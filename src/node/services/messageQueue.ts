@@ -180,6 +180,18 @@ export class MessageQueue {
   }
 
   /**
+   * Whether the next entry to dispatch is a bash-monitor wake. Wake sends are
+   * the only queued input that continues an open delegated workspace turn
+   * (see AgentSession.inheritOpenWorkspaceTurnMetadata); any other head entry
+   * supersedes the turn when it dispatches.
+   */
+  isNextEntryBashMonitorWake(): boolean {
+    const muxMetadata = this.entries[0]?.muxMetadata;
+    if (typeof muxMetadata !== "object" || muxMetadata === null) return false;
+    return (muxMetadata as Record<string, unknown>).type === "bash-monitor-wake";
+  }
+
+  /**
    * Effective dispatch mode across pending entries: any entry queued for tool-end
    * makes the whole queue dispatch at tool-end (sticky, matching pre-entry behavior),
    * otherwise turn-end. Empty queue reports the tool-end default.

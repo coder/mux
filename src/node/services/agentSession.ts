@@ -582,6 +582,14 @@ export class AgentSession {
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
 
+  /**
+   * muxMetadata of the queued entry currently being dispatched, held from
+   * dequeue until its sendMessage settles (the stream has started or failed).
+   * Lets hasPendingBashMonitorWakeContinuation see a wake continuation during
+   * the dequeue→stream-start window without consulting stale stream context.
+   */
+  private dispatchingQueuedEntryMuxMetadata?: unknown;
+
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
   private activeStreamContext?: {
     modelString: string;
@@ -5605,6 +5613,24 @@ export class AgentSession {
     );
   }
 
+  /**
+   * Whether a bash-monitor-wake continuation is pending dispatch: the next
+   * queued entry is a wake, or a dequeued wake is mid-dispatch (dequeue →
+   * stream start). Wake sends are the only input that inherits an open
+   * delegated workspace turn's correlation, so TaskService uses this — not
+   * generic queued/preparing state — to decide whether a correlated
+   * "tool-calls" queue cut will be continued rather than superseded. Once the
+   * wake's stream starts, TaskService matches the active stream's inherited
+   * correlation instead (see hasSameTurnWakeContinuation).
+   */
+  hasPendingBashMonitorWakeContinuation(): boolean {
+    if (this.messageQueue.isNextEntryBashMonitorWake()) {
+      return true;
+    }
+    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
+    return dispatching?.type === "bash-monitor-wake";
+  }
+
   /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */
   hasQueuedDedupeKey(dedupeKey: string): boolean {
     assert(dedupeKey.length > 0, "hasQueuedDedupeKey requires a dedupeKey");
@@ -5763,6 +5789,7 @@ export class AgentSession {
       // skills, workspace-turn follow-ups) own their turn, and anything queued
       // behind them dispatches on a later drain instead of batching into them.
       const { message, options, internal } = this.messageQueue.dequeueNext();
+      this.dispatchingQueuedEntryMuxMetadata = options?.muxMetadata;
       this.emitQueuedMessageChanged();
 
       // Re-arm dispatch signals for the remaining entries so the stream we are
@@ -5780,6 +5807,10 @@ export class AgentSession {
 
       void this.sendMessage(message, options, internal)
         .then(async (result) => {
+          // Dispatch settled: on success the stream is registered (TaskService
+          // switches to matching the active stream's correlation), on failure
+          // there is no continuation to wait for.
+          this.dispatchingQueuedEntryMuxMetadata = undefined;
           // If sendMessage fails before it can start streaming, ensure we don't
           // leave the session stuck in PREPARING and notify correlated internal callers.
           if (!result.success) {
@@ -5803,6 +5834,7 @@ export class AgentSession {
           }
         })
         .catch(() => {
+          this.dispatchingQueuedEntryMuxMetadata = undefined;
           if (this.turnPhase === TurnPhase.PREPARING) {
             this.setTurnPhase(TurnPhase.IDLE);
           }

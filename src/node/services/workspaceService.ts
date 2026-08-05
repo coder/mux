@@ -9631,6 +9631,15 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Whether a bash-monitor-wake continuation is queued next or mid-dispatch.
+   * See AgentSession.hasPendingBashMonitorWakeContinuation for semantics.
+   */
+  hasPendingBashMonitorWakeContinuation(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    return session?.hasPendingBashMonitorWakeContinuation() ?? false;
+  }
+
+  /**
    * Narrow check for an actual scheduled/starting auto-retry, excluding queued
    * manual messages and preparing turns. Callers that must distinguish "the
    * same turn will resume on its own" from "some other queued work exists"

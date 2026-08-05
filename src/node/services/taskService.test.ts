@@ -387,6 +387,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages: ReturnType<typeof mock>;
     isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+    hasPendingBashMonitorWakeContinuation: ReturnType<typeof mock>;
     hasPendingAutoRetry: ReturnType<typeof mock>;
     waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
     waitForIdle: ReturnType<typeof mock>;
@@ -444,6 +445,8 @@ function createWorkspaceServiceMocks(
   const isBusyForMessage = overrides?.isBusyForMessage ?? mock(() => false);
   const hasPendingQueuedOrPreparingTurn =
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
+  const hasPendingBashMonitorWakeContinuation =
+    overrides?.hasPendingBashMonitorWakeContinuation ?? mock(() => false);
   const hasPendingAutoRetry = overrides?.hasPendingAutoRetry ?? mock(() => false);
   const waitForIdleAndNoQueuedMessages =
     overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
@@ -490,6 +493,7 @@ function createWorkspaceServiceMocks(
       hasQueuedWorkspaceTurn,
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
+      hasPendingBashMonitorWakeContinuation,
       hasPendingAutoRetry,
       waitForIdleAndNoQueuedMessages,
       waitForIdle,
@@ -695,6 +699,7 @@ describe("TaskService", () => {
       isStreaming?: ReturnType<typeof mock>;
       hasQueuedMessages?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
+      hasPendingBashMonitorWakeContinuation?: ReturnType<typeof mock>;
       hasPendingAutoRetry?: ReturnType<typeof mock>;
       waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
@@ -732,6 +737,11 @@ describe("TaskService", () => {
         : {}),
       ...(options.hasPendingQueuedOrPreparingTurn != null
         ? { hasPendingQueuedOrPreparingTurn: options.hasPendingQueuedOrPreparingTurn }
+        : {}),
+      ...(options.hasPendingBashMonitorWakeContinuation != null
+        ? {
+            hasPendingBashMonitorWakeContinuation: options.hasPendingBashMonitorWakeContinuation,
+          }
         : {}),
       ...(options.hasPendingAutoRetry != null
         ? { hasPendingAutoRetry: options.hasPendingAutoRetry }
@@ -3629,15 +3639,15 @@ describe("TaskService", () => {
     expect(snapshot?.reportMarkdown).toBeUndefined();
   });
 
-  test("workspace-turn tool-calls stream-end defers to a queued continuation", async () => {
-    // A queued-message dispatch (e.g. a bash monitor wake) cuts the correlated
-    // stream at a tool boundary (finishReason "tool-calls") while the child
-    // seamlessly continues the same turn — the handle must stay running.
-    const hasPendingQueuedOrPreparingTurn = mock(
+  test("workspace-turn tool-calls stream-end defers to a queued wake continuation", async () => {
+    // A queued bash-monitor wake cuts the correlated stream at a tool boundary
+    // (finishReason "tool-calls") while the child seamlessly continues the
+    // same turn — the handle must stay running.
+    const hasPendingBashMonitorWakeContinuation = mock(
       (workspaceId: string) => workspaceId === "childworkspace"
     );
     const { parentId, taskService } = await startWorkspaceTurnForTest({
-      hasPendingQueuedOrPreparingTurn,
+      hasPendingBashMonitorWakeContinuation,
     });
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -3688,6 +3698,95 @@ describe("TaskService", () => {
       messageId: "msg_continuation_final",
       reportMarkdown: "Final review report",
     });
+  });
+
+  test("workspace-turn tool-calls stream-end with superseding queued input settles error", async () => {
+    // Ordinary queued input (manual message, bare /compact) also cuts the
+    // stream at a tool boundary, but it supersedes the delegated turn instead
+    // of continuing it — the handle must settle now, not defer forever.
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => workspaceId === "childworkspace"
+    );
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_superseded_cut",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Cut mid-work" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({
+      status: "error",
+      messageId: "msg_superseded_cut",
+      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+    });
+  });
+
+  test("workspace-turn tool-calls stream-end defers to a streaming inherited continuation", async () => {
+    // The wake already dispatched: the active stream (a newer messageId)
+    // inherited this turn's correlation, proving the turn is continuing.
+    const { parentId, taskService, aiMocks } = await startWorkspaceTurnForTest();
+    aiMocks.getStreamInfo.mockImplementation((workspaceId: string) =>
+      workspaceId === "childworkspace"
+        ? {
+            messageId: "msg_continuation_active",
+            model: "anthropic:claude-opus-4-6",
+            historySequence: 2,
+            startTime: Date.now(),
+            parts: [],
+            toolCompletionTimestamps: new Map(),
+            muxMetadata: {
+              type: "workspace-turn-task",
+              taskHandleId: "wst_handle",
+              ownerWorkspaceId: parentId,
+              turnId: "turn",
+            },
+          }
+        : undefined
+    );
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_queue_cut_streaming",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Cut mid-work" }],
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
+    expect(snapshot?.error).toBeUndefined();
   });
 
   test("uncorrelated compaction stream-end does not interrupt an active workspace turn", async () => {

@@ -4432,6 +4432,7 @@ export class StreamManager extends EventEmitter {
         startTime: number;
         parts: CompletedMessagePart[];
         toolCompletionTimestamps: Map<string, number>;
+        muxMetadata?: unknown;
       }
     | undefined {
     const typedWorkspaceId = workspaceId as WorkspaceId;
@@ -4449,6 +4450,10 @@ export class StreamManager extends EventEmitter {
         startTime: streamInfo.startTime,
         toolCompletionTimestamps: streamInfo.toolCompletionTimestamps ?? new Map(),
         parts: streamInfo.parts,
+        // Correlation metadata for delegated work (e.g. workspace-turn
+        // continuations); lets TaskService match a live continuation stream
+        // to its still-open workspace-turn handle.
+        muxMetadata: streamInfo.initialMetadata?.muxMetadata,
       };
     }
 
