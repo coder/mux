@@ -1,6 +1,5 @@
 import path from "path";
 import { expect, type Locator, type Page } from "@playwright/test";
-import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 import type { DemoProjectConfig } from "./demoProject";
 
 type ChatMode = "Plan" | "Exec";
@@ -91,8 +90,8 @@ function sanitizeMode(mode: ChatMode): ChatMode {
   }
 }
 
-function thinkingLevelLabel(page: Page): Locator {
-  return page.getByLabel(/Thinking level:/);
+function thinkingSelectorTrigger(page: Page): Locator {
+  return page.locator("[data-thinking-selector-trigger]").first();
 }
 
 function transcriptLocator(page: Page): Locator {
@@ -172,86 +171,30 @@ export function createWorkspaceUI(page: Page, context: DemoProjectConfig): Works
      * matching the app's model-aware thinking policy.
      */
     async setThinkingLevel(targetLevel: number): Promise<void> {
-      if (!Number.isInteger(targetLevel)) {
-        throw new Error("Thinking level must be an integer");
-      }
-      if (targetLevel < 0 || targetLevel >= THINKING_LEVELS.length) {
-        throw new Error(
-          `Thinking level ${targetLevel} is outside expected range 0-${THINKING_LEVELS.length - 1}`
-        );
+      if (!Number.isInteger(targetLevel) || targetLevel < 0) {
+        throw new Error("Thinking level must be a non-negative integer");
       }
 
-      const label = thinkingLevelLabel(page);
+      const trigger = thinkingSelectorTrigger(page);
+      await expect(trigger).toBeVisible();
+      await trigger.dispatchEvent("click");
 
-      await expect(label).toBeVisible();
-
-      // Accessible names carry canonical levels; visible labels can collide across model mappings.
-      const readCurrentLevel = async (): Promise<ThinkingLevel> => {
-        const ariaLabel = (await label.getAttribute("aria-label")) ?? "";
-        const match = /Thinking level:\s*([a-z]+)/i.exec(ariaLabel);
-        const level = THINKING_LEVELS.find((candidate) => candidate === match?.[1]?.toLowerCase());
-        if (!level) {
-          throw new Error(`Could not read thinking level from aria-label: ${ariaLabel}`);
-        }
-        return level;
-      };
-
-      // The label cycles through the model's allowed levels and wraps.
-      const cycleOnce = async (previousLevel: ThinkingLevel): Promise<ThinkingLevel> => {
-        for (let attempt = 0; attempt < 3; attempt++) {
-          await label.dispatchEvent("click");
-          try {
-            await expect
-              .poll(
-                async () => {
-                  const currentLevel = await readCurrentLevel();
-                  return currentLevel === previousLevel ? null : currentLevel;
-                },
-                { timeout: 1_000 }
-              )
-              .not.toBeNull();
-            return await readCurrentLevel();
-          } catch {
-            // Linux CI can drop clicks during rapid mode transitions; retry the same control.
-          }
-        }
-
-        return await readCurrentLevel();
-      };
-
-      const discoverAllowedLevels = async (): Promise<ThinkingLevel[]> => {
-        const startLevel = await readCurrentLevel();
-        const seen = new Set<ThinkingLevel>([startLevel]);
-        let currentLevel = startLevel;
-
-        for (let step = 0; step < THINKING_LEVELS.length; step++) {
-          const nextLevel = await cycleOnce(currentLevel);
-          if (nextLevel === currentLevel || nextLevel === startLevel) {
-            break;
-          }
-          currentLevel = nextLevel;
-          seen.add(currentLevel);
-        }
-
-        return THINKING_LEVELS.filter((candidate) => seen.has(candidate));
-      };
-
-      const allowedLevels = await discoverAllowedLevels();
-      const targetIndex = Math.min(targetLevel, allowedLevels.length - 1);
-      const target = allowedLevels[targetIndex];
-
-      // Direct DOM clicks avoid transient Linux Electron overlays that interfere with hit-testing.
-      for (let i = 0; i < allowedLevels.length; i++) {
-        const currentLevel = await readCurrentLevel();
-        if (currentLevel === target) {
-          break;
-        }
-        if ((await cycleOnce(currentLevel)) === currentLevel) {
-          break;
-        }
+      const menu = page.locator('[data-component="ThinkingSelectorMenu"]');
+      await expect(menu).toBeVisible();
+      const options = menu.getByRole("option");
+      const optionCount = await options.count();
+      if (optionCount === 0) {
+        throw new Error("Thinking selector has no available effort levels");
       }
 
-      expect(await readCurrentLevel()).toBe(target);
+      // Numeric inputs index the model-aware menu order from lowest to highest.
+      const option = options.nth(Math.min(targetLevel, optionCount - 1));
+      await option.dispatchEvent("click");
+      await expect(option).toHaveAttribute("aria-selected", "true");
+
+      // The selector intentionally stays open after selection; close it before the scenario proceeds.
+      await trigger.dispatchEvent("click");
+      await expect(trigger).toHaveAttribute("aria-expanded", "false");
     },
 
     async sendMessage(message: string): Promise<void> {
