@@ -39,6 +39,14 @@ describe("getModelStats", () => {
     expect(expectStats("openai:gpt-5.6")).toEqual(expectStats("openai:gpt-5.6-sol"));
   });
 
+  test("resolves Grok 4.5 family aliases and case variants for usage meters", () => {
+    const grok = expectStats(KNOWN_MODELS.GROK_45.id);
+    expect(grok.max_input_tokens).toBe(500000);
+    expect(grok.max_output_tokens).toBe(500000);
+    expect(expectStats("xai:grok-4.5-latest")).toEqual(grok);
+    expect(expectStats("XAI:Grok-4.5")).toEqual(grok);
+  });
+
   test.each([
     // [model, input, output, cacheRead, cacheCreation]
     ["openai:gpt-5.6-sol", 0.000005, 0.00003, 0.0000005, 0.00000625],
