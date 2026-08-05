@@ -97,7 +97,7 @@ describe("BackupRepoCache", () => {
     expect(await localObjects()).not.toContain(" blob ");
   });
 
-  it("preserves SHA-256 object format when rebuilding clone config", async () => {
+  it("recovers malformed cache config without losing SHA-256 object format", async () => {
     const shaOrigin = path.join(tempDir, "sha256-origin.git");
     await git(["init", "--bare", "--object-format=sha256", "--initial-branch=main", shaOrigin]);
     const seed = path.join(tempDir, "sha256-seed");
@@ -114,6 +114,9 @@ describe("BackupRepoCache", () => {
       cacheRoot,
       managedPath: "mux",
     });
+    await repo.ensureCache();
+    await fs.writeFile(path.join(repo.cachePath, ".git", "config"), "[core\n", "utf-8");
+
     await repo.ensureCache();
     await repo.fetch();
     await repo.resetHardToRemote();

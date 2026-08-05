@@ -369,7 +369,7 @@ async function readRawConfigEntries(
 ): Promise<Array<readonly [string, string]>> {
   const result = await runLocalGit(
     ["config", "--no-includes", "--file", configPath, "--list", "-z"],
-    options
+    { ...options, env: { ...options.env, LC_ALL: "C" } }
   );
   const entries: Array<readonly [string, string]> = [];
   for (const record of result.stdout.split("\0")) {
@@ -382,6 +382,17 @@ async function readRawConfigEntries(
     );
   }
   return entries;
+}
+
+function isMalformedConfigSyntaxError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const commandError = error as { code?: unknown; signal?: unknown; stderr?: unknown };
+  return (
+    commandError.code === 128 &&
+    commandError.signal === null &&
+    typeof commandError.stderr === "string" &&
+    /^fatal: bad config(?: file)? line \d+/m.test(commandError.stderr)
+  );
 }
 
 /**
@@ -502,6 +513,33 @@ export class BackupRepoCache {
     );
   }
 
+  private async createCache(): Promise<void> {
+    if ((await this.lsRemote()).branchCommit === null) {
+      // Cloning a nonexistent branch fails. An empty local repository lets the first backup
+      // create it without downloading unrelated history.
+      await this.initEmptyCache();
+      return;
+    }
+
+    // `--no-checkout` defers materialization until `resetHardToRemote` applies sparse checkout.
+    // Local paths need the upload-pack transport so blob filtering is honored instead of
+    // Git copying the full object database before sparse checkout can limit the worktree.
+    await this.networkGit([
+      "clone",
+      ...localCloneArgs(this.repoUrl),
+      "--no-hardlinks",
+      "--no-checkout",
+      "--single-branch",
+      `--filter=${BLOB_FILTER}`,
+      "--branch",
+      this.options.branch,
+      "--origin",
+      "origin",
+      this.repoUrl,
+      this.cachePath,
+    ]);
+  }
+
   async ensureCache(): Promise<void> {
     await assertNotSymlink(this.options.cacheRoot);
     await fs.mkdir(this.options.cacheRoot, { recursive: true, mode: 0o700 });
@@ -525,35 +563,22 @@ export class BackupRepoCache {
       // ever reads a ref other than `origin/<branch>`. Transferring anything else is waste
       // that sparse checkout does not bound, because it limits the working tree and not the
       // transfer.
-      if ((await this.lsRemote()).branchCommit === null) {
-        // Nothing to fetch: the backup branch does not exist yet, and `--single-branch` would
-        // fall back to the remote's HEAD, downloading a default branch whose history this
-        // feature never reads.
-        await this.initEmptyCache();
-      } else {
-        // `--no-checkout` because `resetHardToRemote` checks out the configured branch next.
-        // Local paths need the upload-pack transport so blob filtering is honored instead of
-        // Git copying the full object database before sparse checkout can limit the worktree.
-        await this.networkGit([
-          "clone",
-          ...localCloneArgs(this.repoUrl),
-          "--no-hardlinks",
-          "--no-checkout",
-          "--single-branch",
-          `--filter=${BLOB_FILTER}`,
-          "--branch",
-          this.options.branch,
-          "--origin",
-          "origin",
-          this.repoUrl,
-          this.cachePath,
-        ]);
-      }
+      await this.createCache();
     }
     // Both run every time rather than only at creation, so a cache made by an earlier version
     // of this code, or altered since, is brought back to the state Mux expects before any
     // other git command trusts what is stored there.
-    await this.sanitizeCacheConfig();
+    try {
+      await this.sanitizeCacheConfig();
+    } catch (error) {
+      if (!isMalformedConfigSyntaxError(error)) throw error;
+      // Malformed config prevents validating redirect-sensitive settings. Replace the
+      // disposable cache rather than trust its Git configuration.
+      await fs.rm(this.cachePath, { recursive: true, force: true });
+      this.baseRemoteCommit = undefined;
+      await this.createCache();
+      await this.sanitizeCacheConfig();
+    }
     await this.pinVerbatimContent();
   }
 
