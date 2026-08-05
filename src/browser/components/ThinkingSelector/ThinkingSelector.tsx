@@ -156,7 +156,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
           <button
             type="button"
             data-thinking-selector-trigger
-            className="text-foreground hover:bg-hover focus-visible:ring-accent flex shrink-0 cursor-pointer items-center gap-0.5 rounded-sm bg-transparent py-0 pr-0.5 text-[11px] font-medium transition-colors focus-visible:ring-1"
+            className="text-foreground hover:bg-hover focus-visible:bg-hover focus-visible:text-accent flex shrink-0 cursor-pointer items-center gap-0.5 rounded-sm bg-transparent py-0 pr-0.5 text-[11px] font-medium transition-colors focus-visible:outline-none"
             aria-expanded={isOpen}
             aria-haspopup="listbox"
             aria-label={`Thinking: ${effectiveThinkingLevel}${proModeActive ? ", pro mode" : ""}${fastModeActive ? ", fast mode" : ""}`}
@@ -165,15 +165,18 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
             <span data-thinking-label className="min-w-[3ch] text-center">
               {displayLabel}
             </span>
-            {proModeActive && (
+            {!isOpen && proModeActive && (
               <span
                 data-thinking-pro-status
-                className={cn("text-thinking-mode text-[10px] font-bold", COMPOSER_PRO_HIDE_CLASS)}
+                className={cn(
+                  "bg-surface-secondary text-foreground rounded-[3px] px-1 text-[9px] leading-4 font-semibold tracking-wide",
+                  COMPOSER_PRO_HIDE_CLASS
+                )}
               >
                 PRO
               </span>
             )}
-            {fastModeActive && (
+            {!isOpen && fastModeActive && (
               <Zap
                 data-fast-mode-indicator
                 className="text-thinking-mode h-3 w-3 shrink-0"
@@ -203,7 +206,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
       {isOpen && (
         <div
           className={cn(
-            "absolute right-0 bottom-full z-[1020] mb-1 w-52 [@container(max-width:500px)]:right-auto [@container(max-width:500px)]:left-0",
+            "absolute bottom-full left-0 z-[1020] mb-1 w-52",
             COMPOSER_PICKER_PANEL_CLASS
           )}
           data-component="ThinkingSelectorMenu"
@@ -225,10 +228,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                     { isHighlighted: false, isSelected: selected },
                     "w-full py-1.5 text-left"
                   )}
-                  onClick={() => {
-                    setThinkingLevel(level);
-                    setIsOpen(false);
-                  }}
+                  onClick={() => setThinkingLevel(level)}
                 >
                   <span className="text-foreground min-w-0 flex-1">
                     {THINKING_OPTION_LABELS[level]}

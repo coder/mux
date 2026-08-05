@@ -118,9 +118,11 @@ describeIntegration("Thinking selector", () => {
       await waitFor(() => {
         const label = container.querySelector("[data-thinking-label]")?.textContent?.trim();
         if (label !== "HIGH") throw new Error(`Expected HIGH thinking label, got ${label}`);
+        if (!container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
+          throw new Error("Thinking selector closed after choosing an effort");
+        }
       });
 
-      menu = await openThinkingSelector(container);
       const proToggle = within(menu).getByRole("button", { name: /Pro mode/i });
       const fastToggle = within(menu).getByRole("button", { name: /Fast mode/i });
       await expectPressed(proToggle, false);
@@ -128,14 +130,20 @@ describeIntegration("Thinking selector", () => {
 
       fireEvent.click(proToggle);
       await expectPressed(proToggle, true);
-      if (!container.querySelector("[data-thinking-pro-status]")) {
-        throw new Error("Closed-state Pro status was not rendered");
+      if (!container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
+        throw new Error("Thinking selector closed after toggling Pro mode");
       }
 
       fireEvent.click(fastToggle);
       await expectPressed(fastToggle, true);
+      if (!container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
+        throw new Error("Thinking selector closed after toggling Fast mode");
+      }
       fireEvent.click(container.querySelector("[data-thinking-selector-trigger]")!);
       await waitFor(() => {
+        if (!container.querySelector("[data-thinking-pro-status]")) {
+          throw new Error("Closed-state Pro status was not rendered");
+        }
         if (!container.querySelector("[data-fast-mode-indicator]")) {
           throw new Error("Fast-mode lightning indicator was not rendered");
         }
