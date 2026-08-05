@@ -1048,39 +1048,55 @@ test("analytics rebuild command falls back to alert when chat input toast host i
 });
 
 test("fast mode command is route-aware and keyboard accessible", async () => {
-  const onToggleFastMode = mock(() => undefined);
-  const directOpenAIActions = getActions({
-    selectedWorkspaceState: {
-      lifecycle: "active",
-      goal: null,
-      currentModel: "openai:gpt-5.6-sol",
-    } as unknown as WorkspaceState,
-    providersConfig: {
-      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
-    },
-    getRouteForModel: () => "direct",
-    onToggleFastMode,
-  });
-  const fastAction = directOpenAIActions.find(
-    (action) => action.id === "thinking:toggle-fast-mode"
-  );
+  const testWindow = new GlobalWindow();
+  const originalWindow = globalThis.window;
+  const originalDocument = globalThis.document;
+  const originalCustomEvent = globalThis.CustomEvent;
 
-  expect(fastAction?.shortcutHint).toBeDefined();
-  await fastAction?.run();
-  expect(onToggleFastMode).toHaveBeenCalledTimes(1);
+  globalThis.window = testWindow as unknown as Window & typeof globalThis;
+  globalThis.document = testWindow.document as unknown as Document;
+  globalThis.CustomEvent = testWindow.CustomEvent as unknown as typeof CustomEvent;
+  window.localStorage.setItem(getModelKey("w1"), JSON.stringify("openai:gpt-5.6-sol"));
 
-  const gatewayActions = getActions({
-    selectedWorkspaceState: {
-      lifecycle: "active",
-      goal: null,
-      currentModel: "openai:gpt-5.6-sol",
-    } as unknown as WorkspaceState,
-    providersConfig: {
-      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
-    },
-    getRouteForModel: () => "openrouter",
-  });
-  expect(gatewayActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(false);
+  try {
+    const onToggleFastMode = mock(() => undefined);
+    const directOpenAIActions = getActions({
+      selectedWorkspaceState: {
+        lifecycle: "active",
+        goal: null,
+        currentModel: "openai:gpt-5.6-sol",
+      } as unknown as WorkspaceState,
+      providersConfig: {
+        openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "direct",
+      onToggleFastMode,
+    });
+    const fastAction = directOpenAIActions.find(
+      (action) => action.id === "thinking:toggle-fast-mode"
+    );
+
+    expect(fastAction?.shortcutHint).toBeDefined();
+    await fastAction?.run();
+    expect(onToggleFastMode).toHaveBeenCalledTimes(1);
+
+    const gatewayActions = getActions({
+      selectedWorkspaceState: {
+        lifecycle: "active",
+        goal: null,
+        currentModel: "openai:gpt-5.6-sol",
+      } as unknown as WorkspaceState,
+      providersConfig: {
+        openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      },
+      getRouteForModel: () => "openrouter",
+    });
+    expect(gatewayActions.some((action) => action.id === "thinking:toggle-fast-mode")).toBe(false);
+  } finally {
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+    globalThis.CustomEvent = originalCustomEvent;
+  }
 });
 
 test("workspace generate title command is available for the current workspace", () => {
