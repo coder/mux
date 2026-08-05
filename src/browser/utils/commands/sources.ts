@@ -1318,6 +1318,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         : undefined;
 
       if (
+        p.providersConfig != null &&
         openaiDirectProviderOptionsAvailable(providerOptionGateModel ?? "", {
           providersConfig: p.providersConfig,
           resolvedRouteProvider: providerOptionRoute,

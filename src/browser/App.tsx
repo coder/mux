@@ -661,7 +661,7 @@ function AppInner() {
     const scopeId =
       selectedWorkspace?.workspaceId ??
       (creationProjectPath ? getProjectScopeId(creationProjectPath) : null);
-    if (!api || !scopeId || fastModeToggleInFlightRef.current) return;
+    if (!api || !scopeId || providersConfig == null || fastModeToggleInFlightRef.current) return;
 
     // Creation composers use the same project-scoped model preference as their selector,
     // so the global shortcut remains available before the first workspace exists.
@@ -682,8 +682,8 @@ function AppInner() {
     try {
       const change = await applyFastModeServiceTierChange(
         api.providers,
-        providersConfig?.openai?.serviceTier,
-        providersConfig?.openai?.fastModePreviousServiceTier
+        providersConfig.openai?.serviceTier,
+        providersConfig.openai?.fastModePreviousServiceTier
       );
       if (change) {
         updateOptimistically("openai", {
