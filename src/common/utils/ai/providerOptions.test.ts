@@ -1741,7 +1741,7 @@ describe("buildRequestHeaders", () => {
         })
       ).toBe(false);
       expect(
-        openaiDirectProviderOptionsAvailable("openai:gpt-5.5-pro", {
+        openaiDirectProviderOptionsAvailable("openai:gpt-5.6-sol", {
           providersConfig: {
             openai: {
               apiKeySet: false,

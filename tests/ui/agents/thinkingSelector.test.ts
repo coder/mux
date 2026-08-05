@@ -133,11 +133,17 @@ describeIntegration("Thinking selector", () => {
       if (!container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
         throw new Error("Thinking selector closed after toggling Pro mode");
       }
+      if (!container.querySelector("[data-thinking-pro-status]")) {
+        throw new Error("Open selector did not immediately show Pro status");
+      }
 
       fireEvent.click(fastToggle);
       await expectPressed(fastToggle, true);
       if (!container.querySelector('[data-component="ThinkingSelectorMenu"]')) {
         throw new Error("Thinking selector closed after toggling Fast mode");
+      }
+      if (!container.querySelector("[data-fast-mode-indicator]")) {
+        throw new Error("Open selector did not immediately show Fast status");
       }
       fireEvent.click(container.querySelector("[data-thinking-selector-trigger]")!);
       await waitFor(() => {

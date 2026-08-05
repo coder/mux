@@ -165,7 +165,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
             <span data-thinking-label className="min-w-[3ch] text-center">
               {displayLabel}
             </span>
-            {!isOpen && proModeActive && (
+            {proModeActive && (
               <span
                 data-thinking-pro-status
                 className={cn(
@@ -176,7 +176,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                 PRO
               </span>
             )}
-            {!isOpen && fastModeActive && (
+            {fastModeActive && (
               <Zap
                 data-fast-mode-indicator
                 className="text-thinking-mode h-3 w-3 shrink-0"

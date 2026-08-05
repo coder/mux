@@ -65,6 +65,7 @@ import {
   getAgentsInitNudgeKey,
   getModelKey,
   getNotifyOnResponseKey,
+  getProjectScopeId,
   getThinkingLevelByModelKey,
   getReasoningModeKey,
   getThinkingLevelKey,
@@ -660,12 +661,16 @@ function AppInner() {
   const fastModeToggleInFlightRef = useRef(false);
   const fastModeActive = providersConfig?.openai?.serviceTier === "priority";
   const toggleFastMode = useCallback(async () => {
-    if (!api || !selectedWorkspace || fastModeToggleInFlightRef.current) return;
+    const scopeId =
+      selectedWorkspace?.workspaceId ??
+      (creationProjectPath ? getProjectScopeId(creationProjectPath) : null);
+    if (!api || !scopeId || fastModeToggleInFlightRef.current) return;
 
-    // Serialize keyboard/palette requests so a quick double press cannot compute
-    // both writes from the same stale provider-config snapshot.
+    // Creation composers use the same project-scoped model preference as their selector,
+    // so the global shortcut remains available before the first workspace exists.
+    // Serialize requests so a quick double press cannot compute two writes from stale config.
     fastModeToggleInFlightRef.current = true;
-    const model = getModelForWorkspace(selectedWorkspace.workspaceId);
+    const model = getModelForWorkspace(scopeId);
     const route = getRouteForModel(normalizeToCanonical(model));
     if (
       !openaiDirectProviderOptionsAvailable(model, {
@@ -697,6 +702,7 @@ function AppInner() {
     }
   }, [
     api,
+    creationProjectPath,
     getModelForWorkspace,
     getRouteForModel,
     providersConfig,

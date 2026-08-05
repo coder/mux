@@ -3490,7 +3490,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
                   <div
                     className={cn(
-                      "border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5",
+                      "border-border-light flex min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-0.5",
                       COMPOSER_CONTROL_HEIGHT_CLASS
                     )}
                     data-component="ModelSelectorGroup"
