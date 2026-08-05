@@ -1070,6 +1070,107 @@ const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
 const CREDENTIAL_PATH_HINT =
   /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|(?:api|private)(?:[^a-z/]+)?keys?|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
 
+const CREDENTIAL_URL_PARAMETER_NAMES = new Set([
+  "accesskey",
+  "accesskeyid",
+  "accesstoken",
+  "apikey",
+  "appsecret",
+  "auth",
+  "authcode",
+  "authorization",
+  "authtoken",
+  "awsaccesskeyid",
+  "awssecretaccesskey",
+  "bearer",
+  "bearertoken",
+  "clientkey",
+  "clientsecret",
+  "code",
+  "consumersecret",
+  "credential",
+  "credentials",
+  "idtoken",
+  "jwt",
+  "key",
+  "oauthcode",
+  "passwd",
+  "password",
+  "privatekey",
+  "pwd",
+  "refreshtoken",
+  "secret",
+  "secretaccesskey",
+  "secretkey",
+  "session",
+  "sessionid",
+  "sid",
+  "sig",
+  "signature",
+  "token",
+  "xamzcredential",
+  "xamzsignature",
+]);
+
+function hasCredentialUrlParameters(parameters: URLSearchParams): boolean {
+  for (const [name, value] of parameters) {
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (value !== "" && CREDENTIAL_URL_PARAMETER_NAMES.has(normalizedName)) return true;
+  }
+  return false;
+}
+
+function fragmentHasCredentialUrlParameters(fragment: string): boolean {
+  if (hasCredentialUrlParameters(new URLSearchParams(fragment))) return true;
+  const queryStart = fragment.indexOf("?");
+  return (
+    queryStart >= 0 &&
+    hasCredentialUrlParameters(new URLSearchParams(fragment.slice(queryStart + 1)))
+  );
+}
+
+function rawUrlHasUserinfo(rawUrl: string): boolean {
+  const schemeEnd = rawUrl.indexOf("://");
+  if (schemeEnd < 0 && !rawUrl.startsWith("//")) return false;
+  const authorityStart = schemeEnd >= 0 ? schemeEnd + 3 : 2;
+  const delimiters = ["/", "?", "#"]
+    .map((delimiter) => rawUrl.indexOf(delimiter, authorityStart))
+    .filter((offset) => offset >= 0);
+  const authorityEnd = delimiters.length > 0 ? Math.min(...delimiters) : rawUrl.length;
+  return rawUrl.slice(authorityStart, authorityEnd).includes("@");
+}
+
+function rawUrlHasCredentialParameters(rawUrl: string): boolean {
+  const fragmentStart = rawUrl.indexOf("#");
+  const beforeFragment = fragmentStart >= 0 ? rawUrl.slice(0, fragmentStart) : rawUrl;
+  const queryStart = beforeFragment.indexOf("?");
+  const query = queryStart >= 0 ? beforeFragment.slice(queryStart + 1) : "";
+  const fragment = fragmentStart >= 0 ? rawUrl.slice(fragmentStart + 1) : "";
+  return (
+    hasCredentialUrlParameters(new URLSearchParams(query)) ||
+    fragmentHasCredentialUrlParameters(fragment)
+  );
+}
+
+function urlHasCredentialComponents(rawUrl: string): boolean {
+  return rawUrlHasUserinfo(rawUrl) || rawUrlHasCredentialParameters(rawUrl);
+}
+
+function hasCredentialBearingMcpUrl(content: string): boolean {
+  const errors: jsonc.ParseError[] = [];
+  const parsed = readRecord(jsonc.parse(content, errors));
+  if (errors.length > 0 || !parsed) return false;
+  const servers = readRecord(readOwn(parsed, "servers"));
+  if (!servers) return false;
+  for (const server of Object.values(servers)) {
+    const serverRecord = readRecord(server);
+    if (!serverRecord) continue;
+    const url = readOwn(serverRecord, "url");
+    if (typeof url === "string" && urlHasCredentialComponents(url)) return true;
+  }
+  return false;
+}
+
 function isRecursivelyCollected(filePath: string): boolean {
   return filePath.startsWith("skills/") || filePath.startsWith("memory/global/");
 }
@@ -1083,6 +1184,7 @@ export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[
     .filter((file) => {
       const content = file.content.toString("utf-8");
       if (SECRET_PATTERNS.some((pattern) => pattern.test(content))) return true;
+      if (file.path === "mcp.jsonc" && hasCredentialBearingMcpUrl(content)) return true;
       if (!isRecursivelyCollected(file.path)) return false;
       return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || CREDENTIAL_PATH_HINT.test(file.path);
     })

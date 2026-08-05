@@ -197,6 +197,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
       servers: {
@@ -445,7 +446,7 @@ describe("backup payload", () => {
           toolAllowlist: ["read"],
         },
         api: {
-          url: "/mcp?sig=abc123",
+          url: "/mcp?mode=abc123",
           headers: { Authorization: { secret: "NAME", fallback: "hunter2" } },
         },
       },
@@ -465,7 +466,7 @@ describe("backup payload", () => {
     // reads, so it is redacted while the correctly typed ones publish.
     expect(exported).not.toContain('"yes"');
     expect(exported).toContain('"npx tool"');
-    expect(exported).toContain('"/mcp?sig=abc123"');
+    expect(exported).toContain('"/mcp?mode=abc123"');
     expect(exported).toContain('"stdio"');
     expect(exported).toContain('"read"');
     expect(payload.redactions).toEqual([
@@ -632,7 +633,7 @@ describe("backup payload", () => {
   "servers": {
     "mixed": {
       "command": "npx local-proxy",
-      "url": "https://host.example/mcp?api_key=urlsecret",
+      "url": "https://host.example/mcp?mode=proxy",
       "headers": { "Authorization": "Bearer sk-live-mixed" }
     }
   }
@@ -654,7 +655,7 @@ describe("backup payload", () => {
     };
 
     expect(restored.servers.mixed.command).toBe("npx local-proxy");
-    expect(restored.servers.mixed.url).toBe("https://host.example/mcp?api_key=urlsecret");
+    expect(restored.servers.mixed.url).toBe("https://host.example/mcp?mode=proxy");
     expect(restored.servers.mixed.headers.Authorization).toBe("Bearer sk-live-mixed");
 
     const fresh = path.join(tempDir, "mixed-fresh");
@@ -667,7 +668,7 @@ describe("backup payload", () => {
       }
     ).servers;
     expect(freshServers.mixed.command).toBe("npx local-proxy");
-    expect(freshServers.mixed.url).toBe("https://host.example/mcp?api_key=urlsecret");
+    expect(freshServers.mixed.url).toBe("https://host.example/mcp?mode=proxy");
     expect(freshServers.mixed.headers).toBeUndefined();
   });
 
@@ -1783,16 +1784,54 @@ describe("backup payload", () => {
     }
   });
 
-  it("publishes MCP URLs verbatim and still scans them for recognizable secrets", async () => {
+  it("gates credential-bearing MCP URLs without rewriting them", async () => {
+    const urls = [
+      "https://user:hunter2@example.com/mcp",
+      "https://mcp.example.com/mcp?api_key=hunter2",
+      "https://mcp.example.com/mcp?clientSecret=abc",
+      "https://mcp.example.com/mcp?X-Amz-Signature=deadbeef",
+      "https://mcp.example.com/callback?code=oauth-code",
+      "https://mcp.example.com/mcp#access_token=fragtoken",
+      "https://mcp.example.com/mcp#callback?api_key=fragment-secret",
+      "/mcp?api_key=relative-secret",
+      "https://user:hunter2@#malformed",
+    ];
+
+    for (const url of urls) {
+      await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: { private: { url } } }));
+      const blocked = await rejection(
+        createBackupPayload({
+          muxRoot,
+          muxVersion: "1.2.3",
+          sourceLabel: "test-host",
+        })
+      );
+      expect((blocked as Error).message).toContain("mcp.jsonc");
+
+      const payload = await createBackupPayload({
+        muxRoot,
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        reportSecrets: true,
+      });
+      expect(payloadFileText(payload, "mcp.jsonc")).toContain(url);
+      expect(scanBackupFilesForSecrets(payload.files)).toEqual(["mcp.jsonc"]);
+      expect(payload.redactions).toEqual([]);
+    }
+  });
+
+  it("does not gate ordinary MCP URL parameters", async () => {
     await write(
       muxRoot,
       "mcp.jsonc",
       JSON.stringify({
         servers: {
-          query: { url: "https://example.com/mcp?key=AIzaSyA12345678901234567890123456789012" },
-          capability: { url: "https://mcp.example.com/access/abc123" },
-          fragment: { url: "https://mcp.example.com/mcp#access_token=fragtoken" },
-          tenant: { url: "https://tenantsecret.mcp.example.com/" },
+          safe: {
+            url: "https://mcp.example.com/mcp?mode=fast&tenant=acme&client_id=public&monkey=banana",
+          },
+          unusual: { url: "not a url without parameters" },
+          email: { url: "mailto:user@example.com" },
+          atSign: { url: "not-a-url@all" },
         },
       })
     );
@@ -1801,19 +1840,8 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
-      reportSecrets: true,
     });
-    const mcp = payloadFileText(payload, "mcp.jsonc");
-    for (const value of [
-      "AIzaSyA12345678901234567890123456789012",
-      "abc123",
-      "fragtoken",
-      "tenantsecret",
-    ]) {
-      expect(mcp).toContain(value);
-    }
-    expect(scanBackupFilesForSecrets(payload.files)).toEqual(["mcp.jsonc"]);
-    expect(payload.redactions).toEqual([]);
+    expect(scanBackupFilesForSecrets(payload.files)).toEqual([]);
   });
 
   it("charges what a restore writes, not only what it read", async () => {
@@ -2320,7 +2348,7 @@ describe("backup payload", () => {
       JSON.stringify({
         servers: {
           api: {
-            url: "https://backup-token@example.com/mcp?token=backup-token",
+            url: "https://backup.example.com/mcp?mode=backup",
             headers: {
               Authorization: "Bearer backup-token",
               Portable: { secret: "PORTABLE_TOKEN" },
@@ -2349,7 +2377,7 @@ describe("backup payload", () => {
       JSON.stringify({
         servers: {
           api: {
-            url: "https://local-token@example.com/mcp?token=local-token",
+            url: "https://local.example.com/mcp?mode=local",
             headers: {
               Authorization: "Bearer local-token",
               Portable: { secret: "OLD_TOKEN" },
@@ -2393,9 +2421,7 @@ describe("backup payload", () => {
     ) as {
       servers: { api: { url: string; headers?: Record<string, unknown> } };
     };
-    expect(restoredMcp.servers.api.url).toBe(
-      "https://backup-token@example.com/mcp?token=backup-token"
-    );
+    expect(restoredMcp.servers.api.url).toBe("https://backup.example.com/mcp?mode=backup");
     expect(restoredMcp.servers.api.headers).toBeUndefined();
   });
 });

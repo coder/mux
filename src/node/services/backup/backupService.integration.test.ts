@@ -175,6 +175,25 @@ describe("BackupService against a real repository", () => {
     expect(allowed.success).toBe(true);
   });
 
+  it("gates a low-entropy MCP URL credential until the exact payload is approved", async () => {
+    const url = "https://user:hunter2@example.com/mcp?api_key=abc123";
+    await writeMuxFile("mcp.jsonc", JSON.stringify({ servers: { private: { url } } }));
+
+    const blocked = await service.push(settings);
+    expect(blocked.success).toBe(false);
+    if (blocked.success) throw new Error("Expected the URL credential gate to block the push");
+    expect(blocked.error.code).toBe("SECRET_DETECTED");
+    expect(blocked.error.files).toEqual(["mcp.jsonc"]);
+    expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
+
+    const allowed = await service.push(settings, {
+      approvedSecretDigest: blocked.error.secretApproval ?? undefined,
+    });
+    expect(allowed.success).toBe(true);
+    const clone = await cloneOrigin("url-credential-verify");
+    expect(await fs.readFile(path.join(clone, "mux/mcp.jsonc"), "utf-8")).toContain(url);
+  });
+
   it("removes a safety snapshot that could not be written", async () => {
     const pushed = await service.push(settings);
     if (!pushed.success) throw new Error(pushed.error.message);

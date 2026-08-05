@@ -500,9 +500,9 @@ export function BackupSection() {
         </ul>
         <p className="text-foreground text-xs font-medium">
           Provider key files and dedicated secret files have no export path. MCP commands and URLs
-          are included verbatim, while literal MCP header values are redacted. Inside skills and
-          memory, only documentation is published automatically; any other file waits for you to
-          review it.
+          are included verbatim; credential-like URL components require review, while literal MCP
+          header values are redacted. Inside skills and memory, only documentation is published
+          automatically; any other file waits for you to review it.
         </p>
       </section>
 
