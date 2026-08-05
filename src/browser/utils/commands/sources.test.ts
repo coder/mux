@@ -292,6 +292,25 @@ test("buildCoreSources adds thinking effort command", () => {
   expect(thinkingAction?.subtitle).toContain("Medium");
 });
 
+test("thinking effort options use the visible effective model", async () => {
+  const actions = getActions({
+    selectedWorkspaceState: {
+      lifecycle: "active",
+      goal: null,
+      currentModel: "anthropic:claude-sonnet-4-5",
+    } as unknown as WorkspaceState,
+    getEffectiveComposerModel: () => "openai:gpt-5.6-sol",
+  });
+  const thinkingAction = actions.find((action) => action.id === "thinking:set-level");
+  const thinkingField = thinkingAction?.prompt?.fields.find((field) => field.type === "select");
+  if (thinkingField?.type !== "select") {
+    throw new Error("Expected thinking effort select field");
+  }
+  const options = await thinkingField.getOptions({});
+
+  expect(options.map((option) => option.id)).toEqual(["medium", "high", "xhigh", "max"]);
+});
+
 test("workspace switch commands include keywords for filtering", () => {
   const actions = getActions();
   const switchAction = actions.find((a) => a.id.startsWith("ws:switch:"));

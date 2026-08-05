@@ -1300,13 +1300,12 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 // Filter thinking levels by the active model's policy AND its minimum
                 // floor, so users only see levels valid for the current model (matching
                 // the selector — off/low hidden unless the model's minimum is lowered).
-                const modelString = p.selectedWorkspaceState?.currentModel;
-                const allowedLevels = modelString
+                const allowedLevels = currentModelString
                   ? getAvailableThinkingLevels(
-                      modelString,
+                      currentModelString,
                       resolveMinimumThinkingLevel(
-                        modelString,
-                        p.getMinThinkingOverride?.(modelString),
+                        currentModelString,
+                        p.getMinThinkingOverride?.(currentModelString),
                         p.providersConfig
                       ),
                       p.providersConfig
