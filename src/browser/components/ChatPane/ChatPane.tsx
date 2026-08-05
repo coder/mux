@@ -112,7 +112,6 @@ import {
 } from "@/browser/utils/chatEditing";
 import {
   computeOperationalBundleInfos,
-  computeTaskAwaitPollGroupInfos,
   computeWorkBundleInfos,
 } from "@/browser/utils/messages/transcriptRenderProjection";
 import { isBlockedPreStreamTaskStatus } from "@/browser/utils/ui/workspaceFiltering";
@@ -541,8 +540,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     [deferredMessages]
   );
 
-  const taskAwaitPollGroupInfos = computeTaskAwaitPollGroupInfos(deferredMessages);
-
   const workBundleInfos = useMemo(
     () => (transcriptDensity === "hyper" ? computeWorkBundleInfos(deferredMessages) : undefined),
     [deferredMessages, transcriptDensity]
@@ -550,11 +547,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
 
   const operationalBundleInfos = useMemo(
     () =>
-      transcriptDensity === "hyper"
-        ? computeOperationalBundleInfos(deferredMessages, {
-            isTurnActive: isStreamStarting || canInterrupt,
-          })
-        : undefined,
+      computeOperationalBundleInfos(deferredMessages, {
+        isTurnActive: isStreamStarting || canInterrupt,
+        taskAwaitPollsOnly: transcriptDensity !== "hyper",
+      }),
     [canInterrupt, deferredMessages, isStreamStarting, transcriptDensity]
   );
 
@@ -1498,39 +1494,6 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       const operationalBundle = workBundle
                         ? undefined
                         : operationalBundleInfos?.[index];
-                      const taskAwaitPollGroup = taskAwaitPollGroupInfos[index];
-                      if (taskAwaitPollGroup && !workBundle && !operationalBundle) {
-                        const override = operationalBundleExpansionOverrides.get(
-                          taskAwaitPollGroup.key
-                        );
-                        // A failure/interruption discovered after the user collapsed routine polls must
-                        // still surface immediately; terminal attention wins over a stale false override.
-                        const expanded = taskAwaitPollGroup.defaultExpanded || override === true;
-                        const renderHeader = taskAwaitPollGroup.position === "head";
-                        if (!renderHeader && !expanded) {
-                          return null;
-                        }
-
-                        return (
-                          <React.Fragment key={`${workspaceId}:${msg.id}:task-await-polls`}>
-                            {renderHeader && (
-                              <OperationalBundleMessage
-                                item={taskAwaitPollGroup}
-                                expanded={expanded}
-                                onToggle={() =>
-                                  setOperationalBundleExpanded(taskAwaitPollGroup.key, !expanded)
-                                }
-                              />
-                            )}
-                            {expanded &&
-                              renderMessageAtIndex(msg, index, {
-                                key: `${workspaceId}:${msg.id}:task-await-poll`,
-                                className: "ml-4",
-                              })}
-                          </React.Fragment>
-                        );
-                      }
-
                       const workBundleOverride = workBundle
                         ? workBundleExpansionOverrides.get(workBundle.key)
                         : undefined;
@@ -1562,9 +1525,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                         tailProposePlanOperationalBundleKey !== null &&
                         operationalBundle?.key === tailProposePlanOperationalBundleKey;
                       const isOperationalBundleExpanded = operationalBundle
-                        ? (operationalBundleOverride ??
-                          (defaultRevealTailPlanOperationalBundle ||
-                            operationalBundle.defaultExpanded))
+                        ? operationalBundle.summary.tone !== undefined ||
+                          (operationalBundleOverride ??
+                            (defaultRevealTailPlanOperationalBundle ||
+                              operationalBundle.defaultExpanded))
                         : false;
 
                       if (
@@ -1610,9 +1574,10 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                                 nestedOperationalBundle?.key ===
                                   tailProposePlanOperationalBundleKey;
                               const isNestedExpanded = nestedOperationalBundle
-                                ? (nestedOverride ??
-                                  (defaultRevealTailPlanNestedBundle ||
-                                    nestedOperationalBundle.defaultExpanded))
+                                ? nestedOperationalBundle.summary.tone !== undefined ||
+                                  (nestedOverride ??
+                                    (defaultRevealTailPlanNestedBundle ||
+                                      nestedOperationalBundle.defaultExpanded))
                                 : false;
 
                               if (

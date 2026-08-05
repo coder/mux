@@ -45,6 +45,7 @@ export interface WorkBundleInfo {
 
 interface ComputeBundleInfosOptions {
   isTurnActive: boolean;
+  taskAwaitPollsOnly?: boolean;
 }
 
 type OperationalBundleCategory =
@@ -181,81 +182,44 @@ export function computeWorkBundleInfos(
 export function computeTaskAwaitPollGroupInfos(
   messages: DisplayedMessage[]
 ): Array<OperationalBundleInfo | undefined> {
-  const infos = new Array<OperationalBundleInfo | undefined>(messages.length);
-  let index = 0;
-
-  while (index < messages.length) {
-    const firstIndex = index;
-    const entries: OperationalBundleEntry[] = [];
-    while (index < messages.length) {
-      const message = messages[index];
-      if (!isOperationalBundleMemberMessage(message) || !isTaskAwaitMessage(message)) {
-        break;
-      }
-      entries.push({ message, originalIndex: index });
-      index += 1;
-    }
-
-    if (entries.length < 2) {
-      index = Math.max(index, firstIndex + 1);
-      continue;
-    }
-
-    const frozenEntries = Object.freeze(entries);
-    const messagesInGroup = frozenEntries.map((entry) => entry.message);
-    const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
-      ? "active"
-      : "settled";
-    const needsAttention = hasTaskAwaitTerminalIssue(messagesInGroup);
-    const info: OperationalBundleInfo = {
-      key: `task-await-polls:${frozenEntries[0].message.id}`,
-      position: "head",
-      headIndex: firstIndex,
-      entries: frozenEntries,
-      summary: summarizeOperationalBundle(messagesInGroup),
-      state,
-      // Routine polls stay quiet, but terminal failures and interruptions need their details visible.
-      defaultExpanded: needsAttention,
-    };
-
-    for (const entry of frozenEntries) {
-      infos[entry.originalIndex] = {
-        ...info,
-        position: entry.originalIndex === firstIndex ? "head" : "member",
-      };
-    }
-  }
-
-  return infos;
+  return computeOperationalBundleInfos(messages, {
+    isTurnActive: false,
+    taskAwaitPollsOnly: true,
+  });
 }
 
 export function computeOperationalBundleInfos(
   messages: DisplayedMessage[],
-  _options: ComputeBundleInfosOptions
+  options: ComputeBundleInfosOptions
 ): Array<OperationalBundleInfo | undefined> {
   const infos = new Array<OperationalBundleInfo | undefined>(messages.length);
+  const taskAwaitPollsOnly = options.taskAwaitPollsOnly === true;
   let index = 0;
 
   while (index < messages.length) {
     const leadingReasoningStart = index;
     const leadingReasoningEntries: OperationalBundleEntry[] = [];
-    while (true) {
-      const message = messages[index];
-      if (message?.type !== "reasoning") {
-        break;
+    if (!taskAwaitPollsOnly) {
+      while (true) {
+        const message = messages[index];
+        if (message?.type !== "reasoning") break;
+        leadingReasoningEntries.push({ message, originalIndex: index });
+        index += 1;
       }
-      leadingReasoningEntries.push({ message, originalIndex: index });
-      index += 1;
+
+      if (leadingReasoningEntries.length > 0 && messages[index]?.type === "assistant") {
+        index += 1;
+      } else if (leadingReasoningEntries.length > 0) {
+        leadingReasoningEntries.length = 0;
+        index = leadingReasoningStart;
+      }
     }
 
-    if (leadingReasoningEntries.length > 0 && messages[index]?.type === "assistant") {
-      index += 1;
-    } else if (leadingReasoningEntries.length > 0) {
-      leadingReasoningEntries.length = 0;
-      index = leadingReasoningStart;
-    }
-
-    if (!isOperationalBundleMemberMessage(messages[index])) {
+    const firstMessage = messages[index];
+    if (
+      !isOperationalBundleMemberMessage(firstMessage) ||
+      (taskAwaitPollsOnly && !isTaskAwaitMessage(firstMessage))
+    ) {
       index += 1;
       continue;
     }
@@ -264,35 +228,41 @@ export function computeOperationalBundleInfos(
     const entries: OperationalBundleEntry[] = [...leadingReasoningEntries];
     while (index < messages.length) {
       const candidate = messages[index];
-      if (!isOperationalBundleMemberMessage(candidate)) {
+      if (
+        !isOperationalBundleMemberMessage(candidate) ||
+        (taskAwaitPollsOnly && !isTaskAwaitMessage(candidate))
+      ) {
         break;
       }
       entries.push({ message: candidate, originalIndex: index });
       index += 1;
     }
 
+    if (taskAwaitPollsOnly && entries.length < 2) {
+      continue;
+    }
+
     const frozenEntries = Object.freeze(entries);
-    const first = entries[0].message;
     const messagesInBundle = frozenEntries.map((entry) => entry.message);
     const allTaskAwaits = messagesInBundle.every(isTaskAwaitMessage);
-
     const state = frozenEntries.some((entry) => isActiveOperationalMessage(entry.message))
       ? "active"
       : "settled";
-    const defaultExpanded =
-      hasTaskAwaitTerminalIssue(messagesInBundle) || (state === "active" && !allTaskAwaits);
-    const key = `bundle:${first.id}`;
-    const summary = summarizeOperationalBundle(messagesInBundle);
+    const needsAttention = hasTaskAwaitTerminalIssue(messagesInBundle);
+    const info: OperationalBundleInfo = {
+      key: `${taskAwaitPollsOnly ? "task-await-polls" : "bundle"}:${entries[0].message.id}`,
+      position: "head",
+      headIndex,
+      entries: frozenEntries,
+      summary: summarizeOperationalBundle(messagesInBundle),
+      state,
+      defaultExpanded: needsAttention || (state === "active" && !allTaskAwaits),
+    };
 
     for (const entry of frozenEntries) {
       infos[entry.originalIndex] = {
-        key,
+        ...info,
         position: entry.originalIndex === headIndex ? "head" : "member",
-        headIndex,
-        entries: frozenEntries,
-        summary,
-        state,
-        defaultExpanded,
       };
     }
   }
