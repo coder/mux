@@ -659,11 +659,9 @@ export class BackupRepoCache {
   }
 
   /**
-   * The last check before anything is deleted. Every caller decided to discard from an error,
-   * which cannot say what is at the path now: a swap after the cache was validated turns a
-   * later failure into a delete of whatever replaced it. Only a directory holding its own `.git`
-   * is discardable, so a directory of user files put here instead is never removed. This proves
-   * the shape of what is at the path, not that it is the same clone `ensureCache` validated.
+   * The last check before anything is deleted. Only a directory holding its own `.git` is
+   * discardable, so a directory of user files put here instead is never removed. This proves the
+   * shape of what is at the path, not that it is the same clone `ensureCache` validated.
    */
   private async assertDiscardableCache(): Promise<void> {
     await assertNotSymlink(this.cachePath);

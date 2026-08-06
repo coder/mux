@@ -77,13 +77,13 @@ type BackupErrorCode = BackupOperationError["code"];
 const SNAPSHOT_NAME_PREFIX = "restore-";
 
 /**
- * Written beside a snapshot once the restore that owns it has returned, which is what makes the
+ * Written beside a snapshot as the restore that owns it finishes, which is what makes the
  * snapshot reapable. A sibling rather than a file inside, so the snapshot directory stays a
  * payload `readBackupPayload(dir, { portable: false })` can read for a manual recovery.
  *
- * Absent means the owning restore is still running, or was killed partway. Those are not
- * distinguishable from outside, so both are left alone: leaking a snapshot the user can delete
- * is recoverable, and deleting the recovery point of a live restore is not.
+ * Absent covers a restore still running, one killed partway, and one whose marker write failed.
+ * None are distinguishable from outside, so all are left alone: leaking a snapshot the user can
+ * delete is recoverable, and deleting the recovery point of a live restore is not.
  */
 const SNAPSHOT_RELEASED_SUFFIX = ".released";
 
