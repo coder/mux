@@ -187,6 +187,15 @@ function normalizeBackupSettings(settings: SettingsBackupInput): SettingsBackupI
 export class BackupService {
   private readonly locks = new MutexMap<string>();
 
+  /**
+   * Snapshots owned by a restore that has not returned yet. `locks` is keyed per repository, so
+   * restores of different repositories overlap, and this instance is the only place that knows
+   * they do. A reap runs only when this is empty, so it cannot delete a snapshot whose restore
+   * is still able to hand the path back. The `.released` marker covers the same risk for another
+   * process, which this set cannot see.
+   */
+  private readonly unreturnedSnapshots = new Set<string>();
+
   constructor(
     private readonly config: Config,
     private readonly dependencies: BackupServiceDependencies
@@ -342,6 +351,7 @@ export class BackupService {
           approvedCommandTokens,
         });
         const snapshotPath = await this.createSnapshotPath();
+        this.unreturnedSnapshots.add(snapshotPath);
         try {
           await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
         } catch (error) {
@@ -369,10 +379,12 @@ export class BackupService {
           return Err({ ...toOperationError(error), snapshotPath });
         } finally {
           // Released only now, because until this restore returns its snapshot is the recovery
-          // point it may still hand back. `withRepoLock` is per repository, so restores of
-          // other repositories are running concurrently and must not reap it before then.
+          // point it may still hand back.
+          this.unreturnedSnapshots.delete(snapshotPath);
           await releaseSnapshot(snapshotPath);
-          await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
+          if (this.unreturnedSnapshots.size === 0) {
+            await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
+          }
         }
       } catch (error) {
         return Err(toOperationError(error));

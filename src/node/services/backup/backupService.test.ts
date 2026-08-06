@@ -187,6 +187,56 @@ describe("BackupService", () => {
     }
   });
 
+  test("does not reap while another restore is still running", async () => {
+    let releaseSecond: (() => void) | undefined;
+    const secondStarted = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    let blockNext = false;
+    let blockedOnce = false;
+    let heldReachedRestore: (() => void) | undefined;
+    const heldOwnsSnapshot = new Promise<void>((resolve) => {
+      heldReachedRestore = resolve;
+    });
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        writeSafetySnapshot: async (snapshotRoot) => {
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
+        },
+        restore: async () => {
+          // Holds one restore between its snapshot and its return, which is the state a reap
+          // must not act on. Different repositories are not serialized by withRepoLock.
+          if (blockNext && !blockedOnce) {
+            blockedOnce = true;
+            // Reached only after this restore's snapshot exists and is registered, so the
+            // overlapping restore below cannot start before the state under test is real.
+            heldReachedRestore?.();
+            await secondStarted;
+          }
+          return { changedFiles: ["AGENTS.md"], localOnlyFiles: [] };
+        },
+      }),
+    });
+
+    for (let seed = 0; seed < 4; seed++) {
+      const result = await service.restore(SETTINGS);
+      if (!result.success) throw new Error(result.error.message);
+    }
+    expect((await snapshotDirectories(path.join(tempDir, "backup-cache"))).length).toBe(3);
+
+    blockNext = true;
+    const held = service.restore({ ...SETTINGS, repoUrl: `${SETTINGS.repoUrl}-other` });
+    await heldOwnsSnapshot;
+    const overlapping = await service.restore(SETTINGS);
+    if (!overlapping.success) throw new Error(overlapping.error.message);
+    // The held restore still owns an unreturned snapshot, so nothing was reclaimed.
+    expect((await snapshotDirectories(path.join(tempDir, "backup-cache"))).length).toBe(5);
+
+    releaseSecond?.();
+    await held;
+  });
+
   test("never reaps a snapshot whose restore has not returned", async () => {
     const cacheRoot = path.join(tempDir, "backup-cache");
     // withRepoLock is per repository, so this stands in for restores of other repositories
