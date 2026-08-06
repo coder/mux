@@ -146,13 +146,15 @@ export function hasCredentialUrlParameters(
 }
 
 function rawAuthorityHasCredentials(repoUrl: string): boolean {
-  const match = /^([a-z][a-z0-9+.-]*):[\\/]+([^\\/?#]*)/i.exec(repoUrl);
+  const match = /^([a-z][a-z0-9+.-]*):([\\/]*)([^\\/?#]*)/i.exec(repoUrl);
   if (match == null) return false;
-  const authority = match[2];
+  const scheme = match[1].toLowerCase();
+  if (match[2] === "" && !/^(?:https?|ftps?|ssh|git)$/.test(scheme)) return false;
+  const authority = match[3];
   const userInfoEnd = authority.lastIndexOf("@");
   if (userInfoEnd < 0) return false;
   const userInfo = authority.slice(0, userInfoEnd);
-  return match[1].toLowerCase() !== "ssh" || userInfo.includes(":");
+  return scheme !== "ssh" || userInfo.includes(":");
 }
 
 /**

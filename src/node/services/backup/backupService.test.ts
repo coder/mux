@@ -352,7 +352,9 @@ describe("BackupService", () => {
     for (const repoUrl of [
       "https://oauth2:hunter2@example.com/repo.git",
       "https://oauth2:hunter2@",
+      "https:oauth2:hunter2@",
       "ssh://user:hunter2@",
+      "ssh:user:hunter2@",
       "https://example.com/repo.git?access_token=hunter2",
       "https://example.com/repo.git#access_token=hunter2",
     ]) {

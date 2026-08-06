@@ -119,8 +119,10 @@ describe("AppConfigOnDiskSchema", () => {
       "https://oauth2:hunter2@",
       "https:/oauth2:hunter2@",
       "https:\\oauth2:hunter2@",
+      "https:oauth2:hunter2@",
       "ssh://user:hunter2@example.com/repo.git",
       "ssh://user:hunter2@",
+      "ssh:user:hunter2@",
       "https://example.com/repo.git?access_token=hunter2",
       "https://example.com/repo.git#access_token=hunter2",
     ]) {
@@ -133,6 +135,7 @@ describe("AppConfigOnDiskSchema", () => {
       "https://github.com/me/dotfiles.git#section=backup",
       "ssh://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",
+      "github.com:team@archive.git",
     ]) {
       expect(SettingsBackupSchema.safeParse({ ...base, repoUrl }).success).toBe(true);
     }
