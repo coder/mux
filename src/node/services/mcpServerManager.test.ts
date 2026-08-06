@@ -1320,6 +1320,28 @@ describe("prepareStdioLaunch", () => {
     expect((await fs.stat(dataPath)).isDirectory()).toBe(true);
     expect(launch.cwd).toBe(tmp.path);
     expect(launch.env?.PLUGIN_DATA).toBe(dataPath);
+    // Plugin-root cwd is shipped plugin content: never created by launch.
+    expect(await fs.readdir(tmp.path)).toEqual(["plugin-data"]);
+  });
+
+  test("creates a nested PLUGIN_DATA cwd recursively before launch", async () => {
+    using tmp = new DisposableTempDir("mcp-plugin-data-nested");
+    const dataPath = path.join(tmp.path, "plugin-data", "abc123");
+    const nestedCwd = path.join(dataPath, "nested", "deep");
+
+    const launch = await prepareStdioLaunch({
+      transport: "stdio",
+      command: "bunx",
+      args: [],
+      env: { PLUGIN_ROOT: tmp.path, PLUGIN_DATA: dataPath },
+      cwd: nestedCwd,
+      disabled: false,
+      plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" },
+    });
+
+    // exec() requires an existing cwd; data-dir cwds are client-managed state.
+    expect((await fs.stat(nestedCwd)).isDirectory()).toBe(true);
+    expect(launch.cwd).toBe(nestedCwd);
   });
 
   test("rejects plugin servers without an absolute PLUGIN_DATA env (defensive)", async () => {

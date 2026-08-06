@@ -449,6 +449,21 @@ export async function prepareStdioLaunch(info: MCPStdioServerInfo): Promise<Stdi
       "prepareStdioLaunch: plugin stdio server must carry an absolute PLUGIN_DATA env"
     );
     await fsPromises.mkdir(dataPath, { recursive: true });
+
+    // A ${PLUGIN_DATA}-rooted cwd (e.g. "${PLUGIN_DATA}/nested") is
+    // client-managed writable state that may not exist yet, and exec()
+    // requires the cwd to exist before spawning. Only data-dir cwds are
+    // created; plugin-root cwds refer to shipped plugin content.
+    if (info.cwd !== undefined) {
+      const relativeToData = path.relative(dataPath, info.cwd);
+      const insideData =
+        relativeToData !== "" &&
+        !relativeToData.startsWith("..") &&
+        !path.isAbsolute(relativeToData);
+      if (insideData) {
+        await fsPromises.mkdir(info.cwd, { recursive: true });
+      }
+    }
   }
 
   return {
