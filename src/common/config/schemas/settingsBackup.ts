@@ -176,7 +176,7 @@ function rawAuthorityHasCredentials(repoUrl: string): boolean {
  * while git still decodes the valid ones. Encoded UTF-8 bytes all sit above the ASCII
  * delimiters, so decoding bytewise cannot invent one.
  */
-function decodeDelimitersOnce(authority: string): string {
+export function decodeDelimitersOnce(authority: string): string {
   return authority.replaceAll(/%([0-9a-f]{2})/gi, (_whole, hex: string) =>
     String.fromCharCode(Number.parseInt(hex, 16))
   );

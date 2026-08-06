@@ -9,6 +9,7 @@ import {
 } from "@/common/config/schemas/userPreferences";
 import {
   CREDENTIAL_URL_PARAMETER_NAMES,
+  decodeDelimitersOnce,
   hasCredentialUrlParameters,
   isWindowsUnusableSegment,
 } from "@/common/config/schemas/settingsBackup";
@@ -1196,7 +1197,9 @@ function rawUrlHasUserinfo(rawUrl: string): boolean {
     .map((delimiter) => rawUrl.indexOf(delimiter, authorityStart))
     .filter((offset) => offset >= 0);
   const authorityEnd = delimiters.length > 0 ? Math.min(...delimiters) : rawUrl.length;
-  return rawUrl.slice(authorityStart, authorityEnd).includes("@");
+  // Decoded first: a client resolves `user:pw%40host` to userinfo `user:pw`, so the encoded
+  // spelling publishes the same credential the literal one is held back for.
+  return decodeDelimitersOnce(rawUrl.slice(authorityStart, authorityEnd)).includes("@");
 }
 
 function normalizedUrlHasUserinfo(rawUrl: string): boolean {
@@ -1209,7 +1212,7 @@ function normalizedUrlHasUserinfo(rawUrl: string): boolean {
 }
 
 function malformedSpecialUrlHasUserinfo(rawUrl: string): boolean {
-  return /^(?:ftp|https?|wss?):[^/?#]*@/i.test(rawUrl);
+  return /^(?:ftp|https?|wss?):[^/?#]*@/i.test(decodeDelimitersOnce(rawUrl));
 }
 
 function urlHasCredentialComponents(rawUrl: string): boolean {

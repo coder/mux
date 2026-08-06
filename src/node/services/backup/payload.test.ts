@@ -2065,6 +2065,11 @@ describe("backup payload", () => {
       "/mcp?api_key=relative-secret",
       "https://user:hunter2@#malformed",
       "https:oauth2:hunter2@",
+      // A client decodes the authority, so an encoded `@` still ends the userinfo and
+      // `user:hunter2` is still a credential, even though the raw text holds no delimiter.
+      "https://user:hunter2%40example.com/mcp",
+      "https://user%3Ahunter2%40example.com/mcp",
+      "https:user:hunter2%40example.com/mcp",
     ];
 
     for (const url of urls) {
