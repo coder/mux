@@ -1147,6 +1147,11 @@ const AUTO_PUBLISHED_RECURSIVE_FILE = /\.(?:md|mdx|markdown|txt)$/i;
 const CREDENTIAL_PATH_HINT =
   /(?:^|[^a-z])(?:credential|credentials|secret|secrets|password|passwords|token|tokens|(?:api|private)(?:[^a-z/]+)?keys?|netrc|keychain|htpasswd)(?:[^a-z]|$)/i;
 
+function hasCredentialPathHint(filePath: string): boolean {
+  const stem = path.posix.parse(filePath).name.toLowerCase();
+  return stem === "auth" || stem === "passwd" || CREDENTIAL_PATH_HINT.test(filePath);
+}
+
 const MCP_REVIEW_URL_PARAMETER_NAMES = new Set([
   ...CREDENTIAL_URL_PARAMETER_NAMES,
   "code",
@@ -1176,9 +1181,14 @@ function normalizedUrlHasUserinfo(rawUrl: string): boolean {
   }
 }
 
+function malformedSpecialUrlHasUserinfo(rawUrl: string): boolean {
+  return /^(?:ftp|https?|wss?):[^/?#]*@/i.test(rawUrl);
+}
+
 function urlHasCredentialComponents(rawUrl: string): boolean {
   return (
     rawUrlHasUserinfo(rawUrl) ||
+    malformedSpecialUrlHasUserinfo(rawUrl) ||
     normalizedUrlHasUserinfo(rawUrl) ||
     hasCredentialUrlParameters(rawUrl, MCP_REVIEW_URL_PARAMETER_NAMES)
   );
@@ -1217,7 +1227,7 @@ export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[
       if (SECRET_PATTERNS.some((pattern) => pattern.test(content))) return true;
       if (file.path === "mcp.jsonc" && mcpConfigRequiresPublishApproval(content)) return true;
       if (!isRecursivelyCollected(file.path)) return false;
-      return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || CREDENTIAL_PATH_HINT.test(file.path);
+      return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || hasCredentialPathHint(file.path);
     })
     .map((file) => file.path)
     .sort();

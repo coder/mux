@@ -2054,6 +2054,7 @@ describe("backup payload", () => {
       "https://mcp.example.com/mcp#callback?api_key=fragment-secret",
       "/mcp?api_key=relative-secret",
       "https://user:hunter2@#malformed",
+      "https:oauth2:hunter2@",
     ];
 
     for (const url of urls) {
@@ -2601,6 +2602,7 @@ describe("backup payload", () => {
     await write(muxRoot, "skills/demo/SKILL.md", "a normal skill\n");
     await write(muxRoot, "skills/api/key.md", "ordinary documentation\n");
     await write(muxRoot, "skills/private/key.md", "ordinary documentation\n");
+    await write(muxRoot, "skills/acme/auth-guide.md", "ordinary documentation\n");
     await write(muxRoot, "memory/global/notes.md", "a normal note\n");
     await write(muxRoot, "skills/demo/credentials.json", '{"password":"hunter2"}\n');
     await write(muxRoot, "skills/demo/config.yaml", "api_key: abc123\n");
@@ -2608,6 +2610,8 @@ describe("backup payload", () => {
     await write(muxRoot, "skills/demo/private-keys.txt", "hunter2\n");
     await write(muxRoot, "skills/demo/private_key.txt", "hunter2\n");
     await write(muxRoot, "skills/demo/privatekey.txt", "hunter2\n");
+    await write(muxRoot, "skills/acme/auth.md", "PASSWORD=hunter2\n");
+    await write(muxRoot, "memory/global/passwd.txt", "hunter2\n");
     await write(muxRoot, "memory/global/api-key.txt", "hunter2\n");
     await write(muxRoot, "memory/global/api-keys.txt", "hunter2\n");
     await write(muxRoot, "memory/global/api_key.txt", "hunter2\n");
@@ -2624,13 +2628,16 @@ describe("backup payload", () => {
     const payloadPaths = payload.files.map((file) => file.path);
     expect(payloadPaths).toContain("skills/api/key.md");
     expect(payloadPaths).toContain("skills/private/key.md");
+    expect(payloadPaths).toContain("skills/acme/auth-guide.md");
 
     expect(scanBackupFilesForSecrets(payload.files)).toEqual([
       "memory/global/api-key.txt",
       "memory/global/api-keys.txt",
       "memory/global/api_key.txt",
       "memory/global/apikey.txt",
+      "memory/global/passwd.txt",
       "memory/global/passwords.md",
+      "skills/acme/auth.md",
       "skills/demo/config.yaml",
       "skills/demo/credentials.json",
       "skills/demo/private-key.txt",
