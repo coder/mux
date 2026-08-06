@@ -70,7 +70,7 @@ include fmt.mk
 .PHONY: build-renderer version build-icons build-static build-docker-runtime verify-docker-runtime-artifacts
 .PHONY: lint lint-fix typecheck static-check static-check-full
 .PHONY: test test-unit test-integration test-watch test-coverage test-e2e test-e2e-perf smoke-test
-.PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 check-appimage-icons check-mac-attach-file-runtime
+.PHONY: dist dist-mac dist-win dist-linux install-mac-arm64 ensure-mac-sharp-runtime-deps check-appimage-icons check-mac-attach-file-runtime
 .PHONY: vscode-ext vscode-ext-install
 .PHONY: docs-server check-docs-links
 .PHONY: storybook storybook-run storybook-build test-storybook
@@ -439,7 +439,17 @@ test-e2e-perf: ## Run automated performance profiling scenarios
 dist: build ## Build distributable packages
 	@bun x electron-builder --publish never
 
+ensure-mac-sharp-runtime-deps: node_modules/.installed ## Install macOS x64+arm64 sharp runtime deps for packaging
+	@echo "Installing macOS sharp runtime optional dependencies..."
+	@# Issue #3338: Bun installs optional packages for the current host by default,
+	@# but electron-builder packages both Intel and Apple Silicon apps from one
+	@# node_modules tree. Install each documented Darwin CPU runtime before packaging
+	@# so the x64 app does not accidentally ship with only arm64 native assets.
+	@bun install --frozen-lockfile --os=darwin --cpu=x64
+	@bun install --frozen-lockfile --os=darwin --cpu=arm64
+
 dist-mac: build ## Build macOS distributables (x64 + arm64)
+	@$(MAKE) --no-print-directory ensure-mac-sharp-runtime-deps
 	@if [ -n "$$CSC_LINK" ]; then \
 		echo "🔐 Code signing enabled - using unified build for correct yml..."; \
 		bun x electron-builder --mac --x64 --arm64 --publish never; \
@@ -452,15 +462,18 @@ dist-mac: build ## Build macOS distributables (x64 + arm64)
 	@echo "✅ Both architectures built successfully"
 
 dist-mac-release: build ## Build and publish macOS distributables (x64 + arm64)
+	@$(MAKE) --no-print-directory ensure-mac-sharp-runtime-deps
 	@echo "🔐 Building macOS x64 + arm64 (unified for correct yml)..."
 	@bun x electron-builder --mac --x64 --arm64 --publish always
 	@echo "✅ Both architectures built and published successfully"
 
 dist-mac-x64: build ## Build macOS x64 distributable only
+	@$(MAKE) --no-print-directory ensure-mac-sharp-runtime-deps
 	@echo "Building macOS x64..."
 	@bun x electron-builder --mac --x64 --publish never
 
 dist-mac-arm64: build ## Build macOS arm64 distributable only
+	@$(MAKE) --no-print-directory ensure-mac-sharp-runtime-deps
 	@echo "Building macOS arm64..."
 	@bun x electron-builder --mac --arm64 --publish never
 
