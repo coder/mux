@@ -456,7 +456,7 @@ exit 128
 
     expect(result.credential).toBe("ssh");
     expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      "/opt/wrapper/ssh -i /keys/id -o BatchMode=yes"
+      "/opt/wrapper/ssh -o BatchMode=yes -i /keys/id"
     );
   });
 
@@ -547,7 +547,30 @@ printf '%s\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
 
     expect(result.credential).toBe("ssh");
     expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      "/opt/wrapper/ssh -i /keys/id -o BatchMode=yes"
+      "/opt/wrapper/ssh -o BatchMode=yes -i /keys/id"
     );
+  });
+
+  it("overrides a configured BatchMode=no instead of being ignored after it", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "ssh -o BatchMode=no" },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    // OpenSSH keeps the first value for an option, so ours has to precede the configured one.
+    const command = (await fs.readFile(logPath, "utf-8")).trim();
+    expect(command).toBe("ssh -o BatchMode=yes -o BatchMode=no");
+    expect(command.indexOf("BatchMode=yes")).toBeLessThan(command.indexOf("BatchMode=no"));
   });
 });

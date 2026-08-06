@@ -14,6 +14,9 @@ const NON_INTERACTIVE_ENV = {
   LANGUAGE: "C",
 } as const;
 
+/** The leading program of an ssh command line, either a single-quoted path or a bare token. */
+const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*(\S+)/;
+
 /**
  * A prompt for a password, a key passphrase, or host key confirmation is unanswerable behind
  * a UI button, so the ssh client is asked to fail instead of asking. The client's own command
@@ -40,7 +43,20 @@ async function nonInteractiveSshCommand(
     // spaces only survives becoming part of a shell command line if it is quoted.
     (program !== null ? shellQuote(program) : "ssh");
   const flag = nonInteractiveFlag(base, options);
-  return flag === null ? null : `${base} ${flag}`;
+  return flag === null ? null : insertNonInteractiveFlag(base, flag);
+}
+
+/**
+ * Placed before the configured command's own options, not after: OpenSSH keeps the first value
+ * it obtains for an option (verified with `ssh -G -o BatchMode=no -o BatchMode=yes`, which
+ * reports `batchmode no`), so appending leaves a configured `BatchMode=no` in force and lets a
+ * prompt block until the git timeout.
+ */
+function insertNonInteractiveFlag(command: string, flag: string): string {
+  const program = SSH_PROGRAM_TOKEN.exec(command);
+  if (program === null) return `${flag} ${command}`;
+  const programEnd = program.index + program[0].length;
+  return `${command.slice(0, programEnd)} ${flag}${command.slice(programEnd)}`;
 }
 
 /**
@@ -62,7 +78,7 @@ function nonInteractiveFlag(command: string, options: GitCredentialOptions): str
 }
 
 function sshVariant(command: string): string {
-  const program = /^\s*'((?:[^']|'\\'')*)'|^\s*(\S+)/.exec(command);
+  const program = SSH_PROGRAM_TOKEN.exec(command);
   const executable = (program?.[1] ?? program?.[2] ?? "").replaceAll(`'\\''`, "'");
   return path
     .basename(executable)
