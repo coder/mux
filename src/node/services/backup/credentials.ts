@@ -30,9 +30,9 @@ function sshProgram(command: string): { executable: string; end: number } | null
     singleQuoted !== undefined
       ? singleQuoted.replaceAll(`'\\''`, "'")
       : doubleQuoted !== undefined
-        ? // Only the two characters double-quoted syntax actually escapes. Decoding every
-          // backslash would eat the separators in `"C:\Program Files\OpenSSH\ssh.exe"`, which
-          // is the spelling this quoting exists to support.
+        ? // Only escaped quotes and backslashes are decoded. Decoding every backslash would eat
+          // the separators in `"C:\Program Files\OpenSSH\ssh.exe"`, which is the spelling this
+          // quoting exists to support.
           doubleQuoted.replaceAll(/\\(["\\])/g, "$1")
         : (bare ?? "");
   return { executable, end: match.index + match[0].length };
