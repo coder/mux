@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { SettingsBackupSchema } from "@/common/config/schemas/settingsBackup";
+import {
+  SettingsBackupInputSchema,
+  SettingsBackupSchema,
+} from "@/common/config/schemas/settingsBackup";
 import { ResultSchema } from "./result";
 
 /**
@@ -48,11 +51,6 @@ export const BackupFileChangeSchema = z.object({
 });
 
 export const BackupCredentialKindSchema = z.enum(["ssh", "gh", "ambient"]);
-
-const SettingsBackupInputSchema = SettingsBackupSchema.omit({
-  lastPushedCommit: true,
-  lastRestoredCommit: true,
-});
 
 const BackupResult = <T extends z.ZodTypeAny>(schema: T) =>
   ResultSchema(schema, BackupOperationErrorSchema);
@@ -115,7 +113,7 @@ export const backup = {
   },
 };
 
-export type SettingsBackupInput = z.infer<typeof SettingsBackupInputSchema>;
+export type { SettingsBackupInput } from "@/common/config/schemas/settingsBackup";
 export type BackupOperationError = z.infer<typeof BackupOperationErrorSchema>;
 export type BackupFileChange = z.infer<typeof BackupFileChangeSchema>;
 export type BackupCommandApproval = z.infer<typeof BackupCommandApprovalSchema>;

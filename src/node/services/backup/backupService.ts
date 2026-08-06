@@ -9,12 +9,11 @@ import type {
   BackupCredentialKind,
   BackupFileChange,
   BackupOperationError,
-  SettingsBackupInput,
 } from "@/common/orpc/schemas/backup";
 import {
-  hasUrlCredentials,
-  isValidBackupPath,
+  SettingsBackupInputSchema,
   type SettingsBackup,
+  type SettingsBackupInput,
 } from "@/common/config/schemas/settingsBackup";
 import { assertNotSymlink } from "./gitRepo";
 import { BackupCommandApprovalRequiredError } from "./payload";
@@ -140,7 +139,19 @@ function toOperationError(error: unknown): BackupOperationError {
 }
 
 function repoLockKey(settings: SettingsBackupInput): string {
-  return `${settings.repoUrl.trim()}\0${settings.branch.trim()}`;
+  return `${settings.repoUrl}\0${settings.branch}`;
+}
+
+/** Service-level validation prevents direct callers from bypassing schema invariants. */
+function normalizeBackupSettings(settings: SettingsBackupInput): SettingsBackupInput {
+  const parsed = SettingsBackupInputSchema.safeParse(settings);
+  if (!parsed.success) {
+    throw new BackupServiceError(
+      "INVALID_BACKUP",
+      parsed.error.issues[0]?.message ?? "Invalid backup settings"
+    );
+  }
+  return parsed.data;
 }
 
 export class BackupService {
@@ -159,23 +170,8 @@ export class BackupService {
     settings: SettingsBackupInput
   ): Promise<Result<SettingsBackup, BackupOperationError>> {
     try {
-      // The ORPC schema also refines this, but the service owns the invariant because
-      // the managed path scopes every write and every `git clean`.
-      if (!isValidBackupPath(settings.path)) {
-        throw new BackupServiceError(
-          "INVALID_BACKUP",
-          "Enter a subdirectory inside the repository"
-        );
-      }
-      // Same split as the path check. Persisting a URL-embedded token would store a
-      // credential in config.json, which the backup policy forbids outright.
-      if (hasUrlCredentials(settings.repoUrl)) {
-        throw new BackupServiceError(
-          "INVALID_BACKUP",
-          "Remove the credential embedded in the repository URL"
-        );
-      }
-      const saved = await this.persistSettings(settings);
+      const normalized = normalizeBackupSettings(settings);
+      const saved = await this.persistSettings(normalized);
       return Ok(saved);
     } catch (error) {
       return Err(toOperationError(error));
@@ -191,7 +187,8 @@ export class BackupService {
     >
   > {
     try {
-      const result = await this.dependencies.gitRepo.validate(settings);
+      const normalized = normalizeBackupSettings(settings);
+      const result = await this.dependencies.gitRepo.validate(normalized);
       return Ok({ reachable: true, ...result });
     } catch (error) {
       return Err(toOperationError(error));
@@ -210,20 +207,20 @@ export class BackupService {
       BackupOperationError
     >
   > {
-    return this.withRepoLock(settings, async () => {
+    return this.withRepoLock(settings, async (normalized) => {
       try {
-        const repository = await this.dependencies.gitRepo.prepare(settings);
+        const repository = await this.dependencies.gitRepo.prepare(normalized);
         const restorePreview = await this.dependencies.payload.previewRestore({
           repositoryRoot: repository.rootDir,
-          managedPath: settings.path,
+          managedPath: normalized.path,
         });
         const exported = await this.dependencies.payload.exportTo({
           repositoryRoot: repository.rootDir,
-          managedPath: settings.path,
+          managedPath: normalized.path,
         });
         const pushChanges = await this.dependencies.gitRepo.getPushChanges(
           repository,
-          settings.path
+          normalized.path
         );
         return Ok({
           pushChanges,
@@ -252,19 +249,17 @@ export class BackupService {
       BackupOperationError
     >
   > {
-    return this.withRepoLock(settings, async () => {
+    const approvedSecretDigest = options.approvedSecretDigest;
+    return this.withRepoLock(settings, async (normalized) => {
       try {
-        const repository = await this.dependencies.gitRepo.prepare(settings);
+        const repository = await this.dependencies.gitRepo.prepare(normalized);
         const exported = await this.dependencies.payload.exportTo({
           repositoryRoot: repository.rootDir,
-          managedPath: settings.path,
+          managedPath: normalized.path,
         });
         // Approval is bound to the exact flagged bytes, so an override the user granted for
         // one payload cannot publish a different one another window wrote in between.
-        if (
-          exported.secretFiles.length > 0 &&
-          options.approvedSecretDigest !== exported.secretApproval
-        ) {
+        if (exported.secretFiles.length > 0 && approvedSecretDigest !== exported.secretApproval) {
           throw new BackupServiceError(
             "SECRET_DETECTED",
             "Potential secrets were found in the backup payload",
@@ -274,11 +269,11 @@ export class BackupService {
         }
 
         const pushed = await this.dependencies.gitRepo.commitAndPush(repository, {
-          managedPath: settings.path,
+          managedPath: normalized.path,
           message: "Back up Mux settings",
           expectedRemoteCommit: repository.remoteCommit,
         });
-        await this.persistSettings(settings, { lastPushedCommit: pushed.commit });
+        await this.persistSettings(normalized, { lastPushedCommit: pushed.commit });
         // The pushing credential, not the one prepare() used: the ladder can fall through
         // to a later rung when the earlier one can read but not write.
         return Ok({
@@ -300,9 +295,11 @@ export class BackupService {
       BackupOperationError
     >
   > {
-    return this.withRepoLock(settings, async () => {
+    const approvedCommandTokens =
+      options.approvedCommandTokens == null ? undefined : [...options.approvedCommandTokens];
+    return this.withRepoLock(settings, async (normalized) => {
       try {
-        const repository = await this.dependencies.gitRepo.prepare(settings);
+        const repository = await this.dependencies.gitRepo.prepare(normalized);
         if (repository.remoteCommit == null) {
           throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
         }
@@ -311,8 +308,8 @@ export class BackupService {
         // unredacted copy of the local settings on disk.
         await this.dependencies.payload.validateRestore({
           repositoryRoot: repository.rootDir,
-          managedPath: settings.path,
-          approvedCommandTokens: options.approvedCommandTokens,
+          managedPath: normalized.path,
+          approvedCommandTokens,
         });
         const snapshotPath = await this.createSnapshotPath();
         try {
@@ -326,10 +323,10 @@ export class BackupService {
         try {
           const restored = await this.dependencies.payload.restore({
             repositoryRoot: repository.rootDir,
-            managedPath: settings.path,
-            approvedCommandTokens: options.approvedCommandTokens,
+            managedPath: normalized.path,
+            approvedCommandTokens,
           });
-          await this.persistSettings(settings, { lastRestoredCommit: repository.remoteCommit });
+          await this.persistSettings(normalized, { lastRestoredCommit: repository.remoteCommit });
           return Ok({
             commit: repository.remoteCommit,
             snapshotPath,
@@ -411,7 +408,16 @@ export class BackupService {
     return fs.mkdtemp(path.join(cacheRoot, "restore-"));
   }
 
-  private withRepoLock<T>(settings: SettingsBackupInput, operation: () => Promise<T>): Promise<T> {
-    return this.locks.withLock(repoLockKey(settings), operation);
+  private withRepoLock<T>(
+    settings: SettingsBackupInput,
+    operation: (normalized: SettingsBackupInput) => Promise<Result<T, BackupOperationError>>
+  ): Promise<Result<T, BackupOperationError>> {
+    let normalized: SettingsBackupInput;
+    try {
+      normalized = normalizeBackupSettings(settings);
+    } catch (error) {
+      return Promise.resolve(Err(toOperationError(error)));
+    }
+    return this.locks.withLock(repoLockKey(normalized), () => operation(normalized));
   }
 }

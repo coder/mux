@@ -38,6 +38,41 @@ export function isValidBackupPath(value: string): boolean {
   );
 }
 
+const INVALID_GIT_REF_CHARACTERS: ReadonlySet<string> = new Set([
+  "~",
+  "^",
+  ":",
+  "?",
+  "*",
+  "[",
+  "\\",
+]);
+
+/** Mux prefixes branch names with `refs/heads/`, so callers must provide an unqualified name. */
+export function isValidBackupBranch(value: string): boolean {
+  if (
+    value === "" ||
+    value === "HEAD" ||
+    value.startsWith("refs/") ||
+    value.startsWith("-") ||
+    value.startsWith("/") ||
+    value.endsWith("/") ||
+    value.endsWith(".") ||
+    value.includes("//") ||
+    value.includes("..") ||
+    value.includes("@{")
+  ) {
+    return false;
+  }
+  if (value.split("/").some((segment) => segment.startsWith(".") || segment.endsWith(".lock"))) {
+    return false;
+  }
+  return ![...value].some((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return codePoint <= 0x20 || codePoint === 0x7f || INVALID_GIT_REF_CHARACTERS.has(character);
+  });
+}
+
 export const CREDENTIAL_URL_PARAMETER_NAMES: ReadonlySet<string> = new Set([
   "accesskey",
   "accesskeyid",
@@ -126,26 +161,35 @@ export function hasUrlCredentials(repoUrl: string): boolean {
 }
 
 /**
- * One definition for the persisted `settingsBackup` key and the IPC shape. Two schemas
- * would let config.json hold a value the `getSettings` response then rejects, leaving the
- * Backup screen unable to load what the user saved.
+ * The persisted schema extends the IPC input schema so config.json cannot hold a value
+ * the `getSettings` response rejects, leaving the Backup screen unable to load saved settings.
  */
-export const SettingsBackupSchema = z.object({
+export const SettingsBackupInputSchema = z.object({
   repoUrl: z
     .string()
     .trim()
-    .min(1)
+    .min(1, { message: "Enter a repository URL" })
     .refine((value) => !hasUrlCredentials(value), {
       message: "Remove the credential embedded in the repository URL",
     }),
-  branch: z.string().trim().min(1),
+  branch: z
+    .string()
+    .trim()
+    .min(1, { message: "Enter a valid Git branch name" })
+    .refine(isValidBackupBranch, {
+      message: "Enter a valid Git branch name",
+    }),
   path: z
     .string()
     .trim()
-    .min(1)
+    .min(1, { message: "Enter a subdirectory inside the repository" })
     .refine(isValidBackupPath, { message: "Enter a subdirectory inside the repository" }),
+});
+
+export const SettingsBackupSchema = SettingsBackupInputSchema.extend({
   lastPushedCommit: z.string().optional(),
   lastRestoredCommit: z.string().optional(),
 });
 
+export type SettingsBackupInput = z.infer<typeof SettingsBackupInputSchema>;
 export type SettingsBackup = z.infer<typeof SettingsBackupSchema>;

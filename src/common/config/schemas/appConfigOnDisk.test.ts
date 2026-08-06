@@ -134,6 +134,49 @@ describe("AppConfigOnDiskSchema", () => {
     }
   });
 
+  it("rejects invalid backup branch names", () => {
+    const base = {
+      repoUrl: "https://github.com/me/dotfiles.git",
+      path: "mux",
+    };
+    for (const branch of [
+      "my branch",
+      "-backup",
+      ".backup",
+      "feature/.backup",
+      "feature.lock",
+      "feature/backup.lock",
+      "feature..backup",
+      "feature~backup",
+      "feature^backup",
+      "feature:backup",
+      "feature?backup",
+      "feature*backup",
+      "feature[backup",
+      "feature\\backup",
+      "/feature",
+      "feature/",
+      "feature//backup",
+      "feature.",
+      "feature@{backup",
+      "refs/heads/main",
+      "HEAD",
+    ]) {
+      expect(SettingsBackupSchema.safeParse({ ...base, branch }).success).toBe(false);
+    }
+    for (const branch of [
+      "main",
+      "feature/backup",
+      "feature/-backup",
+      "release/v1.0+build",
+      "feature/backup.LOCK",
+      "@",
+      "føø/backup",
+    ]) {
+      expect(SettingsBackupSchema.safeParse({ ...base, branch }).success).toBe(true);
+    }
+  });
+
   it("accepts sparse configs", () => {
     expect(AppConfigOnDiskSchema.safeParse({ defaultModel: "openai:gpt-4o" }).success).toBe(true);
   });

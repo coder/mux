@@ -363,6 +363,76 @@ describe("BackupService", () => {
     }
   });
 
+  test("rejects invalid settings before config or repository access", async () => {
+    const config = createTestConfig(tempDir);
+    let validateCalls = 0;
+    let prepareCalls = 0;
+    const service = new BackupService(config, {
+      gitRepo: createGitRepo({
+        validate: () => {
+          validateCalls += 1;
+          return Promise.resolve({ credential: "ssh", empty: false });
+        },
+        prepare: () => {
+          prepareCalls += 1;
+          return Promise.resolve(createRepository());
+        },
+      }),
+      payload: createPayload(),
+    });
+
+    for (const settings of [
+      { ...SETTINGS, branch: "my branch" },
+      { ...SETTINGS, branch: "-backup" },
+      { ...SETTINGS, branch: "refs/heads/main" },
+      { ...SETTINGS, repoUrl: "   " },
+      { ...SETTINGS, branch: null } as unknown as SettingsBackupInput,
+    ]) {
+      const results = await Promise.all([
+        service.saveSettings(settings),
+        service.validate(settings),
+        service.preview(settings),
+        service.push(settings),
+        service.restore(settings),
+      ]);
+
+      for (const result of results) {
+        expect(result.success).toBe(false);
+        if (result.success) throw new Error("Expected the invalid settings to be rejected");
+        expect(result.error.code).toBe("INVALID_BACKUP");
+      }
+      expect(service.getSettings()).toBeNull();
+    }
+    expect(validateCalls).toBe(0);
+    expect(prepareCalls).toBe(0);
+  });
+
+  test("normalizes direct service input like the ORPC schema", async () => {
+    const seen: SettingsBackupInput[] = [];
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        validate: (settings) => {
+          seen.push(settings);
+          return Promise.resolve({ credential: "ssh", empty: false });
+        },
+      }),
+      payload: createPayload(),
+    });
+    const input = {
+      repoUrl: ` ${SETTINGS.repoUrl} `,
+      branch: ` ${SETTINGS.branch} `,
+      path: ` ${SETTINGS.path} `,
+    };
+
+    const saved = await service.saveSettings(input);
+    const validated = await service.validate(input);
+
+    expect(saved.success).toBe(true);
+    expect(validated.success).toBe(true);
+    expect(service.getSettings()).toMatchObject(SETTINGS);
+    expect(seen).toEqual([SETTINGS]);
+  });
+
   test("surfaces the current command approvals when a restore is blocked", async () => {
     const approvals = [
       { path: "servers.notes.command", command: "npx notes-mcp", token: "token-notes" },
@@ -407,7 +477,7 @@ describe("BackupService", () => {
       payload: createPayload(),
     });
 
-    for (const managedPath of ["CON/mux", "foo:bar/mux", "mux ", "mux."]) {
+    for (const managedPath of ["CON/mux", "foo:bar/mux", "mux."]) {
       const result = await service.saveSettings({ ...SETTINGS, path: managedPath });
       expect(result.success).toBe(false);
       if (result.success) throw new Error(`Expected '${managedPath}' to be rejected`);
@@ -442,6 +512,156 @@ describe("BackupService", () => {
     firstCanFinish.resolve();
     await Promise.all([first, second]);
     expect(starts).toEqual(["prepare-1", "prepare-2"]);
+  });
+
+  test("rejects invalid settings before waiting for the repository lock", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const firstCanFinish = Promise.withResolvers<void>();
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        prepare: async () => {
+          firstStarted.resolve();
+          await firstCanFinish.promise;
+          return createRepository();
+        },
+      }),
+      payload: createPayload(),
+    });
+
+    const first = service.preview(SETTINGS);
+    await firstStarted.promise;
+    const invalid = service.preview({ ...SETTINGS, path: ".git" });
+    const pending = Symbol("pending");
+    try {
+      const result = await Promise.race([
+        invalid,
+        new Promise<typeof pending>((resolve) => setImmediate(() => resolve(pending))),
+      ]);
+      if (result === pending) throw new Error("Invalid settings waited for the repository lock");
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected the invalid settings to be rejected");
+      expect(result.error.code).toBe("INVALID_BACKUP");
+    } finally {
+      firstCanFinish.resolve();
+      await Promise.all([first, invalid]);
+    }
+  });
+
+  test("snapshots settings before waiting for the repository lock", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const firstCanFinish = Promise.withResolvers<void>();
+    const prepared: SettingsBackupInput[] = [];
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        prepare: async (settings) => {
+          prepared.push(settings);
+          if (prepared.length === 1) {
+            firstStarted.resolve();
+            await firstCanFinish.promise;
+          }
+          return createRepository();
+        },
+      }),
+      payload: createPayload(),
+    });
+
+    const first = service.preview(SETTINGS);
+    await firstStarted.promise;
+    const mutable = { ...SETTINGS };
+    const second = service.preview(mutable);
+    mutable.branch = "refs/heads/main";
+    firstCanFinish.resolve();
+    await Promise.all([first, second]);
+
+    expect(prepared).toEqual([SETTINGS, SETTINGS]);
+  });
+
+  test("snapshots push approval before waiting for the repository lock", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const firstCanFinish = Promise.withResolvers<void>();
+    let prepareCalls = 0;
+    let pushCalls = 0;
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        prepare: async () => {
+          prepareCalls += 1;
+          if (prepareCalls === 1) {
+            firstStarted.resolve();
+            await firstCanFinish.promise;
+          }
+          return createRepository();
+        },
+        commitAndPush: () => {
+          pushCalls += 1;
+          return Promise.resolve({ commit: "pushed-commit", changed: true, credential: "gh" });
+        },
+      }),
+      payload: createPayload({
+        exportTo: () =>
+          Promise.resolve({
+            redactions: [],
+            secretFiles: ["AGENTS.md"],
+            secretApproval: "approved-digest",
+          }),
+      }),
+    });
+
+    const first = service.preview(SETTINGS);
+    await firstStarted.promise;
+    const options = { approvedSecretDigest: "stale-digest" };
+    const second = service.push(SETTINGS, options);
+    options.approvedSecretDigest = "approved-digest";
+    firstCanFinish.resolve();
+    const [, result] = await Promise.all([first, second]);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the stale approval to be rejected");
+    expect(result.error.code).toBe("SECRET_DETECTED");
+    expect(pushCalls).toBe(0);
+  });
+
+  test("snapshots restore approvals before waiting for the repository lock", async () => {
+    const firstStarted = Promise.withResolvers<void>();
+    const firstCanFinish = Promise.withResolvers<void>();
+    let prepareCalls = 0;
+    const approvals = [
+      { path: "servers.notes.command", command: "npx notes-mcp", token: "approved-token" },
+    ];
+    const seenTokens: string[][] = [];
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo({
+        prepare: async () => {
+          prepareCalls += 1;
+          if (prepareCalls === 1) {
+            firstStarted.resolve();
+            await firstCanFinish.promise;
+          }
+          return createRepository();
+        },
+      }),
+      payload: createPayload({
+        validateRestore: ({ approvedCommandTokens }) => {
+          const tokens = [...(approvedCommandTokens ?? [])];
+          seenTokens.push(tokens);
+          return tokens.includes("approved-token")
+            ? Promise.resolve()
+            : Promise.reject(new BackupCommandApprovalRequiredError(approvals));
+        },
+      }),
+    });
+
+    const first = service.preview(SETTINGS);
+    await firstStarted.promise;
+    const options = { approvedCommandTokens: ["stale-token"] };
+    const second = service.restore(SETTINGS, options);
+    options.approvedCommandTokens[0] = "approved-token";
+    firstCanFinish.resolve();
+    const [, result] = await Promise.all([first, second]);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected the stale approval to be rejected");
+    expect(result.error.code).toBe("COMMAND_APPROVAL_REQUIRED");
+    expect(seenTokens).toEqual([["stale-token"]]);
   });
 
   test("preserves commit metadata when saving the same repository settings", async () => {
