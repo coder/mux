@@ -264,9 +264,9 @@ describe("BackupRepoCache", () => {
   });
 
   it("rebuilds a cache whose git metadata is corrupt rather than structurally wrong", async () => {
-    // Each of these keeps the entries and types a structural check looks for, so only running
-    // git reveals them. A ref naming nothing even survives `git status` and fails at reset, and
-    // a `config` directory fails inside `ensureCache`, before any remote command runs.
+    // Each of these keeps the entries and types `isCompleteGitDirectory` checks and fails a
+    // later git command instead. A ref naming nothing even survives `git status` and fails at
+    // reset, and a `config` directory fails inside `ensureCache`, before any remote command.
     const corruptions: Array<(gitDir: string) => Promise<void>> = [
       (gitDir) => fs.writeFile(path.join(gitDir, "HEAD"), "", "utf-8"),
       (gitDir) => fs.writeFile(path.join(gitDir, "index"), "DIRC", "utf-8"),
@@ -304,8 +304,8 @@ describe("BackupRepoCache", () => {
     const caught = await repo.materialize("mux").catch((error: unknown) => error);
     spy.mockRestore();
 
-    // Rebuilding would discard the cache, and the retried fetch still fails, so an outage would
-    // cost the whole local copy.
+    // Rebuilding would discard the cache and the retried fetch would still fail, so an outage
+    // would cost the whole local copy.
     expect(caught).toBe(unreachable);
     expect(await pathExists(clonedAt)).toBe(true);
   });
@@ -317,8 +317,8 @@ describe("BackupRepoCache", () => {
     await fs.writeFile(clonedAt, "original\n", "utf-8");
     const outside = path.join(cacheRoot, "outside-target");
     await fs.writeFile(outside, "not mux's\n", "utf-8");
-    // ensureCache has already accepted this cache, so a swap during materialization is the only
-    // way to reach a refusal from inside the retry region.
+    // The swap lands after ensureCache accepted this cache, so the refusal comes from the
+    // recheck inside applySparseCheckout.
     const sparsePath = path.join(repo.cachePath, ".git", "info", "sparse-checkout");
     const spy = spyOn(repo, "fetch").mockImplementation(async () => {
       await fs.rm(sparsePath, { force: true });
@@ -332,6 +332,26 @@ describe("BackupRepoCache", () => {
     expect(caught).toBeInstanceOf(BackupCacheSafetyError);
     expect(await pathExists(clonedAt)).toBe(true);
     expect(await fs.readFile(outside, "utf-8")).toBe("not mux's\n");
+  });
+
+  it("refuses to discard a cache path that was replaced after it was checked", async () => {
+    const repo = createRepo();
+    await repo.materialize("mux");
+    const foreign = path.join(repo.cachePath, "important.txt");
+    // The discard follows a failure, which cannot say what is at the path by then. Swapping the
+    // whole cache directory reaches discardCache with content it never validated.
+    const spy = spyOn(repo, "fetch").mockImplementation(async () => {
+      await fs.rm(repo.cachePath, { recursive: true, force: true });
+      await fs.mkdir(repo.cachePath, { recursive: true });
+      await fs.writeFile(foreign, "not mux's\n", "utf-8");
+      throw new Error("index file corrupt");
+    });
+
+    const caught = await repo.materialize("mux").catch((error: unknown) => error);
+    spy.mockRestore();
+
+    expect(caught).toBeInstanceOf(BackupCacheSafetyError);
+    expect(await fs.readFile(foreign, "utf-8")).toBe("not mux's\n");
   });
 
   it("refuses a cache path holding content it did not create", async () => {

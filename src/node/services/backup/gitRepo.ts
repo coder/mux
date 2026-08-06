@@ -97,10 +97,9 @@ const GIT_IDENTITY_ARGS = [
 ] as const;
 
 /**
- * Refusals to touch content this cache cannot prove it owns. Carrying one type lets
- * `materialize` rethrow them instead of discarding, so a tampered or foreign path is never
- * deleted by the rebuild retry. No `code`: these keep the IO_ERROR mapping they had as
- * plain errors.
+ * Refusals to touch content this cache cannot prove it owns, typed so `materialize` rethrows
+ * them instead of answering them with a discard. No `code`, so they keep the IO_ERROR mapping
+ * they had as plain errors.
  */
 export class BackupCacheSafetyError extends Error {
   constructor(message: string) {
@@ -660,12 +659,39 @@ export class BackupRepoCache {
   }
 
   /**
+   * The last check before anything is deleted. Every caller decided to discard from an error,
+   * which cannot say what is at the path now: a swap after the cache was validated turns a
+   * later failure into a delete of whatever replaced it. Only a directory holding this cache's
+   * own `.git` is discardable, which is the same ownership `ensureCache` demands before it
+   * writes there.
+   */
+  private async assertDiscardableCache(): Promise<void> {
+    await assertNotSymlink(this.cachePath);
+    const stat = await fs.lstat(this.cachePath).catch(() => null);
+    if (stat === null) return;
+    if (!stat.isDirectory()) {
+      throw new BackupCacheSafetyError(
+        `Refusing to discard '${this.cachePath}': it is not a directory`
+      );
+    }
+    await assertOwnGitDirectory(this.cachePath);
+    if (!(await exists(path.join(this.cachePath, ".git")))) {
+      throw new BackupCacheSafetyError(
+        `Refusing to discard '${this.cachePath}': it holds no git repository`
+      );
+    }
+  }
+
+  /**
    * Renames before deleting, because a recursive delete is not atomic: a kill partway through
    * would leave the cache directory populated but without a `.git`, which is indistinguishable
    * from content this cache must never delete. The rename is a single operation inside one
    * directory, so an interrupted discard leaves either the whole cache or nothing at its path.
    */
   private async discardCache(): Promise<void> {
+    // Rechecked here rather than trusted from the caller: a discard can follow a whole remote
+    // round-trip, and this deletes whatever is at the path by then, not what was validated.
+    await this.assertDiscardableCache();
     const tombstone = `${this.cachePath}${CACHE_SUFFIX_DISCARDED}${process.pid}-${randomUUID()}`;
     try {
       await fs.rename(this.cachePath, tombstone);
@@ -928,11 +954,10 @@ export class BackupRepoCache {
 
   /**
    * Corruption is unbounded: an empty `HEAD`, a truncated index, or a `config` that is a
-   * directory all keep the shape a structural check looks for and still fail a later command,
-   * so any unrecognized failure rebuilds the cache once instead of being enumerated. That only
-   * ever costs a fresh clone, because every prepare already resets the cache to the remote.
-   * Refusals to touch unowned content and recognized remote or credential failures are rethrown,
-   * so neither a foreign path nor a healthy cache is deleted by the retry.
+   * directory all pass a structural check and fail a later command. So the first attempt answers
+   * an unrecognized failure, including a local one, by rebuilding once rather than enumerating
+   * causes; that costs at most a fresh clone, because every prepare resets to the remote anyway.
+   * Ownership refusals and classified remote failures are rethrown instead of rebuilding.
    */
   async materialize(managedPath: string): Promise<string | null> {
     try {
