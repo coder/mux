@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -24,10 +25,11 @@ import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expans
  *   siblings unaffected.
  *
  * Normalized servers are default-disabled, read-only config entries keyed by
- * `plugin:<instanceId>:<serverName>` where `instanceId` hashes the canonical
- * plugin root. The key is stable across manifest renames and content updates,
- * so workspace `enabledServers` overrides and the `PLUGIN_DATA` directory
- * survive plugin updates (§9.1).
+ * `plugin:<instanceId>:<serverName>` where `instanceId` hashes the plugin's
+ * stable installation identity (lexical location; see
+ * computePluginInstanceId). The key is stable across manifest renames,
+ * content updates, and symlink retargets, so workspace `enabledServers`
+ * overrides and the `PLUGIN_DATA` directory survive plugin updates (§9.1).
  */
 
 /** Canonical `$schema` const for Agent Plugins 1.0.0 mcp.json documents. */
@@ -37,9 +39,11 @@ export const AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0 =
 const PLUGIN_SERVER_KEY_PREFIX = "plugin:";
 
 /**
- * Stable plugin-instance identity. Global plugins hash their canonical root
- * path; project plugins hash `<projectKey>\0<container-relative location>` so
- * the same plugin gets the same instance ID from every worktree of a project
+ * Stable plugin-instance identity. Global plugins hash their LEXICAL
+ * installation location (`<containerPath>/<dirName>`) so a symlinked plugin
+ * dir keeps its identity when an updater retargets the link to a new version;
+ * project plugins hash `<projectKey>\0<container-relative location>` so the
+ * same plugin gets the same instance ID from every worktree of a project
  * (worktree realpaths differ per workspace, but the project identity and the
  * plugin's location inside the repo do not).
  */
@@ -87,7 +91,10 @@ function classifyCommandToken(command: string): "bare" | "relative" | null {
     return null;
   }
   if (command.startsWith("./")) {
-    return "relative";
+    // NUL can neither appear in a real path nor cross the spawn boundary;
+    // rejecting it here keeps the diagnostic precise (fs would otherwise
+    // fail with ERR_INVALID_ARG_VALUE during containment resolution).
+    return command.includes("\0") ? null : "relative";
   }
   if (command.includes("/") || command.includes("\\")) {
     return null;
@@ -190,6 +197,13 @@ async function normalizeStdioEntry(
     }
   }
   const args = (entry.args as string[] | undefined) ?? [];
+  // NUL bytes cannot cross the spawn boundary: child_process rejects argv and
+  // env entries containing '\0' (ERR_INVALID_ARG_VALUE), so accepting them
+  // would yield an enableable server whose every launch fails pre-spawn.
+  const argsNulIndex = args.findIndex((arg) => arg.includes("\0"));
+  if (argsNulIndex !== -1) {
+    return { error: `'args[${argsNulIndex}]' must not contain NUL bytes` };
+  }
 
   if (entry.env !== undefined && !isPlainObject(entry.env)) {
     return { error: "'env' must be an object of strings" };
@@ -204,6 +218,10 @@ async function normalizeStdioEntry(
     if (typeof value !== "string") {
       return { error: `'env.${key}' must be a string` };
     }
+    if (key.includes("\0") || value.includes("\0")) {
+      // Same spawn constraint as args: env entries must be NUL-free.
+      return { error: `'env' entry ${JSON.stringify(key)} must not contain NUL bytes` };
+    }
   }
 
   if (entry.cwd !== undefined && typeof entry.cwd !== "string") {
@@ -214,6 +232,11 @@ async function normalizeStdioEntry(
     return {
       error: "'cwd' must be './…', '${PLUGIN_ROOT}[/…]', or '${PLUGIN_DATA}[/…]'",
     };
+  }
+  if (cwd?.includes("\0")) {
+    // Fail with a precise diagnostic instead of the misleading fs error the
+    // containment resolution below would raise for a NUL-bearing path.
+    return { error: "'cwd' must not contain NUL bytes" };
   }
 
   const rootPath = ctx.plugin.rootPath;
@@ -240,6 +263,15 @@ async function normalizeStdioEntry(
       }
     } catch (error) {
       return { error: `'command' is not accessible: ${getErrorMessage(error)}` };
+    }
+    // POSIX: a non-executable file spawns then exits with 'permission denied'
+    // on every launch. Windows has no execute bit, so skip the check there.
+    if (process.platform !== "win32") {
+      try {
+        await fsPromises.access(resolvedCommand, fsConstants.X_OK);
+      } catch {
+        return { error: `'command' is not executable: ${command}` };
+      }
     }
   }
 
@@ -610,7 +642,7 @@ export function createAgentPluginsMcpProvider(ctx: {
         if (plugin.mcpConfigPath === undefined) {
           continue;
         }
-        let instanceId: string | undefined;
+        let instanceId: string;
         if (plugin.scope === "project" && projectRoot !== undefined) {
           // Project plugin roots keep the repo-symlink posture of repo config:
           // the plugin root itself must stay inside the scanned checkout.
@@ -627,11 +659,19 @@ export function createAgentPluginsMcpProvider(ctx: {
             projectRoot,
             plugin,
           });
+        } else {
+          // Global scope: hash the LEXICAL installation location, not the
+          // canonical root. A symlinked plugin dir (e.g. a version-managed
+          // install) realpaths to a version-specific target, so hashing
+          // rootPath would rotate the server key and PLUGIN_DATA on every
+          // update, silently disabling workspace-enabled servers and
+          // orphaning their persistent data.
+          instanceId = computePluginInstanceId(path.join(plugin.containerPath, plugin.dirName));
         }
         try {
           const { servers } = await loadPluginMcpServers(plugin, {
             muxHome: ctx.muxHome,
-            ...(instanceId !== undefined ? { instanceId } : {}),
+            instanceId,
           });
           Object.assign(merged, servers);
         } catch (error) {

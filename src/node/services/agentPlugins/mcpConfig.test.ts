@@ -220,7 +220,11 @@ describe("loadPluginMcpServers", () => {
       mcpDoc({ srv: { type: "stdio", command: "./bin/tool" } })
     );
     await fs.mkdir(path.join(plugin.rootPath, "bin"), { recursive: true });
-    await fs.writeFile(path.join(plugin.rootPath, "bin", "tool"), "#!/bin/sh\n", "utf8");
+    // mode 0o755: normalization verifies the execute bit on POSIX.
+    await fs.writeFile(path.join(plugin.rootPath, "bin", "tool"), "#!/bin/sh\n", {
+      encoding: "utf8",
+      mode: 0o755,
+    });
 
     const { servers } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
 
@@ -281,6 +285,46 @@ describe("loadPluginMcpServers", () => {
 
       expect(servers).toEqual({});
       expect(diagnostics[0].message).toContain("single executable token");
+    }
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "rejects a './'-relative command without the execute bit",
+    async () => {
+      using tmp = new DisposableTempDir("plugin-mcp");
+      const plugin = await makePlugin(
+        tmp.path,
+        "noexec-cmd",
+        mcpDoc({ srv: { type: "stdio", command: "./tool" } })
+      );
+      await fs.writeFile(path.join(plugin.rootPath, "tool"), "#!/bin/sh\n", {
+        encoding: "utf8",
+        mode: 0o644,
+      });
+
+      const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+      expect(servers).toEqual({});
+      expect(diagnostics[0].message).toContain("not executable");
+    }
+  );
+
+  test("rejects NUL bytes in args, env entries, cwd, and relative commands", async () => {
+    using tmp = new DisposableTempDir("plugin-mcp");
+    const cases: Array<{ entry: Record<string, unknown>; expect: string }> = [
+      { entry: { type: "stdio", command: "x", args: ["a\0b"] }, expect: "NUL" },
+      { entry: { type: "stdio", command: "x", env: { KEY: "a\0b" } }, expect: "NUL" },
+      { entry: { type: "stdio", command: "x", env: { "K\0EY": "v" } }, expect: "NUL" },
+      { entry: { type: "stdio", command: "x", cwd: "./a\0b" }, expect: "NUL" },
+      { entry: { type: "stdio", command: "./a\0b" }, expect: "single executable token" },
+    ];
+    for (const [index, testCase] of cases.entries()) {
+      const plugin = await makePlugin(tmp.path, `nul-${index}`, mcpDoc({ srv: testCase.entry }));
+
+      const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+      expect(servers).toEqual({});
+      expect(diagnostics[0].message).toContain(testCase.expect);
     }
   });
 
@@ -614,6 +658,36 @@ describe("createAgentPluginsMcpProvider", () => {
       // No project at all: global only.
       const globalOnly = await provider({ trusted: false });
       expect(pluginNamesOf(globalOnly)).toEqual(["global-plugin", "universal-plugin"]);
+    });
+  });
+
+  test("global plugin identity survives symlink retargeting (versioned installs)", async () => {
+    using home = new DisposableTempDir("plugin-provider-home");
+    using muxHome = new DisposableTempDir("plugin-provider-mux");
+    await withHomeDir(home.path, async () => {
+      // Versioned install layout: plugins/demo is a symlink an updater
+      // retargets from v1 to v2. The realpath changes; identity must not.
+      const versions = path.join(muxHome.path, "versions");
+      await writeDiscoverablePlugin(versions, "v1", mcpDoc({ srv: STDIO_ENTRY }));
+      await writeDiscoverablePlugin(versions, "v2", mcpDoc({ srv: STDIO_ENTRY }));
+      const container = path.join(muxHome.path, "plugins");
+      await fs.mkdir(container, { recursive: true });
+      const link = path.join(container, "demo");
+      await fs.symlink(path.join(versions, "v1"), link);
+
+      const provider = createAgentPluginsMcpProvider({
+        muxHome: muxHome.path,
+        isEnabled: () => true,
+      });
+
+      const before = Object.keys(await provider({ trusted: false })).sort();
+      expect(before).toHaveLength(1);
+
+      await fs.unlink(link);
+      await fs.symlink(path.join(versions, "v2"), link);
+
+      const after = Object.keys(await provider({ trusted: false })).sort();
+      expect(after).toEqual(before);
     });
   });
 
