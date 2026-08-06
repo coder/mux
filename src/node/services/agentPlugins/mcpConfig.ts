@@ -224,6 +224,16 @@ async function normalizeStdioEntry(
           : `'command' resolves outside the plugin root: ${getErrorMessage(error)}`,
       };
     }
+    // Containment only proves existence: a directory (e.g. "./bin") would pass
+    // but exec() rejects it, yielding an enableable server that can never start.
+    try {
+      const commandStat = await fsPromises.stat(resolvedCommand);
+      if (!commandStat.isFile()) {
+        return { error: `'command' must be a file: ${command}` };
+      }
+    } catch (error) {
+      return { error: `'command' is not accessible: ${getErrorMessage(error)}` };
+    }
   }
 
   // §9.2 expansion applies to args elements, env values, and cwd only.

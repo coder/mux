@@ -253,6 +253,21 @@ describe("loadPluginMcpServers", () => {
     expect(escapeResult.diagnostics[0].message).toContain("outside the plugin root");
   });
 
+  test("rejects a './'-relative command that resolves to a directory (exec would fail)", async () => {
+    using tmp = new DisposableTempDir("plugin-mcp");
+    const plugin = await makePlugin(
+      tmp.path,
+      "dir-cmd",
+      mcpDoc({ srv: { type: "stdio", command: "./bin" } })
+    );
+    await fs.mkdir(path.join(plugin.rootPath, "bin"), { recursive: true });
+
+    const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+    expect(servers).toEqual({});
+    expect(diagnostics[0].message).toContain("must be a file");
+  });
+
   test("rejects entries with reserved env keys (PLUGIN_ROOT / PLUGIN_DATA)", async () => {
     using tmp = new DisposableTempDir("plugin-mcp");
     for (const key of ["PLUGIN_ROOT", "PLUGIN_DATA"]) {
