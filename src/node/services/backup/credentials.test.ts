@@ -551,6 +551,33 @@ printf '%s\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
+  it("extends a double-quoted ssh path without writing into it", async () => {
+    if (process.platform === "win32") return;
+    const wrapper = path.join(binDir, "wrap dir");
+    await fs.mkdir(wrapper, { recursive: true });
+    await writeExecutable(path.join(wrapper, "ssh"), "#!/bin/sh\nexit 0\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // How a path with spaces is spelled on Windows; the flag must land after the closing
+        // quote, not inside the path.
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: `"${wrapper}/ssh" -i /keys/id` },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      `"${wrapper}/ssh" -o BatchMode=yes -i /keys/id`
+    );
+  });
+
   it("reports a Windows drive path as a local repository, not ssh", async () => {
     await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexit 0\n");
     const platform = process.platform;

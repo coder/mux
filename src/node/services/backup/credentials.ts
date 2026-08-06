@@ -14,8 +14,27 @@ const NON_INTERACTIVE_ENV = {
   LANGUAGE: "C",
 } as const;
 
-/** The leading program of an ssh command line, either a single-quoted path or a bare token. */
-const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*(\S+)/;
+/**
+ * The leading program of an ssh command line: a quoted path in either style, or a bare token.
+ * Double quotes matter because that is how a Windows `core.sshCommand` spells a path with
+ * spaces, and both the variant check and the flag insertion read this same boundary. Getting it
+ * wrong is not just a missed variant: an option inserted at the wrong offset lands inside the
+ * path and git fails outright.
+ */
+const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*"((?:[^"\\]|\\.)*)"|^\s*(\S+)/;
+
+function sshProgram(command: string): { executable: string; end: number } | null {
+  const match = SSH_PROGRAM_TOKEN.exec(command);
+  if (match === null) return null;
+  const [, singleQuoted, doubleQuoted, bare] = match;
+  const executable =
+    singleQuoted !== undefined
+      ? singleQuoted.replaceAll(`'\\''`, "'")
+      : doubleQuoted !== undefined
+        ? doubleQuoted.replaceAll(/\\(.)/g, "$1")
+        : (bare ?? "");
+  return { executable, end: match.index + match[0].length };
+}
 
 const DOS_DRIVE_PREFIX = /^[A-Za-z]:/;
 
@@ -55,10 +74,9 @@ async function nonInteractiveSshCommand(
  * prompt block until the git timeout.
  */
 function insertNonInteractiveFlag(command: string, flag: string): string {
-  const program = SSH_PROGRAM_TOKEN.exec(command);
+  const program = sshProgram(command);
   if (program === null) return `${flag} ${command}`;
-  const programEnd = program.index + program[0].length;
-  return `${command.slice(0, programEnd)} ${flag}${command.slice(programEnd)}`;
+  return `${command.slice(0, program.end)} ${flag}${command.slice(program.end)}`;
 }
 
 /**
@@ -80,10 +98,8 @@ function nonInteractiveFlag(command: string, options: GitCredentialOptions): str
 }
 
 function sshVariant(command: string): string {
-  const program = SSH_PROGRAM_TOKEN.exec(command);
-  const executable = (program?.[1] ?? program?.[2] ?? "").replaceAll(`'\\''`, "'");
   return path
-    .basename(executable)
+    .basename(sshProgram(command)?.executable ?? "")
     .toLowerCase()
     .replace(/\.exe$/, "");
 }
