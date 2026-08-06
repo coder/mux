@@ -135,6 +135,32 @@ describe("BackupRepoCache", () => {
     );
   });
 
+  it("recovers a cache left holding stale git lock files", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    // A kill during checkout or commit leaves these behind, and git then refuses every later
+    // index and ref write, so the cache would stay broken until deleted by hand.
+    const gitDir = path.join(repo.cachePath, ".git");
+    await fs.mkdir(path.join(gitDir, "refs", "heads"), { recursive: true });
+    const staleLocks = [
+      path.join(gitDir, "index.lock"),
+      path.join(gitDir, "config.lock"),
+      path.join(gitDir, "refs", "heads", "main.lock"),
+    ];
+    for (const lock of staleLocks) await fs.writeFile(lock, "", "utf-8");
+
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "after lock recovery\n");
+
+    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    if (commit === null) throw new Error("Expected a commit after the stale locks were cleared");
+    expect(await repo.push()).toBe(commit);
+    for (const lock of staleLocks) expect(await pathExists(lock)).toBe(false);
+  });
+
   it("creates a missing backup branch with the remote's SHA-256 object format", async () => {
     const shaOrigin = await createSha256Origin("sha256-new-branch", "existing branch\n");
     const repo = new BackupRepoCache({

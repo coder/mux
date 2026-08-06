@@ -280,6 +280,10 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
  * Git rewrites an open-ended set of metadata paths. Symlinks are rejected, and
  * multiply-linked regular files are copied to cache-owned inodes before Git runs, so Git
  * cannot update an outside hard-link alias. New local clones also use `--no-hardlinks`.
+ *
+ * `*.lock` files are deleted rather than kept. Callers hold this cache's mutex and await
+ * every git they spawn, so no live git owns a lock here; one that survived a kill would
+ * otherwise fail every later index and ref write until deleted by hand.
  */
 async function normalizeGitMetadataLinks(dir: string): Promise<void> {
   let entries: string[];
@@ -299,6 +303,8 @@ async function normalizeGitMetadataLinks(dir: string): Promise<void> {
       await normalizeGitMetadataLinks(entryPath);
     } else if (!metadata.isFile()) {
       throw new Error(`Refusing to use '${entryPath}': it is not a regular file`);
+    } else if (entry.endsWith(".lock")) {
+      await fs.rm(entryPath, { force: true });
     } else if (metadata.nlink > 1) {
       await severHardLink(entryPath, metadata.dev, metadata.ino);
     }
