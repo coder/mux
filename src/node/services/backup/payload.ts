@@ -520,8 +520,13 @@ async function writeCheckedFile(
       written += bytesWritten;
     }
     // Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the read and
-    // write bits to the local umask rather than inventing a source mode.
-    let next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
+    // write bits to the local umask rather than inventing a source mode. Masked to ordinary
+    // permissions first: the write above clears setuid and setgid, so carrying them out of
+    // `stat.mode` would deliberately restore a privileged identity onto repository content.
+    // Untested because bun's `fs.chmod` drops setuid and setgid (node's keeps them), so the
+    // fixture cannot be built under the test runner.
+    const base = stat.mode & 0o777;
+    let next = executable ? base | ((base & 0o444) >> 2) : base & ~0o111;
     // Set rather than masked, and applied even though the open above requests it, because a
     // creation mode does nothing when the destination already exists. Masking would carry an
     // existing file's setuid, setgid, sticky, and owner-execute bits into a config file.
