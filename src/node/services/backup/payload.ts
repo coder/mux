@@ -151,9 +151,8 @@ function toPosixPath(...parts: string[]): string {
 }
 
 /**
- * `mcpConfigService` writes `mcp.jsonc` 0600 on every write because server definitions carry
- * commands, URLs, and headers that can hold credentials. Restore writes the same secrets, so it
- * holds the file to the same permissions instead of leaving them to the umask.
+ * MCP definitions carry commands, URLs, and headers that can hold credentials, so restore
+ * reproduces the owner-only mode `mcpConfigService` writes rather than following the umask.
  */
 function isOwnerOnlyPayloadPath(relativePath: string): boolean {
   return relativePath === "mcp.jsonc";

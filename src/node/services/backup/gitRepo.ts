@@ -288,6 +288,19 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
 }
 
 /**
+ * Git accepts a directory as a repository only with these three entries present and of these
+ * types, so a `.git` missing or mistyping any of them cannot serve a single later command.
+ * `normalizeGitMetadataLinks` has already rejected symlinks, so `lstat` sees the real entries.
+ */
+async function isCompleteGitDirectory(gitDir: string): Promise<boolean> {
+  const entries = await Promise.all(
+    ["HEAD", "objects", "refs"].map((entry) => fs.lstat(path.join(gitDir, entry)).catch(() => null))
+  );
+  const [head, objects, refs] = entries;
+  return head?.isFile() === true && objects?.isDirectory() === true && refs?.isDirectory() === true;
+}
+
+/**
  * Git rewrites an open-ended set of metadata paths. Symlinks are rejected, and
  * multiply-linked regular files are copied to cache-owned inodes before Git runs, so Git
  * cannot update an outside hard-link alias. New local clones also use `--no-hardlinks`.
@@ -607,8 +620,13 @@ export class BackupRepoCache {
     // cache's config rewrite with it.
     await assertOwnGitDirectory(this.cachePath);
     await normalizeGitMetadataLinks(gitDir);
-    if (!(await exists(gitDir))) {
-      if (await exists(this.cachePath)) {
+    if (!(await isCompleteGitDirectory(gitDir))) {
+      if (await exists(gitDir)) {
+        // Git rejects this directory outright, so no later command can use it. The cache is
+        // disposable, so it is rebuilt rather than left permanently failing.
+        await fs.rm(this.cachePath, { recursive: true, force: true });
+        this.baseRemoteCommit = undefined;
+      } else if (await exists(this.cachePath)) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
       }
       // A settings backup often lives in an existing dotfiles repository, and nothing here

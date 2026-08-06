@@ -159,6 +159,38 @@ describe("BackupRepoCache", () => {
     for (const lock of staleLocks) expect(await pathExists(lock)).toBe(false);
   });
 
+  it("rebuilds a cache whose .git was left incomplete", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
+    const seeded = await repo.stageAndCommit("mux", "Back up settings");
+    if (seeded === null) throw new Error("Expected the seed commit");
+    await repo.push();
+
+    // What a kill between creating `.git` and writing its metadata leaves behind. The directory
+    // case covers a `HEAD` that exists but is the wrong type, which git rejects just as firmly.
+    for (const leaveBehind of [
+      () => fs.rm(path.join(repo.cachePath, ".git", "HEAD")),
+      async () => {
+        await fs.rm(path.join(repo.cachePath, ".git", "HEAD"));
+        await fs.mkdir(path.join(repo.cachePath, ".git", "HEAD"));
+      },
+    ]) {
+      await leaveBehind();
+
+      const reopened = createRepo();
+      await reopened.ensureCache();
+      await reopened.fetch();
+      await reopened.resetHardToRemote();
+
+      expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
+        "before the interruption\n"
+      );
+    }
+  });
+
   it("creates a missing backup branch with the remote's SHA-256 object format", async () => {
     const shaOrigin = await createSha256Origin("sha256-new-branch", "existing branch\n");
     const repo = new BackupRepoCache({
