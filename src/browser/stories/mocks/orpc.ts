@@ -21,6 +21,7 @@ import type {
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
 import type { ProjectConfig } from "@/node/config";
+import type { ConfiguredProjectGitHubRepoInfo } from "@/common/orpc/schemas/githubRepoInfo";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   normalizeLayoutPresetsConfig,
@@ -120,6 +121,7 @@ export interface MockORPCClientOptions {
   /** Layout presets config for Settings → Layouts stories */
   layoutPresets?: LayoutPresetsConfig;
   projects?: Map<string, ProjectConfig>;
+  githubRepoInfoByProject?: ConfiguredProjectGitHubRepoInfo;
   workspaces?: FrontendWorkspaceMetadata[];
   /** Pre-seeded multi-project git status rows keyed by workspace ID. */
   projectGitStatusesByWorkspace?: Map<string, ApiProjectGitStatusResult[]>;
@@ -347,6 +349,7 @@ type MockMcpTestResult = { success: true; tools: string[] } | { success: false; 
 export function createMockORPCClient(options: MockORPCClientOptions = {}): APIClient {
   const {
     projects: providedProjects = new Map<string, ProjectConfig>(),
+    githubRepoInfoByProject = {},
     workspaces = [],
     projectGitStatusesByWorkspace = new Map<string, ApiProjectGitStatusResult[]>(),
     workspaceActivitySnapshots = {},
@@ -1281,6 +1284,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }),
       pickDirectory: () => Promise.resolve(null),
       getDefaultProjectDir: () => Promise.resolve("~/.mux/projects"),
+      githubRepoInfo: () =>
+        Promise.resolve(
+          Object.fromEntries(
+            Array.from(projects.keys()).map((projectPath) => [
+              projectPath,
+              githubRepoInfoByProject[projectPath] ?? null,
+            ])
+          )
+        ),
       setDefaultProjectDir: () => Promise.resolve(),
       clone: () =>
         Promise.resolve(

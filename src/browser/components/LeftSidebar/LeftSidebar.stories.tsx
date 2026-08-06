@@ -35,6 +35,7 @@ import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import {
   SELECTED_WORKSPACE_KEY,
   SIDEBAR_AGE_GROUPING_KEY,
+  SIDEBAR_DISPLAY_STYLE_KEY,
   UI_THEME_KEY,
   getWorkspaceLastReadKey,
 } from "@/common/constants/storage";
@@ -111,6 +112,7 @@ function resetStorybookPersistedStateForStory(): void {
     // FlatListWhenAgeGroupingDisabled writes this key; clear it so later
     // stories are not affected by story execution order.
     localStorage.removeItem(SIDEBAR_AGE_GROUPING_KEY);
+    localStorage.removeItem(SIDEBAR_DISPLAY_STYLE_KEY);
   }
 }
 
@@ -265,7 +267,88 @@ function createGitStatusExecutor(gitStatus?: Map<string, GitStatusFixture>) {
   };
 }
 
-/** Single project with multiple workspaces including SSH */
+const STORY_AVATAR_DATA_URL =
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='64' height='64'%3E%3Crect width='64' height='64' rx='32' fill='%235b8def'/%3E%3Cpath d='M20 44V20h24v24z' fill='white'/%3E%3C/svg%3E";
+
+function createFlatCardsClient(options: {
+  ageGrouping: boolean;
+  brokenAvatar?: boolean;
+}): APIClient {
+  const firstProjectPath = "/home/user/projects/extraordinarily-long-repository-name";
+  const secondProjectPath = "/home/user/projects/sidebar-fallbacks";
+  const recentWorkspace = createWorkspace({
+    id: "ws-flat-card-recent",
+    name: "recent-card",
+    title: "Implement a very long workspace title that must truncate without hiding actions",
+    projectName: "extraordinarily-long-repository-name",
+    projectPath: firstProjectPath,
+    createdAt: new Date(NOW - 30 * 60 * 1000).toISOString(),
+  });
+  const startingWorkspace = {
+    ...createWorkspace({
+      id: "ws-flat-card-starting",
+      name: "starting-card",
+      title: "Starting workspace with status label",
+      projectName: "extraordinarily-long-repository-name",
+      projectPath: firstProjectPath,
+      createdAt: new Date(NOW - 60 * 60 * 1000).toISOString(),
+    }),
+    isInitializing: true,
+  };
+  const oldWorkspace = createWorkspace({
+    id: "ws-flat-card-old",
+    name: "old-card",
+    title: "Older workspace using the fallback repository icon",
+    projectName: "sidebar-fallbacks",
+    projectPath: secondProjectPath,
+    createdAt: new Date(NOW - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  });
+  const scratchWorkspace = {
+    ...createWorkspace({
+      id: "ws-flat-card-scratch",
+      name: "scratch-card",
+      title: "Scratch workspace",
+      projectName: "Scratch",
+      projectPath: firstProjectPath,
+      createdAt: new Date(NOW - 90 * 60 * 1000).toISOString(),
+    }),
+    kind: "scratch" as const,
+  };
+  const workspaces = [recentWorkspace, startingWorkspace, oldWorkspace, scratchWorkspace];
+
+  setWorkspaceDrafts(firstProjectPath, [
+    {
+      draftId: "flat-card-draft",
+      workspaceName: "Draft workspace",
+      prompt: "Draft prompt preview",
+      createdAt: NOW - 1_000,
+    },
+  ]);
+
+  updatePersistedState(SIDEBAR_DISPLAY_STYLE_KEY, "flat");
+  updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, options.ageGrouping);
+  updatePersistedState("expandedOldWorkspaces", { "flat:0": true });
+
+  return createMockORPCClient({
+    projects: groupWorkspacesByProject(workspaces),
+    workspaces,
+    githubRepoInfoByProject: {
+      [firstProjectPath]: {
+        owner: "coder",
+        repo: "extraordinarily-long-repository-name",
+        avatarUrl: STORY_AVATAR_DATA_URL,
+      },
+      [secondProjectPath]: options.brokenAvatar
+        ? {
+            owner: "broken-avatar",
+            repo: "sidebar-fallbacks",
+            avatarUrl: "https://example.invalid/sidebar-avatar.png",
+          }
+        : null,
+    },
+  });
+}
+
 export const SingleProject: AppStory = {
   parameters: {
     pixel: { matrix: PIXEL_DUAL_THEME },
@@ -989,6 +1072,75 @@ export const FlatListWhenAgeGroupingDisabled: AppStory = {
       throw new Error("Did not expect an age-tier toggle when grouping is disabled");
     }
   },
+};
+
+export const FlatCardsWithAgeGrouping: AppStory = {
+  parameters: {
+    pixel: { matrix: PIXEL_DUAL_THEME },
+  },
+  render: () => (
+    <LeftSidebarStoryShell setup={() => createFlatCardsClient({ ageGrouping: true })} />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      if (!canvasElement.querySelector('[data-testid="flat-sidebar-list"]')) {
+        throw new Error("Flat sidebar cards did not render");
+      }
+      if (!canvasElement.querySelector('img[src^="data:image/svg+xml"]')) {
+        throw new Error("Repository avatar did not render after identity lookup");
+      }
+      if (!canvasElement.querySelector('[data-draft-id="flat-card-draft"]')) {
+        throw new Error("Flat sidebar draft did not render");
+      }
+      if (!canvasElement.querySelector('[data-workspace-id="ws-flat-card-old"]')) {
+        throw new Error("Expanded age tier did not render the old flat card");
+      }
+    });
+  },
+};
+
+export const FlatCardsWithoutAgeGroupingAndAvatarFallbacks: AppStory = {
+  render: () => (
+    <LeftSidebarStoryShell
+      setup={() => createFlatCardsClient({ ageGrouping: false, brokenAvatar: true })}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    await waitFor(() => {
+      if (canvasElement.querySelector('[aria-expanded][class*="border-t"]')) {
+        throw new Error("Age tier rendered while grouping was disabled");
+      }
+      if (!canvasElement.querySelector('[data-testid="project-avatar-fallback"]')) {
+        throw new Error("Avatar fallback did not render");
+      }
+    });
+
+    const actions = within(canvasElement).getByRole("button", {
+      name: /workspace actions for implement a very long workspace title/i,
+    });
+    await userEvent.click(actions);
+    await waitFor(() => {
+      within(document.body).getByText("Archive chat");
+    });
+  },
+};
+
+export const FlatCardsPhone: AppStory = {
+  tags: ["!test"],
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+  render: () => (
+    <LeftSidebarStoryShell
+      leftSidebarProps={{ collapsed: false, widthPx: 390 }}
+      setup={() => createFlatCardsClient({ ageGrouping: false, brokenAvatar: true })}
+    />
+  ),
 };
 
 /** Long workspace names - tests truncation and prevents horizontal scroll regression */

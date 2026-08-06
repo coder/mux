@@ -4,7 +4,11 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import * as ActualSelectPrimitiveModule from "@/browser/components/SelectPrimitive/SelectPrimitive";
 import { installDom } from "../../../../../tests/ui/dom";
-import { BASH_COLLAPSED_SUMMARY_MODE_KEY } from "@/common/constants/storage";
+import {
+  BASH_COLLAPSED_SUMMARY_MODE_KEY,
+  SIDEBAR_DISPLAY_STYLE_KEY,
+} from "@/common/constants/storage";
+import { readPersistedState } from "@/browser/hooks/usePersistedState";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
   type CoderWorkspaceArchiveBehavior,
@@ -333,6 +337,15 @@ describe("GeneralSection", () => {
     expect(window.localStorage.getItem(BASH_COLLAPSED_SUMMARY_MODE_KEY)).toBe(
       JSON.stringify("intent")
     );
+  });
+
+  test("selects flat sidebar cards and persists the preference", async () => {
+    const { view } = renderGeneralSection();
+
+    expect(getSelectTrigger(view, "Sidebar layout").textContent).toContain("Project sections");
+    await chooseSelectOption(view, "Sidebar layout", "Flat cards");
+
+    expect(readPersistedState(SIDEBAR_DISPLAY_STYLE_KEY, "projects")).toBe("flat");
   });
 
   test("loads and persists the full-width chat transcript toggle", async () => {

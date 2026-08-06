@@ -867,3 +867,28 @@ describe("router config.saveConfig", () => {
     expect(savedTaskSettings.proposePlanImplementReplacesChatHistory).toBe(true);
   });
 });
+
+describe("router project GitHub info", () => {
+  test("exposes the no-argument bulk project identity lookup", async () => {
+    const githubRepoInfo = mock(() =>
+      Promise.resolve({
+        "/repo": {
+          owner: "coder",
+          repo: "mux",
+          avatarUrl: "https://github.com/coder.png?size=64",
+        },
+      })
+    );
+    const context = { projectService: { githubRepoInfo } } as unknown as ORPCContext;
+    const client = createRouterClient(router(), { context });
+
+    expect(await client.projects.githubRepoInfo()).toEqual({
+      "/repo": {
+        owner: "coder",
+        repo: "mux",
+        avatarUrl: "https://github.com/coder.png?size=64",
+      },
+    });
+    expect(githubRepoInfo).toHaveBeenCalledTimes(1);
+  });
+});

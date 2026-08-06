@@ -24,9 +24,12 @@ import {
   CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   SIDEBAR_AGE_GROUPING_KEY,
+  SIDEBAR_DISPLAY_STYLE_KEY,
+  DEFAULT_SIDEBAR_DISPLAY_STYLE,
   TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
   normalizeEditorConfig,
+  normalizeSidebarDisplayStyle,
   normalizeTerminalFontConfig,
   normalizeTranscriptDensity,
   type BashCollapsedSummaryMode,
@@ -34,6 +37,7 @@ import {
   type EditorConfig,
   type EditorType,
   type LaunchBehavior,
+  type SidebarDisplayStyle,
   type TerminalFontConfig,
 } from "@/common/constants/storage";
 import {
@@ -125,6 +129,10 @@ const TRANSCRIPT_DENSITY_OPTIONS = TRANSCRIPT_DENSITIES.map((value) => ({
   value,
   label: TRANSCRIPT_DENSITY_LABELS[value],
 }));
+const SIDEBAR_DISPLAY_STYLE_OPTIONS: Array<{ value: SidebarDisplayStyle; label: string }> = [
+  { value: "projects", label: "Project sections" },
+  { value: "flat", label: "Flat cards" },
+];
 const ARCHIVE_BEHAVIOR_OPTIONS = [
   { value: "keep", label: "Keep running" },
   { value: "stop", label: "Stop workspace" },
@@ -158,6 +166,12 @@ export function GeneralSection() {
     SIDEBAR_AGE_GROUPING_KEY,
     true
   );
+  const [rawSidebarDisplayStyle, setSidebarDisplayStyle] = usePersistedState<unknown>(
+    SIDEBAR_DISPLAY_STYLE_KEY,
+    DEFAULT_SIDEBAR_DISPLAY_STYLE,
+    { listener: true }
+  );
+  const sidebarDisplayStyle = normalizeSidebarDisplayStyle(rawSidebarDisplayStyle);
   const [transcriptDensity, setTranscriptDensity] = useTranscriptDensity();
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
     TERMINAL_FONT_CONFIG_KEY,
@@ -542,6 +556,30 @@ export function GeneralSection() {
               onCheckedChange={handleChatTranscriptFullWidthChange}
               aria-label="Toggle full-width chat transcript"
             />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Sidebar layout</div>
+              <div className="text-muted text-xs">
+                Choose project sections or one flat card list.
+              </div>
+            </div>
+            <Select
+              value={sidebarDisplayStyle}
+              onValueChange={(value) => setSidebarDisplayStyle(normalizeSidebarDisplayStyle(value))}
+            >
+              <SelectTrigger className="border-border-medium bg-background-secondary hover:bg-hover h-9 w-auto cursor-pointer rounded-md border px-3 text-sm transition-colors">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {SIDEBAR_DISPLAY_STYLE_OPTIONS.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div className="flex items-center justify-between gap-4">

@@ -30,6 +30,11 @@ import {
   type CloneErrorCode,
 } from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
+import type {
+  ConfiguredProjectGitHubRepoInfo,
+  GitHubRepoInfo,
+} from "@/common/orpc/schemas/githubRepoInfo";
+import { parseGitHubRemote } from "@/common/utils/githubRemote";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
@@ -353,6 +358,35 @@ interface FileCompletionsCacheEntry {
   refreshing?: Promise<void>;
 }
 
+const GITHUB_REPO_INFO_CACHE_TTL_MS = 5 * 60 * 1000;
+const GITHUB_REMOTE_TIMEOUT_MS = 2_000;
+
+interface GitHubRepoInfoCacheEntry {
+  value: GitHubRepoInfo | null;
+  expiresAt: number;
+}
+
+type GitRemoteReader = (projectPath: string) => Promise<string>;
+
+async function readOriginRemote(projectPath: string): Promise<string> {
+  using proc = execFileAsync("git", ["-C", projectPath, "remote", "get-url", "origin"], {
+    timeoutMs: GITHUB_REMOTE_TIMEOUT_MS,
+  });
+  const { stdout } = await proc.result;
+  return stdout.trim();
+}
+
+function toGitHubRepoInfo(remote: string): GitHubRepoInfo | null {
+  const identity = parseGitHubRemote(remote);
+  if (!identity) {
+    return null;
+  }
+  return {
+    ...identity,
+    avatarUrl: `https://github.com/${identity.owner}.png?size=64`,
+  };
+}
+
 // Keep raw Node errno details out of project-add errors.
 function friendlyFsError(error: unknown, action: string, targetPath: string): string | null {
   const code = (error as NodeJS.ErrnoException).code;
@@ -419,13 +453,16 @@ function hasRegisteredSubProjectAncestor(
 
 export class ProjectService {
   private readonly fileCompletionsCache = new Map<string, FileCompletionsCacheEntry>();
+  private readonly githubRepoInfoCache = new Map<string, GitHubRepoInfoCacheEntry>();
+  private readonly githubRepoInfoInflight = new Map<string, Promise<GitHubRepoInfo | null>>();
   private directoryPicker?: (initialPath?: string | null) => Promise<string | null>;
   private readonly sshPromptService: SshPromptService | undefined;
   private workspaceService?: WorkspaceRemover;
 
   constructor(
     private readonly config: Config,
-    sshPromptService?: SshPromptService
+    sshPromptService?: SshPromptService,
+    private readonly gitRemoteReader: GitRemoteReader = readOriginRemote
   ) {
     this.sshPromptService = sshPromptService;
   }
@@ -1284,6 +1321,50 @@ export class ProjectService {
       log.error("Failed to list projects:", error);
       return [];
     }
+  }
+
+  async githubRepoInfo(): Promise<ConfiguredProjectGitHubRepoInfo> {
+    const projectPaths = Array.from(this.config.loadConfigOrDefault().projects.keys());
+    const configuredProjectPaths = new Set(projectPaths);
+    for (const cachedProjectPath of this.githubRepoInfoCache.keys()) {
+      if (!configuredProjectPaths.has(cachedProjectPath)) {
+        this.githubRepoInfoCache.delete(cachedProjectPath);
+      }
+    }
+    const entries = await Promise.all(
+      projectPaths.map(
+        async (projectPath) => [projectPath, await this.getGitHubRepoInfo(projectPath)] as const
+      )
+    );
+    return Object.fromEntries(entries);
+  }
+
+  private async getGitHubRepoInfo(projectPath: string): Promise<GitHubRepoInfo | null> {
+    const cached = this.githubRepoInfoCache.get(projectPath);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const pending = this.githubRepoInfoInflight.get(projectPath);
+    if (pending) {
+      return pending;
+    }
+
+    const request = this.gitRemoteReader(projectPath)
+      .then(toGitHubRepoInfo)
+      .catch(() => null)
+      .then((value) => {
+        this.githubRepoInfoCache.set(projectPath, {
+          value,
+          expiresAt: Date.now() + GITHUB_REPO_INFO_CACHE_TTL_MS,
+        });
+        return value;
+      })
+      .finally(() => {
+        this.githubRepoInfoInflight.delete(projectPath);
+      });
+    this.githubRepoInfoInflight.set(projectPath, request);
+    return request;
   }
 
   async listBranches(projectPath: string): Promise<BranchListResult> {
