@@ -96,6 +96,7 @@ export const CREDENTIAL_URL_PARAMETER_NAMES: ReadonlySet<string> = new Set([
   "idtoken",
   "jwt",
   "oauthcode",
+  "passphrase",
   "passwd",
   "password",
   "privatekey",
