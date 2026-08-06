@@ -289,8 +289,8 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
 
 /**
  * An interrupted create can leave the cache directory behind with no `.git` yet, and git clones
- * into an empty directory, so one is reused instead of refused. Anything else already at this
- * path was not put there by this cache, and no branch below may delete it.
+ * into an empty directory, so one is reused instead of refused. A non-empty directory cannot
+ * prove it belongs to this cache, so it is refused rather than deleted.
  */
 async function isEmptyOrAbsentDirectory(target: string): Promise<boolean> {
   const stat = await fs.lstat(target).catch(() => null);
@@ -617,6 +617,25 @@ export class BackupRepoCache {
     await this.initEmptyCache(objectFormat);
   }
 
+  /**
+   * Renames before deleting, because a recursive delete is not atomic: a kill partway through
+   * would leave the cache directory populated but without a `.git`, which is indistinguishable
+   * from content this cache must never delete. The rename is a single operation inside one
+   * directory, so an interrupted discard leaves either the whole cache or nothing at its path.
+   */
+  private async discardCache(): Promise<void> {
+    const tombstone = `${this.cachePath}.discarded-${process.pid}-${randomUUID()}`;
+    try {
+      await fs.rename(this.cachePath, tombstone);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    } finally {
+      this.baseRemoteCommit = undefined;
+    }
+    await fs.rm(tombstone, { recursive: true, force: true });
+  }
+
   async ensureCache(): Promise<void> {
     await assertNotSymlink(this.options.cacheRoot);
     await fs.mkdir(this.options.cacheRoot, { recursive: true, mode: 0o700 });
@@ -636,8 +655,7 @@ export class BackupRepoCache {
       if (await exists(gitDir)) {
         // Git rejects this directory outright, so no later command can use it. The cache is
         // disposable, so it is rebuilt rather than left permanently failing.
-        await fs.rm(this.cachePath, { recursive: true, force: true });
-        this.baseRemoteCommit = undefined;
+        await this.discardCache();
       } else if (!(await isEmptyOrAbsentDirectory(this.cachePath))) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
       }
@@ -656,8 +674,7 @@ export class BackupRepoCache {
       if (!isMalformedConfigSyntaxError(error)) throw error;
       // Malformed config prevents validating redirect-sensitive settings. Replace the
       // disposable cache rather than trust its Git configuration.
-      await fs.rm(this.cachePath, { recursive: true, force: true });
-      this.baseRemoteCommit = undefined;
+      await this.discardCache();
       await this.createCache();
       await this.sanitizeCacheConfig();
     }

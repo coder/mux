@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -212,6 +212,37 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
       "before the interruption\n"
     );
+  });
+
+  it("leaves no half-deleted cache behind when a discard is interrupted", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
+    // Config the sanitize pass cannot parse, so ensureCache discards the cache.
+    await fs.writeFile(path.join(repo.cachePath, ".git", "config"), "[core\n", "utf-8");
+
+    const rename = fs.rename;
+    // Interrupt immediately after the rename, the point where a partial recursive delete would
+    // otherwise leave the cache directory populated but without a `.git`.
+    const interrupted = new Error("killed mid-discard");
+    const spy = spyOn(fs, "rename").mockImplementation(async (from, to) => {
+      await rename(from as string, to as string);
+      throw interrupted;
+    });
+    const caught = await repo.ensureCache().catch((error: unknown) => error);
+    spy.mockRestore();
+    expect(caught).toBe(interrupted);
+
+    // The cache path must be absent rather than a populated directory with no `.git`.
+    expect(await pathExists(repo.cachePath)).toBe(false);
+
+    const reopened = createRepo();
+    await reopened.ensureCache();
+    await reopened.fetch();
+    await reopened.resetHardToRemote();
+    expect(await pathExists(path.join(reopened.cachePath, ".git"))).toBe(true);
   });
 
   it("refuses a cache path holding content it did not create", async () => {
