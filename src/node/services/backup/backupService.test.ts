@@ -126,6 +126,39 @@ describe("BackupService", () => {
     expect(service.getSettings()?.lastRestoredCommit).toBe("remote-commit");
   });
 
+  test("keeps a bounded number of restore snapshots", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        writeSafetySnapshot: async (snapshotRoot) => {
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
+        },
+      }),
+    });
+    const cacheRoot = path.join(tempDir, "backup-cache");
+    await fs.mkdir(cacheRoot, { recursive: true });
+    // A cache clone lives beside the snapshots and must survive the reap.
+    const clone = path.join(cacheRoot, "0123456789ab");
+    await fs.mkdir(clone, { recursive: true });
+
+    const snapshots: string[] = [];
+    for (let restore = 0; restore < 5; restore++) {
+      const result = await service.restore(SETTINGS);
+      if (!result.success) throw new Error(result.error.message);
+      snapshots.push(result.data.snapshotPath);
+    }
+
+    const surviving = new Set(
+      (await fs.readdir(cacheRoot)).filter((entry) => entry.startsWith("restore-"))
+    );
+    expect(surviving.size).toBe(3);
+    // The newest are the ones a recovery would reach for.
+    for (const kept of snapshots.slice(-3)) {
+      expect(surviving.has(path.basename(kept))).toBe(true);
+    }
+    expect((await fs.stat(clone)).isDirectory()).toBe(true);
+  });
+
   test("reports the completed snapshot when the restore fails after it", async () => {
     const service = new BackupService(createTestConfig(tempDir), {
       gitRepo: createGitRepo(),

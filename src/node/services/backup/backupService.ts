@@ -74,6 +74,19 @@ export interface BackupServiceDependencies {
 
 type BackupErrorCode = BackupOperationError["code"];
 
+const SNAPSHOT_NAME_PREFIX = "restore-";
+
+const STAMPED_SNAPSHOT_NAME = /^restore-(\d{4}-\d{2}-\d{2}T[\d-]+Z)-/;
+
+/**
+ * Snapshots are ordered by the stamp in their own name, not by mtime: several restores can land
+ * in the same millisecond, and a filesystem timestamp cannot separate them. A name from before
+ * the stamp existed sorts oldest, so those are reclaimed first rather than kept forever.
+ */
+function snapshotOrder(name: string): string {
+  return `${STAMPED_SNAPSHOT_NAME.exec(name)?.[1] ?? ""}\u0000${name}`;
+}
+
 const BACKUP_ERROR_CODES = new Set<BackupErrorCode>([
   "AUTH_FAILED",
   "REMOTE_UNREACHABLE",
@@ -320,6 +333,9 @@ export class BackupService {
           await fs.rm(snapshotPath, { recursive: true, force: true });
           throw error;
         }
+        // Outside the write's own failure handling, which deletes this snapshot: reclaiming
+        // disk must never cost the recovery point this restore is about to depend on.
+        await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
         try {
           const restored = await this.dependencies.payload.restore({
             repositoryRoot: repository.rootDir,
@@ -397,6 +413,32 @@ export class BackupService {
     return saved;
   }
 
+  /**
+   * A snapshot is an unredacted copy of the whole local payload, and one is kept per restore as
+   * its only recovery path, so they would otherwise grow without limit. Older ones are dropped
+   * once this many newer recovery points exist. Only entries older than the snapshot just
+   * written are considered, so a slower concurrent restore's snapshot is not a candidate.
+   */
+  private static readonly RETAINED_SNAPSHOTS = 3;
+
+  private async reapOldSnapshots(cacheRoot: string, keepFrom: string): Promise<void> {
+    const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);
+    const newest = snapshotOrder(path.basename(keepFrom));
+    const older = entries
+      // `isDirectory` is false for a symlink here, so a link is never followed or removed.
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith(SNAPSHOT_NAME_PREFIX))
+      .map((entry) => entry.name)
+      .filter((name) => snapshotOrder(name) < newest)
+      .sort((a, b) => (snapshotOrder(a) < snapshotOrder(b) ? 1 : -1));
+    for (const stale of older.slice(BackupService.RETAINED_SNAPSHOTS - 1)) {
+      // Per entry, because one snapshot nobody can delete must not stop the rest from being
+      // reclaimed, and the restore it belongs to has already succeeded either way.
+      await fs
+        .rm(path.join(cacheRoot, stale), { recursive: true, force: true })
+        .catch(() => undefined);
+    }
+  }
+
   private async createSnapshotPath(): Promise<string> {
     // Mode matches the chmod `ensureCache` applies to this same directory: the snapshot
     // below is unredacted, so the tree above it must not be traversable by other users.
@@ -405,7 +447,10 @@ export class BackupService {
     // wherever it points (a world-readable /tmp, say).
     await assertNotSymlink(cacheRoot);
     await fs.mkdir(cacheRoot, { recursive: true, mode: 0o700 });
-    return fs.mkdtemp(path.join(cacheRoot, "restore-"));
+    // Stamped so `reapOldSnapshots` can order snapshots by name; `mkdtemp` still supplies the
+    // uniqueness, since two restores can start in the same millisecond.
+    const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
+    return fs.mkdtemp(path.join(cacheRoot, `${SNAPSHOT_NAME_PREFIX}${stamp}-`));
   }
 
   private withRepoLock<T>(
