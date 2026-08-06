@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import { BackupRepoCache, BackupNonFastForwardError, BackupOriginMismatchError } from "./gitRepo";
+import { BackupRemoteUnreachableError } from "./credentials";
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -255,6 +256,48 @@ describe("BackupRepoCache", () => {
 
     expect(await pathExists(tombstone)).toBe(false);
     expect(await pathExists(path.join(repo.cachePath, ".git"))).toBe(true);
+  });
+
+  it("rebuilds a cache whose git metadata is corrupt rather than structurally wrong", async () => {
+    // Each of these keeps the entries and types a structural check looks for, so only running
+    // git reveals them. A ref naming nothing even survives `git status` and fails at reset.
+    const corruptions: Array<(gitDir: string) => Promise<void>> = [
+      (gitDir) => fs.writeFile(path.join(gitDir, "HEAD"), "", "utf-8"),
+      (gitDir) => fs.writeFile(path.join(gitDir, "index"), "DIRC", "utf-8"),
+      (gitDir) => fs.writeFile(path.join(gitDir, "HEAD"), "ref: refs/heads/\n", "utf-8"),
+    ];
+    for (const corrupt of corruptions) {
+      const seed = createRepo();
+      await seed.materialize("mux");
+      await writeManagedFile(seed, "AGENTS.md", "backed up\n");
+      if ((await seed.stageAndCommit("mux", "Back up settings")) !== null) await seed.push();
+      await corrupt(path.join(seed.cachePath, ".git"));
+
+      const reopened = createRepo();
+      expect(await reopened.materialize("mux")).not.toBeNull();
+      expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
+        "backed up\n"
+      );
+    }
+  });
+
+  it("keeps a healthy cache when the remote is unreachable", async () => {
+    const repo = createRepo();
+    await repo.materialize("mux");
+    // Identifies this exact clone: a discard would replace the cache with a fresh one, and the
+    // rebuilt `.git` alone cannot tell the two apart.
+    const clonedAt = path.join(repo.cachePath, ".git", "mux-clone-marker");
+    await fs.writeFile(clonedAt, "original\n", "utf-8");
+    const unreachable = new BackupRemoteUnreachableError(new Error("Could not resolve host"));
+    const spy = spyOn(repo, "fetch").mockImplementation(() => Promise.reject(unreachable));
+
+    const caught = await repo.materialize("mux").catch((error: unknown) => error);
+    spy.mockRestore();
+
+    // Rebuilding here would discard the cache and then fail to clone it back, so an outage would
+    // cost the whole local copy.
+    expect(caught).toBe(unreachable);
+    expect(await pathExists(clonedAt)).toBe(true);
   });
 
   it("refuses a cache path holding content it did not create", async () => {

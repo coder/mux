@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import {
+  BackupAuthFailedError,
+  BackupRemoteUnreachableError,
   GIT_SCOPE_ENV_UNSET,
   runGitWithCredentialLadder,
   type BackupCredential,
@@ -901,6 +903,37 @@ export class BackupRepoCache {
     await this.localGit(["update-ref", "-d", ref]);
     await this.localGit(["read-tree", "--empty"]);
     await this.localGit(["clean", "-fdx"]);
+  }
+
+  /**
+   * Corruption is unbounded. An empty `HEAD`, a truncated index, or a ref naming nothing all keep
+   * the shape a structural check looks for and still fail later commands, so no predicate can
+   * enumerate them. Any failure against an already-checked cache therefore rebuilds it once.
+   *
+   * The retry starts after `ensureCache`, so a refusal protecting foreign or tampered content is
+   * never retried into a delete. Recognized remote and credential failures are rethrown instead,
+   * so an outage cannot throw away a healthy cache. A rebuild only ever costs a fresh clone,
+   * because every prepare already resets the cache to the remote.
+   */
+  async materialize(managedPath: string): Promise<string | null> {
+    await this.ensureCache();
+    try {
+      return await this.materializeFromRemote(managedPath);
+    } catch (error) {
+      if (error instanceof BackupRemoteUnreachableError || error instanceof BackupAuthFailedError) {
+        throw error;
+      }
+      await this.discardCache();
+      await this.ensureCache();
+      return await this.materializeFromRemote(managedPath);
+    }
+  }
+
+  private async materializeFromRemote(managedPath: string): Promise<string | null> {
+    await this.fetch();
+    const remoteCommit = await this.resetHardToRemote();
+    await this.cleanManagedPath(managedPath);
+    return remoteCommit;
   }
 
   async cleanManagedPath(managedPath: string): Promise<void> {
