@@ -40,6 +40,7 @@ import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceExecutionPath,
+  resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
@@ -1552,8 +1553,17 @@ export class AIService extends EventEmitter {
       recordStartupPhaseTiming("loadWorkspaceMcpOverridesMs", loadWorkspaceMcpOverridesStartedAt);
 
       // Agent Plugins: discovery follows the active checkout and is disabled
-      // for workspaces that exec off-host (SSH/Docker/devcontainer).
-      const agentPluginsMcpContext = resolveAgentPluginsMcpContext(metadata, workspacePath);
+      // for workspaces that exec off-host (SSH/Docker/devcontainer). Scan the
+      // CHECKOUT ROOT, not `workspacePath`: for subProjectPath workspaces the
+      // execution path includes the subdirectory, which would miss checkout-
+      // level plugin containers (and diverge from the oRPC listing path, which
+      // also uses resolveWorkspaceRootPath).
+      const agentPluginsMcpContext = singleProjectContext
+        ? resolveAgentPluginsMcpContext(
+            metadata,
+            resolveWorkspaceRootPath(metadataWithPath, runtime)
+          )
+        : null;
 
       // Fetch MCP server config for system prompt (before building message).
       const listMcpServersStartedAt = Date.now();

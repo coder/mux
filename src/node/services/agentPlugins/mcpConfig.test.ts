@@ -296,7 +296,7 @@ describe("loadPluginMcpServers", () => {
     expect(cwdOf("dataSub")).toBe(path.join(dataPath, "nested"));
   });
 
-  test("rejects invalid cwd forms and post-resolution escapes", async () => {
+  test("rejects invalid cwd forms, post-resolution escapes, and missing plugin-root cwds", async () => {
     using tmp = new DisposableTempDir("plugin-mcp");
     const cases: Array<{ cwd: string; messagePart: string }> = [
       { cwd: "sub", messagePart: "'cwd' must be" },
@@ -306,6 +306,10 @@ describe("loadPluginMcpServers", () => {
       { cwd: "./sub/../../up", messagePart: "escapes" },
       { cwd: "${PLUGIN_ROOT}/../up", messagePart: "escapes" },
       { cwd: "${PLUGIN_DATA}/..", messagePart: "escapes" },
+      // Plugin-root cwds are shipped content: launch only creates PLUGIN_DATA
+      // dirs and exec() rejects a missing cwd, so these entries are invalid.
+      { cwd: "./missing", messagePart: "does not exist" },
+      { cwd: "${PLUGIN_ROOT}/missing", messagePart: "does not exist" },
     ];
     for (const [index, testCase] of cases.entries()) {
       const plugin = await makePlugin(

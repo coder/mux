@@ -238,13 +238,33 @@ async function normalizeStdioEntry(
   let resolvedCwd = rootPath;
   if (cwd !== undefined) {
     const expandedCwd = expandPluginPlaceholders(cwd, ctx.vars);
-    const anchor = cwd.startsWith("${PLUGIN_DATA}") ? ctx.dataPath : rootPath;
+    const isDataAnchored = cwd.startsWith("${PLUGIN_DATA}");
+    const anchor = isDataAnchored ? ctx.dataPath : rootPath;
+    const candidate = path.resolve(rootPath, expandedCwd);
+
+    // Lexical pre-check: report `../`-style breakouts as escapes before any
+    // filesystem access (the target may not even exist).
+    const lexicalRelative = path.relative(anchor, candidate);
+    if (lexicalRelative.startsWith("..") || path.isAbsolute(lexicalRelative)) {
+      return { error: `'cwd' escapes its containment root: ${cwd}` };
+    }
+
     try {
-      resolvedCwd = await ensureContainedAllowMissingRoot(
-        anchor,
-        path.resolve(rootPath, expandedCwd)
-      );
+      if (isDataAnchored) {
+        // Data-dir cwds are client-managed writable state that launch creates
+        // on demand, so missing paths are fine here.
+        resolvedCwd = await ensureContainedAllowMissingRoot(anchor, candidate);
+      } else {
+        // Plugin-root cwds refer to shipped plugin content: they must exist,
+        // because launch only creates PLUGIN_DATA directories and exec()
+        // rejects a missing cwd — accepting one yields an enableable server
+        // that can never start.
+        resolvedCwd = await ensurePathContained(anchor, candidate);
+      }
     } catch (error) {
+      if (!isDataAnchored && hasErrorCode(error, "ENOENT")) {
+        return { error: `'cwd' does not exist inside the plugin: ${cwd}` };
+      }
       return { error: `'cwd' escapes its containment root: ${getErrorMessage(error)}` };
     }
   }
