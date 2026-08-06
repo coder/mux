@@ -42,6 +42,7 @@ import {
   resolveWorkspaceExecutionPath,
   resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
@@ -1050,6 +1051,29 @@ export class AIService extends EventEmitter {
    */
   isAgentPluginsEnabled(): boolean {
     return this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true;
+  }
+
+  /**
+   * Resolve the MuxToolScope a workspace's tools receive, including the host
+   * checkout root that anchors Agent Plugins containers (agent-plugins
+   * experiment). Public so AgentSession's slash-skill snapshot materialization
+   * resolves skills with the same roots/containment as the skill read tool:
+   * for subProjectPath workspaces the execution path is a subdirectory of the
+   * checkout, and default discovery there misses checkout-level plugin
+   * containers. Mirrors streamMessage's hostCheckoutRoot gating.
+   */
+  resolveMuxToolScopeForWorkspace(
+    metadata: WorkspaceMetadata,
+    runtime: Runtime,
+    workspacePath: string
+  ): MuxToolScope {
+    const hostCheckoutRoot =
+      !isMultiProject(metadata) &&
+      metadata.runtimeConfig.type !== "ssh" &&
+      metadata.runtimeConfig.type !== "docker"
+        ? resolveWorkspaceRootPath(metadata, runtime)
+        : null;
+    return resolveMuxToolScope(this.config, metadata, workspacePath, hostCheckoutRoot);
   }
 
   /** Stream a message conversation to the AI model. */

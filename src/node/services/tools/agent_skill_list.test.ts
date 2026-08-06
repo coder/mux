@@ -359,6 +359,49 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("lists checkout-level plugin skills when the workspace executes in a subproject", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-plugins-subproject-home");
+    using checkout = new TestTempDir("test-agent-skill-list-plugins-subproject-checkout");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-plugins-subproject-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        // subProjectPath workspaces execute in a subdirectory of the checkout;
+        // plugin containers live at the checkout level.
+        const subprojectRoot = path.join(checkout.path, "packages", "app");
+        await fs.mkdir(subprojectRoot, { recursive: true });
+        await writePlugin(path.join(checkout.path, ".mux", "plugins"), "checkout-plugin", [
+          { name: "plugin-checkout", description: "from checkout plugin" },
+        ]);
+
+        const tool = createAgentSkillListTool({
+          ...createTestToolConfig(subprojectRoot, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: subprojectRoot,
+              projectStorageAuthority: "host-local",
+              checkoutRoot: checkout.path,
+            },
+          }),
+          experiments: { agentPlugins: true },
+        });
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "plugin-checkout")).toMatchObject({
+          name: "plugin-checkout",
+          description: "from checkout plugin",
+          scope: "project",
+        });
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");

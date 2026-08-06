@@ -266,15 +266,20 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
 
         if (includeAgentPlugins) {
           // agent-plugins experiment: expand plugin containers into per-plugin skills/ roots.
+          // Containers anchor at the CHECKOUT root (matching buildProjectLocalRoots):
+          // for subProjectPath workspaces `projectRoot` is the execution
+          // subdirectory, but plugins live at the checkout level.
+          const pluginAnchor =
+            muxScope.type === "project" ? (muxScope.checkoutRoot ?? muxScope.projectRoot) : null;
           const pluginContainers = [
-            ...(muxScope.type === "project"
+            ...(pluginAnchor != null
               ? [
                   {
-                    path: path.join(muxScope.projectRoot, ".mux", "plugins"),
+                    path: path.join(pluginAnchor, ".mux", "plugins"),
                     scope: "project" as const,
                   },
                   {
-                    path: path.join(muxScope.projectRoot, ".agents", "plugins"),
+                    path: path.join(pluginAnchor, ".agents", "plugins"),
                     scope: "project" as const,
                   },
                 ]
@@ -288,10 +293,10 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
               continue;
             }
             // Project plugin roots keep the repo-symlink posture of other project
-            // roots: the plugin root itself must stay inside the project root.
-            if (plugin.scope === "project" && muxScope.type === "project") {
+            // roots: the plugin root itself must stay inside the checkout root.
+            if (plugin.scope === "project" && pluginAnchor != null) {
               try {
-                await ensurePathContained(muxScope.projectRoot, plugin.rootPath);
+                await ensurePathContained(pluginAnchor, plugin.rootPath);
               } catch {
                 log.warn(
                   `Skipping project plugin '${plugin.name}': plugin root resolves outside the project root`

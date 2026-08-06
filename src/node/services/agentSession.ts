@@ -130,6 +130,7 @@ import {
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import {
   createLoadedSkillSnapshot,
   extractLoadedSkillSnapshotsFromMessages,
@@ -6448,10 +6449,40 @@ export class AgentSession {
         const includeAgentPlugins =
           typeof this.aiService.isAgentPluginsEnabled === "function" &&
           this.aiService.isAgentPluginsEnabled();
-        resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data, {
-          includeClaudeSkills,
-          includeAgentPlugins,
-        });
+        // agent-plugins experiment: resolve host-local project workspaces through
+        // the same storage context as the skill read tool so checkout-level
+        // plugin containers stay reachable — for subProjectPath workspaces the
+        // execution path is a subdirectory of the checkout and default
+        // discovery misses them. disableWorkspaceAgents keeps default
+        // discovery: it anchors at projectPath, which is already the
+        // checkout-level root the UI lists in that mode.
+        const muxScope =
+          !disableWorkspaceAgents &&
+          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
+            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
+            : null;
+        const skillCtx =
+          muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
+            ? resolveSkillStorageContext({
+                runtime,
+                workspacePath: skillDiscoveryPath,
+                muxScope,
+                includeClaudeSkills,
+                includeAgentPlugins,
+              })
+            : null;
+        resolved = await readAgentSkill(
+          skillCtx?.runtime ?? runtime,
+          skillCtx?.workspacePath ?? skillDiscoveryPath,
+          parsedName.data,
+          {
+            ...(skillCtx != null
+              ? { roots: skillCtx.roots, containment: skillCtx.containment }
+              : {}),
+            includeClaudeSkills,
+            includeAgentPlugins,
+          }
+        );
       } catch (error) {
         if (ref.source === "slash") {
           throw error;

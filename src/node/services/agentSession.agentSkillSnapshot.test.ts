@@ -168,6 +168,73 @@ describe("AgentSession.sendMessage (agent skill snapshots)", () => {
     expect(snapshotText).toContain("Project override for init skill.");
   });
 
+  it("resolves checkout-level plugin skills for subproject execution paths (agent-plugins)", async () => {
+    const workspaceId = "ws-test";
+
+    // agent-plugins experiment: the workspace executes in a subdirectory of the
+    // checkout, while the plugin container lives at the checkout level.
+    const checkout = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skill-checkout-"));
+    const subprojectPath = path.join(checkout, "packages", "app");
+    await fs.mkdir(subprojectPath, { recursive: true });
+    const muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "mux-agent-skill-muxhome-"));
+
+    const pluginDir = path.join(checkout, ".mux", "plugins", "demo-plugin");
+    const skillDir = path.join(pluginDir, "skills", "plugin-skill");
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({
+        $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+        name: "demo-plugin",
+        version: "1.0.0",
+        description: "demo",
+      }),
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: plugin-skill\ndescription: Plugin skill\n---\n\nFollow the plugin skill.\n",
+      "utf-8"
+    );
+
+    const { session, appendToHistory, messages } = await createSessionHarness({
+      workspaceId,
+      workspacePath: subprojectPath,
+      aiServiceOverrides: {
+        isAgentPluginsEnabled: () => true,
+        // Mirrors AIService: checkout root anchors plugin containers even though
+        // the execution path is the subproject directory.
+        resolveMuxToolScopeForWorkspace: () => ({
+          type: "project",
+          muxHome,
+          projectRoot: subprojectPath,
+          projectStorageAuthority: "host-local",
+          checkoutRoot: checkout,
+        }),
+      },
+    });
+
+    const result = await session.sendMessage("do X", {
+      model: "anthropic:claude-3-5-sonnet-latest",
+      agentId: "exec",
+      muxMetadata: {
+        type: "agent-skill",
+        rawCommand: "/plugin-skill do X",
+        skillName: "plugin-skill",
+        scope: "project",
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    expect(appendToHistory.mock.calls).toHaveLength(2);
+    const [snapshotMessage] = messages;
+
+    expect(snapshotMessage.metadata?.agentSkillSnapshot?.skillName).toBe("plugin-skill");
+    const snapshotText = snapshotMessage.parts.find((p) => p.type === "text")?.text;
+    expect(snapshotText).toContain("Follow the plugin skill.");
+  });
+
   it("dedupes identical skill snapshots when recently inserted", async () => {
     const workspaceId = "ws-test";
 
