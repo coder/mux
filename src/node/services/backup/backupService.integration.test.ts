@@ -293,25 +293,22 @@ describe("BackupService against a real repository", () => {
     expect(await fs.readdir(outside)).toEqual([]);
   });
 
-  it("leaves no safety snapshot behind when the restore is refused", async () => {
+  it("restores a push whose source had two names for one file", async () => {
     await pushOrThrow();
 
-    // Two backed-up files become one file locally, which the restore cannot write faithfully.
+    // Collection publishes both names, so this push is one the same source must be able to
+    // restore. The write path severs the link, giving each name its own recorded content.
     await fs.rm(path.join(muxRoot, "agents/reviewer.md"));
     await fs.link(path.join(muxRoot, "AGENTS.md"), path.join(muxRoot, "agents/reviewer.md"));
 
-    const refused = await service.restore(settings);
+    const restored = await service.restore(settings);
 
-    expect(refused.success).toBe(false);
-    // A restore that changed nothing must not leave an unredacted copy of local settings, and
-    // every retry would add another.
-    const cacheRoot = path.join(muxRoot, "backup-cache");
-    const snapshots = (await fs.readdir(cacheRoot).catch(() => [])).filter((entry) =>
-      entry.startsWith("restore-")
-    );
-    expect(snapshots).toEqual([]);
+    expect(restored.success).toBe(true);
     expect(await fs.readFile(path.join(muxRoot, "AGENTS.md"), "utf-8")).toBe(
       "global instructions\n"
+    );
+    expect(await fs.readFile(path.join(muxRoot, "agents/reviewer.md"), "utf-8")).toBe(
+      "reviewer agent\n"
     );
   });
 

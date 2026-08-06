@@ -2254,22 +2254,20 @@ export async function planRestoreWrites(
     if (existing !== null && !existing.isFile()) {
       throw new Error(`Cannot restore '${file.path}': a non-regular file already exists there`);
     }
-    // Two claims per entry, because two names reach one file two different ways. Folding the
-    // path catches the pair a case-insensitive or normalizing volume would merge, which no
-    // filesystem here can be asked about because neither name exists yet. An identity catches
-    // the pair that is already one file, which no spelling reveals: hard links. Either way a
-    // write goes through to the same bytes, so the entry written last would decide what both
-    // names hold and neither entry would be restored as the backup recorded it.
-    for (const claim of [
-      collisionKey(destination),
-      existing === null ? null : `${existing.dev}:${existing.ino}`,
-    ]) {
-      if (claim === null) continue;
-      if (claimed.has(claim)) {
-        throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
-      }
-      claimed.add(claim);
+    // Folding the path catches the pair a case-insensitive or normalizing volume would merge,
+    // which no filesystem here can be asked about because neither name exists yet: both entries
+    // would write the same bytes and the last would decide what both names hold.
+    //
+    // Destinations that are already one file (hard links) are not refused. Collection publishes
+    // every such name deliberately, so refusing here made a push this same install could not
+    // then preview or restore. `openSeveredWriteHandle` unlinks a destination whose `nlink`
+    // exceeds one and recreates it, so each entry ends up at its own inode holding exactly what
+    // the backup recorded, which is the same outcome the refusal was protecting.
+    const claim = collisionKey(destination);
+    if (claimed.has(claim)) {
+      throw new Error(`Cannot restore '${file.path}': another entry resolves to the same file`);
     }
+    claimed.add(claim);
     const content = await resolveRestoredContent(root.path, file, payload.manifest.mcpRedactions);
     budget(file.path, content.byteLength);
     writes.push({ path: file.path, content, executable: file.executable === true });

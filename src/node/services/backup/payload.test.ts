@@ -2246,9 +2246,9 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
   });
 
-  it("refuses a restore whose entries are already one local file", async () => {
-    // Hard-linked locally, so a write to either name goes through to the same bytes and the
-    // entry written last would decide what both hold. Neither would be restored as recorded.
+  it("restores entries that are already one local file by severing the link", async () => {
+    // Collection publishes both names of a hard link, so refusing them here would make a push
+    // this same source could never restore. Each entry must land its own recorded content.
     await write(muxRoot, "skills/demo/first.md", "first\n");
     await write(muxRoot, "skills/demo/second.md", "second\n");
     const payload = await createBackupPayload({
@@ -2264,13 +2264,13 @@ describe("backup payload", () => {
       path.join(muxRoot, "skills/demo/second.md")
     );
 
-    const rejected = await rejection(
-      restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) })
-    );
+    await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
 
-    expect((rejected as Error).message).toContain("another entry resolves to the same file");
-    // Refused before the first write, so the local file still holds what it did.
-    expect(await fs.readFile(path.join(muxRoot, "skills/demo/first.md"), "utf-8")).toBe("first\n");
+    const first = path.join(muxRoot, "skills/demo/first.md");
+    const second = path.join(muxRoot, "skills/demo/second.md");
+    expect(await fs.readFile(first, "utf-8")).toBe("first\n");
+    expect(await fs.readFile(second, "utf-8")).toBe("second\n");
+    expect((await fs.stat(first)).ino).not.toBe((await fs.stat(second)).ino);
   });
 
   it("reports a local file the restore writes under another name as restored", async () => {
