@@ -96,6 +96,19 @@ const GIT_IDENTITY_ARGS = [
   "commit.gpgsign=false",
 ] as const;
 
+/**
+ * Refusals to touch content this cache cannot prove it owns. Carrying one type lets
+ * `materialize` rethrow them instead of discarding, so a tampered or foreign path is never
+ * deleted by the rebuild retry. No `code`: these keep the IO_ERROR mapping they had as
+ * plain errors.
+ */
+export class BackupCacheSafetyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BackupCacheSafetyError";
+  }
+}
+
 // `code` is what BackupService.toOperationError maps onto the typed result, so these
 // must carry one or they degrade to IO_ERROR and the UI loses the actionable message.
 export class BackupOriginMismatchError extends Error {
@@ -261,7 +274,7 @@ async function exists(filePath: string): Promise<boolean> {
 export async function assertNotSymlink(target: string): Promise<void> {
   const existing = await fs.lstat(target).catch(() => null);
   if (existing?.isSymbolicLink() === true) {
-    throw new Error(`Refusing to use '${target}': it is a symlink`);
+    throw new BackupCacheSafetyError(`Refusing to use '${target}': it is a symlink`);
   }
 }
 
@@ -278,14 +291,16 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
   const existing = await fs.lstat(gitDir).catch(() => null);
   if (existing === null) return;
   if (existing.isSymbolicLink()) {
-    throw new Error(`Refusing to use '${gitDir}': it is a symlink`);
+    throw new BackupCacheSafetyError(`Refusing to use '${gitDir}': it is a symlink`);
   }
   if (!existing.isDirectory()) {
-    throw new Error(`Refusing to use '${gitDir}': it is not a directory`);
+    throw new BackupCacheSafetyError(`Refusing to use '${gitDir}': it is not a directory`);
   }
   const commonDir = await fs.lstat(path.join(gitDir, "commondir")).catch(() => null);
   if (commonDir !== null) {
-    throw new Error(`Refusing to use '${gitDir}': it redirects to another repository`);
+    throw new BackupCacheSafetyError(
+      `Refusing to use '${gitDir}': it redirects to another repository`
+    );
   }
 }
 
@@ -336,12 +351,12 @@ async function normalizeGitMetadataLinks(dir: string): Promise<void> {
     const entryPath = path.join(dir, entry);
     const metadata = await fs.lstat(entryPath);
     if (metadata.isSymbolicLink()) {
-      throw new Error(`Refusing to use '${entryPath}': it is a symlink`);
+      throw new BackupCacheSafetyError(`Refusing to use '${entryPath}': it is a symlink`);
     }
     if (metadata.isDirectory()) {
       await normalizeGitMetadataLinks(entryPath);
     } else if (!metadata.isFile()) {
-      throw new Error(`Refusing to use '${entryPath}': it is not a regular file`);
+      throw new BackupCacheSafetyError(`Refusing to use '${entryPath}': it is not a regular file`);
     } else if (entry.endsWith(".lock")) {
       await fs.rm(entryPath, { force: true });
     } else if (metadata.nlink > 1) {
@@ -368,7 +383,9 @@ async function severHardLink(
         sourceMetadata.dev !== expectedDevice ||
         sourceMetadata.ino !== expectedInode
       ) {
-        throw new Error(`Refusing to use '${filePath}': it changed while checking hard links`);
+        throw new BackupCacheSafetyError(
+          `Refusing to use '${filePath}': it changed while checking hard links`
+        );
       }
       if (sourceMetadata.nlink <= 1) return;
 
@@ -683,7 +700,9 @@ export class BackupRepoCache {
         // disposable, so it is rebuilt rather than left permanently failing.
         await this.discardCache();
       } else if (!(await isEmptyOrAbsentDirectory(this.cachePath))) {
-        throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
+        throw new BackupCacheSafetyError(
+          `Backup cache path exists but is not a git repository: ${this.cachePath}`
+        );
       }
       // A settings backup often lives in an existing dotfiles repository, and nothing here
       // ever reads a ref other than `origin/<branch>`. Transferring anything else is waste
@@ -733,7 +752,9 @@ export class BackupRepoCache {
     const valuesOf = (key: string) =>
       entries.filter(([entryKey]) => entryKey === key).map(([, value]) => value);
     if (valuesOf("core.worktree").length > 0) {
-      throw new Error(`Refusing to use '${configPath}': core.worktree redirects the working tree`);
+      throw new BackupCacheSafetyError(
+        `Refusing to use '${configPath}': core.worktree redirects the working tree`
+      );
     }
     // `remote.origin.pushurl` overrides the url for pushes only and is multi-valued, so every
     // value is held to the same expectation as the url; absent means pushes use the url.
@@ -906,21 +927,24 @@ export class BackupRepoCache {
   }
 
   /**
-   * Corruption is unbounded. An empty `HEAD`, a truncated index, or a ref naming nothing all keep
-   * the shape a structural check looks for and still fail later commands, so no predicate can
-   * enumerate them. Any failure against an already-checked cache therefore rebuilds it once.
-   *
-   * The retry starts after `ensureCache`, so a refusal protecting foreign or tampered content is
-   * never retried into a delete. Recognized remote and credential failures are rethrown instead,
-   * so an outage cannot throw away a healthy cache. A rebuild only ever costs a fresh clone,
-   * because every prepare already resets the cache to the remote.
+   * Corruption is unbounded: an empty `HEAD`, a truncated index, or a `config` that is a
+   * directory all keep the shape a structural check looks for and still fail a later command,
+   * so any unrecognized failure rebuilds the cache once instead of being enumerated. That only
+   * ever costs a fresh clone, because every prepare already resets the cache to the remote.
+   * Refusals to touch unowned content and recognized remote or credential failures are rethrown,
+   * so neither a foreign path nor a healthy cache is deleted by the retry.
    */
   async materialize(managedPath: string): Promise<string | null> {
-    await this.ensureCache();
     try {
+      await this.ensureCache();
       return await this.materializeFromRemote(managedPath);
     } catch (error) {
-      if (error instanceof BackupRemoteUnreachableError || error instanceof BackupAuthFailedError) {
+      if (
+        error instanceof BackupCacheSafetyError ||
+        error instanceof BackupOriginMismatchError ||
+        error instanceof BackupRemoteUnreachableError ||
+        error instanceof BackupAuthFailedError
+      ) {
         throw error;
       }
       await this.discardCache();
