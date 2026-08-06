@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import type { BackupCredentialKind } from "@/common/orpc/schemas/backup";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
+import { SSH_PROTOCOL_SCHEMES } from "@/constants/git";
 
 const NON_INTERACTIVE_ENV = {
   GIT_TERMINAL_PROMPT: "0",
@@ -158,10 +159,11 @@ function repoHost(repoUrl: string): string | null {
 }
 
 function isSshRepoUrl(repoUrl: string): boolean {
-  return (
-    repoUrl.startsWith("ssh://") ||
-    (!repoUrl.includes("://") && /^(?:[^@]+@)?[^:/]+:/.test(repoUrl))
-  );
+  const schemeEnd = repoUrl.indexOf("://");
+  if (schemeEnd >= 0) {
+    return SSH_PROTOCOL_SCHEMES.has(`${repoUrl.slice(0, schemeEnd).toLowerCase()}:`);
+  }
+  return /^(?:[^@]+@)?[^:/]+:/.test(repoUrl);
 }
 
 async function run(

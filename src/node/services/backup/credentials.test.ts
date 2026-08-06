@@ -70,6 +70,43 @@ printf 'prompt=%s,%s,%s\n' "$GIT_TERMINAL_PROMPT" "$GH_PROMPT_DISABLED" "$GCM_IN
     expect(log).toContain("prompt=0,1,never");
   });
 
+  it("picks the ssh rung for git's ssh alias schemes even when gh is authenticated", async () => {
+    if (process.platform === "win32") return;
+    // An authenticated gh makes the gh rung available, so a remote misread as non-SSH would
+    // take it and lose BatchMode, leaving ssh free to block on a host-key prompt.
+    await writeExecutable(path.join(binDir, "gh"), "#!/bin/sh\nexit 0\n");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "config" ]; then',
+        "  exit 1",
+        "fi",
+        `printf '%s\\n' "$@" > "$GIT_LOG"`,
+        `printf 'ssh=%s\\n' "$GIT_SSH_COMMAND" >> "$GIT_LOG"`,
+        "",
+      ].join("\n")
+    );
+
+    for (const repoUrl of [
+      "git+ssh://git@github.com/example/repo.git",
+      "ssh+git://git@github.com/example/repo.git",
+      "GIT+SSH://git@github.com/example/repo.git",
+    ]) {
+      const result = await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", repoUrl], {
+          repoUrl,
+          env: { GIT_LOG: logPath, GIT_SSH_COMMAND: "ssh" },
+        })
+      );
+
+      expect(result.credential).toBe("ssh");
+      const log = await fs.readFile(logPath, "utf-8");
+      expect(log).toContain("ssh=ssh -o BatchMode=yes");
+      expect(log).not.toContain("credential.helper");
+    }
+  });
+
   it("strips ambient GitHub token variables from the gh rung", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(
