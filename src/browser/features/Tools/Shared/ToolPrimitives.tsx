@@ -288,6 +288,9 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   // Activity (ECG line) rather than HeartPulse: it matches the scanning pulse-trace
   // motif inside the HeartbeatToolCall card. The config menu uses HeartPulse.
   heartbeat: Activity,
+  // Sparkles matches the icon the Timeline tab feed renders on agent.event rows, which is
+  // exactly where a timeline_event call lands.
+  timeline_event: Sparkles,
 };
 
 export const ToolIcon: React.FC<ToolIconProps> = ({ toolName, emoji, emojiSpin, className }) => {

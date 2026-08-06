@@ -3016,6 +3016,19 @@ export const HeartbeatToolResultSchema = z.union([
   }),
 ]);
 
+// `recorded: false` means TimelineService throttled the note (duplicate description or too
+// many agent events in a short window) and nothing was added to the timeline.
+export const TimelineEventToolResultSchema = z.union([
+  z.object({
+    success: z.literal(true),
+    recorded: z.boolean(),
+  }),
+  z.object({
+    success: z.literal(false),
+    error: z.string(),
+  }),
+]);
+
 export const MemoryToolResultSchema = z.union([
   z.object({
     success: z.literal(true),

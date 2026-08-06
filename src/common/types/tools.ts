@@ -32,6 +32,7 @@ import type {
   TaskListToolResultSchema,
   TaskTerminateToolResultSchema,
   TaskWorkspaceLifecycleToolResultSchema,
+  TimelineEventToolResultSchema,
   TOOL_DEFINITIONS,
   WebFetchToolResultSchema,
   WorkflowRunToolResultSchema,
@@ -137,6 +138,10 @@ export type FileReadToolResult = z.infer<typeof FileReadToolResultSchema>;
 // Heartbeat tool types, derived from schema (avoid drift)
 export type HeartbeatToolArgs = z.infer<typeof TOOL_DEFINITIONS.heartbeat.schema>;
 export type HeartbeatToolResult = z.infer<typeof HeartbeatToolResultSchema>;
+
+// Timeline-event tool types, derived from schema (avoid drift)
+export type TimelineEventToolArgs = z.infer<typeof TOOL_DEFINITIONS.timeline_event.schema>;
+export type TimelineEventToolResult = z.infer<typeof TimelineEventToolResultSchema>;
 
 // Memory tool types, derived from schema (avoid drift)
 export type MemoryToolArgs = z.infer<typeof TOOL_DEFINITIONS.memory.schema>;

@@ -49,6 +49,7 @@ import { WorkspaceLifecycleToolCall } from "../WorkspaceLifecycleToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { HeartbeatToolCall } from "../HeartbeatToolCall";
+import { TimelineEventToolCall } from "../TimelineEventToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { CompleteGoalToolCall } from "../CompleteGoalToolCall";
 
@@ -227,6 +228,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     schema: TOOL_DEFINITIONS.complete_goal.schema,
   },
   heartbeat: { component: HeartbeatToolCall, schema: TOOL_DEFINITIONS.heartbeat.schema },
+  timeline_event: {
+    component: TimelineEventToolCall,
+    schema: TOOL_DEFINITIONS.timeline_event.schema,
+  },
   review_pane_update: {
     component: ReviewPaneUpdateToolCall,
     schema: TOOL_DEFINITIONS.review_pane_update.schema,

@@ -29,6 +29,8 @@ import type {
 
 import {
   TIMELINE_CATEGORIES,
+  formatTimelineTime,
+  getTimelineDayLabel,
   getTimelineEventCategories,
   getTimelineEventKind,
   getTimelineEventTitle,
@@ -89,17 +91,6 @@ const FILTERS: Array<{ value: TimelineFilter; label: string }> = [
   })),
 ];
 
-const timeFormatter = new Intl.DateTimeFormat(undefined, {
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-const dayFormatter = new Intl.DateTimeFormat(undefined, {
-  month: "short",
-  day: "numeric",
-  year: "numeric",
-});
-
 function isTimelineFilter(value: string): value is TimelineFilter {
   return value === "all" || TIMELINE_CATEGORIES.some((category) => category === value);
 }
@@ -107,18 +98,6 @@ function isTimelineFilter(value: string): value is TimelineFilter {
 function getDayKey(timestamp: number): string {
   const date = new Date(timestamp);
   return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-}
-
-function getDayLabel(timestamp: number): string {
-  const date = new Date(timestamp);
-  const today = new Date();
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-  const dayOffset = Math.round((startOfToday - startOfDate) / 86_400_000);
-
-  if (dayOffset === 0) return "Today";
-  if (dayOffset === 1) return "Yesterday";
-  return dayFormatter.format(date);
 }
 
 function groupEventsByDay(events: TimelineEvent[]): DayGroup[] {
@@ -129,7 +108,7 @@ function groupEventsByDay(events: TimelineEvent[]): DayGroup[] {
     if (existing) {
       existing.events.push(event);
     } else {
-      groups.set(key, { key, label: getDayLabel(event.ts), events: [event] });
+      groups.set(key, { key, label: getTimelineDayLabel(event.ts), events: [event] });
     }
   }
   return Array.from(groups.values());
@@ -218,7 +197,7 @@ function TimelineRuleRow(props: {
         dateTime={new Date(props.event.ts).toISOString()}
         className="text-muted counter-nums shrink-0 text-[10px]"
       >
-        {timeFormatter.format(props.event.ts)}
+        {formatTimelineTime(props.event.ts)}
       </time>
     </>
   ) : (
@@ -314,7 +293,7 @@ function TimelineEventRow(props: {
         dateTime={new Date(props.event.ts).toISOString()}
         className="text-muted counter-nums shrink-0 pt-0.5 text-[10px]"
       >
-        {timeFormatter.format(props.event.ts)}
+        {formatTimelineTime(props.event.ts)}
       </time>
     </button>
   );
@@ -580,7 +559,7 @@ function TimelinePreviewCard(props: {
             dateTime={new Date(props.event.ts).toISOString()}
             className="text-muted counter-nums shrink-0 text-[10px]"
           >
-            {timeFormatter.format(props.event.ts)}
+            {formatTimelineTime(props.event.ts)}
           </time>
         </div>
         {eventText ? (

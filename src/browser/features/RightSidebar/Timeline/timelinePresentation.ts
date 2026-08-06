@@ -99,6 +99,35 @@ const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
 
 const knownKinds = new Set<string>(TIMELINE_EVENT_KINDS);
 
+const timeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
+
+const dayFormatter = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+/** Row timestamp as the Timeline tab renders it (also used by the transcript card's preview). */
+export function formatTimelineTime(timestamp: number): string {
+  return timeFormatter.format(timestamp);
+}
+
+/** Day-group header label as the Timeline tab renders it. */
+export function getTimelineDayLabel(timestamp: number): string {
+  const date = new Date(timestamp);
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+  const startOfDate = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const dayOffset = Math.round((startOfToday - startOfDate) / 86_400_000);
+
+  if (dayOffset === 0) return "Today";
+  if (dayOffset === 1) return "Yesterday";
+  return dayFormatter.format(date);
+}
+
 export function getTimelinePresentation(kind: string): TimelinePresentation {
   if (knownKinds.has(kind)) {
     return TIMELINE_PRESENTATION[kind as TimelineEventKind];
