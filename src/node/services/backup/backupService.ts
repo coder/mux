@@ -87,21 +87,26 @@ const SNAPSHOT_NAME_PREFIX = "restore-";
  */
 const SNAPSHOT_RELEASED_SUFFIX = ".released";
 
+/** Fixed width so the sequence sorts as text alongside the stamp. */
+const SNAPSHOT_SEQUENCE_DIGITS = 6;
+
 async function releaseSnapshot(snapshotPath: string): Promise<void> {
   await fs
     .writeFile(`${snapshotPath}${SNAPSHOT_RELEASED_SUFFIX}`, "", { mode: 0o600 })
     .catch(() => undefined);
 }
 
-const STAMPED_SNAPSHOT_NAME = /^restore-(\d{4}-\d{2}-\d{2}T[\d-]+Z)-/;
+const STAMPED_SNAPSHOT_NAME = /^restore-(\d{4}-\d{2}-\d{2}T[\d-]+Z)-(?:(\d{6})-)?/;
 
 /**
- * Snapshots are ordered by the stamp in their own name, not by mtime: several restores can land
- * in the same millisecond, and a filesystem timestamp cannot separate them. A name from before
- * the stamp existed sorts oldest, so those are reclaimed first rather than kept forever.
+ * Snapshots are ordered by the stamp and sequence in their own name, never by mtime or by the
+ * random `mkdtemp` suffix: several restores can land in the same millisecond, and neither a
+ * filesystem timestamp nor a random suffix can put those in creation order. A name from before
+ * either part existed sorts oldest, so those are reclaimed first rather than kept forever.
  */
 function snapshotOrder(name: string): string {
-  return `${STAMPED_SNAPSHOT_NAME.exec(name)?.[1] ?? ""}\u0000${name}`;
+  const match = STAMPED_SNAPSHOT_NAME.exec(name);
+  return `${match?.[1] ?? ""}\u0000${match?.[2] ?? ""}\u0000${name}`;
 }
 
 const BACKUP_ERROR_CODES = new Set<BackupErrorCode>([
@@ -193,6 +198,13 @@ export class BackupService {
    * Held only around local payload work, so git and network work stays parallel.
    */
   private readonly localPayload = new MutexMap<string>();
+
+  /**
+   * Orders snapshots the stamp cannot separate. Restores that land in the same millisecond would
+   * otherwise be ranked by `mkdtemp`'s random suffix, which can reap a newer recovery point and
+   * keep an older one.
+   */
+  private snapshotSequence = 0;
 
   constructor(
     private readonly config: Config,
@@ -498,7 +510,8 @@ export class BackupService {
     // Stamped so `reapOldSnapshots` can order snapshots by name; `mkdtemp` still supplies the
     // uniqueness, since two restores can start in the same millisecond.
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
-    return fs.mkdtemp(path.join(cacheRoot, `${SNAPSHOT_NAME_PREFIX}${stamp}-`));
+    const sequence = String(this.snapshotSequence++).padStart(SNAPSHOT_SEQUENCE_DIGITS, "0");
+    return fs.mkdtemp(path.join(cacheRoot, `${SNAPSHOT_NAME_PREFIX}${stamp}-${sequence}-`));
   }
 
   /**
