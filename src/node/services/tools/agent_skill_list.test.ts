@@ -402,6 +402,63 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("lists plugin skills behind symlinks contained in the plugin root, rejects escaping ones", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-plugins-symlink-home");
+    using project = new TestTempDir("test-agent-skill-list-plugins-symlink-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-plugins-symlink-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writePlugin(path.join(project.path, ".mux", "plugins"), "sym-plugin", []);
+        const pluginDir = path.join(project.path, ".mux", "plugins", "sym-plugin");
+        await fs.mkdir(path.join(pluginDir, "skills"), { recursive: true });
+
+        // Contained symlink: skills/<name> -> ../real-skill (inside the plugin root).
+        await writeSkill(path.join(pluginDir, "real-skills"), "linked-skill", {
+          description: "behind a contained symlink",
+        });
+        await fs.symlink(
+          path.join(pluginDir, "real-skills", "linked-skill"),
+          path.join(pluginDir, "skills", "linked-skill")
+        );
+
+        // Escaping symlink: resolves outside the plugin root; must stay hidden.
+        await writeSkill(path.join(project.path, "outside-skills"), "escaping-skill", {
+          description: "outside the plugin root",
+        });
+        await fs.symlink(
+          path.join(project.path, "outside-skills", "escaping-skill"),
+          path.join(pluginDir, "skills", "escaping-skill")
+        );
+
+        const tool = createAgentSkillListTool({
+          ...createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          }),
+          experiments: { agentPlugins: true },
+        });
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "linked-skill")).toMatchObject({
+          name: "linked-skill",
+          description: "behind a contained symlink",
+          scope: "project",
+        });
+        expect(result.skills.find((skill) => skill.name === "escaping-skill")).toBeUndefined();
+      });
+    });
+  });
+
   it("returns only the winning descriptor when project skills shadow global skills", async () => {
     using project = new TestTempDir("test-agent-skill-list-shadow-project");
     using muxHome = new TestTempDir("test-agent-skill-list-shadow-home");

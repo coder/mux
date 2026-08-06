@@ -216,6 +216,12 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           skillsRoot: string;
           containmentRoot: string;
           scope: "global" | "project";
+          /**
+           * Agent Plugins root: per-skill containment anchors at the plugin
+           * root (§4.1), so contained symlinked skill dirs stay listed —
+           * matching stream discovery and agent_skill_read.
+           */
+          isPlugin?: boolean;
         }> = [
           {
             skillsRoot: path.join(muxScope.muxHome, "skills"),
@@ -309,12 +315,13 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
               skillsRoot: plugin.skillsDir,
               containmentRoot: plugin.rootPath,
               scope: plugin.scope,
+              isPlugin: true,
             });
           }
         }
 
         const skills: AgentSkillDescriptor[] = [];
-        for (const { skillsRoot, containmentRoot, scope } of roots) {
+        for (const { skillsRoot, containmentRoot, scope, isPlugin } of roots) {
           let skillsRootReal: string;
           try {
             skillsRootReal = await fsPromises.realpath(skillsRoot);
@@ -337,8 +344,10 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           const directoryEntries = await listSkillDirectories(skillsRootReal);
           for (const entry of directoryEntries) {
             // Project scope: reject symlinked skill directories to avoid resolving
-            // repo-controlled entries to out-of-project locations.
-            if (scope === "project" && entry.isSymbolicLink) {
+            // repo-controlled entries to out-of-project locations. Plugin roots
+            // are exempt: readSkillDescriptor enforces realpath containment at
+            // the plugin root, the same rule stream discovery applies.
+            if (scope === "project" && !isPlugin && entry.isSymbolicLink) {
               log.warn(
                 `Skipping project skill '${entry.name}': skill directory is a symbolic link`
               );

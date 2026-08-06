@@ -268,6 +268,22 @@ describe("loadPluginMcpServers", () => {
     expect(diagnostics[0].message).toContain("must be a file");
   });
 
+  test("rejects bare commands containing whitespace or control characters", async () => {
+    using tmp = new DisposableTempDir("plugin-mcp");
+    for (const [index, command] of ["node --version", " ", "no\tde", "no\nde"].entries()) {
+      const plugin = await makePlugin(
+        tmp.path,
+        `ws-cmd-${index}`,
+        mcpDoc({ srv: { type: "stdio", command } })
+      );
+
+      const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+      expect(servers).toEqual({});
+      expect(diagnostics[0].message).toContain("single executable token");
+    }
+  });
+
   test("rejects entries with reserved env keys (PLUGIN_ROOT / PLUGIN_DATA)", async () => {
     using tmp = new DisposableTempDir("plugin-mcp");
     for (const key of ["PLUGIN_ROOT", "PLUGIN_DATA"]) {

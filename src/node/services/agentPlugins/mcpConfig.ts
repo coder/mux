@@ -92,6 +92,13 @@ function classifyCommandToken(command: string): "bare" | "relative" | null {
   if (command.includes("/") || command.includes("\\")) {
     return null;
   }
+  // Bare names are PATH-searched executable names. A shell fragment like
+  // "node --version" (or control characters) can never resolve — launch
+  // shell-quotes the whole value as one token — so it would otherwise yield
+  // an enableable server that can never start.
+  if (/[\s\p{Cc}]/u.test(command)) {
+    return null;
+  }
   return "bare";
 }
 
