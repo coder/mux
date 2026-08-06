@@ -169,6 +169,28 @@ describe("backup adapters", () => {
     expect(preview.localOnlyFiles).toContain("AGENTS.md");
   });
 
+  it("fails a preview whose restore could not run", async () => {
+    await writeMuxFile("agents/foo.md", "an agent\n");
+    const gitRepo = createBackupGitRepo({ cacheRoot });
+    const payload = createBackupPayloadStore({ config });
+    const prepared = await gitRepo.prepare(settings);
+    await payload.exportTo({ repositoryRoot: prepared.rootDir, managedPath: settings.path });
+
+    // Without the preflight this reads as a plain addition, and the restore the user accepts
+    // then fails on the same unchanged filesystem state.
+    await fs.rm(path.join(muxRoot, "agents/foo.md"));
+    await fs.mkdir(path.join(muxRoot, "agents/foo.md"), { recursive: true });
+
+    const refused = await payload
+      .previewRestore({ repositoryRoot: prepared.rootDir, managedPath: settings.path })
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    expect((refused as Error | null)?.message).toContain("a directory already exists there");
+  });
+
   it("reports drift when the remote moves before an unchanged push", async () => {
     await writeMuxFile("AGENTS.md", "shared state\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });

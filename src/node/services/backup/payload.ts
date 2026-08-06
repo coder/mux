@@ -961,8 +961,8 @@ function replaceJsoncNodeText(text: string, jsonPath: jsonc.JSONPath, valueText:
 /**
  * `McpConfigService.readConfigFile` enumerates `servers` with `Object.entries`, so an array or
  * a string there becomes runnable servers named by index rather than being ignored. A document
- * like that cannot be projected field by field, so an export redacts the whole map and a
- * restore refuses the backup instead of passing a shape the runtime accepts through unexamined.
+ * like that cannot be projected field by field, so both an export and a restore refuse it
+ * instead of passing a shape the runtime accepts through unexamined.
  * A falsy value is not this case: the runtime returns no servers at all for it.
  */
 function isUnsupportedServerMap(value: unknown): boolean {
@@ -1051,7 +1051,16 @@ function redactMcpConfig(content: Buffer): {
   }
 
   const servers = readOwn(root, "servers");
-  if (isUnsupportedServerMap(servers)) redact(["servers"]);
+  // Refused rather than redacted: restore rejects this shape on every machine, including the
+  // one that wrote it, so redacting here would report a successful push for a backup that can
+  // never be restored.
+  if (isUnsupportedServerMap(servers)) {
+    throw new BackupInvalidPayloadError(
+      new Error(
+        "Cannot back up: mcp.jsonc lists servers as something other than an object. Fix the local file, then back up again."
+      )
+    );
+  }
   const serverRecord = readRecord(servers);
   if (!serverRecord) return finish();
 

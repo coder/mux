@@ -518,34 +518,21 @@ describe("backup payload", () => {
     );
   });
 
-  it("redacts a servers map that is not an object, and refuses to restore one", async () => {
+  it("refuses to export a servers map that is not an object", async () => {
     // `McpConfigService.readConfigFile` calls `Object.entries` on this, so an array element
-    // is a runnable stdio command named `0` rather than a value the runtime ignores.
-    await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: ["npx tool --token hunter2"] }));
+    // is a runnable stdio command named `0` rather than a value the runtime ignores. Restore
+    // rejects the shape on every machine, so redacting it here would report a successful
+    // backup that can never be restored.
+    for (const servers of [true, 1, "invalid", ["npx tool --token hunter2"]] as const) {
+      await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers }));
 
-    const payload = await createBackupPayload({
-      muxRoot,
-      muxVersion: "1.2.3",
-      sourceLabel: "test-host",
-    });
-    expect(payloadFileText(payload, "mcp.jsonc")).not.toContain("hunter2");
-    expect(payload.redactions).toEqual(["servers"]);
+      const refused = await rejection(
+        createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+      );
 
-    const tampered: typeof payload = {
-      ...payload,
-      files: payload.files.map((file) =>
-        file.path === "mcp.jsonc"
-          ? {
-              ...file,
-              content: Buffer.from(JSON.stringify({ servers: ["npx malicious"] }), "utf-8"),
-            }
-          : file
-      ),
-    };
-    const refused = await rejection(restoreBackupPayload({ muxRoot, payload: tampered }));
-    expect((refused as { code?: string }).code).toBe("INVALID_BACKUP");
-    // The refusal has to come before any write, or the command reaches disk anyway.
-    expect(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8")).not.toContain("malicious");
+      expect((refused as { code?: string }).code).toBe("INVALID_BACKUP");
+      expect((refused as Error).message).toContain("mcp.jsonc lists servers");
+    }
   });
 
   it("reports a corrupt backup as an invalid backup rather than an IO failure", async () => {

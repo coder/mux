@@ -203,6 +203,10 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       }
 
       const payload = await readBackupPayload(sourceDir);
+      // The preflight restore itself runs, so a destination this payload cannot be written to
+      // fails here instead of after the user accepts a plan that cannot execute. Recomputed
+      // rather than carried over to the restore, for the same reason the approvals are.
+      await planRestoreWrites(muxRoot, payload);
       const restoredPaths = new Set(
         payload.files.filter((file) => file.path !== "preferences.json").map((file) => file.path)
       );
