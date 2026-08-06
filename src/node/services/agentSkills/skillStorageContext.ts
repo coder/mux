@@ -39,11 +39,14 @@ function buildProjectLocalRoots(
         }
       : {}),
     // agent-plugins experiment: read-only plugin containers at lowest precedence within each scope.
+    // Containers anchor at the CHECKOUT root: for subProjectPath workspaces
+    // `projectRoot` is the execution subdirectory, but plugins live (and are
+    // listed by the UI) at the checkout level.
     ...(options?.includeAgentPlugins
       ? {
           projectPluginRoots: [
-            path.join(muxScope.projectRoot, ".mux", "plugins"),
-            path.join(muxScope.projectRoot, ".agents", "plugins"),
+            path.join(muxScope.checkoutRoot ?? muxScope.projectRoot, ".mux", "plugins"),
+            path.join(muxScope.checkoutRoot ?? muxScope.projectRoot, ".agents", "plugins"),
           ],
           globalPluginRoots: [path.join(muxScope.muxHome, "plugins"), "~/.agents/plugins"],
         }
@@ -140,7 +143,9 @@ export function resolveSkillStorageContext(input: {
     }),
     containment: {
       kind: "local",
-      root: input.muxScope.projectRoot,
+      // The checkout root (when present) contains projectRoot, so this stays a
+      // correct repo boundary while also covering checkout-level plugin roots.
+      root: input.muxScope.checkoutRoot ?? input.muxScope.projectRoot,
     },
   };
 }

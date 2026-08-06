@@ -131,8 +131,12 @@ export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
  * Format: "mcpTestResults:{projectPath}"
  * Stores: Record<serverName, CachedMCPTestResult>
  */
-export function getMCPTestResultsKey(projectPath: string): string {
-  return `mcpTestResults:${projectPath}`;
+export function getMCPTestResultsKey(projectPath: string, workspaceId?: string): string {
+  // Workspace-scoped results (agent-plugins experiment): plugin tool lists
+  // follow each workspace's checkout, so they must not be shared per-project.
+  return workspaceId
+    ? `mcpTestResults:${projectPath}:${workspaceId}`
+    : `mcpTestResults:${projectPath}`;
 }
 
 /**

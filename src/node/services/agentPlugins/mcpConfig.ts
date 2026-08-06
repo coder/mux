@@ -267,6 +267,20 @@ async function normalizeStdioEntry(
       }
       return { error: `'cwd' escapes its containment root: ${getErrorMessage(error)}` };
     }
+
+    // An existing cwd must be a directory: exec() fails with ENOTDIR on files
+    // (and launch's mkdir of a data-dir cwd would fail the same way).
+    try {
+      const cwdStat = await fsPromises.stat(resolvedCwd);
+      if (!cwdStat.isDirectory()) {
+        return { error: `'cwd' must be a directory: ${cwd}` };
+      }
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) {
+        return { error: `'cwd' is not accessible: ${getErrorMessage(error)}` };
+      }
+      // Missing paths only reach here for data-anchored cwds (created at launch).
+    }
   }
 
   return {

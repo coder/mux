@@ -2189,6 +2189,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       muxHome: muxHome.path,
       projectRoot: MULTI_PROJECT_CONFIG_KEY,
       projectStorageAuthority: "host-local",
+      checkoutRoot: MULTI_PROJECT_CONFIG_KEY,
     });
   });
 

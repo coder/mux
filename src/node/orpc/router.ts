@@ -294,10 +294,18 @@ async function resolveAgentDiscoveryContext(
  * otherwise the workspace's own context — worktree-scanning for host
  * workspaces, null for off-host workspaces so plugin servers match what the
  * engine actually offers there.
+ *
+ * SECURITY: the workspace must belong to the request's project. The caller's
+ * `trusted` flag is derived from `projectPath`, so honoring a workspaceId from
+ * a DIFFERENT (untrusted) project would scan that project's checkout under
+ * another project's trust and let mcp.test execute its repo-local stdio
+ * plugins. Mismatches fall back to the projectPath-scoped default, whose
+ * trust and scan root describe the same project.
  */
 async function resolveWorkspaceAgentPluginsMcpContext(
   context: ORPCContext,
-  workspaceId: string | null | undefined
+  workspaceId: string | null | undefined,
+  projectPath: string | null | undefined
 ): Promise<AgentPluginsMcpContext | null | undefined> {
   const trimmed = workspaceId?.trim();
   if (!trimmed) {
@@ -309,6 +317,14 @@ async function resolveWorkspaceAgentPluginsMcpContext(
       return undefined;
     }
     const metadata = metadataResult.data;
+    if (metadata.projectPath !== projectPath?.trim()) {
+      log.debug("Ignoring Agent Plugins workspace context for mismatched project", {
+        workspaceId: trimmed,
+        requestedProjectPath: projectPath,
+        workspaceProjectPath: metadata.projectPath,
+      });
+      return undefined;
+    }
     const runtime = createRuntimeForWorkspace(metadata);
     const workspacePath = resolveWorkspaceRootPath(metadata, runtime);
     return resolveAgentPluginsMcpContext(metadata, workspacePath);
@@ -2816,7 +2832,8 @@ export const router = (authToken?: string) => {
             {
               agentPlugins: await resolveWorkspaceAgentPluginsMcpContext(
                 context,
-                input.workspaceId
+                input.workspaceId,
+                input.projectPath
               ),
             }
           );
@@ -2961,7 +2978,8 @@ export const router = (authToken?: string) => {
 
           const agentPlugins = await resolveWorkspaceAgentPluginsMcpContext(
             context,
-            input.workspaceId
+            input.workspaceId,
+            projectPathProvided ? resolvedProjectPath : undefined
           );
           const configuredTransport = input.name
             ? (

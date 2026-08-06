@@ -377,7 +377,9 @@ export function resolveMuxProjectRootForHostFs(
 function resolveMuxToolScope(
   config: Config,
   metadata: WorkspaceMetadata,
-  workspacePath: string
+  workspacePath: string,
+  /** Host checkout root when known (subProjectPath workspaces execute in a subdirectory). */
+  checkoutRoot?: string | null
 ): MuxToolScope {
   const projectConfig = config.loadConfigOrDefault().projects.get(metadata.projectPath);
   if (
@@ -400,6 +402,7 @@ function resolveMuxToolScope(
     projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
     projectStorageAuthority:
       runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
+    ...(checkoutRoot != null ? { checkoutRoot } : {}),
   };
 }
 
@@ -1552,17 +1555,22 @@ export class AIService extends EventEmitter {
       }
       recordStartupPhaseTiming("loadWorkspaceMcpOverridesMs", loadWorkspaceMcpOverridesStartedAt);
 
+      // Host checkout root for single-project host workspaces. This differs
+      // from `workspacePath` for subProjectPath workspaces, whose execution
+      // path is a subdirectory of the checkout; Agent Plugins containers (MCP
+      // and skills) anchor at the checkout root, matching the oRPC listing
+      // paths (resolveWorkspaceRootPath).
+      const hostCheckoutRoot =
+        singleProjectContext &&
+        metadata.runtimeConfig.type !== "ssh" &&
+        metadata.runtimeConfig.type !== "docker"
+          ? resolveWorkspaceRootPath(metadataWithPath, runtime)
+          : null;
+
       // Agent Plugins: discovery follows the active checkout and is disabled
-      // for workspaces that exec off-host (SSH/Docker/devcontainer). Scan the
-      // CHECKOUT ROOT, not `workspacePath`: for subProjectPath workspaces the
-      // execution path includes the subdirectory, which would miss checkout-
-      // level plugin containers (and diverge from the oRPC listing path, which
-      // also uses resolveWorkspaceRootPath).
-      const agentPluginsMcpContext = singleProjectContext
-        ? resolveAgentPluginsMcpContext(
-            metadata,
-            resolveWorkspaceRootPath(metadataWithPath, runtime)
-          )
+      // for workspaces that exec off-host (SSH/Docker/devcontainer).
+      const agentPluginsMcpContext = hostCheckoutRoot
+        ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
         : null;
 
       // Fetch MCP server config for system prompt (before building message).
@@ -1628,7 +1636,7 @@ export class AIService extends EventEmitter {
         });
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
-      const muxScope = resolveMuxToolScope(this.config, metadata, workspacePath);
+      const muxScope = resolveMuxToolScope(this.config, metadata, workspacePath, hostCheckoutRoot);
 
       const desktopSessionManager = this.desktopSessionManager;
       let desktopCapabilityPromise: ReturnType<DesktopSessionManager["getCapability"]> | undefined;

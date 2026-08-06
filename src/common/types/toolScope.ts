@@ -17,4 +17,11 @@ export type MuxToolScope =
       readonly muxHome: string;
       readonly projectRoot: string;
       readonly projectStorageAuthority: ProjectStorageAuthority;
+      /**
+       * Host checkout root when it differs from `projectRoot` (workspaces with
+       * a `subProjectPath` execute in a subdirectory of the checkout). Agent
+       * Plugins containers live at the checkout root, matching the UI-facing
+       * discovery paths (agent-plugins experiment).
+       */
+      readonly checkoutRoot?: string;
     };

@@ -323,6 +323,42 @@ describe("loadPluginMcpServers", () => {
     }
   });
 
+  test("rejects a cwd that resolves to a file (exec would fail with ENOTDIR)", async () => {
+    using tmp = new DisposableTempDir("plugin-mcp");
+    const plugin = await makePlugin(
+      tmp.path,
+      "cwd-file",
+      mcpDoc({
+        rel: { type: "stdio", command: "x", cwd: "./afile" },
+        rooted: { type: "stdio", command: "x", cwd: "${PLUGIN_ROOT}/afile" },
+      })
+    );
+    await fs.writeFile(path.join(plugin.rootPath, "afile"), "not a dir", "utf8");
+
+    const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+    expect(servers).toEqual({});
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics.every((d) => d.message.includes("must be a directory"))).toBe(true);
+  });
+
+  test("rejects a data-anchored cwd whose existing target is a file", async () => {
+    using tmp = new DisposableTempDir("plugin-mcp");
+    const plugin = await makePlugin(
+      tmp.path,
+      "data-cwd-file",
+      mcpDoc({ srv: { type: "stdio", command: "x", cwd: "${PLUGIN_DATA}/blob" } })
+    );
+    const dataPath = getPluginDataPath(tmp.path, computePluginInstanceId(plugin.rootPath));
+    await fs.mkdir(dataPath, { recursive: true });
+    await fs.writeFile(path.join(dataPath, "blob"), "not a dir", "utf8");
+
+    const { servers, diagnostics } = await loadPluginMcpServers(plugin, { muxHome: tmp.path });
+
+    expect(servers).toEqual({});
+    expect(diagnostics[0].message).toContain("must be a directory");
+  });
+
   test("rejects a cwd that symlink-escapes the plugin root", async () => {
     using tmp = new DisposableTempDir("plugin-mcp");
     const outsideDir = path.join(tmp.path, "outside-dir");

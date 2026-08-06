@@ -40,7 +40,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
   const [error, setError] = useState<string | null>(null);
 
   // Use shared cache for tool test results
-  const { getTools, setResult, reload: reloadCache } = useMCPTestCache(projectPath);
+  const { getTools, setResult, reload: reloadCache } = useMCPTestCache(projectPath, workspaceId);
 
   // Ref so the effect can call reloadCache without depending on its identity.
   // We only want to re-fire the effect when the modal opens (open/api/ids change),
