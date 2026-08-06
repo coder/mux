@@ -2466,6 +2466,54 @@ describe("backup payload", () => {
     expect((rejected as Error).message).toContain("regular file");
   });
 
+  it("refuses an unwritable destination before overwriting earlier entries", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return;
+    await write(muxRoot, "AGENTS.md", "from backup\n");
+    await write(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "unwritable-target");
+    await write(restoreRoot, "AGENTS.md", "local\n");
+    const readOnly = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await write(restoreRoot, "skills/demo/SKILL.md", "local\n");
+    await fs.chmod(readOnly, 0o444);
+
+    try {
+      const rejected = await rejection(restoreBackupPayload({ muxRoot: restoreRoot, payload }));
+      expect((rejected as Error).message).toContain("not writable");
+      expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe("local\n");
+      expect(await fs.readFile(readOnly, "utf-8")).toBe("local\n");
+    } finally {
+      await fs.chmod(readOnly, 0o644);
+    }
+  });
+
+  it("refuses a new entry the nearest existing directory cannot accept", async () => {
+    if (process.platform === "win32" || process.getuid?.() === 0) return;
+    await write(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "unwritable-parent");
+    const skills = path.join(restoreRoot, "skills");
+    await fs.mkdir(skills, { recursive: true });
+    await fs.chmod(skills, 0o555);
+
+    try {
+      const rejected = await rejection(planRestoreWrites(restoreRoot, payload));
+      expect((rejected as Error).message).toContain("not writable");
+    } finally {
+      await fs.chmod(skills, 0o755);
+    }
+  });
+
   it("opens restore destinations nonblocking", async () => {
     if (process.platform === "win32") return;
     await write(muxRoot, "AGENTS.md", "from backup\n");

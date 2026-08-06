@@ -2218,6 +2218,37 @@ interface RestorePlan {
 }
 
 /**
+ * The write opens an existing destination `O_WRONLY` and otherwise creates it along with any
+ * missing parent, so a readable-but-unwritable destination fails there instead of here, once
+ * earlier entries of the same restore are already on disk. Probing the permission the write will
+ * need keeps that refusal in the preflight, where nothing has changed yet.
+ */
+async function assertRestoreDestinationWritable(
+  destination: string,
+  existing: Stats | null,
+  relativePath: string
+): Promise<void> {
+  let probe = destination;
+  let mode = fs.constants.W_OK;
+  if (existing === null) {
+    // The write's mkdir is recursive, so the directory that has to accept the new entry is the
+    // nearest one that already exists, which is not always the immediate parent.
+    mode |= fs.constants.X_OK;
+    probe = path.dirname(destination);
+    while ((await lstatOrNull(probe)) === null) {
+      const parent = path.dirname(probe);
+      if (parent === probe) break;
+      probe = parent;
+    }
+  }
+  try {
+    await fs.access(probe, mode);
+  } catch {
+    throw new Error(`Cannot restore '${relativePath}': the destination is not writable`);
+  }
+}
+
+/**
  * Everything a restore can reject before it writes anything, so a path or a limit that
  * refuses the payload cannot leave a half-restored install behind. `BackupService.restore`
  * runs this ahead of the safety snapshot too: a refused restore changes nothing, so it must
@@ -2254,6 +2285,7 @@ export async function planRestoreWrites(
     if (existing !== null && !existing.isFile()) {
       throw new Error(`Cannot restore '${file.path}': a non-regular file already exists there`);
     }
+    await assertRestoreDestinationWritable(destination, existing, file.path);
     // Folding the path catches the pair a case-insensitive or normalizing volume would merge,
     // which no filesystem here can be asked about because neither name exists yet: both entries
     // would write the same bytes and the last would decide what both names hold.
