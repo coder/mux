@@ -28,6 +28,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git python3 mak
 # Copy package files first for better layer caching
 COPY package.json bun.lock bunfig.toml ./
 
+# Copy dependency patches referenced by package.json patchedDependencies
+# (bun install fails without them).
+COPY patches/ patches/
+
 # Copy postinstall script (needed by bun install)
 COPY scripts/postinstall.sh scripts/
 
