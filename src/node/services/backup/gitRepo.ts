@@ -288,6 +288,18 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
 }
 
 /**
+ * An interrupted create can leave the cache directory behind with no `.git` yet, and git clones
+ * into an empty directory, so one is reused instead of refused. Anything else already at this
+ * path was not put there by this cache, and no branch below may delete it.
+ */
+async function isEmptyOrAbsentDirectory(target: string): Promise<boolean> {
+  const stat = await fs.lstat(target).catch(() => null);
+  if (stat === null) return true;
+  if (!stat.isDirectory()) return false;
+  return (await fs.readdir(target)).length === 0;
+}
+
+/**
  * Git accepts a directory as a repository only with these three entries present and of these
  * types, so a `.git` missing or mistyping any of them cannot serve a single later command.
  * `normalizeGitMetadataLinks` has already rejected symlinks, so `lstat` sees the real entries.
@@ -626,7 +638,7 @@ export class BackupRepoCache {
         // disposable, so it is rebuilt rather than left permanently failing.
         await fs.rm(this.cachePath, { recursive: true, force: true });
         this.baseRemoteCommit = undefined;
-      } else if (await exists(this.cachePath)) {
+      } else if (!(await isEmptyOrAbsentDirectory(this.cachePath))) {
         throw new Error(`Backup cache path exists but is not a git repository: ${this.cachePath}`);
       }
       // A settings backup often lives in an existing dotfiles repository, and nothing here

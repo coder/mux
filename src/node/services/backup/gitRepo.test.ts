@@ -191,6 +191,41 @@ describe("BackupRepoCache", () => {
     }
   });
 
+  it("recovers when only the cache directory itself was created", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    await repo.fetch();
+    await repo.resetHardToRemote();
+    await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
+    const seeded = await repo.stageAndCommit("mux", "Back up settings");
+    if (seeded === null) throw new Error("Expected the seed commit");
+    await repo.push();
+    await fs.rm(repo.cachePath, { recursive: true, force: true });
+    // What a kill between creating the directory and creating `.git` leaves behind.
+    await fs.mkdir(repo.cachePath, { recursive: true });
+
+    const reopened = createRepo();
+    await reopened.ensureCache();
+    await reopened.fetch();
+    await reopened.resetHardToRemote();
+
+    expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
+      "before the interruption\n"
+    );
+  });
+
+  it("refuses a cache path holding content it did not create", async () => {
+    const repo = createRepo();
+    await fs.mkdir(repo.cachePath, { recursive: true });
+    const bystander = path.join(repo.cachePath, "important.txt");
+    await fs.writeFile(bystander, "not mux's\n", "utf-8");
+
+    const rejected = await repo.ensureCache().catch((error: unknown) => error);
+
+    expect((rejected as Error).message).toContain("is not a git repository");
+    expect(await fs.readFile(bystander, "utf-8")).toBe("not mux's\n");
+  });
+
   it("creates a missing backup branch with the remote's SHA-256 object format", async () => {
     const shaOrigin = await createSha256Origin("sha256-new-branch", "existing branch\n");
     const repo = new BackupRepoCache({
