@@ -28,6 +28,7 @@ Mux is a desktop & browser application for parallel agentic development. It enab
 - **Multi-model** (`sonnet-4-*`, `grok-*`, `gpt-5-*`, `opus-4-*`)
   - Ollama supported for local LLMs ([docs](https://mux.coder.com/config/models#ollama-local))
   - OpenRouter supported for long-tail of LLMs ([docs](https://mux.coder.com/config/models#openrouter-cloud))
+  - OrcaRouter supported as an OpenAI-compatible gateway ([docs](https://mux.coder.com/config/providers#orcarouter))
 - **VS Code Extension**: Jump into Mux workspaces directly from VS Code ([docs](https://mux.coder.com/integrations/vscode-extension))
 - Supporting UI and keybinds for efficiently managing a suite of agents
 - Rich markdown outputs (mermaid diagrams, LaTeX, etc.)

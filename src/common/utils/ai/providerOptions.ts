@@ -94,6 +94,7 @@ type ProviderOptions =
   | { moonshotai: MoonshotAIProviderOptions }
   | { xai: XaiBuiltProviderOptions }
   | { "github-copilot": OpenAICompatibleGatewayProviderOptions }
+  | { orcarouter: OpenAICompatibleGatewayProviderOptions }
   | Record<string, never>; // Empty object for unsupported providers
 
 const OPENAI_REASONING_SUMMARY_UNSUPPORTED_MODELS = new Set<string>([
@@ -601,32 +602,66 @@ export function buildProviderOptions(
     // explicit-none support, so degrade GPT-5.6 "max" to xhigh (the pre-5.6 top
     // effort) and "none" back to omission instead of risking a rejection.
     const nativeReasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
-    const reasoningEffort =
+    const copilotReasoningEffort =
       nativeReasoningEffort === "max"
         ? "xhigh"
         : nativeReasoningEffort === "none"
           ? undefined
           : nativeReasoningEffort;
-    if (!reasoningEffort) {
-      log.debug(
-        "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",
-        {
+
+    if (providerOptionsNamespaceKey === "github-copilot") {
+      if (!copilotReasoningEffort) {
+        log.debug(
+          "buildProviderOptions: OpenAI-compatible gateway (thinking off, no provider options)",
+          {
+            formatProvider,
+            origin,
+            routeProvider,
+            providerOptionsNamespaceKey,
+          }
+        );
+        return {};
+      }
+
+      const options = {
+        "github-copilot": {
+          reasoningEffort: copilotReasoningEffort,
+        },
+      } satisfies { "github-copilot": OpenAICompatibleGatewayProviderOptions };
+      log.debug("buildProviderOptions: Returning OpenAI-compatible gateway options", options);
+      return options;
+    }
+
+    if (providerOptionsNamespaceKey === "orcarouter") {
+      // OrcaRouter is a transparent OpenAI-compatible gateway: send the native
+      // OpenAI reasoning effort (including "max" and explicit "none") so
+      // OpenAI-origin models routed through it keep Mux's exact thinking level.
+      if (!nativeReasoningEffort) {
+        log.debug("buildProviderOptions: OrcaRouter (thinking off, no provider options)", {
           formatProvider,
           origin,
           routeProvider,
           providerOptionsNamespaceKey,
-        }
-      );
-      return {};
+        });
+        return {};
+      }
+
+      const options = {
+        orcarouter: {
+          reasoningEffort: nativeReasoningEffort,
+        },
+      } satisfies { orcarouter: OpenAICompatibleGatewayProviderOptions };
+      log.debug("buildProviderOptions: Returning OrcaRouter options", options);
+      return options;
     }
 
-    const options = {
-      "github-copilot": {
-        reasoningEffort,
-      },
-    } satisfies { "github-copilot": OpenAICompatibleGatewayProviderOptions };
-    log.debug("buildProviderOptions: Returning OpenAI-compatible gateway options", options);
-    return options;
+    log.debug("buildProviderOptions: Unsupported OpenAI-compatible gateway", {
+      formatProvider,
+      origin,
+      routeProvider,
+      providerOptionsNamespaceKey,
+    });
+    return {};
   }
 
   // No provider-specific options for unsupported providers

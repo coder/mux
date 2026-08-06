@@ -5,6 +5,7 @@ import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import GoogleIcon from "@/browser/assets/icons/google.svg?react";
 import XAIIcon from "@/browser/assets/icons/xai.svg?react";
 import OpenRouterIcon from "@/browser/assets/icons/openrouter.svg?react";
+import OrcaRouterIcon from "@/browser/assets/icons/orcarouter.svg?react";
 import OllamaIcon from "@/browser/assets/icons/ollama.svg?react";
 import DeepSeekIcon from "@/browser/assets/icons/deepseek.svg?react";
 import MoonshotAIIcon from "@/browser/assets/icons/moonshotai.svg?react";
@@ -30,6 +31,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   deepseek: DeepSeekIcon,
   moonshotai: MoonshotAIIcon,
   openrouter: OpenRouterIcon,
+  orcarouter: OrcaRouterIcon,
   bedrock: AWSIcon,
   ollama: OllamaIcon,
   "mux-gateway": GatewayIcon,

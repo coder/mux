@@ -1357,6 +1357,47 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("honors OrcaRouter gateway routes end-to-end", async () => {
+    await withTempConfig(async (config, factory) => {
+      config.saveProvidersConfig({
+        openai: {
+          apiKey: "sk-test",
+          enabled: false,
+        },
+        orcarouter: {
+          apiKey: "sk-orca-test",
+        },
+      });
+
+      await saveRoutePriority(config, ["orcarouter", "direct"]);
+
+      const resolved = factory.resolveGatewayModelString("openai:gpt-5", "openai:gpt-5");
+      expect(resolved).toBe("orcarouter:openai/gpt-5");
+
+      const created = await factory.createModel("openai:gpt-5");
+      expect(created.success).toBe(true);
+
+      const result = await factory.resolveAndCreateModel("openai:gpt-5", "off");
+      expectSuccessfulRouteResult(result, {
+        effectiveModelString: "orcarouter:openai/gpt-5",
+        routeProvider: "orcarouter",
+        routedThroughGateway: false,
+      });
+    });
+  });
+
+  it("requires an API key for the OrcaRouter provider", async () => {
+    await withTempConfig(async (config, factory) => {
+      await saveRoutePriority(config, ["orcarouter", "direct"]);
+
+      const result = await factory.createModel("openai:gpt-5");
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("api_key_not_found");
+      }
+    });
+  });
+
   it("routes Anthropic models through Bedrock when Bedrock is configured and prioritized", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

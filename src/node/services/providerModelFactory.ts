@@ -8,6 +8,7 @@ import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
 import {
+  ORCAROUTER_BASE_URL,
   PROVIDER_REGISTRY,
   PROVIDER_DEFINITIONS,
   type ProviderName,
@@ -1658,6 +1659,38 @@ export class ProviderModelFactory {
           headers,
           fetch: providerFetch,
           extraBody,
+        });
+        return Ok(provider(modelId));
+      }
+
+      // Handle OrcaRouter provider (OpenAI-compatible gateway)
+      if (providerName === "orcarouter") {
+        // Resolve credentials from config + env (single source of truth)
+        const creds = resolveProviderCredentials("orcarouter", providerConfig);
+        if (!creds.isConfigured) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
+        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const baseFetch = getProviderFetch(providerConfig);
+
+        // Pass only explicit OpenAI-compatible SDK settings so Mux-local config
+        // fields (enabled, defaultModel, models, apiKeyFile) never reach the SDK.
+        // headers already includes app attribution (HTTP-Referer / X-Title).
+        const { headers } = providerConfig;
+
+        const providerFetch = baseFetch;
+        const provider = createOpenAICompatible({
+          name: "orcarouter",
+          apiKey: resolvedApiKey,
+          baseURL: creds.baseUrl ?? ORCAROUTER_BASE_URL,
+          headers,
+          fetch: providerFetch,
+          // Request usage data in streaming responses so Mux can show token/cost
+          // accounting for gateway-routed models.
+          includeUsage: true,
         });
         return Ok(provider(modelId));
       }
