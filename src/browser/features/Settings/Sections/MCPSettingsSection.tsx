@@ -1163,6 +1163,12 @@ export const MCPSettingsSection: React.FC = () => {
                   const isEditing = editing?.name === name;
                   const isEnabled = !entry.disabled;
                   const remoteEntry = entry.transport === "stdio" ? null : entry;
+                  // Agent Plugin servers are read-only config entries: no
+                  // global enable/edit/remove; enable them per workspace.
+                  const isPluginEntry = entry.plugin !== undefined;
+                  const displayName = entry.plugin
+                    ? `${entry.plugin.pluginName}/${entry.plugin.serverName}`
+                    : name;
                   return (
                     <div
                       key={name}
@@ -1174,20 +1180,32 @@ export const MCPSettingsSection: React.FC = () => {
                             <div className="mt-0.5 shrink-0">
                               <Switch
                                 checked={isEnabled}
+                                disabled={isPluginEntry}
                                 onCheckedChange={(checked) =>
                                   void handleToggleEnabled(name, checked)
                                 }
-                                aria-label={`Toggle ${name} enabled`}
+                                aria-label={`Toggle ${displayName} enabled`}
                               />
                             </div>
                           </TooltipTrigger>
                           <TooltipContent side="top">
-                            {isEnabled ? "Disable server" : "Enable server"}
+                            {isPluginEntry
+                              ? "Agent Plugin servers are enabled per workspace (Workspace MCP)"
+                              : isEnabled
+                                ? "Disable server"
+                                : "Enable server"}
                           </TooltipContent>
                         </Tooltip>
                         <div className={cn("min-w-0", !isEnabled && "opacity-50")}>
                           <div className="flex items-center gap-2">
-                            <span className="text-foreground text-sm font-medium">{name}</span>
+                            <span className="text-foreground text-sm font-medium">
+                              {displayName}
+                            </span>
+                            {isPluginEntry && (
+                              <span className="text-muted bg-background rounded px-1.5 py-0.5 text-xs">
+                                plugin
+                              </span>
+                            )}
                             {cached?.result.success && !isEditing && isEnabled && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1311,39 +1329,44 @@ export const MCPSettingsSection: React.FC = () => {
                                 </TooltipTrigger>
                                 <TooltipContent side="top">Test connection</TooltipContent>
                               </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="inline-flex">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => handleStartEdit(name, entry)}
-                                      className="text-muted hover:text-accent h-7 w-7"
-                                      aria-label="Edit server"
-                                    >
-                                      <Pencil className="h-4 w-4" />
-                                    </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">Edit server</TooltipContent>
-                              </Tooltip>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="inline-flex">
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      onClick={() => void handleRemove(name)}
-                                      disabled={loading}
-                                      className="text-muted hover:text-error h-7 w-7"
-                                      aria-label="Remove server"
-                                    >
-                                      <Trash2 className="h-4 w-4" />
-                                    </Button>
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent side="top">Remove server</TooltipContent>
-                              </Tooltip>
+                              {/* Plugin entries are read-only: no edit/remove. */}
+                              {!isPluginEntry && (
+                                <>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => handleStartEdit(name, entry)}
+                                          className="text-muted hover:text-accent h-7 w-7"
+                                          aria-label="Edit server"
+                                        >
+                                          <Pencil className="h-4 w-4" />
+                                        </Button>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">Edit server</TooltipContent>
+                                  </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex">
+                                        <Button
+                                          variant="ghost"
+                                          size="icon"
+                                          onClick={() => void handleRemove(name)}
+                                          disabled={loading}
+                                          className="text-muted hover:text-error h-7 w-7"
+                                          aria-label="Remove server"
+                                        >
+                                          <Trash2 className="h-4 w-4" />
+                                        </Button>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="top">Remove server</TooltipContent>
+                                  </Tooltip>
+                                </>
+                              )}
                             </>
                           )}
                         </div>

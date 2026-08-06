@@ -12,19 +12,28 @@ import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
+import type { AgentPluginsMcpProvider } from "@/node/services/agentPlugins/mcpConfig";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
 
 export class MCPConfigService {
   private readonly config: Config;
+  /**
+   * Agent Plugins (agent-plugins experiment): read-only extra server source
+   * merged into listings. Plugin servers are never persisted — every mutation
+   * below operates on the on-disk global config only, so `plugin:*` keys
+   * naturally fail with "not found".
+   */
+  private readonly agentPluginsMcpProvider: AgentPluginsMcpProvider | null;
 
-  constructor(config: Config) {
+  constructor(config: Config, options?: { agentPluginsMcpProvider?: AgentPluginsMcpProvider }) {
     assert(
       typeof config.rootDir === "string" && config.rootDir.trim().length > 0,
       "MCPConfigService: config.rootDir must be a non-empty string"
     );
 
     this.config = config;
+    this.agentPluginsMcpProvider = options?.agentPluginsMcpProvider ?? null;
   }
 
   private getGlobalConfigPath(): string {
@@ -219,23 +228,36 @@ export class MCPConfigService {
    * - When no projectPath is provided: returns global servers from <muxHome>/mcp.jsonc
    * - When projectPath is provided and trusted=false: returns only global servers
    * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
+   * - Agent Plugins servers (when the experiment provider is wired) are merged
+   *   at the lowest precedence: user config always wins on key collisions.
    */
   async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
+    let pluginServers: Record<string, MCPServerInfo> = {};
+    if (this.agentPluginsMcpProvider) {
+      try {
+        pluginServers = await this.agentPluginsMcpProvider({ projectPath, trusted });
+      } catch (error) {
+        // Plugin discovery failures must never break MCP config listing.
+        log.warn("[MCP] Agent Plugins server discovery failed", { error });
+      }
+    }
+
     const globalCfg = await this.getGlobalConfig();
 
     if (!projectPath) {
-      return globalCfg.servers;
+      return { ...pluginServers, ...globalCfg.servers };
     }
 
     if (!trusted) {
       log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return globalCfg.servers;
+      return { ...pluginServers, ...globalCfg.servers };
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
 
     // Repo overrides win by server name.
     return {
+      ...pluginServers,
       ...globalCfg.servers,
       ...repoCfg.servers,
     };

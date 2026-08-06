@@ -29,12 +29,23 @@ export const MCPTransportSchema = z.enum(["stdio", "http", "sse", "auto"]);
 export const MCPHeaderValueSchema = z.union([z.string(), z.object({ secret: z.string() })]);
 export const MCPHeadersSchema = z.record(z.string(), MCPHeaderValueSchema);
 
+/** UI-safe Agent Plugin provenance (agent-plugins experiment; read-only entries). */
+export const MCPServerPluginProvenanceSchema = z.object({
+  pluginName: z.string(),
+  serverName: z.string(),
+  sourceScope: z.enum(["project", "global"]),
+});
+
 export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
   z.object({
     transport: z.literal("stdio"),
     command: z.string(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.string()).optional(),
+    cwd: z.string().optional(),
     disabled: z.boolean(),
     toolAllowlist: z.array(z.string()).optional(),
+    plugin: MCPServerPluginProvenanceSchema.optional(),
   }),
   z.object({
     transport: z.literal("http"),
@@ -42,6 +53,7 @@ export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
     headers: MCPHeadersSchema.optional(),
     disabled: z.boolean(),
     toolAllowlist: z.array(z.string()).optional(),
+    plugin: MCPServerPluginProvenanceSchema.optional(),
   }),
   z.object({
     transport: z.literal("sse"),
@@ -49,6 +61,7 @@ export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
     headers: MCPHeadersSchema.optional(),
     disabled: z.boolean(),
     toolAllowlist: z.array(z.string()).optional(),
+    plugin: MCPServerPluginProvenanceSchema.optional(),
   }),
   z.object({
     transport: z.literal("auto"),
@@ -56,6 +69,7 @@ export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
     headers: MCPHeadersSchema.optional(),
     disabled: z.boolean(),
     toolAllowlist: z.array(z.string()).optional(),
+    plugin: MCPServerPluginProvenanceSchema.optional(),
   }),
 ]);
 

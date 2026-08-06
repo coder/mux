@@ -3,6 +3,18 @@ export type MCPServerTransport = "stdio" | "http" | "sse" | "auto";
 
 export type MCPHeaderValue = string | { secret: string };
 
+/**
+ * UI-safe provenance for servers contributed by an Agent Plugin
+ * (agent-plugins experiment). Presence marks the server as a read-only
+ * config entry: never editable and never persisted into mcp.jsonc.
+ */
+export interface MCPServerPluginProvenance {
+  pluginName: string;
+  /** Server name as declared in the plugin's mcp.json (the map key is the instance key). */
+  serverName: string;
+  sourceScope: "project" | "global";
+}
+
 export interface MCPServerBaseInfo {
   transport: MCPServerTransport;
   disabled: boolean;
@@ -12,12 +24,24 @@ export interface MCPServerBaseInfo {
    * If not set, all tools are exposed.
    */
   toolAllowlist?: string[];
+  /** Present when this server comes from an Agent Plugin. */
+  plugin?: MCPServerPluginProvenance;
 }
 
 /** stdio server definition (local process). */
 export interface MCPStdioServerInfo extends MCPServerBaseInfo {
   transport: "stdio";
   command: string;
+  /**
+   * Argv appended to `command`. When set (even empty), launch composes the
+   * shell command by quoting `command` and each element; when unset, `command`
+   * is treated as a raw shell string (legacy mcp.jsonc behavior).
+   */
+  args?: string[];
+  /** Extra environment variables injected into the server process. */
+  env?: Record<string, string>;
+  /** Working directory; defaults to the workspace path when unset. */
+  cwd?: string;
 }
 
 /** HTTP-based server definition. */

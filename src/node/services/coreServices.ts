@@ -18,6 +18,8 @@ import {
   type GoalLifecycleAnalyticsSink,
   type WorkspaceGoalServiceOptions,
 } from "@/node/services/workspaceGoalService";
+import { EXPERIMENT_IDS } from "@/common/constants/experiments";
+import { createAgentPluginsMcpProvider } from "@/node/services/agentPlugins/mcpConfig";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
@@ -134,7 +136,16 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   );
 
   // MCP: allow callers to override which Config provides server definitions
-  const mcpConfigService = new MCPConfigService(opts.mcpConfig ?? config);
+  const mcpConfig = opts.mcpConfig ?? config;
+  // Agent Plugins (agent-plugins experiment): read-only plugin MCP servers are
+  // merged into listings; without an ExperimentsService the provider is inert.
+  const mcpConfigService = new MCPConfigService(mcpConfig, {
+    agentPluginsMcpProvider: createAgentPluginsMcpProvider({
+      muxHome: mcpConfig.rootDir,
+      isEnabled: () =>
+        opts.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true,
+    }),
+  });
   const mcpServerManager = new MCPServerManager(
     mcpConfigService,
     opts.mcpServerManagerOptions,

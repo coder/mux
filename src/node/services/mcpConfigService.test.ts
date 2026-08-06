@@ -94,12 +94,13 @@ describe("MCPConfigService", () => {
 
 describe("MCP server disable filtering", () => {
   let tempDir: string;
+  let config: Config;
   let configService: MCPConfigService;
   let serverManager: MCPServerManager;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-test-"));
-    const config = new Config(tempDir);
+    config = new Config(tempDir);
 
     configService = new MCPConfigService(config);
     serverManager = new MCPServerManager(configService);
@@ -136,6 +137,85 @@ describe("MCP server disable filtering", () => {
     expect(enabledServers).toEqual({
       "enabled-server": { transport: "stdio", command: "cmd1", disabled: false },
     });
+  });
+
+  // --- Agent Plugins provider (agent-plugins experiment) ---
+
+  const PLUGIN_SERVER = {
+    transport: "stdio" as const,
+    command: "bunx",
+    args: ["-y", "some-server"],
+    disabled: true,
+    plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" as const },
+  };
+
+  test("listServers merges Agent Plugins servers at the lowest precedence", async () => {
+    const withProvider = new MCPConfigService(config, {
+      agentPluginsMcpProvider: () =>
+        Promise.resolve({
+          "plugin:abc:srv": PLUGIN_SERVER,
+          // A hostile plugin key colliding with a user server must lose.
+          collides: { ...PLUGIN_SERVER, command: "plugin-command" },
+        }),
+    });
+    await withProvider.addServer("collides", { transport: "stdio", command: "user-command" });
+
+    const servers = await withProvider.listServers();
+
+    expect(servers["plugin:abc:srv"]).toEqual(PLUGIN_SERVER);
+    expect(servers.collides).toEqual({
+      transport: "stdio",
+      command: "user-command",
+      disabled: false,
+      toolAllowlist: undefined,
+    });
+  });
+
+  test("listServers passes projectPath and trust through to the provider", async () => {
+    const seenArgs: Array<{ projectPath?: string; trusted: boolean }> = [];
+    const withProvider = new MCPConfigService(config, {
+      agentPluginsMcpProvider: (args) => {
+        seenArgs.push(args);
+        return Promise.resolve({});
+      },
+    });
+
+    await withProvider.listServers();
+    await withProvider.listServers("/proj", false);
+    await withProvider.listServers("/proj", true);
+
+    expect(seenArgs).toEqual([
+      { projectPath: undefined, trusted: false },
+      { projectPath: "/proj", trusted: false },
+      { projectPath: "/proj", trusted: true },
+    ]);
+  });
+
+  test("a throwing Agent Plugins provider never breaks listServers", async () => {
+    const withProvider = new MCPConfigService(config, {
+      agentPluginsMcpProvider: () => Promise.reject(new Error("boom")),
+    });
+    await withProvider.addServer("still-there", { transport: "stdio", command: "cmd" });
+
+    const servers = await withProvider.listServers();
+
+    expect(Object.keys(servers)).toEqual(["still-there"]);
+  });
+
+  test("plugin servers are never persisted: mutations reject plugin keys", async () => {
+    const withProvider = new MCPConfigService(config, {
+      agentPluginsMcpProvider: () => Promise.resolve({ "plugin:abc:srv": PLUGIN_SERVER }),
+    });
+
+    expect((await withProvider.setServerEnabled("plugin:abc:srv", true)).success).toBe(false);
+    expect((await withProvider.removeServer("plugin:abc:srv")).success).toBe(false);
+    expect((await withProvider.setToolAllowlist("plugin:abc:srv", [])).success).toBe(false);
+
+    // The on-disk global config never gained a plugin entry.
+    const globalRaw = await fs
+      .readFile(path.join(config.rootDir, "mcp.jsonc"), "utf-8")
+      .catch(() => "");
+    expect(globalRaw).not.toContain("plugin:abc:srv");
   });
 });
 

@@ -319,6 +319,11 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                 const tools = getTools(name);
                 const isLoadingTools = loadingTools[name];
                 const allowedTools = overrides.toolAllowlist?.[name] ?? tools ?? [];
+                // Agent Plugin servers keep the instance key as the override
+                // name but display readable provenance (plugin/server).
+                const displayName = info.plugin
+                  ? `${info.plugin.pluginName}/${info.plugin.serverName}`
+                  : name;
 
                 return (
                   <div
@@ -335,12 +340,18 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           onCheckedChange={(checked) =>
                             toggleServerEnabled(name, checked, projectDisabled)
                           }
-                          aria-label={`Toggle ${name} MCP server`}
+                          aria-label={`Toggle ${displayName} MCP server`}
                         />
                         <div>
-                          <div className="font-medium">{name}</div>
-                          {projectDisabled && (
-                            <div className="text-muted text-xs">(disabled at project level)</div>
+                          <div className="font-medium">{displayName}</div>
+                          {info.plugin ? (
+                            <div className="text-muted text-xs">
+                              Agent Plugin ({info.plugin.sourceScope}) — disabled by default
+                            </div>
+                          ) : (
+                            projectDisabled && (
+                              <div className="text-muted text-xs">(disabled at project level)</div>
+                            )
                           )}
                         </div>
                       </div>

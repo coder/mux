@@ -1,0 +1,521 @@
+import { createHash } from "node:crypto";
+import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import type { MCPServerInfo, MCPStdioServerInfo } from "@/common/types/mcp";
+import assert from "@/common/utils/assert";
+import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
+import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
+import type { AgentPluginContainer, AgentPluginDiagnostic, AgentPluginInfo } from "./discovery";
+import { discoverAgentPlugins } from "./discovery";
+import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
+
+/**
+ * Agent Plugins 1.0.0 MCP configuration (`mcp.json`, §7.2) → Mux MCPServerInfo.
+ *
+ * Loading rules follow §7.2.2 exactly:
+ * - invalid JSON / bad top-level / `$schema` mismatch → MCP disabled for that
+ *   plugin only (diagnostic), other components unaffected;
+ * - an invalid or unsupported server entry → that entry skipped (diagnostic),
+ *   siblings unaffected.
+ *
+ * Normalized servers are default-disabled, read-only config entries keyed by
+ * `plugin:<instanceId>:<serverName>` where `instanceId` hashes the canonical
+ * plugin root. The key is stable across manifest renames and content updates,
+ * so workspace `enabledServers` overrides and the `PLUGIN_DATA` directory
+ * survive plugin updates (§9.1).
+ */
+
+/** Canonical `$schema` const for Agent Plugins 1.0.0 mcp.json documents. */
+export const AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0 =
+  "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
+
+const PLUGIN_SERVER_KEY_PREFIX = "plugin:";
+
+/** Stable plugin-instance identity keyed on the canonical root path (not name/content). */
+export function computePluginInstanceId(rootPath: string): string {
+  assert(path.isAbsolute(rootPath), "computePluginInstanceId: rootPath must be absolute");
+  return createHash("sha256").update(rootPath).digest("hex").slice(0, 16);
+}
+
+/** Client-managed persistent data directory for a plugin instance (§9.1). */
+export function getPluginDataPath(muxHome: string, instanceId: string): string {
+  assert(path.isAbsolute(muxHome), "getPluginDataPath: muxHome must be absolute");
+  return path.join(muxHome, "plugin-data", instanceId);
+}
+
+export function buildPluginServerKey(instanceId: string, serverName: string): string {
+  return `${PLUGIN_SERVER_KEY_PREFIX}${instanceId}:${serverName}`;
+}
+
+export interface LoadPluginMcpServersResult {
+  servers: Record<string, MCPServerInfo>;
+  diagnostics: AgentPluginDiagnostic[];
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+// Closed variants (§7.2.1): an unknown field makes the entry invalid.
+const STDIO_ENTRY_KEYS = new Set(["type", "command", "args", "env", "cwd"]);
+const REMOTE_ENTRY_KEYS = new Set(["type", "url", "headers"]);
+
+// Canonical mcp.schema.json cwd pattern: `./…`, `${PLUGIN_ROOT}[/…]`, `${PLUGIN_DATA}[/…]`.
+const CWD_FORM_PATTERN = /^(?:\.\/|\$\{PLUGIN_ROOT\}(?:\/|$)|\$\{PLUGIN_DATA\}(?:\/|$))/;
+
+// RFC 9110 token grammar for header field names.
+const HEADER_NAME_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+/**
+ * §7.2.1 command token rules: a single executable token — either a bare name
+ * (resolved via platform executable search) or a `./`-relative plugin path.
+ * No placeholder expansion, no shell strings, no absolute/parent paths.
+ */
+function classifyCommandToken(command: string): "bare" | "relative" | null {
+  if (command.length === 0) {
+    return null;
+  }
+  if (command.startsWith("./")) {
+    return "relative";
+  }
+  if (command.includes("/") || command.includes("\\")) {
+    return null;
+  }
+  return "bare";
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host =
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
+  if (host === "localhost") {
+    return true;
+  }
+  if (host === "::1") {
+    return true;
+  }
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/** Returns an error message for invalid remote URLs (§7.2.1), or null when valid. */
+function validateRemoteUrl(rawUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "'url' must be an absolute HTTP or HTTPS URL";
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return "'url' must use http or https";
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
+    return "'url' must not contain user information";
+  }
+  if (parsed.hash !== "") {
+    return "'url' must not contain a fragment";
+  }
+  if (parsed.protocol === "http:" && !isLoopbackHost(parsed.hostname)) {
+    return "non-loopback endpoints must use HTTPS";
+  }
+  return null;
+}
+
+/**
+ * Containment that tolerates a not-yet-created containment root (the
+ * `PLUGIN_DATA` directory is created lazily before launch). When the root does
+ * not exist, nothing beneath it can be a symlink, so lexical containment is
+ * sufficient and equivalent.
+ */
+async function ensureContainedAllowMissingRoot(root: string, candidate: string): Promise<string> {
+  try {
+    return await ensurePathContained(root, candidate, { allowMissing: true });
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) {
+      throw error;
+    }
+    const resolved = path.resolve(candidate);
+    const relative = path.relative(root, resolved);
+    if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {
+      throw new Error("Path resolves outside containment root.");
+    }
+    return resolved;
+  }
+}
+
+interface NormalizeContext {
+  plugin: AgentPluginInfo;
+  dataPath: string;
+  vars: PluginPlaceholderValues;
+}
+
+/** Validate + normalize one stdio entry; returns null (with error) when invalid. */
+async function normalizeStdioEntry(
+  entry: Record<string, unknown>,
+  ctx: NormalizeContext
+): Promise<{ info: MCPStdioServerInfo } | { error: string }> {
+  for (const key of Object.keys(entry)) {
+    if (!STDIO_ENTRY_KEYS.has(key)) {
+      return { error: `unknown field '${key}' in stdio server entry` };
+    }
+  }
+
+  const command = entry.command;
+  if (typeof command !== "string" || classifyCommandToken(command) === null) {
+    return {
+      error:
+        "'command' must be a single executable token: a bare name or a './'-relative plugin path",
+    };
+  }
+
+  if (entry.args !== undefined) {
+    if (!Array.isArray(entry.args) || entry.args.some((arg) => typeof arg !== "string")) {
+      return { error: "'args' must be an array of strings" };
+    }
+  }
+  const args = (entry.args as string[] | undefined) ?? [];
+
+  if (entry.env !== undefined && !isPlainObject(entry.env)) {
+    return { error: "'env' must be an object of strings" };
+  }
+  const env = entry.env ?? {};
+  for (const [key, value] of Object.entries(env)) {
+    if (key === "PLUGIN_ROOT" || key === "PLUGIN_DATA") {
+      // §9.2: reserved names in `env` make the entry invalid; the client
+      // supplies these variables itself.
+      return { error: `'env' must not contain reserved variable '${key}'` };
+    }
+    if (typeof value !== "string") {
+      return { error: `'env.${key}' must be a string` };
+    }
+  }
+
+  if (entry.cwd !== undefined && typeof entry.cwd !== "string") {
+    return { error: "'cwd' must be a string" };
+  }
+  const cwd = entry.cwd;
+  if (cwd !== undefined && !CWD_FORM_PATTERN.test(cwd)) {
+    return {
+      error: "'cwd' must be './…', '${PLUGIN_ROOT}[/…]', or '${PLUGIN_DATA}[/…]'",
+    };
+  }
+
+  const rootPath = ctx.plugin.rootPath;
+
+  // `./`-relative commands resolve against the plugin root and must
+  // realpath-resolve inside it (§4.1). Bare names use PATH search at launch.
+  let resolvedCommand = command;
+  if (command.startsWith("./")) {
+    try {
+      resolvedCommand = await ensurePathContained(rootPath, path.resolve(rootPath, command));
+    } catch (error) {
+      return {
+        error: hasErrorCode(error, "ENOENT")
+          ? `'command' does not exist inside the plugin: ${command}`
+          : `'command' resolves outside the plugin root: ${getErrorMessage(error)}`,
+      };
+    }
+  }
+
+  // §9.2 expansion applies to args elements, env values, and cwd only.
+  const expandedArgs = args.map((arg) => expandPluginPlaceholders(arg, ctx.vars));
+  const expandedEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    expandedEnv[key] = expandPluginPlaceholders(value as string, ctx.vars);
+  }
+
+  // Default cwd is the plugin root; explicit cwd stays inside its anchor
+  // (plugin root or data dir) after expansion + resolution (§7.2.1).
+  let resolvedCwd = rootPath;
+  if (cwd !== undefined) {
+    const expandedCwd = expandPluginPlaceholders(cwd, ctx.vars);
+    const anchor = cwd.startsWith("${PLUGIN_DATA}") ? ctx.dataPath : rootPath;
+    try {
+      resolvedCwd = await ensureContainedAllowMissingRoot(
+        anchor,
+        path.resolve(rootPath, expandedCwd)
+      );
+    } catch (error) {
+      return { error: `'cwd' escapes its containment root: ${getErrorMessage(error)}` };
+    }
+  }
+
+  return {
+    info: {
+      transport: "stdio",
+      command: resolvedCommand,
+      args: expandedArgs,
+      // §9.1 overlay order: configured env first, reserved variables last so
+      // they can never be shadowed.
+      env: {
+        ...expandedEnv,
+        PLUGIN_ROOT: rootPath,
+        PLUGIN_DATA: ctx.dataPath,
+      },
+      cwd: resolvedCwd,
+      disabled: true,
+      plugin: {
+        pluginName: ctx.plugin.name,
+        serverName: "", // filled by caller
+        sourceScope: ctx.plugin.scope,
+      },
+    },
+  };
+}
+
+/** Validate + normalize one streamable-http/sse entry. */
+function normalizeRemoteEntry(
+  entry: Record<string, unknown>,
+  ctx: NormalizeContext
+): { info: MCPServerInfo } | { error: string } | { skip: string } {
+  for (const key of Object.keys(entry)) {
+    if (!REMOTE_ENTRY_KEYS.has(key)) {
+      return { error: `unknown field '${key}' in remote server entry` };
+    }
+  }
+
+  const url = entry.url;
+  if (typeof url !== "string") {
+    return { error: "'url' is required and must be a string" };
+  }
+  const urlError = validateRemoteUrl(url);
+  if (urlError !== null) {
+    return { error: urlError };
+  }
+
+  if (entry.headers !== undefined) {
+    if (!isPlainObject(entry.headers)) {
+      return { error: "'headers' must be an object of strings" };
+    }
+    const seenNames = new Set<string>();
+    for (const [name, value] of Object.entries(entry.headers)) {
+      if (!HEADER_NAME_PATTERN.test(name)) {
+        return { error: `invalid header name '${name}'` };
+      }
+      if (typeof value !== "string" || /[\r\n\0]/.test(value)) {
+        return { error: `header '${name}' must be a valid HTTP header value` };
+      }
+      const lower = name.toLowerCase();
+      if (seenNames.has(lower)) {
+        return { error: `duplicate header name '${name}' (header names are case-insensitive)` };
+      }
+      seenNames.add(lower);
+    }
+
+    if (Object.keys(entry.headers).length > 0) {
+      // §7.2.1 forbids forwarding configured headers cross-origin via
+      // redirects; Mux remote transports follow redirects, so entries with
+      // configured headers are skipped rather than risk leaking them.
+      return {
+        skip: "configured 'headers' are not supported yet (cross-origin redirect header forwarding cannot be prevented)",
+      };
+    }
+  }
+
+  return {
+    info: {
+      transport: entry.type === "streamable-http" ? "http" : "sse",
+      url,
+      disabled: true,
+      plugin: {
+        pluginName: ctx.plugin.name,
+        serverName: "", // filled by caller
+        sourceScope: ctx.plugin.scope,
+      },
+    },
+  };
+}
+
+/**
+ * Load and normalize a plugin's `mcp.json` into default-disabled Mux server
+ * records keyed by `plugin:<instanceId>:<serverName>`.
+ */
+export async function loadPluginMcpServers(
+  plugin: AgentPluginInfo,
+  ctx: { muxHome: string }
+): Promise<LoadPluginMcpServersResult> {
+  assert(
+    plugin.mcpConfigPath !== undefined && path.isAbsolute(plugin.mcpConfigPath),
+    "loadPluginMcpServers: plugin.mcpConfigPath must be an absolute path"
+  );
+
+  const diagnostics: AgentPluginDiagnostic[] = [];
+  const servers: Record<string, MCPServerInfo> = {};
+
+  const disableMcp = (message: string): LoadPluginMcpServersResult => {
+    log.warn(`Agent plugin ${plugin.rootPath}: ${message}`);
+    diagnostics.push({
+      path: plugin.mcpConfigPath!,
+      scope: plugin.scope,
+      severity: "error",
+      message,
+    });
+    return { servers: {}, diagnostics };
+  };
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await fsPromises.readFile(plugin.mcpConfigPath, "utf8")) as unknown;
+  } catch (error) {
+    // §7.2.2 rule 2: invalid JSON disables MCP for this plugin only.
+    return disableMcp(`mcp.json is not valid JSON: ${getErrorMessage(error)}`);
+  }
+
+  if (!isPlainObject(raw)) {
+    return disableMcp("mcp.json must be a JSON object");
+  }
+
+  // Closed top-level: exactly { $schema, mcpServers }, both required (§7.2.1).
+  for (const key of Object.keys(raw)) {
+    if (key !== "$schema" && key !== "mcpServers") {
+      return disableMcp(`mcp.json has unknown top-level field '${key}'`);
+    }
+  }
+  if (raw.$schema !== AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0) {
+    // Discovery only admits 1.0.0 manifests, so any other value is either an
+    // unsupported version or a version mismatch with plugin.json — both
+    // disable MCP for this plugin (§7.2.2 rule 2).
+    return disableMcp(
+      `mcp.json '$schema' must be '${AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0}' (matching plugin.json's Agent Plugins version)`
+    );
+  }
+  if (!isPlainObject(raw.mcpServers)) {
+    return disableMcp("mcp.json 'mcpServers' is required and must be an object");
+  }
+
+  const instanceId = computePluginInstanceId(plugin.rootPath);
+  const dataPath = getPluginDataPath(ctx.muxHome, instanceId);
+  const normalizeCtx: NormalizeContext = {
+    plugin,
+    dataPath,
+    vars: { PLUGIN_ROOT: plugin.rootPath, PLUGIN_DATA: dataPath },
+  };
+
+  for (const [serverName, entry] of Object.entries(raw.mcpServers)) {
+    const reportEntry = (severity: "warning" | "error", message: string): void => {
+      const fullMessage = `mcp.json server '${serverName}': ${message}; skipping this server`;
+      log.warn(`Agent plugin ${plugin.rootPath}: ${fullMessage}`);
+      diagnostics.push({
+        path: plugin.mcpConfigPath!,
+        scope: plugin.scope,
+        severity,
+        message: fullMessage,
+      });
+    };
+
+    if (!isPlainObject(entry)) {
+      reportEntry("error", "server entry must be an object");
+      continue;
+    }
+
+    // §7.2.2 rules 3-4: invalid entries and unknown transports are skipped
+    // individually; sibling servers keep loading.
+    let result: { info: MCPServerInfo } | { error: string } | { skip: string };
+    if (entry.type === "stdio") {
+      result = await normalizeStdioEntry(entry, normalizeCtx);
+    } else if (entry.type === "streamable-http" || entry.type === "sse") {
+      result = normalizeRemoteEntry(entry, normalizeCtx);
+    } else {
+      reportEntry("error", `unknown server 'type' ${JSON.stringify(entry.type)}`);
+      continue;
+    }
+
+    if ("error" in result) {
+      reportEntry("error", result.error);
+      continue;
+    }
+    if ("skip" in result) {
+      reportEntry("warning", result.skip);
+      continue;
+    }
+
+    const info = result.info;
+    assert(
+      info.plugin !== undefined,
+      "loadPluginMcpServers: normalized info must carry provenance"
+    );
+    info.plugin.serverName = serverName;
+    servers[buildPluginServerKey(instanceId, serverName)] = info;
+  }
+
+  return { servers, diagnostics };
+}
+
+export interface AgentPluginsMcpProviderArgs {
+  /** Host project root for project-scope plugin containers (when applicable). */
+  projectPath?: string;
+  /** Whether repo-local (project-scope) plugin config is allowed (Project Trust). */
+  trusted: boolean;
+}
+
+export type AgentPluginsMcpProvider = (
+  args: AgentPluginsMcpProviderArgs
+) => Promise<Record<string, MCPServerInfo>>;
+
+/**
+ * Build the MCP server provider for Agent Plugins containers. Returns an empty
+ * map when the agent-plugins experiment is off. Project-scope containers are
+ * consulted only for trusted projects (mirroring repo `.mux/mcp.jsonc`).
+ * Failures in one plugin never affect others (§11.3).
+ */
+export function createAgentPluginsMcpProvider(ctx: {
+  muxHome: string;
+  isEnabled: () => boolean;
+}): AgentPluginsMcpProvider {
+  assert(
+    path.isAbsolute(ctx.muxHome),
+    "createAgentPluginsMcpProvider: muxHome must be an absolute path"
+  );
+
+  return async (args) => {
+    if (!ctx.isEnabled()) {
+      return {};
+    }
+
+    const containers: AgentPluginContainer[] = [];
+    if (args.projectPath !== undefined && args.trusted && path.isAbsolute(args.projectPath)) {
+      containers.push({ path: path.join(args.projectPath, ".mux", "plugins"), scope: "project" });
+      containers.push({
+        path: path.join(args.projectPath, ".agents", "plugins"),
+        scope: "project",
+      });
+    }
+    containers.push({ path: path.join(ctx.muxHome, "plugins"), scope: "global" });
+    containers.push({ path: path.join(os.homedir(), ".agents", "plugins"), scope: "global" });
+
+    const merged: Record<string, MCPServerInfo> = {};
+    try {
+      const { plugins } = await discoverAgentPlugins(containers);
+      for (const plugin of plugins) {
+        if (plugin.mcpConfigPath === undefined) {
+          continue;
+        }
+        // Project plugin roots keep the repo-symlink posture of repo config:
+        // the plugin root itself must stay inside the project root.
+        if (plugin.scope === "project" && args.projectPath !== undefined) {
+          try {
+            await ensurePathContained(args.projectPath, plugin.rootPath);
+          } catch (error) {
+            log.warn(
+              `Skipping project plugin '${plugin.name}' MCP config: plugin root escapes the project root: ${getErrorMessage(error)}`
+            );
+            continue;
+          }
+        }
+        try {
+          const { servers } = await loadPluginMcpServers(plugin, { muxHome: ctx.muxHome });
+          Object.assign(merged, servers);
+        } catch (error) {
+          // §11.3: one broken plugin never affects the others.
+          log.warn(
+            `Agent plugin ${plugin.rootPath}: failed to load MCP config: ${getErrorMessage(error)}`
+          );
+        }
+      }
+    } catch (error) {
+      log.warn(`Agent Plugins MCP discovery failed: ${getErrorMessage(error)}`);
+    }
+    return merged;
+  };
+}
