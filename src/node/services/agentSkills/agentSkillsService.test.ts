@@ -1083,3 +1083,225 @@ describe("agentSkillsService", () => {
     expect(found!.description).toBe("Symlinked SKILL.md");
   });
 });
+
+// Agent Plugins (agent-plugins experiment): plugin skills join discovery at the
+// lowest per-scope precedence. See src/node/services/agentPlugins/ for the
+// container/manifest layer.
+describe("agentSkillsService agent plugins", () => {
+  const PLUGIN_SCHEMA = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json";
+
+  async function writePlugin(
+    containerPath: string,
+    pluginName: string,
+    skills: Array<{ name: string; description: string }>
+  ): Promise<string> {
+    const pluginDir = path.join(containerPath, pluginName);
+    await fs.mkdir(pluginDir, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDir, "plugin.json"),
+      JSON.stringify({ $schema: PLUGIN_SCHEMA, name: pluginName }),
+      "utf-8"
+    );
+    for (const skill of skills) {
+      await writeSkill(path.join(pluginDir, "skills"), skill.name, skill.description);
+    }
+    return pluginDir;
+  }
+
+  test("getDefaultAgentSkillsRoots includes plugin containers only when includeAgentPlugins is set", () => {
+    using project = new DisposableTempDir("agent-skills-plugin-roots");
+    const runtime = new LocalRuntime(project.path);
+
+    const defaultRoots = getDefaultAgentSkillsRoots(runtime, project.path);
+    expect(defaultRoots.projectPluginRoots).toBeUndefined();
+    expect(defaultRoots.globalPluginRoots).toBeUndefined();
+
+    const onRoots = getDefaultAgentSkillsRoots(runtime, project.path, {
+      includeAgentPlugins: true,
+    });
+    expect(onRoots.projectPluginRoots).toEqual([
+      path.join(project.path, ".mux", "plugins"),
+      path.join(project.path, ".agents", "plugins"),
+    ]);
+    expect(onRoots.globalPluginRoots).toEqual(["~/.mux/plugins", "~/.agents/plugins"]);
+  });
+
+  test("getDefaultAgentSkillsRoots never includes plugin containers for remote runtimes", () => {
+    using project = new DisposableTempDir("agent-skills-plugin-remote");
+    const runtime = new RemotePathMappedRuntime(project.path, "/remote/workspace");
+
+    const onRoots = getDefaultAgentSkillsRoots(runtime, "/remote/workspace", {
+      includeAgentPlugins: true,
+    });
+    expect(onRoots.projectPluginRoots).toBeUndefined();
+    expect(onRoots.globalPluginRoots).toBeUndefined();
+  });
+
+  test("experiment off: plugin skills stay invisible with default-shaped roots", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-off");
+    using global = new DisposableTempDir("agent-skills-plugin-off-global");
+
+    await writePlugin(path.join(project.path, ".mux", "plugins"), "hello-plugin", [
+      { name: "plugin-only", description: "from plugin" },
+    ]);
+    await writeSkill(path.join(project.path, ".agents", "skills"), "agents-only", "from agents");
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      ...getDefaultAgentSkillsRoots(runtime, project.path),
+      globalRoot: global.path,
+      universalRoot: "",
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.find((s) => s.name === "plugin-only")).toBeUndefined();
+    // Sanity: sibling .agents root still discovered, so absence above is plugin-specific.
+    expect(skills.find((s) => s.name === "agents-only")).toMatchObject({ scope: "project" });
+  });
+
+  test("experiment on: discovers plugin skills at lowest per-scope precedence", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-on");
+    using global = new DisposableTempDir("agent-skills-plugin-on-global");
+    using globalPlugins = new DisposableTempDir("agent-skills-plugin-on-global-plugins");
+
+    await writePlugin(path.join(project.path, ".mux", "plugins"), "project-plugin", [
+      { name: "plugin-only", description: "from project plugin" },
+      { name: "shared-mux", description: "from project plugin" },
+    ]);
+    await writeSkill(path.join(project.path, ".mux", "skills"), "shared-mux", "from project mux");
+    await writePlugin(globalPlugins.path, "global-plugin", [
+      { name: "global-plugin-only", description: "from global plugin" },
+      { name: "plugin-only", description: "from global plugin" },
+    ]);
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+      universalRoot: "",
+      projectPluginRoots: [path.join(project.path, ".mux", "plugins")],
+      globalPluginRoots: [globalPlugins.path],
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    // Project plugin skill loses the name collision to .mux/skills.
+    expect(skills.find((s) => s.name === "shared-mux")).toMatchObject({
+      scope: "project",
+      description: "from project mux",
+    });
+    // Project plugin beats global plugin for colliding names (scope precedence).
+    expect(skills.find((s) => s.name === "plugin-only")).toMatchObject({
+      scope: "project",
+      description: "from project plugin",
+    });
+    expect(skills.find((s) => s.name === "global-plugin-only")).toMatchObject({
+      scope: "global",
+      description: "from global plugin",
+    });
+
+    // Read path resolves plugin skills with the same roots as discovery.
+    const pluginOnlyName = SkillNameSchema.parse("plugin-only");
+    const resolved = await readAgentSkill(runtime, project.path, pluginOnlyName, { roots });
+    expect(resolved.package.scope).toBe("project");
+    expect(resolved.package.frontmatter.description).toBe("from project plugin");
+  });
+
+  test("a broken sibling plugin or skill never hides valid plugin skills", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-isolation");
+    using global = new DisposableTempDir("agent-skills-plugin-isolation-global");
+
+    const container = path.join(project.path, ".mux", "plugins");
+    // Broken sibling plugin: invalid manifest.
+    const brokenDir = path.join(container, "a-broken");
+    await fs.mkdir(brokenDir, { recursive: true });
+    await fs.writeFile(path.join(brokenDir, "plugin.json"), "{ not json", "utf-8");
+    // Valid plugin with one broken skill (missing frontmatter) and one valid skill.
+    const pluginDir = await writePlugin(container, "b-valid", [
+      { name: "valid-skill", description: "works" },
+    ]);
+    const brokenSkillDir = path.join(pluginDir, "skills", "broken-skill");
+    await fs.mkdir(brokenSkillDir, { recursive: true });
+    await fs.writeFile(path.join(brokenSkillDir, "SKILL.md"), "no frontmatter", "utf-8");
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+      universalRoot: "",
+      projectPluginRoots: [container],
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.find((s) => s.name === "valid-skill")).toMatchObject({ scope: "project" });
+    expect(skills.find((s) => s.name === "broken-skill")).toBeUndefined();
+  });
+
+  test("plugin skill SKILL.md symlink escaping the plugin root is skipped", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-escape");
+    using global = new DisposableTempDir("agent-skills-plugin-escape-global");
+
+    const container = path.join(project.path, ".mux", "plugins");
+    const pluginDir = await writePlugin(container, "escape-plugin", [
+      { name: "safe-skill", description: "contained" },
+    ]);
+    // A skill whose SKILL.md symlinks outside the plugin root (but inside the project).
+    const outside = path.join(project.path, "outside-skill.md");
+    await fs.writeFile(outside, "---\nname: sneaky\ndescription: outside\n---\nBody\n", "utf-8");
+    const sneakyDir = path.join(pluginDir, "skills", "sneaky");
+    await fs.mkdir(sneakyDir, { recursive: true });
+    await fs.symlink(outside, path.join(sneakyDir, "SKILL.md"));
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+      universalRoot: "",
+      projectPluginRoots: [container],
+    };
+
+    const result = await discoverAgentSkillsDiagnostics(runtime, project.path, {
+      roots,
+      projectContainmentRoot: project.path,
+    });
+
+    expect(result.skills.find((s) => s.name === "safe-skill")).toBeDefined();
+    expect(result.skills.find((s) => s.name === "sneaky")).toBeUndefined();
+    expect(
+      result.invalidSkills.some(
+        (issue) => issue.directoryName === "sneaky" && issue.message.includes("plugin root")
+      )
+    ).toBe(true);
+  });
+
+  test("project plugin whose root escapes the project containment is skipped", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-root-escape");
+    using elsewhere = new DisposableTempDir("agent-skills-plugin-root-escape-target");
+    using global = new DisposableTempDir("agent-skills-plugin-root-escape-global");
+
+    // Plugin lives outside the project and is symlinked into .mux/plugins.
+    await writePlugin(elsewhere.path, "linked-plugin", [
+      { name: "linked-skill", description: "from outside" },
+    ]);
+    const container = path.join(project.path, ".mux", "plugins");
+    await fs.mkdir(container, { recursive: true });
+    await fs.symlink(path.join(elsewhere.path, "linked-plugin"), path.join(container, "linked-plugin"));
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      projectRoot: path.join(project.path, ".mux", "skills"),
+      globalRoot: global.path,
+      universalRoot: "",
+      projectPluginRoots: [container],
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, {
+      roots,
+      projectContainmentRoot: project.path,
+    });
+
+    expect(skills.find((s) => s.name === "linked-skill")).toBeUndefined();
+  });
+});

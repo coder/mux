@@ -29,11 +29,16 @@ import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFi
 import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 import type { ProjectSkillContainment } from "./skillStorageContext";
+import { discoverAgentPlugins } from "@/node/services/agentPlugins/discovery";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 // Claude Code compatibility roots (claude-skills-compat experiment): discovery-only,
 // lowest precedence within each scope. Write tools never target these roots.
 const CLAUDE_SKILLS_ROOT = "~/.claude/skills";
+// Agent Plugins containers (agent-plugins experiment): discovery-only, host-local,
+// lowest precedence within each scope. Write tools never target plugin roots.
+const UNIVERSAL_PLUGINS_ROOT = "~/.agents/plugins";
 
 export interface AgentSkillsRoots {
   projectRoot: string;
@@ -44,12 +49,16 @@ export interface AgentSkillsRoots {
   universalRoot?: string;
   /** ~/.claude/skills (claude-skills-compat experiment; read-only). */
   globalClaudeRoot?: string;
+  /** Agent Plugins container dirs, e.g. <projectRoot>/.mux/plugins (agent-plugins experiment; read-only). */
+  projectPluginRoots?: string[];
+  /** Agent Plugins container dirs, e.g. ~/.mux/plugins (agent-plugins experiment; read-only). */
+  globalPluginRoots?: string[];
 }
 
 export function getDefaultAgentSkillsRoots(
   runtime: Runtime,
   workspacePath: string,
-  options?: { includeClaudeSkills?: boolean }
+  options?: { includeClaudeSkills?: boolean; includeAgentPlugins?: boolean }
 ): AgentSkillsRoots {
   if (!workspacePath) {
     throw new Error("getDefaultAgentSkillsRoots: workspacePath is required");
@@ -66,6 +75,17 @@ export function getDefaultAgentSkillsRoots(
       ? {
           projectClaudeRoot: runtime.normalizePath(".claude/skills", workspacePath),
           globalClaudeRoot: CLAUDE_SKILLS_ROOT,
+        }
+      : {}),
+    // Agent Plugins discovery is host-filesystem-only (v1), so remote runtimes
+    // never get plugin containers.
+    ...(options?.includeAgentPlugins && !(runtime instanceof RemoteRuntime)
+      ? {
+          projectPluginRoots: [
+            runtime.normalizePath(".mux/plugins", workspacePath),
+            runtime.normalizePath(".agents/plugins", workspacePath),
+          ],
+          globalPluginRoots: [`${runtime.getMuxHome()}/plugins`, UNIVERSAL_PLUGINS_ROOT],
         }
       : {}),
   };
@@ -91,30 +111,112 @@ function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
   return Array.from(new Set(orderedRoots));
 }
 
-function buildScanOrder(roots: AgentSkillsRoots): Array<{ scope: AgentSkillScope; root: string }> {
-  return [
-    ...getProjectSkillRoots(roots).map((root) => ({ scope: "project" as const, root })),
-    ...getGlobalSkillRoots(roots).map((root) => ({ scope: "global" as const, root })),
-  ];
-}
-
 interface AgentSkillScanCandidate {
   scope: AgentSkillScope;
   root: string;
   runtime: Runtime;
+  /**
+   * Agent Plugins only: canonical plugin root anchoring per-skill realpath
+   * containment (§4.1). Present exactly for plugin skills/ roots.
+   */
+  pluginRoot?: string;
 }
 
-function buildScanCandidates(
+/**
+ * Agent Plugins (agent-plugins experiment): expand plugin container dirs into
+ * per-plugin `skills/` scan candidates. Host-local filesystem only (v1).
+ */
+async function buildPluginScanCandidates(args: {
+  containers: string[];
+  scope: "project" | "global";
+  workspacePath: string;
+  /**
+   * Project scope: plugin roots must additionally stay inside the project
+   * containment root so repo-controlled symlinks under .mux/plugins keep the
+   * same escape posture as .mux/skills.
+   */
+  projectContainmentRoot?: string;
+}): Promise<AgentSkillScanCandidate[]> {
+  if (args.containers.length === 0) {
+    return [];
+  }
+
+  const localRuntime = new LocalRuntime(args.workspacePath);
+  const resolvedContainers: Array<{ path: string; scope: "project" | "global" }> = [];
+  for (const container of args.containers) {
+    try {
+      // Container paths may be tilde-form (e.g. ~/.agents/plugins).
+      resolvedContainers.push({
+        path: await localRuntime.resolvePath(container),
+        scope: args.scope,
+      });
+    } catch (err) {
+      log.warn(`Failed to resolve plugin container ${container}: ${getErrorMessage(err)}`);
+    }
+  }
+
+  const { plugins } = await discoverAgentPlugins(resolvedContainers);
+
+  const candidates: AgentSkillScanCandidate[] = [];
+  for (const plugin of plugins) {
+    if (plugin.skillsDir == null) {
+      continue;
+    }
+
+    if (args.projectContainmentRoot != null) {
+      try {
+        await ensurePathContained(args.projectContainmentRoot, plugin.rootPath);
+      } catch (error) {
+        log.warn(
+          `Skipping project plugin '${plugin.name}' at '${plugin.rootPath}': plugin root escapes the project containment root: ${getErrorMessage(error)}`
+        );
+        continue;
+      }
+    }
+
+    candidates.push({
+      scope: args.scope,
+      root: plugin.skillsDir,
+      runtime: localRuntime,
+      pluginRoot: plugin.rootPath,
+    });
+  }
+
+  return candidates;
+}
+
+async function buildScanCandidates(
   runtime: Runtime,
   workspacePath: string,
-  roots: AgentSkillsRoots
-): AgentSkillScanCandidate[] {
+  roots: AgentSkillsRoots,
+  containment: ProjectSkillContainment
+): Promise<AgentSkillScanCandidate[]> {
   const globalRuntime = resolveGlobalRuntime(runtime, workspacePath);
 
-  return buildScanOrder(roots).map((scan) => ({
-    ...scan,
-    runtime: scan.scope === "global" ? globalRuntime : runtime,
-  }));
+  // Plugin skills sit at the lowest precedence within each scope, after the
+  // standard (and .claude compat) roots of that scope.
+  const projectPluginCandidates = await buildPluginScanCandidates({
+    containers: roots.projectPluginRoots ?? [],
+    scope: "project",
+    workspacePath,
+    projectContainmentRoot: containment.kind === "local" ? containment.root : undefined,
+  });
+  const globalPluginCandidates = await buildPluginScanCandidates({
+    containers: roots.globalPluginRoots ?? [],
+    scope: "global",
+    workspacePath,
+  });
+
+  return [
+    ...getProjectSkillRoots(roots).map((root) => ({ scope: "project" as const, root, runtime })),
+    ...projectPluginCandidates,
+    ...getGlobalSkillRoots(roots).map((root) => ({
+      scope: "global" as const,
+      root,
+      runtime: globalRuntime,
+    })),
+    ...globalPluginCandidates,
+  ];
 }
 
 const NO_PROJECT_SKILL_CONTAINMENT: ProjectSkillContainment = { kind: "none" };
@@ -159,6 +261,31 @@ async function assertProjectSkillContained(args: {
     args.skillFilePath,
     "Project skill file"
   );
+}
+
+/**
+ * Agent Plugins: §4.1 per-skill containment anchored at the canonical plugin
+ * root. Returns false when the skill must be skipped: a missing SKILL.md means
+ * "not a skill" (silent, per §7.1), a realpath escape is logged and reported
+ * via onEscape.
+ */
+async function isPluginSkillContained(args: {
+  pluginRoot: string;
+  skillFilePath: string;
+  directoryName: string;
+  onEscape?: (message: string) => void;
+}): Promise<boolean> {
+  try {
+    await ensurePathContained(args.pluginRoot, args.skillFilePath);
+    return true;
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) {
+      const message = `Plugin skill '${args.directoryName}' at '${args.skillFilePath}' escapes the plugin root: ${getErrorMessage(error)}`;
+      log.warn(message);
+      args.onEscape?.(message);
+    }
+    return false;
+  }
 }
 
 async function listSkillDirectoriesFromLocalFs(root: string): Promise<string[]> {
@@ -311,6 +438,8 @@ export async function discoverAgentSkills(
     dedupeByName?: boolean;
     /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
     includeClaudeSkills?: boolean;
+    /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
+    includeAgentPlugins?: boolean;
   }
 ): Promise<AgentSkillDescriptor[]> {
   if (!workspacePath) {
@@ -321,6 +450,7 @@ export async function discoverAgentSkills(
     options?.roots ??
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
+      includeAgentPlugins: options?.includeAgentPlugins,
     });
 
   const containment = resolveProjectSkillContainment(options);
@@ -330,7 +460,7 @@ export async function discoverAgentSkills(
   const discoveredSkills: AgentSkillDescriptor[] = [];
 
   // Scan order encodes precedence: earlier roots win when names collide.
-  const scans = buildScanCandidates(runtime, workspacePath, roots);
+  const scans = await buildScanCandidates(runtime, workspacePath, roots, containment);
 
   for (const scan of scans) {
     let resolvedRoot: string;
@@ -362,7 +492,16 @@ export async function discoverAgentSkills(
       const skillDir = scan.runtime.normalizePath(directoryName, resolvedRoot);
       const skillFilePath = scan.runtime.normalizePath("SKILL.md", skillDir);
 
-      if (scan.scope === "project") {
+      if (scan.pluginRoot != null) {
+        // Plugin candidates use plugin-root containment; the plugin root itself
+        // was already validated against the project containment root.
+        const contained = await isPluginSkillContained({
+          pluginRoot: scan.pluginRoot,
+          skillFilePath,
+          directoryName,
+        });
+        if (!contained) continue;
+      } else if (scan.scope === "project") {
         try {
           await assertProjectSkillContained({
             runtime: scan.runtime,
@@ -428,6 +567,8 @@ export async function discoverAgentSkillsDiagnostics(
     projectContainmentRoot?: string | null;
     /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
     includeClaudeSkills?: boolean;
+    /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
+    includeAgentPlugins?: boolean;
   }
 ): Promise<DiscoverAgentSkillsDiagnosticsResult> {
   if (!workspacePath) {
@@ -438,6 +579,7 @@ export async function discoverAgentSkillsDiagnostics(
     options?.roots ??
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
+      includeAgentPlugins: options?.includeAgentPlugins,
     });
 
   const containment = resolveProjectSkillContainment(options);
@@ -446,7 +588,7 @@ export async function discoverAgentSkillsDiagnostics(
   const invalidSkills: AgentSkillIssue[] = [];
 
   // Scan order encodes precedence: earlier roots win when names collide.
-  const scans = buildScanCandidates(runtime, workspacePath, roots);
+  const scans = await buildScanCandidates(runtime, workspacePath, roots, containment);
 
   for (const scan of scans) {
     let resolvedRoot: string;
@@ -485,7 +627,25 @@ export async function discoverAgentSkillsDiagnostics(
       const skillDir = scan.runtime.normalizePath(directoryName, resolvedRoot);
       const skillFilePath = scan.runtime.normalizePath("SKILL.md", skillDir);
 
-      if (scan.scope === "project") {
+      if (scan.pluginRoot != null) {
+        // Plugin candidates use plugin-root containment; the plugin root itself
+        // was already validated against the project containment root.
+        const contained = await isPluginSkillContained({
+          pluginRoot: scan.pluginRoot,
+          skillFilePath,
+          directoryName,
+          onEscape: (message) => {
+            invalidSkills.push({
+              directoryName,
+              scope: scan.scope,
+              displayPath: skillFilePath,
+              message,
+              hint: "Remove the symlink escaping the plugin root or move the skill inside the plugin.",
+            });
+          },
+        });
+        if (!contained) continue;
+      } else if (scan.scope === "project") {
         try {
           await assertProjectSkillContained({
             runtime: scan.runtime,
@@ -613,6 +773,8 @@ export async function readAgentSkill(
     projectContainmentRoot?: string | null;
     /** claude-skills-compat experiment: also scan .claude/skills roots (used only when `roots` is absent). */
     includeClaudeSkills?: boolean;
+    /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
+    includeAgentPlugins?: boolean;
   }
 ): Promise<ResolvedAgentSkill> {
   if (!workspacePath) {
@@ -623,12 +785,13 @@ export async function readAgentSkill(
     options?.roots ??
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
+      includeAgentPlugins: options?.includeAgentPlugins,
     });
 
   const containment = resolveProjectSkillContainment(options);
 
   // Scan order encodes precedence: earlier roots win when names collide.
-  const candidates = buildScanCandidates(runtime, workspacePath, roots);
+  const candidates = await buildScanCandidates(runtime, workspacePath, roots, containment);
 
   for (const candidate of candidates) {
     let resolvedRoot: string;
@@ -641,7 +804,16 @@ export async function readAgentSkill(
     const skillDir = candidate.runtime.normalizePath(name, resolvedRoot);
     const skillFilePath = candidate.runtime.normalizePath("SKILL.md", skillDir);
 
-    if (candidate.scope === "project") {
+    if (candidate.pluginRoot != null) {
+      // Plugin candidates use plugin-root containment; the plugin root itself
+      // was already validated against the project containment root.
+      const contained = await isPluginSkillContained({
+        pluginRoot: candidate.pluginRoot,
+        skillFilePath,
+        directoryName: name,
+      });
+      if (!contained) continue;
+    } else if (candidate.scope === "project") {
       try {
         await assertProjectSkillContained({
           runtime: candidate.runtime,

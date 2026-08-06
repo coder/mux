@@ -134,6 +134,57 @@ describe("resolveSkillStorageContext", () => {
     });
   });
 
+  it("adds read-only Agent Plugins containers when includeAgentPlugins is set", () => {
+    using tempDir = new TestTempDir("skill-storage-context-plugin-roots");
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const projectRoot = path.join(tempDir.path, "project");
+    const muxScope: MuxToolScope = {
+      type: "project",
+      muxHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    };
+
+    const offContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: "/remote/workspace",
+      muxScope,
+    });
+    expect(offContext.roots?.projectPluginRoots).toBeUndefined();
+    expect(offContext.roots?.globalPluginRoots).toBeUndefined();
+
+    const projectContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: "/remote/workspace",
+      muxScope,
+      includeAgentPlugins: true,
+    });
+    expect(projectContext.roots?.projectPluginRoots).toEqual([
+      path.join(projectRoot, ".mux", "plugins"),
+      path.join(projectRoot, ".agents", "plugins"),
+    ]);
+    expect(projectContext.roots?.globalPluginRoots).toEqual([
+      path.join(tempDir.path, "plugins"),
+      "~/.agents/plugins",
+    ]);
+
+    const globalContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: tempDir.path,
+      muxScope: {
+        type: "global",
+        muxHome: tempDir.path,
+      },
+      includeAgentPlugins: true,
+    });
+    expect(globalContext.roots?.projectPluginRoots).toBeUndefined();
+    expect(globalContext.roots?.globalPluginRoots).toEqual([
+      path.join(tempDir.path, "plugins"),
+      "~/.agents/plugins",
+    ]);
+  });
+
   it("swaps devcontainer project-local contexts to a host-local runtime", async () => {
     using tempDir = new TestTempDir("skill-storage-context-project-local-devcontainer");
 

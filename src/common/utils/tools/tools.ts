@@ -285,6 +285,8 @@ export interface ToolConfiguration {
     toolSearch?: boolean;
     /** claude-skills-compat: discover skills from .claude/skills and ~/.claude/skills (read-only). */
     claudeSkillsCompat?: boolean;
+    /** agent-plugins: discover Agent Plugins skills from .mux/plugins, .agents/plugins and their global counterparts (read-only). */
+    agentPlugins?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
   availableSubagents?: AgentDefinitionDescriptor[];

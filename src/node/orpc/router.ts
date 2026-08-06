@@ -1852,6 +1852,10 @@ export const router = (authToken?: string) => {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
             ),
+            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
+            ),
           });
         }),
       listDiagnostics: t
@@ -1866,6 +1870,10 @@ export const router = (authToken?: string) => {
           const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath, {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
+            ),
+            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
             ),
           });
           return diagnostics;
@@ -1882,6 +1890,10 @@ export const router = (authToken?: string) => {
           const result = await readAgentSkill(runtime, discoveryPath, input.skillName, {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
+            ),
+            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
             ),
           });
           return result.package;

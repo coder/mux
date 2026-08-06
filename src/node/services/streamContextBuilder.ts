@@ -271,6 +271,8 @@ export interface BuildStreamSystemContextOptions {
   hotMemoriesBlock?: string;
   /** claude-skills-compat experiment: discover skills from .claude/skills roots (read-only). */
   claudeSkillsCompatEnabled?: boolean;
+  /** agent-plugins experiment: discover skills from Agent Plugins containers (read-only). */
+  agentPluginsEnabled?: boolean;
 }
 
 /** Result of system context assembly. */
@@ -591,6 +593,7 @@ export async function buildStreamSystemContext(
     workspacePath,
     muxScope,
     includeClaudeSkills: opts.claudeSkillsCompatEnabled,
+    includeAgentPlugins: opts.agentPluginsEnabled,
   });
 
   let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
@@ -600,6 +603,7 @@ export async function buildStreamSystemContext(
       containment: skillCtx.containment,
       // Used only for the project-runtime default-roots fallback (skillCtx.roots undefined).
       includeClaudeSkills: opts.claudeSkillsCompatEnabled,
+      includeAgentPlugins: opts.agentPluginsEnabled,
     });
   } catch (error) {
     workspaceLog.warn("Failed to discover agent skills for tool description", { error });

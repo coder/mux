@@ -1037,6 +1037,16 @@ export class AIService extends EventEmitter {
     );
   }
 
+  /**
+   * Host-evaluated gate for the agent-plugins experiment: when enabled, skill
+   * discovery/read paths also scan Agent Plugins containers (.mux/plugins,
+   * .agents/plugins, ~/.mux/plugins, ~/.agents/plugins; read-only, lowest
+   * precedence). Public for the same reason as isClaudeSkillsCompatEnabled.
+   */
+  isAgentPluginsEnabled(): boolean {
+    return this.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true;
+  }
+
   /** Stream a message conversation to the AI model. */
   async streamMessage(opts: StreamMessageOptions): Promise<Result<void, SendMessageError>> {
     const {
@@ -1448,6 +1458,7 @@ export class AIService extends EventEmitter {
       // claude-skills-compat is host-evaluated (like memory-hot-set): sub-agents share the
       // host ExperimentsService, so it is not inherited through SendMessageOptions.experiments.
       const claudeSkillsCompatExperimentEnabled = this.isClaudeSkillsCompatEnabled();
+      const agentPluginsExperimentEnabled = this.isAgentPluginsEnabled();
       // Once final tool policy keeps the memory tool, upgrade the index-only
       // memory context (resolved pre-policy with includeHotMemories: false) to
       // the token-budgeted hot block for the model that will actually stream.
@@ -1648,6 +1659,7 @@ export class AIService extends EventEmitter {
           memoryToolAvailable: toolset.memoryToolAvailable,
           hotMemoriesBlock: contextForModel?.hotMemoriesBlock ?? undefined,
           claudeSkillsCompatEnabled: claudeSkillsCompatExperimentEnabled,
+          agentPluginsEnabled: agentPluginsExperimentEnabled,
         });
 
       // Build provisional agent context before tool policy finalizes the toolset.
@@ -2206,6 +2218,7 @@ export class AIService extends EventEmitter {
           workspaceHeartbeats: workspaceHeartbeatsExperimentEnabled,
           toolSearch: toolSearchExperimentEnabled,
           claudeSkillsCompat: claudeSkillsCompatExperimentEnabled,
+          agentPlugins: agentPluginsExperimentEnabled,
         },
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,

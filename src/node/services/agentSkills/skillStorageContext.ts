@@ -24,7 +24,7 @@ export interface SkillStorageContext {
 
 function buildProjectLocalRoots(
   muxScope: Extract<MuxToolScope, { type: "project" }>,
-  options?: { includeClaudeSkills?: boolean }
+  options?: { includeClaudeSkills?: boolean; includeAgentPlugins?: boolean }
 ): AgentSkillsRoots {
   return {
     projectRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
@@ -38,6 +38,16 @@ function buildProjectLocalRoots(
           globalClaudeRoot: "~/.claude/skills",
         }
       : {}),
+    // agent-plugins experiment: read-only plugin containers at lowest precedence within each scope.
+    ...(options?.includeAgentPlugins
+      ? {
+          projectPluginRoots: [
+            path.join(muxScope.projectRoot, ".mux", "plugins"),
+            path.join(muxScope.projectRoot, ".agents", "plugins"),
+          ],
+          globalPluginRoots: [path.join(muxScope.muxHome, "plugins"), "~/.agents/plugins"],
+        }
+      : {}),
   };
 }
 
@@ -45,6 +55,7 @@ function buildGlobalLocalRoots(input: {
   runtime: Runtime;
   muxScope?: MuxToolScope | null;
   includeClaudeSkills?: boolean;
+  includeAgentPlugins?: boolean;
 }): AgentSkillsRoots {
   const muxHome = input.muxScope?.muxHome ?? input.runtime.getMuxHome();
 
@@ -54,6 +65,10 @@ function buildGlobalLocalRoots(input: {
     universalRoot: "~/.agents/skills",
     // claude-skills-compat experiment: read-only root at lowest global precedence.
     ...(input.includeClaudeSkills ? { globalClaudeRoot: "~/.claude/skills" } : {}),
+    // agent-plugins experiment: read-only plugin containers at lowest global precedence.
+    ...(input.includeAgentPlugins
+      ? { globalPluginRoots: [path.join(muxHome, "plugins"), "~/.agents/plugins"] }
+      : {}),
   };
 }
 
@@ -80,6 +95,8 @@ export function resolveSkillStorageContext(input: {
   muxScope?: MuxToolScope | null;
   /** claude-skills-compat experiment: include read-only .claude/skills roots in discovery. */
   includeClaudeSkills?: boolean;
+  /** agent-plugins experiment: include read-only Agent Plugins skill roots in discovery. */
+  includeAgentPlugins?: boolean;
 }): SkillStorageContext {
   if (input.muxScope?.type !== "project") {
     return {
@@ -92,6 +109,7 @@ export function resolveSkillStorageContext(input: {
         runtime: input.runtime,
         muxScope: input.muxScope,
         includeClaudeSkills: input.includeClaudeSkills,
+        includeAgentPlugins: input.includeAgentPlugins,
       }),
       containment: { kind: "none" },
     };
@@ -118,6 +136,7 @@ export function resolveSkillStorageContext(input: {
     workspacePath: input.workspacePath,
     roots: buildProjectLocalRoots(input.muxScope, {
       includeClaudeSkills: input.includeClaudeSkills,
+      includeAgentPlugins: input.includeAgentPlugins,
     }),
     containment: {
       kind: "local",

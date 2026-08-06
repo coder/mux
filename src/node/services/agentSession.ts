@@ -6444,8 +6444,13 @@ export class AgentSession {
         const includeClaudeSkills =
           typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
           this.aiService.isClaudeSkillsCompatEnabled();
+        // agent-plugins experiment: same treatment for plugin-provided skills.
+        const includeAgentPlugins =
+          typeof this.aiService.isAgentPluginsEnabled === "function" &&
+          this.aiService.isAgentPluginsEnabled();
         resolved = await readAgentSkill(runtime, skillDiscoveryPath, parsedName.data, {
           includeClaudeSkills,
+          includeAgentPlugins,
         });
       } catch (error) {
         if (ref.source === "slash") {

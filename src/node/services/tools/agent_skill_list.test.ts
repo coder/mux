@@ -56,6 +56,29 @@ function getSkill(skills: AgentSkillDescriptor[], name: string): AgentSkillDescr
   return skill!;
 }
 
+/** Agent Plugins fixture: a container entry with a plugin.json manifest and skills. */
+async function writePlugin(
+  containerPath: string,
+  pluginName: string,
+  skills: Array<{ name: string; description: string }>
+): Promise<void> {
+  const pluginDir = path.join(containerPath, pluginName);
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.writeFile(
+    path.join(pluginDir, "plugin.json"),
+    JSON.stringify({
+      $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+      name: pluginName,
+    }),
+    "utf-8"
+  );
+  for (const skill of skills) {
+    await writeSkill(path.join(pluginDir, "skills"), skill.name, {
+      description: skill.description,
+    });
+  }
+}
+
 describe("agent_skill_list", () => {
   it("lists effective available skills across project and global scopes", async () => {
     using project = new TestTempDir("test-agent-skill-list-project");
@@ -239,6 +262,97 @@ describe("agent_skill_list", () => {
         expect(getSkill(result.skills, "claude-global")).toMatchObject({
           name: "claude-global",
           description: "from global claude root",
+          scope: "global",
+        });
+      });
+    });
+  });
+
+  it("hides Agent Plugins skills when the agent-plugins experiment is off", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-plugins-off-home");
+    using project = new TestTempDir("test-agent-skill-list-plugins-off-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-plugins-off-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writePlugin(path.join(project.path, ".mux", "plugins"), "project-plugin", [
+          { name: "plugin-project", description: "from project plugin" },
+        ]);
+        await writePlugin(path.join(muxHomeDir.path, "plugins"), "global-plugin", [
+          { name: "plugin-global", description: "from global plugin" },
+        ]);
+
+        // Default tool config: no experiments => plugin roots must stay invisible.
+        const tool = createAgentSkillListTool(
+          createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          })
+        );
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(result.skills.find((skill) => skill.name === "plugin-project")).toBeUndefined();
+        expect(result.skills.find((skill) => skill.name === "plugin-global")).toBeUndefined();
+      });
+    });
+  });
+
+  it("lists Agent Plugins skills when the agent-plugins experiment is on", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-plugins-on-home");
+    using project = new TestTempDir("test-agent-skill-list-plugins-on-project");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-plugins-on-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        await writePlugin(path.join(project.path, ".mux", "plugins"), "project-plugin", [
+          { name: "plugin-project", description: "from project plugin" },
+        ]);
+        await writePlugin(path.join(muxHomeDir.path, "plugins"), "global-plugin", [
+          { name: "plugin-global", description: "from global plugin" },
+        ]);
+        // Sibling non-plugin entry (e.g. Codex marketplace metadata) must not break listing.
+        await fs.mkdir(path.join(homeDir.path, ".agents", "plugins"), { recursive: true });
+        await fs.writeFile(
+          path.join(homeDir.path, ".agents", "plugins", "marketplace.json"),
+          "{}",
+          "utf-8"
+        );
+
+        const tool = createAgentSkillListTool({
+          ...createTestToolConfig(project.path, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: project.path,
+              projectStorageAuthority: "host-local",
+            },
+          }),
+          experiments: { agentPlugins: true },
+        });
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "plugin-project")).toMatchObject({
+          name: "plugin-project",
+          description: "from project plugin",
+          scope: "project",
+        });
+        expect(getSkill(result.skills, "plugin-global")).toMatchObject({
+          name: "plugin-global",
+          description: "from global plugin",
           scope: "global",
         });
       });

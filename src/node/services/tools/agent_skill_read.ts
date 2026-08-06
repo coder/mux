@@ -72,11 +72,14 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
       try {
         // claude-skills-compat experiment: allow reading skills discovered from .claude roots.
         const includeClaudeSkills = config.experiments?.claudeSkillsCompat === true;
+        // agent-plugins experiment: allow reading skills discovered from Agent Plugins.
+        const includeAgentPlugins = config.experiments?.agentPlugins === true;
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath,
           muxScope: config.muxScope ?? null,
           includeClaudeSkills,
+          includeAgentPlugins,
         });
         const resolved = await readAgentSkill(
           skillCtx.runtime,
@@ -86,6 +89,7 @@ export const createAgentSkillReadTool: ToolFactory = (config: ToolConfiguration)
             roots: skillCtx.roots,
             containment: skillCtx.containment,
             includeClaudeSkills,
+            includeAgentPlugins,
           }
         );
         return {
