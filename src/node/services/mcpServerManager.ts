@@ -1377,6 +1377,8 @@ export class MCPServerManager {
     url?: string;
     headers?: Record<string, MCPHeaderValue>;
     projectSecrets?: Record<string, string>;
+    /** Agent Plugins discovery context for named-server lookups (null = no plugin servers). */
+    agentPlugins?: AgentPluginsMcpContext | null;
   }): Promise<MCPTestResult> {
     const isTransportAllowed = (t: MCPServerTransport): boolean => {
       return !this.policyService?.isEnforced() || this.policyService.isMcpTransportAllowed(t);
@@ -1390,11 +1392,12 @@ export class MCPServerManager {
       url,
       headers,
       projectSecrets,
+      agentPlugins,
     } = options;
     const trimmedName = name?.trim();
 
     if (trimmedName && !command?.trim() && !url?.trim()) {
-      const servers = await this.configService.listServers(projectPath, trusted);
+      const servers = await this.configService.listServers(projectPath, trusted, { agentPlugins });
       const server = servers[trimmedName];
       if (!server) {
         return { success: false, error: `Server "${trimmedName}" not found in configuration` };

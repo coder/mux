@@ -4,8 +4,10 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import type { MCPServerInfo, MCPStdioServerInfo } from "@/common/types/mcp";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { isMultiProject } from "@/common/utils/multiProject";
 import { log } from "@/node/services/log";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import type { AgentPluginContainer, AgentPluginDiagnostic, AgentPluginInfo } from "./discovery";
@@ -473,6 +475,31 @@ export interface AgentPluginsMcpContext {
 export interface AgentPluginsMcpProviderArgs extends AgentPluginsMcpContext {
   /** Whether repo-local (project-scope) plugin config is allowed (Project Trust). */
   trusted: boolean;
+}
+
+/**
+ * Agent Plugins MCP context for a workspace, or null when plugin servers must
+ * not be offered because the workspace executes off-host: SSH/Docker remotes,
+ * devcontainers (exec runs inside the container even though the checkout is a
+ * host path), and multi-project fan-out. `workspacePath` is the active host
+ * checkout, so plugin content follows the workspace branch (matching skill
+ * discovery), while `projectKey` keeps instance IDs stable across worktrees.
+ *
+ * Metadata-based (not Runtime-based) so both AIService streams and oRPC
+ * handlers resolve the identical context for a workspace.
+ */
+export function resolveAgentPluginsMcpContext(
+  metadata: WorkspaceMetadata,
+  workspacePath: string
+): AgentPluginsMcpContext | null {
+  if (isMultiProject(metadata)) {
+    return null;
+  }
+  const runtimeType = metadata.runtimeConfig.type;
+  if (runtimeType !== "local" && runtimeType !== "worktree") {
+    return null;
+  }
+  return { projectRoot: workspacePath, projectKey: metadata.projectPath };
 }
 
 export type AgentPluginsMcpProvider = (

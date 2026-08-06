@@ -60,7 +60,9 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
       setError(null);
       try {
         const [projectServers, workspaceOverrides] = await Promise.all([
-          api.mcp.list({ projectPath }),
+          // workspaceId scopes Agent Plugins servers to this workspace's active
+          // checkout (and hides them entirely for off-host workspaces).
+          api.mcp.list({ projectPath, workspaceId }),
           api.workspace.mcp.get({ workspaceId }),
         ]);
         setServers(projectServers ?? {});
@@ -81,7 +83,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
       if (!api) return;
       setLoadingTools((prev) => ({ ...prev, [serverName]: true }));
       try {
-        const result = await api.mcp.test({ projectPath, name: serverName });
+        const result = await api.mcp.test({ projectPath, name: serverName, workspaceId });
         setResult(serverName, result);
         if (!result.success) {
           setError(`Failed to fetch tools for ${serverName}: ${result.error}`);
@@ -92,7 +94,7 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
         setLoadingTools((prev) => ({ ...prev, [serverName]: false }));
       }
     },
-    [api, projectPath, setResult]
+    [api, projectPath, workspaceId, setResult]
   );
 
   /**

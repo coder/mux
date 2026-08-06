@@ -77,6 +77,14 @@ export const MCPServerMapSchema = z.record(z.string(), MCPServerInfoSchema);
 
 export const MCPListParamsSchema = z.object({
   projectPath: z.string().optional(),
+  /**
+   * Workspace whose Agent Plugins MCP context should apply (agent-plugins
+   * experiment): plugin servers are discovered from that workspace's active
+   * checkout, and omitted entirely for off-host workspaces. Without a
+   * workspaceId, plugin discovery scans under projectPath (project-level
+   * flows like Settings).
+   */
+  workspaceId: z.string().optional(),
 });
 
 const MCPAddParamsBaseSchema = z.object({
@@ -167,6 +175,8 @@ const MCPTestParamsBaseSchema = z.object({
   command: z.string().optional(),
   url: z.string().optional(),
   headers: MCPHeadersSchema.optional(),
+  /** Workspace whose Agent Plugins MCP context should apply; see MCPListParamsSchema. */
+  workspaceId: z.string().optional(),
 });
 
 type MCPTestParamsLike = z.infer<typeof MCPTestParamsBaseSchema>;

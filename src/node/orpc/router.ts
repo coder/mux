@@ -48,6 +48,10 @@ import {
   createRuntimeForWorkspace,
   resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
+import {
+  resolveAgentPluginsMcpContext,
+  type AgentPluginsMcpContext,
+} from "@/node/services/agentPlugins/mcpConfig";
 import { readPlanFile } from "@/node/utils/runtime/helpers";
 import {
   parseMemoryPath,
@@ -281,6 +285,40 @@ async function resolveAgentDiscoveryContext(
     { projectPath: input.projectPath! }
   );
   return { runtime, discoveryPath: input.projectPath! };
+}
+
+/**
+ * Agent Plugins MCP context for an optional workspaceId input (agent-plugins
+ * experiment). Returns undefined (project-level default: scan under
+ * projectPath) when no workspace is given or its metadata cannot be resolved;
+ * otherwise the workspace's own context — worktree-scanning for host
+ * workspaces, null for off-host workspaces so plugin servers match what the
+ * engine actually offers there.
+ */
+async function resolveWorkspaceAgentPluginsMcpContext(
+  context: ORPCContext,
+  workspaceId: string | null | undefined
+): Promise<AgentPluginsMcpContext | null | undefined> {
+  const trimmed = workspaceId?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  try {
+    const metadataResult = await context.aiService.getWorkspaceMetadata(trimmed);
+    if (!metadataResult.success) {
+      return undefined;
+    }
+    const metadata = metadataResult.data;
+    const runtime = createRuntimeForWorkspace(metadata);
+    const workspacePath = resolveWorkspaceRootPath(metadata, runtime);
+    return resolveAgentPluginsMcpContext(metadata, workspacePath);
+  } catch (error) {
+    log.debug("Failed to resolve Agent Plugins MCP context for workspace", {
+      workspaceId: trimmed,
+      error,
+    });
+    return undefined;
+  }
 }
 
 function isTrustedProjectPath(context: ORPCContext, projectPath?: string | null): boolean {
@@ -2774,7 +2812,13 @@ export const router = (authToken?: string) => {
         .handler(async ({ context, input }) => {
           const servers = await context.mcpConfigService.listServers(
             input.projectPath,
-            isTrustedProjectPath(context, input.projectPath)
+            isTrustedProjectPath(context, input.projectPath),
+            {
+              agentPlugins: await resolveWorkspaceAgentPluginsMcpContext(
+                context,
+                input.workspaceId
+              ),
+            }
           );
 
           if (!context.policyService.isEnforced()) {
@@ -2915,11 +2959,16 @@ export const router = (authToken?: string) => {
             opResolver
           );
 
+          const agentPlugins = await resolveWorkspaceAgentPluginsMcpContext(
+            context,
+            input.workspaceId
+          );
           const configuredTransport = input.name
             ? (
                 await context.mcpConfigService.listServers(
                   projectPathProvided ? resolvedProjectPath : undefined,
-                  trusted
+                  trusted,
+                  { agentPlugins }
                 )
               )[input.name]?.transport
             : undefined;
@@ -2942,6 +2991,7 @@ export const router = (authToken?: string) => {
             url: input.url,
             headers: input.headers,
             projectSecrets: secrets,
+            agentPlugins,
           });
 
           const durationMs = Date.now() - start;

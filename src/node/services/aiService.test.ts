@@ -10,7 +10,6 @@ import { describe, it, expect, beforeEach, afterEach, mock, spyOn } from "bun:te
 import {
   AIService,
   prepareProviderRequestMessages,
-  resolveAgentPluginsMcpContext,
   resolveMuxProjectRootForHostFs,
 } from "./aiService";
 import { discoverAvailableSubagentsForToolContext } from "./streamContextBuilder";
@@ -26,11 +25,7 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { Config } from "@/node/config";
 import * as runtimeFactory from "@/node/runtime/runtimeFactory";
-import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
-import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
-import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import type { Runtime } from "@/node/runtime/Runtime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 
 import { createTaskTool } from "./tools/task";
@@ -564,46 +559,6 @@ describe("resolveMuxProjectRootForHostFs", () => {
         "/src"
       )
     ).toBe(projectPath);
-  });
-});
-
-describe("resolveAgentPluginsMcpContext", () => {
-  const projectPath = "/home/user/projects/my-app";
-  const workspacePath = "/home/user/.mux/src/my-app/feature-branch";
-
-  function createMetadata(runtimeConfig: WorkspaceMetadata["runtimeConfig"]): WorkspaceMetadata {
-    return {
-      id: "workspace-id",
-      name: "feature-branch",
-      projectName: "my-app",
-      projectPath,
-      runtimeConfig,
-    };
-  }
-
-  it("scans the active checkout keyed by the project for host runtimes", () => {
-    expect(
-      resolveAgentPluginsMcpContext(
-        new LocalRuntime(projectPath),
-        createMetadata({ type: "local" }),
-        workspacePath
-      )
-    ).toEqual({ projectRoot: workspacePath, projectKey: projectPath });
-  });
-
-  it("returns null for runtimes whose exec runs off-host", () => {
-    const offHostRuntimes = [
-      // Both classes exec off-host; DevcontainerRuntime despite extending LocalBaseRuntime.
-      Object.create(RemoteRuntime.prototype) as Runtime,
-      Object.create(DevcontainerRuntime.prototype) as Runtime,
-      // MultiProjectRuntime implements Runtime directly: excluded by the host allowlist.
-      Object.create(MultiProjectRuntime.prototype) as Runtime,
-    ];
-    for (const runtime of offHostRuntimes) {
-      expect(
-        resolveAgentPluginsMcpContext(runtime, createMetadata({ type: "local" }), workspacePath)
-      ).toBeNull();
-    }
   });
 });
 

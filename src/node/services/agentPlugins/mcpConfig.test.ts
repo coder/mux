@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { describe, expect, spyOn, test } from "bun:test";
 
 import type { MCPStdioServerInfo } from "@/common/types/mcp";
+import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import type { AgentPluginInfo } from "./discovery";
 import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
@@ -15,6 +16,7 @@ import {
   createAgentPluginsMcpProvider,
   getPluginDataPath,
   loadPluginMcpServers,
+  resolveAgentPluginsMcpContext,
 } from "./mcpConfig";
 
 /** Create a plugin dir on disk and return its AgentPluginInfo. */
@@ -618,5 +620,66 @@ describe("createAgentPluginsMcpProvider", () => {
       });
       expect(Object.keys(otherProject)).not.toEqual(Object.keys(fromProject));
     });
+  });
+});
+
+describe("resolveAgentPluginsMcpContext", () => {
+  const projectPath = "/home/user/projects/my-app";
+  const workspacePath = "/home/user/.mux/src/my-app/feature-branch";
+
+  function createMetadata(
+    runtimeConfig: WorkspaceMetadata["runtimeConfig"],
+    extra?: Partial<WorkspaceMetadata>
+  ): WorkspaceMetadata {
+    return {
+      id: "workspace-id",
+      name: "feature-branch",
+      projectName: "my-app",
+      projectPath,
+      runtimeConfig,
+      ...extra,
+    };
+  }
+
+  test("scans the active checkout keyed by the project for host runtimes", () => {
+    for (const runtimeConfig of [
+      { type: "local" } as const,
+      { type: "worktree", srcBaseDir: "/home/user/.mux/src" } as const,
+    ]) {
+      expect(resolveAgentPluginsMcpContext(createMetadata(runtimeConfig), workspacePath)).toEqual({
+        projectRoot: workspacePath,
+        projectKey: projectPath,
+      });
+    }
+  });
+
+  test("returns null for workspaces that exec off-host", () => {
+    const offHostConfigs: Array<WorkspaceMetadata["runtimeConfig"]> = [
+      { type: "ssh", host: "remote", srcBaseDir: "/home/remote/.mux/src" },
+      { type: "docker", image: "ubuntu:22.04" },
+      // Devcontainer checkouts are host paths, but exec runs inside the container.
+      { type: "devcontainer", configPath: ".devcontainer/devcontainer.json" },
+    ];
+    for (const runtimeConfig of offHostConfigs) {
+      expect(
+        resolveAgentPluginsMcpContext(createMetadata(runtimeConfig), workspacePath)
+      ).toBeNull();
+    }
+
+    // Multi-project fan-out execs per-project; the shared root is not a checkout.
+    expect(
+      resolveAgentPluginsMcpContext(
+        createMetadata(
+          { type: "local" },
+          {
+            projects: [
+              { projectPath: "/proj/a", projectName: "a" },
+              { projectPath: "/proj/b", projectName: "b" },
+            ],
+          }
+        ),
+        workspacePath
+      )
+    ).toBeNull();
   });
 });
