@@ -464,6 +464,8 @@ describe("backup payload", () => {
           disabled: "yes",
           transport: "stdio",
           toolAllowlist: ["read"],
+          toString: { API_KEY: "to-string-secret" },
+          constructor: { API_KEY: "constructor-secret" },
         },
         api: {
           url: "/mcp?mode=abc123",
@@ -480,7 +482,13 @@ describe("backup payload", () => {
       reportSecrets: true,
     });
     const exported = payloadFileText(payload, "mcp.jsonc");
-    for (const secret of ["top-level-secret", "hunter2", "swordfish"]) {
+    for (const secret of [
+      "top-level-secret",
+      "hunter2",
+      "swordfish",
+      "to-string-secret",
+      "constructor-secret",
+    ]) {
       expect(exported).not.toContain(secret);
     }
     // A recognized field read as the wrong type is another place to hide a value nobody
@@ -495,6 +503,8 @@ describe("backup payload", () => {
       "servers.tool.env",
       "servers.tool.args",
       "servers.tool.disabled",
+      "servers.tool.toString",
+      "servers.tool.constructor",
       "servers.api.headers.Authorization",
     ]);
 

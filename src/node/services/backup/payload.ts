@@ -1050,7 +1050,9 @@ function redactMcpConfig(content: Buffer): {
     for (const field of objectKeyNames(tree, ["servers", serverName])) {
       const fieldPath: jsonc.JSONPath = ["servers", serverName, field];
       const value = readOwn(server, field);
-      const isPortableField = PORTABLE_SERVER_FIELDS[field];
+      const isPortableField = hasOwn(PORTABLE_SERVER_FIELDS, field)
+        ? PORTABLE_SERVER_FIELDS[field]
+        : undefined;
       if (isPortableField) {
         // Read as the wrong type, `normalizeEntry` ignores it, which makes it another place
         // to hide a value nobody reads.
