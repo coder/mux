@@ -1560,14 +1560,13 @@ export class ProviderModelFactory {
         // that capability; older custom model strings stay on Chat Completions for
         // legacy search_parameters compatibility.
         const capabilityModel = resolveModelForMetadata(`xai:${modelId}`, providersConfig);
-        const model = isGrok45Model(capabilityModel)
-          ? provider.responses(modelId)
-          : provider.chat(modelId);
+        const isGrok45 = isGrok45Model(capabilityModel);
+        const model = isGrok45 ? provider.responses(modelId) : provider.chat(modelId);
 
         // Grok 4.5 Responses: force store=false by default so ZDR and non-ZDR share
         // one path. buildProviderOptions already defaults this; inject here too so
         // callers that omit providerOptions still get ZDR-safe requests.
-        if (isGrok45Model(capabilityModel)) {
+        if (isGrok45) {
           injectGrok45StoreDefault(model, muxProviderOptions?.xai?.store);
         }
 
