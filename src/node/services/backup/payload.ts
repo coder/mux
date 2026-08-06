@@ -78,11 +78,14 @@ export interface BackupManifestFile {
   executable?: boolean;
 }
 
+export type BackupRedactionPath = jsonc.JSONPath;
+
 export interface BackupManifest {
   schemaVersion: typeof BACKUP_SCHEMA_VERSION;
   exportedAt: string;
   muxVersion: string;
   sourceLabel: string;
+  mcpRedactions?: BackupRedactionPath[];
   files: BackupManifestFile[];
 }
 
@@ -970,23 +973,56 @@ const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
  * local `// token=hunter2` beside a server would be published verbatim and the scanner would
  * not recognise it either. Reserializing publishes only the values this file kept.
  */
-function serializeProjectedMcp(text: string): Buffer {
-  const projected: unknown = jsonc.parse(text);
-  if (!projected || typeof projected !== "object" || Array.isArray(projected)) {
-    throw new Error("Invalid mcp.jsonc");
-  }
-  return Buffer.from(`${JSON.stringify(projected, null, 2)}\n`, "utf-8");
+function serializeProjectedMcp(text: string): {
+  content: Buffer;
+  parsed: Record<string, unknown>;
+} {
+  const parsed = readRecord(jsonc.parse(text));
+  if (!parsed) throw new Error("Invalid mcp.jsonc");
+  return {
+    content: Buffer.from(`${JSON.stringify(parsed, null, 2)}\n`, "utf-8"),
+    parsed,
+  };
 }
 
-function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string[] } {
+function valueHasRedactionAtPath(
+  root: Record<string, unknown>,
+  jsonPath: BackupRedactionPath
+): boolean {
+  let value: unknown = root;
+  for (const segment of jsonPath) {
+    if (typeof segment === "number") {
+      value = Array.isArray(value) ? value[segment] : undefined;
+      continue;
+    }
+    const record = readRecord(value);
+    value = record ? readOwn(record, segment) : undefined;
+  }
+  return typeof value === "string" && containsRedaction(value);
+}
+
+function redactMcpConfig(content: Buffer): {
+  content: Buffer;
+  redactionPaths: BackupRedactionPath[];
+} {
   const text = content.toString("utf-8");
   const { parsed: root, tree } = parseJsoncObjectWithTree(text, "mcp.jsonc");
-  const redactions: string[] = [];
+  const redactionPaths: BackupRedactionPath[] = [];
   const edits: Array<{ path: jsonc.JSONPath; value: unknown }> = [];
 
   function redact(jsonPath: jsonc.JSONPath): void {
     edits.push({ path: jsonPath, value: REDACTED_BACKUP_VALUE });
-    redactions.push(jsonPath.join("."));
+    redactionPaths.push([...jsonPath]);
+  }
+
+  function finish(): { content: Buffer; redactionPaths: BackupRedactionPath[] } {
+    const projected = serializeProjectedMcp(applyJsoncEdits(text, edits));
+    return {
+      content: projected.content,
+      redactionPaths: redactionPaths.filter((jsonPath) =>
+        valueHasRedactionAtPath(projected.parsed, jsonPath)
+      ),
+    };
   }
 
   // Names come from the document rather than the parse result throughout, because
@@ -998,20 +1034,18 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
 
   const servers = readOwn(root, "servers");
   if (isUnsupportedServerMap(servers)) redact(["servers"]);
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) {
-    return { content: serializeProjectedMcp(applyJsoncEdits(text, edits)), redactions };
-  }
-  const serverRecord = servers as Record<string, unknown>;
+  const serverRecord = readRecord(servers);
+  if (!serverRecord) return finish();
 
   for (const serverName of objectKeyNames(tree, ["servers"])) {
     const rawServer = readOwn(serverRecord, serverName);
     // A bare string entry is the stdio command itself (`McpConfigService.normalizeEntry`).
     if (typeof rawServer === "string") continue;
-    if (typeof rawServer !== "object" || rawServer === null || Array.isArray(rawServer)) {
+    const server = readRecord(rawServer);
+    if (!server) {
       redact(["servers", serverName]);
       continue;
     }
-    const server = rawServer as Record<string, unknown>;
 
     for (const field of objectKeyNames(tree, ["servers", serverName])) {
       const fieldPath: jsonc.JSONPath = ["servers", serverName, field];
@@ -1024,11 +1058,11 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
         continue;
       }
       if (field === "headers") {
-        if (!value || typeof value !== "object" || Array.isArray(value)) {
+        const headers = readRecord(value);
+        if (!headers) {
           redact(fieldPath);
           continue;
         }
-        const headers = value as Record<string, unknown>;
         for (const headerName of objectKeyNames(tree, fieldPath)) {
           if (!isPortableReference(readOwn(headers, headerName))) {
             redact([...fieldPath, headerName]);
@@ -1041,28 +1075,61 @@ function redactMcpConfig(content: Buffer): { content: Buffer; redactions: string
       redact(fieldPath);
     }
   }
-  return { content: serializeProjectedMcp(applyJsoncEdits(text, edits)), redactions };
+  return finish();
 }
 
-/** Reports what a payload had redacted, so reading one back describes the same paths. */
-function findMcpRedactions(content: Buffer): string[] {
-  const { parsed: root, tree } = parseJsoncObjectWithTree(content.toString("utf-8"), "mcp.jsonc");
-  const redactions: string[] = [];
+function findMcpRedactionPaths(tree: jsonc.Node): BackupRedactionPath[] {
+  const paths: BackupRedactionPath[] = [];
+  const jsonPath: BackupRedactionPath = [];
 
-  function walk(value: unknown, jsonPath: jsonc.JSONPath): void {
-    if (typeof value === "string") {
-      if (containsRedaction(value)) redactions.push(jsonPath.join("."));
+  function walk(node: jsonc.Node): void {
+    if (node.type === "string") {
+      if (typeof node.value === "string" && containsRedaction(node.value)) {
+        paths.push([...jsonPath]);
+      }
       return;
     }
-    if (!value || typeof value !== "object" || Array.isArray(value)) return;
-    const record = value as Record<string, unknown>;
-    for (const key of objectKeyNames(tree, jsonPath)) {
-      walk(readOwn(record, key), [...jsonPath, key]);
+    if (node.type === "array") {
+      for (const [index, child] of (node.children ?? []).entries()) {
+        jsonPath.push(index);
+        walk(child);
+        jsonPath.pop();
+      }
+      return;
+    }
+    if (node.type !== "object") return;
+    for (const property of node.children ?? []) {
+      const key: unknown = property.children?.[0]?.value;
+      const value = property.children?.[1];
+      if (typeof key !== "string" || !value) continue;
+      jsonPath.push(key);
+      walk(value);
+      jsonPath.pop();
     }
   }
 
-  walk(root, []);
-  return redactions;
+  walk(tree);
+  return paths;
+}
+
+function redactionPathKey(jsonPath: ReadonlyArray<string | number>): string {
+  return JSON.stringify(jsonPath);
+}
+
+function redactionPathLabel(jsonPath: ReadonlyArray<string | number>): string {
+  return jsonPath.join(".");
+}
+
+function validateMcpRedactionPaths(tree: jsonc.Node, paths: readonly BackupRedactionPath[]): void {
+  if (paths.length === 0) return;
+  const markerPaths = new Set(findMcpRedactionPaths(tree).map(redactionPathKey));
+  for (const jsonPath of paths) {
+    if (!markerPaths.has(redactionPathKey(jsonPath))) {
+      throw new BackupInvalidPayloadError(
+        new Error(`Invalid MCP redaction path '${redactionPathLabel(jsonPath)}'`)
+      );
+    }
+  }
 }
 
 /**
@@ -1177,12 +1244,12 @@ export async function createBackupPayload(
   options: CreateBackupPayloadOptions
 ): Promise<BackupPayload> {
   const files = await collectAllowlistedFiles(options.muxRoot);
-  const redactions: string[] = [];
+  const mcpRedactionPaths: BackupRedactionPath[] = [];
   const mcpFile = files.find((file) => file.path === "mcp.jsonc");
   if (mcpFile && options.keepLocalSecrets !== true) {
     const redacted = redactMcpConfig(mcpFile.content);
     mcpFile.content = redacted.content;
-    redactions.push(...redacted.redactions);
+    mcpRedactionPaths.push(...redacted.redactionPaths);
   }
   files.push({
     path: "preferences.json",
@@ -1203,6 +1270,7 @@ export async function createBackupPayload(
       exportedAt: options.exportedAt ?? new Date().toISOString(),
       muxVersion: normalizeMuxVersion(options.muxVersion),
       sourceLabel: options.sourceLabel,
+      ...(mcpFile ? { mcpRedactions: mcpRedactionPaths } : {}),
       files: files.map((file) => ({
         path: file.path,
         sha256: sha256(file.content),
@@ -1210,11 +1278,12 @@ export async function createBackupPayload(
       })),
     },
     files,
-    redactions,
+    redactions: mcpRedactionPaths.map(redactionPathLabel),
   };
 }
 
 function sameManifestContent(a: BackupManifest, b: BackupManifest): boolean {
+  if (JSON.stringify(a.mcpRedactions) !== JSON.stringify(b.mcpRedactions)) return false;
   if (a.files.length !== b.files.length) return false;
   return a.files.every(
     (file, index) =>
@@ -1314,7 +1383,22 @@ export async function writeBackupPayload(
   });
 }
 
+function isBackupRedactionPath(value: unknown): value is BackupRedactionPath {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every(
+      (segment) =>
+        typeof segment === "string" ||
+        (typeof segment === "number" && Number.isInteger(segment) && segment >= 0)
+    )
+  );
+}
+
 function parseManifest(raw: string): BackupManifest {
+  const tree = jsonc.parseTree(raw);
+  if (!tree) throw new Error("Invalid backup manifest");
+  assertNoDuplicateKeys(tree, "backup manifest");
   const value: unknown = JSON.parse(raw);
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Invalid backup manifest");
@@ -1325,9 +1409,20 @@ function parseManifest(raw: string): BackupManifest {
     typeof manifest.exportedAt !== "string" ||
     typeof manifest.muxVersion !== "string" ||
     typeof manifest.sourceLabel !== "string" ||
+    (manifest.mcpRedactions !== undefined &&
+      (!Array.isArray(manifest.mcpRedactions) ||
+        !manifest.mcpRedactions.every(isBackupRedactionPath))) ||
     !Array.isArray(manifest.files)
   ) {
     throw new Error("Invalid backup manifest");
+  }
+  if (manifest.mcpRedactions !== undefined) {
+    const paths = new Set<string>();
+    for (const jsonPath of manifest.mcpRedactions) {
+      const key = redactionPathKey(jsonPath);
+      if (paths.has(key)) throw new Error("Invalid backup manifest: duplicate MCP redaction path");
+      paths.add(key);
+    }
   }
   for (const file of manifest.files) {
     if (
@@ -1429,16 +1524,28 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
   }
   // Parse every structured entry here so a malformed backup is rejected before restore
   // writes anything. Otherwise a later parse failure leaves a half-restored install.
-  for (const file of files) {
-    if (file.path === "preferences.json") {
-      projectBackupPreferences(JSON.parse(file.content.toString("utf-8")));
-    }
-    if (file.path === "mcp.jsonc") {
-      parseJsoncObject(file.content.toString("utf-8"), "backup mcp.jsonc");
-    }
+  const preferencesFile = files.find((file) => file.path === "preferences.json");
+  if (preferencesFile) {
+    projectBackupPreferences(JSON.parse(preferencesFile.content.toString("utf-8")));
   }
   const mcpFile = files.find((file) => file.path === "mcp.jsonc");
-  return { manifest, files, redactions: mcpFile ? findMcpRedactions(mcpFile.content) : [] };
+  const parsedMcp = mcpFile
+    ? parseJsoncObjectWithTree(mcpFile.content.toString("utf-8"), "backup mcp.jsonc")
+    : undefined;
+  if (manifest.mcpRedactions !== undefined) {
+    if (!parsedMcp) throw new Error("Backup manifest lists MCP redactions without mcp.jsonc");
+    validateMcpRedactionPaths(parsedMcp.tree, manifest.mcpRedactions);
+    return {
+      manifest,
+      files,
+      redactions: manifest.mcpRedactions.map(redactionPathLabel),
+    };
+  }
+  return {
+    manifest,
+    files,
+    redactions: parsedMcp ? findMcpRedactionPaths(parsedMcp.tree).map(redactionPathLabel) : [],
+  };
 }
 
 function containsRedaction(value: string): boolean {
@@ -1448,27 +1555,30 @@ function containsRedaction(value: string): boolean {
   );
 }
 
-/**
- * Collects the edits that put locally-held values back where the backup carries a
- * redaction marker, so re-reading a backup never destroys a working credential.
- *
- * A marker makes the WHOLE scalar locally owned, so a non-secret change the backup
- * made inside that same string is deliberately not restored. Splicing the local
- * credential into backup-controlled text would let a tampered backup move the local
- * secret to a different host or binary.
- */
+function isRedactedBackupValue(
+  value: string,
+  jsonPath: jsonc.JSONPath,
+  redactedPaths: ReadonlySet<string> | undefined
+): boolean {
+  return redactedPaths === undefined
+    ? containsRedaction(value)
+    : redactedPaths.has(redactionPathKey(jsonPath));
+}
+
+/** Whole-value restoration prevents backup-controlled text from redirecting local credentials. */
 function collectRedactionRestoreEdits(
   backup: unknown,
   local: unknown,
   currentPath: jsonc.JSONPath,
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
+  redactedPaths: ReadonlySet<string> | undefined,
   resolvedServers: ReadonlySet<string> = new Set()
 ): void {
   // Only the paths handled by command or header resolution are skipped, so a mixed entry
   // can still rehydrate its other redacted values. A dropped entry is skipped wholesale,
   // since a nested edit would resurrect what it removed.
   if (resolvedServers.has(currentPath.join("\u0000"))) return;
-  if (typeof backup === "string" && containsRedaction(backup)) {
+  if (typeof backup === "string" && isRedactedBackupValue(backup, currentPath, redactedPaths)) {
     if (local !== undefined) edits.push({ path: currentPath, value: local });
     return;
   }
@@ -1480,31 +1590,36 @@ function collectRedactionRestoreEdits(
         localArray[index],
         [...currentPath, index],
         edits,
+        redactedPaths,
         resolvedServers
       )
     );
     return;
   }
-  if (backup && typeof backup === "object") {
-    const localRecord =
-      local && typeof local === "object" && !Array.isArray(local)
-        ? (local as Record<string, unknown>)
-        : {};
-    for (const [key, value] of Object.entries(backup as Record<string, unknown>)) {
-      collectRedactionRestoreEdits(
-        value,
-        readOwn(localRecord, key),
-        [...currentPath, key],
-        edits,
-        resolvedServers
-      );
-    }
+  const backupRecord = readRecord(backup);
+  if (!backupRecord) return;
+  const localRecord = readRecord(local) ?? {};
+  for (const [key, value] of Object.entries(backupRecord)) {
+    collectRedactionRestoreEdits(
+      value,
+      readOwn(localRecord, key),
+      [...currentPath, key],
+      edits,
+      redactedPaths,
+      resolvedServers
+    );
   }
 }
 
 /** Shared by preview and restore so the preview cannot promise a different result. */
-export async function resolveRestoredContent(muxRoot: string, file: BackupFile): Promise<Buffer> {
-  return file.path === "mcp.jsonc" ? await restoreMcpFile(muxRoot, file.content) : file.content;
+export async function resolveRestoredContent(
+  muxRoot: string,
+  file: BackupFile,
+  mcpRedactions?: readonly BackupRedactionPath[]
+): Promise<Buffer> {
+  return file.path === "mcp.jsonc"
+    ? await restoreMcpFile(muxRoot, file.content, mcpRedactions)
+    : file.content;
 }
 
 /**
@@ -1541,16 +1656,13 @@ interface ServerCommand {
 function readServerCommand(value: unknown): ServerCommand | undefined {
   const raw = typeof value === "string" ? value : undefined;
   if (raw !== undefined) {
-    if (raw.trim() === "" || raw === REDACTED_BACKUP_VALUE) return undefined;
+    if (raw.trim() === "") return undefined;
     return { command: raw, enabled: true, runnable: true };
   }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const record = value as Record<string, unknown>;
+  const record = readRecord(value);
+  if (!record) return undefined;
   const command = record.command;
   if (typeof command !== "string" || command.trim() === "") return undefined;
-  // The marker is a placeholder rather than command text: it either rehydrates to the local
-  // value or stays unrunnable, so there is nothing for the user to read and approve.
-  if (command === REDACTED_BACKUP_VALUE) return undefined;
   const url = record.url;
   return {
     command,
@@ -1582,8 +1694,9 @@ function readServerCommands(content: string): Map<string, ServerCommand> {
       )
     );
   }
-  if (!servers || typeof servers !== "object" || Array.isArray(servers)) return commands;
-  for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
+  const serverRecord = readRecord(servers);
+  if (!serverRecord) return commands;
+  for (const [name, server] of Object.entries(serverRecord)) {
     const entry = readServerCommand(server);
     if (entry !== undefined) commands.set(name, entry);
   }
@@ -1608,12 +1721,13 @@ export function backupCommandApprovalToken(serverPath: string, command: string):
  */
 export async function collectMcpCommandApprovals(
   muxRoot: string,
-  files: readonly BackupFile[]
+  files: readonly BackupFile[],
+  mcpRedactions?: readonly BackupRedactionPath[]
 ): Promise<BackupCommandApproval[]> {
   const file = files.find((candidate) => candidate.path === "mcp.jsonc");
   if (!file) return [];
 
-  const restored = await resolveRestoredContent(muxRoot, file);
+  const restored = await resolveRestoredContent(muxRoot, file, mcpRedactions);
   const incoming = readServerCommands(restored.toString("utf-8"));
   const localText = await readLocalMcpText(muxRoot);
   const local =
@@ -1648,7 +1762,13 @@ export function assertBackupCommandsApproved(
   if (unapproved.length > 0) throw new BackupCommandApprovalRequiredError(approvals);
 }
 
-async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer> {
+async function restoreMcpFile(
+  muxRoot: string,
+  content: Buffer,
+  mcpRedactions?: readonly BackupRedactionPath[]
+): Promise<Buffer> {
+  const redactedPaths =
+    mcpRedactions === undefined ? undefined : new Set(mcpRedactions.map(redactionPathKey));
   const backupText = content.toString("utf-8");
   // Deliberately not gated on a marker being present: `resolveRestoredHeaders` has to inspect
   // a marker-free backup too, since a bare `{secret: NAME}` header carries no marker yet
@@ -1657,6 +1777,7 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     backupText,
     "backup mcp.jsonc"
   );
+  if (mcpRedactions !== undefined) validateMcpRedactionPaths(backupTree, mcpRedactions);
   const localText = await readLocalMcpText(muxRoot);
   let local: Record<string, unknown> = {};
   let localTree: jsonc.Node | undefined;
@@ -1676,11 +1797,18 @@ async function restoreMcpFile(muxRoot: string, content: Buffer): Promise<Buffer>
     localTree && localText
       ? preserveLocalOnlyMcpServers(backupTree, localTree, localText)
       : ({ kind: "none" } satisfies LocalMcpServerMerge);
-  const resolved = resolveRestoredCommands(backup, local, edits);
-  for (const path of resolveRestoredHeaders(backup, local, backupTree, edits, resolved)) {
+  const resolved = resolveRestoredCommands(backup, local, edits, redactedPaths);
+  for (const path of resolveRestoredHeaders(
+    backup,
+    local,
+    backupTree,
+    edits,
+    resolved,
+    redactedPaths
+  )) {
     resolved.add(path);
   }
-  collectRedactionRestoreEdits(backup, local, [], edits, resolved);
+  collectRedactionRestoreEdits(backup, local, [], edits, redactedPaths, resolved);
   let restoredText = applyJsoncEdits(backupText, edits);
   if (localServerMerge.kind === "replace") {
     restoredText = replaceJsoncNodeText(restoredText, ["servers"], localServerMerge.valueText);
@@ -1834,14 +1962,12 @@ function preserveLocalOnlyMcpServers(
   };
 }
 
-/**
- * Rehydrate command markers from local state, or remove them so they cannot execute.
- * Returned paths prevent the generic redaction pass from handling the same command paths.
- */
+/** Tracks handled paths so the generic pass cannot resurrect removed commands. */
 function resolveRestoredCommands(
   backup: Record<string, unknown>,
   local: Record<string, unknown>,
-  edits: Array<{ path: jsonc.JSONPath; value: unknown }>
+  edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
+  redactedPaths: ReadonlySet<string> | undefined
 ): Set<string> {
   const handled = new Set<string>();
   const servers = readRecord(backup.servers);
@@ -1849,8 +1975,15 @@ function resolveRestoredCommands(
   const localServers = readRecord(local.servers) ?? {};
 
   for (const [name, entry] of Object.entries(servers)) {
-    const isBareMarker = entry === REDACTED_BACKUP_VALUE;
-    const isObjectMarker = !isBareMarker && readRecord(entry)?.command === REDACTED_BACKUP_VALUE;
+    const barePath: jsonc.JSONPath = ["servers", name];
+    const objectPath: jsonc.JSONPath = ["servers", name, "command"];
+    const isBareMarker =
+      typeof entry === "string" && isRedactedBackupValue(entry, barePath, redactedPaths);
+    const objectCommand = readRecord(entry)?.command;
+    const isObjectMarker =
+      !isBareMarker &&
+      typeof objectCommand === "string" &&
+      isRedactedBackupValue(objectCommand, objectPath, redactedPaths);
     if (!isBareMarker && !isObjectMarker) continue;
 
     const localEntry = readOwn(localServers, name);
@@ -1858,14 +1991,16 @@ function resolveRestoredCommands(
     if (localCommand === undefined) {
       // `normalizeEntry` gives a non-empty resolved URL precedence over the command. Keep that
       // HTTP entry after removing the marker; otherwise remove the server so it cannot execute.
-      const url = isObjectMarker ? restoredServerUrl(entry, readRecord(localEntry)) : undefined;
+      const url = isObjectMarker
+        ? restoredServerUrl(entry, readRecord(localEntry), name, redactedPaths)
+        : undefined;
       const hasUrl = url !== undefined && url !== "" && !containsRedaction(url);
       const removed: jsonc.JSONPath = hasUrl ? ["servers", name, "command"] : ["servers", name];
       edits.push({ path: removed, value: undefined });
       handled.add(removed.join("\u0000"));
       continue;
     }
-    const commandPath = isBareMarker ? ["servers", name] : ["servers", name, "command"];
+    const commandPath = isBareMarker ? barePath : objectPath;
     edits.push({ path: commandPath, value: localCommand });
     handled.add(commandPath.join("\u0000"));
   }
@@ -1896,7 +2031,8 @@ function resolveRestoredHeaders(
   local: Record<string, unknown>,
   backupTree: jsonc.Node,
   edits: Array<{ path: jsonc.JSONPath; value: unknown }>,
-  resolvedServers: ReadonlySet<string>
+  resolvedServers: ReadonlySet<string>,
+  redactedPaths: ReadonlySet<string> | undefined
 ): Set<string> {
   const handled = new Set<string>();
   const servers = readRecord(backup.servers);
@@ -1916,7 +2052,8 @@ function resolveRestoredHeaders(
     handled.add(headersPath.join("\u0000"));
 
     const headers = readRecord(rawHeaders);
-    const endpointMatches = restoredServerUrl(entry, localServer) === readUrl(localServer);
+    const endpointMatches =
+      restoredServerUrl(entry, localServer, name, redactedPaths) === readUrl(localServer);
     if (!headers || !endpointMatches) {
       edits.push({ path: headersPath, value: undefined });
       continue;
@@ -1979,11 +2116,17 @@ function readOwn(record: Record<string, unknown>, key: string): unknown {
 /** The url the restored entry ends up with, since a redacted url is itself put back from local. */
 function restoredServerUrl(
   backupEntry: unknown,
-  localServer: Record<string, unknown> | undefined
+  localServer: Record<string, unknown> | undefined,
+  serverName: string,
+  redactedPaths: ReadonlySet<string> | undefined
 ): string | undefined {
   const backupUrl = readUrl(readRecord(backupEntry));
   const localUrl = readUrl(localServer);
-  if (backupUrl !== undefined && containsRedaction(backupUrl) && localUrl !== undefined) {
+  if (
+    backupUrl !== undefined &&
+    isRedactedBackupValue(backupUrl, ["servers", serverName, "url"], redactedPaths) &&
+    localUrl !== undefined
+  ) {
     return localUrl;
   }
   return backupUrl;
@@ -2000,16 +2143,9 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
-/** The command text of either supported shape, enabled or not, ignoring the marker. */
 function readAnyServerCommand(value: unknown): string | undefined {
-  const command =
-    typeof value === "string"
-      ? value
-      : value && typeof value === "object" && !Array.isArray(value)
-        ? (value as Record<string, unknown>).command
-        : undefined;
-  if (typeof command !== "string" || command === REDACTED_BACKUP_VALUE) return undefined;
-  return command.trim() === "" ? undefined : command;
+  const command = typeof value === "string" ? value : readRecord(value)?.command;
+  return typeof command === "string" && command.trim() !== "" ? command : undefined;
 }
 
 interface RestorePlan {
@@ -2072,7 +2208,7 @@ export async function planRestoreWrites(
       }
       claimed.add(claim);
     }
-    const content = await resolveRestoredContent(root.path, file);
+    const content = await resolveRestoredContent(root.path, file, payload.manifest.mcpRedactions);
     budget(file.path, content.byteLength);
     writes.push({ path: file.path, content, executable: file.executable === true });
   }
@@ -2093,7 +2229,11 @@ export async function restoreBackupPayload(
   // Recomputed here rather than trusted from the preview, so an approval cannot authorize
   // a command the repository changed between the preview and this restore.
   assertBackupCommandsApproved(
-    await collectMcpCommandApprovals(options.muxRoot, options.payload.files),
+    await collectMcpCommandApprovals(
+      options.muxRoot,
+      options.payload.files,
+      options.payload.manifest.mcpRedactions
+    ),
     options.approvedCommandTokens
   );
 

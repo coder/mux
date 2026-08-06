@@ -561,6 +561,55 @@ describe("backup payload", () => {
     expect((missing as { code?: string }).code).toBe("ENOENT");
   });
 
+  it("rejects invalid and duplicate persisted MCP metadata", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({
+        servers: {
+          notes: {
+            url: "https://notes.example/mcp",
+            headers: { Authorization: "Bearer local-secret" },
+          },
+        },
+      })
+    );
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      reportSecrets: true,
+    });
+
+    const destination = path.join(tempDir, "invalid-redaction-metadata");
+    await writeBackupPayload(destination, payload);
+    const manifestPath = path.join(destination, "manifest.json");
+    const originalManifestRaw = await fs.readFile(manifestPath, "utf-8");
+    const manifest = JSON.parse(originalManifestRaw) as {
+      mcpRedactions?: Array<Array<string | number>>;
+    };
+    manifest.mcpRedactions = [["servers", "notes", "command"]];
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+    const invalidPath = await rejection(readBackupPayload(destination));
+    expect((invalidPath as { code?: string }).code).toBe("INVALID_BACKUP");
+
+    const duplicateKeyManifest = originalManifestRaw.replace(
+      '"mcpRedactions": [',
+      '"mcpRedactions": [],\n  "mcpRedactions": ['
+    );
+    await fs.writeFile(manifestPath, duplicateKeyManifest, "utf-8");
+    const duplicateKey = await rejection(readBackupPayload(destination));
+    expect((duplicateKey as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((duplicateKey as Error).message).toContain("duplicate key 'mcpRedactions'");
+
+    const redactedPath: Array<string | number> = ["servers", "notes", "headers", "Authorization"];
+    manifest.mcpRedactions = [redactedPath, [...redactedPath]];
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+    const duplicateMetadata = await rejection(readBackupPayload(destination));
+    expect((duplicateMetadata as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((duplicateMetadata as Error).message).toContain("duplicate MCP redaction path");
+  });
+
   it("reports a manifest entry with no file as an invalid backup", async () => {
     await write(muxRoot, "AGENTS.md", "backed up\n");
     const payload = await createBackupPayload({
@@ -645,6 +694,51 @@ describe("backup payload", () => {
     expect(restored.servers.bare).toBe(mcp.servers.bare);
     expect(restored.servers.remote.url).toBe(mcp.servers.remote.url);
     expect(restored.servers.remote.headers).toBeUndefined();
+  });
+
+  it("round-trips literal redaction-marker MCP commands", async () => {
+    for (const [index, server] of [
+      REDACTED_BACKUP_VALUE,
+      { command: REDACTED_BACKUP_VALUE },
+    ].entries()) {
+      await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: { literal: server } }));
+      const payload = await createBackupPayload({
+        muxRoot,
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        reportSecrets: true,
+      });
+      const destination = path.join(tempDir, `literal-marker-payload-${index}`);
+      // Equal file content must not reuse a legacy manifest that lacks the new metadata.
+      await writeBackupPayload(destination, {
+        ...payload,
+        manifest: { ...payload.manifest, mcpRedactions: undefined },
+      });
+      await writeBackupPayload(destination, payload);
+      const readBack = await readBackupPayload(destination);
+      expect(readBack.manifest.mcpRedactions).toEqual([]);
+      const fresh = path.join(tempDir, `literal-marker-root-${index}`);
+      await fs.mkdir(fresh, { recursive: true });
+
+      const approvals = await collectMcpCommandApprovals(
+        fresh,
+        readBack.files,
+        readBack.manifest.mcpRedactions
+      );
+      expect(approvals.map((approval) => approval.command)).toEqual([REDACTED_BACKUP_VALUE]);
+      expect(
+        await rejection(restoreBackupPayload({ muxRoot: fresh, payload: readBack }))
+      ).toBeInstanceOf(BackupCommandApprovalRequiredError);
+      await restoreBackupPayload({
+        muxRoot: fresh,
+        payload: readBack,
+        approvedCommandTokens: approvals.map((approval) => approval.token),
+      });
+      const restored = jsonc.parse(await fs.readFile(path.join(fresh, "mcp.jsonc"), "utf-8")) as {
+        servers: { literal: unknown };
+      };
+      expect(restored.servers.literal).toEqual(server);
+    }
   });
 
   it("restores a mixed command and URL while rehydrating its headers", async () => {
@@ -752,6 +846,7 @@ describe("backup payload", () => {
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
     });
+    expect(payload.manifest.mcpRedactions).toEqual([]);
     const tampered = {
       ...payload,
       files: payload.files.map((candidate) =>
@@ -803,6 +898,10 @@ describe("backup payload", () => {
     });
     const tampered = {
       ...payload,
+      manifest: {
+        ...payload.manifest,
+        mcpRedactions: [["servers", "api", "headers"]],
+      },
       files: payload.files.map((candidate) =>
         candidate.path === "mcp.jsonc"
           ? {
@@ -851,6 +950,10 @@ describe("backup payload", () => {
     for (const headerName of ["constructor", "toString", "__proto__"]) {
       const tampered = {
         ...payload,
+        manifest: {
+          ...payload.manifest,
+          mcpRedactions: [["servers", "api", "headers", headerName]],
+        },
         files: payload.files.map((candidate) =>
           candidate.path === "mcp.jsonc"
             ? {
@@ -1036,6 +1139,7 @@ describe("backup payload", () => {
     const readBack = await readBackupPayload(destination);
     const tampered = {
       ...readBack,
+      manifest: { ...readBack.manifest, mcpRedactions: undefined },
       files: readBack.files.map((candidate) =>
         candidate.path === "mcp.jsonc"
           ? {
@@ -1371,14 +1475,22 @@ describe("backup payload", () => {
       `{"servers":{"mixed":{"command":${JSON.stringify(REDACTED_BACKUP_VALUE)}}}}`
     );
     const readBack = await readBackupPayload(destination);
+    const legacyPayload = {
+      ...readBack,
+      manifest: { ...readBack.manifest, mcpRedactions: undefined },
+    };
 
-    const approvals = await collectMcpCommandApprovals(muxRoot, readBack.files);
+    const approvals = await collectMcpCommandApprovals(
+      muxRoot,
+      legacyPayload.files,
+      legacyPayload.manifest.mcpRedactions
+    );
     expect(approvals).toHaveLength(1);
     expect(approvals[0]?.command).toBe("npx dormant-tool");
 
-    expect(await rejection(restoreBackupPayload({ muxRoot, payload: readBack }))).toBeInstanceOf(
-      BackupCommandApprovalRequiredError
-    );
+    expect(
+      await rejection(restoreBackupPayload({ muxRoot, payload: legacyPayload }))
+    ).toBeInstanceOf(BackupCommandApprovalRequiredError);
   });
 
   it("gates only the disabled url-to-stdio command transition", async () => {
@@ -1633,11 +1745,26 @@ describe("backup payload", () => {
       sourceLabel: "test-host",
       reportSecrets: true,
     });
+    const legacyContent = `{"servers": {"api": {"command": ${JSON.stringify(REDACTED_BACKUP_VALUE)}}}}`;
     const legacyPayload = withPayloadFileText(
-      payload,
+      {
+        ...payload,
+        manifest: {
+          ...payload.manifest,
+          mcpRedactions: undefined,
+          files: payload.manifest.files.map((file) =>
+            file.path === "mcp.jsonc" ? { ...file, sha256: sha256Hex(legacyContent) } : file
+          ),
+        },
+      },
       "mcp.jsonc",
-      `{"servers": {"api": {"command": ${JSON.stringify(REDACTED_BACKUP_VALUE)}}}}`
+      legacyContent
     );
+    const destination = path.join(tempDir, "legacy-command-marker");
+    await writeBackupPayload(destination, legacyPayload);
+    const readBack = await readBackupPayload(destination);
+    expect(readBack.manifest.mcpRedactions).toBeUndefined();
+    expect(readBack.redactions).toEqual(["servers.api.command"]);
 
     const restoreRoot = path.join(tempDir, "policy-restore");
     await write(
@@ -1645,7 +1772,7 @@ describe("backup payload", () => {
       "mcp.jsonc",
       `{"servers": {"api": {"command": "acme-mcp --api-key local-secret --port 2000"}}}`
     );
-    await restoreBackupPayload({ muxRoot: restoreRoot, payload: legacyPayload });
+    await restoreBackupPayload({ muxRoot: restoreRoot, payload: readBack });
 
     const restored = jsonc.parse(
       await fs.readFile(path.join(restoreRoot, "mcp.jsonc"), "utf-8")
@@ -1722,6 +1849,29 @@ describe("backup payload", () => {
       if (!(error instanceof Error)) throw error;
       expect(error.message).toContain("duplicate key 'Authorization'");
     }
+  });
+
+  it("writes readable metadata after projection drops __proto__ keys", async () => {
+    await write(
+      muxRoot,
+      "mcp.jsonc",
+      `{"__proto__":{"token":"root-secret"},"servers":{"api":{"headers":{"__proto__":"header-secret"}}}}`
+    );
+
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const destination = path.join(tempDir, "proto-projection");
+    await writeBackupPayload(destination, payload);
+    const readBack = await readBackupPayload(destination);
+
+    expect(readBack.manifest.mcpRedactions).toEqual([]);
+    expect(readBack.redactions).toEqual([]);
+    const exported = payloadFileText(readBack, "mcp.jsonc");
+    expect(exported).not.toContain("root-secret");
+    expect(exported).not.toContain("header-secret");
   });
 
   it("refuses to publish a path Windows cannot check out", async () => {

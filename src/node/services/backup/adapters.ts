@@ -237,7 +237,11 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
         }
         // Diff what restore would write, not the raw backup: rehydrated redactions
         // would otherwise read as a change on every preview.
-        const restored = await resolveRestoredContent(muxRoot, file);
+        const restored = await resolveRestoredContent(
+          muxRoot,
+          file,
+          payload.manifest.mcpRedactions
+        );
         if (!existing.content.equals(restored) || !sameMode(existing, file)) {
           changes.push({ status: "M", path: file.path });
         }
@@ -245,7 +249,11 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       return {
         changes: changes.sort((a, b) => a.path.localeCompare(b.path)),
         localOnlyFiles: localOnly,
-        commandApprovals: await collectMcpCommandApprovals(muxRoot, payload.files),
+        commandApprovals: await collectMcpCommandApprovals(
+          muxRoot,
+          payload.files,
+          payload.manifest.mcpRedactions
+        ),
       };
     },
 
@@ -262,7 +270,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       }
       const payload = await readBackupPayload(sourceDir);
       assertBackupCommandsApproved(
-        await collectMcpCommandApprovals(muxRoot, payload.files),
+        await collectMcpCommandApprovals(muxRoot, payload.files, payload.manifest.mcpRedactions),
         validateOptions.approvedCommandTokens
       );
       // The same preflight the restore runs, so a payload it would refuse is refused here,
