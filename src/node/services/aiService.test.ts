@@ -330,6 +330,7 @@ function stubCommonStreamMessageDependencies(args: {
       agentDefinitions: undefined,
       availableSkills: undefined,
       ancestorPlanFilePaths: [],
+      instructionSources: { global: null, context: [] },
     });
   });
   spyOn(messagePipeline, "prepareMessagesForProvider").mockImplementation((pipelineArgs) => {
@@ -343,6 +344,7 @@ function stubCommonStreamMessageDependencies(args: {
   const getToolsForModelSpy = spyOn(toolsModule, "getToolsForModel").mockResolvedValue(
     args.allTools ?? {}
   );
+  spyOn(systemMessageModule, "toolInstructionsFromSources").mockReturnValue({});
   spyOn(systemMessageModule, "readToolInstructions").mockResolvedValue({});
 
   const providerModelFactory = Reflect.get(args.service, "providerModelFactory") as

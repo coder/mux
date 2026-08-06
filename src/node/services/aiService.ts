@@ -72,7 +72,7 @@ import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggreg
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
-import { readToolInstructions } from "./systemMessage";
+import { toolInstructionsFromSources } from "./systemMessage";
 import {
   effectiveAdditionalSystemContext,
   mergeAdditionalSystemInstructions,
@@ -1664,6 +1664,7 @@ export class AIService extends EventEmitter {
         agentDefinitions,
         availableSkills,
         ancestorPlanFilePaths,
+        instructionSources,
       } = prePolicyStreamSystemContext;
       let systemMessageTokens = prePolicyStreamSystemContext.systemMessageTokens;
       let systemMessage = prePolicyStreamSystemContext.systemMessage;
@@ -1676,32 +1677,68 @@ export class AIService extends EventEmitter {
       // Generate stream token and create temp directory for tools
       const streamToken = this.streamManager.generateStreamToken();
 
-      let mcpTools: Record<string, Tool> | undefined;
-      let mcpStats: MCPWorkspaceStats | undefined;
       let mcpSetupDurationMs = 0;
 
-      if (this.mcpServerManager) {
-        const mcpToolSetupStartedAt = Date.now();
-        try {
-          const result = await this.mcpServerManager.getToolsForWorkspace({
-            workspaceId,
-            projectPath: metadata.projectPath,
-            runtime,
-            workspacePath,
-            trusted: projectTrusted,
-            overrides: mcpOverrides,
-            projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
-          });
+      const mcpToolSetupStartedAt = Date.now();
+      const createTempDirForStreamStartedAt = Date.now();
+      const readToolInstructionsStartedAt = Date.now();
+      const loadSessionUsageStartedAt = Date.now();
+      const toolInstructions = toolInstructionsFromSources(
+        instructionSources,
+        metadata,
+        capabilityModelString,
+        agentSystemPromptSections
+      );
+      recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
+      const [mcpSetupResult, runtimeTempDir, sessionCostsUsd] = await Promise.all([
+        this.mcpServerManager
+          ? (async (): Promise<{
+              tools: Record<string, Tool> | undefined;
+              stats: MCPWorkspaceStats | undefined;
+            }> => {
+              try {
+                const result = await this.mcpServerManager!.getToolsForWorkspace({
+                  workspaceId,
+                  projectPath: metadata.projectPath,
+                  runtime,
+                  workspacePath,
+                  trusted: projectTrusted,
+                  overrides: mcpOverrides,
+                  projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
+                });
+                return { tools: result.tools, stats: result.stats };
+              } catch (error) {
+                workspaceLog.error("Failed to start MCP servers", { error });
+                return { tools: undefined, stats: undefined };
+              } finally {
+                mcpSetupDurationMs = Date.now() - mcpToolSetupStartedAt;
+                startupPhaseTimingsMs.mcpToolSetupMs = mcpSetupDurationMs;
+              }
+            })()
+          : Promise.resolve({ tools: undefined, stats: undefined }),
+        this.streamManager.createTempDirForStream(streamToken, runtime).then((tempDir) => {
+          recordStartupPhaseTiming("createTempDirForStreamMs", createTempDirForStreamStartedAt);
+          return tempDir;
+        }),
+        (async (): Promise<number | undefined> => {
+          try {
+            if (!this.sessionUsageService) {
+              return undefined;
+            }
+            const sessionUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
+            if (!sessionUsage) {
+              return undefined;
+            }
+            const allUsage = sumUsageHistory(Object.values(sessionUsage.byModel));
+            return getTotalCost(allUsage);
+          } finally {
+            recordStartupPhaseTiming("loadSessionUsageMs", loadSessionUsageStartedAt);
+          }
+        })(),
+      ]);
 
-          mcpTools = result.tools;
-          mcpStats = result.stats;
-        } catch (error) {
-          workspaceLog.error("Failed to start MCP servers", { error });
-        } finally {
-          mcpSetupDurationMs = Date.now() - mcpToolSetupStartedAt;
-          startupPhaseTimingsMs.mcpToolSetupMs = mcpSetupDurationMs;
-        }
-      }
+      const mcpTools = mcpSetupResult.tools;
+      const mcpStats = mcpSetupResult.stats;
 
       // Tool search (tool-search experiment): assembly-time gate. The runtime
       // holder makes getToolsForModel create the tool_catalog_search tool; its `state`
@@ -1710,33 +1747,6 @@ export class AIService extends EventEmitter {
       // defer, so the feature stays fully inactive.
       const toolSearchRuntime: ToolSearchRuntime | undefined =
         toolSearchExperimentEnabled && Object.keys(mcpTools ?? {}).length > 0 ? {} : undefined;
-
-      const createTempDirForStreamStartedAt = Date.now();
-      const runtimeTempDir = await this.streamManager.createTempDirForStream(streamToken, runtime);
-      recordStartupPhaseTiming("createTempDirForStreamMs", createTempDirForStreamStartedAt);
-
-      // Extract tool-specific instructions from AGENTS.md files and agent definition
-      const readToolInstructionsStartedAt = Date.now();
-      const toolInstructions = await readToolInstructions(
-        metadata,
-        runtime,
-        workspacePath,
-        capabilityModelString,
-        agentSystemPromptSections
-      );
-      recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
-
-      // Calculate cumulative session costs for MUX_COSTS_USD env var
-      let sessionCostsUsd: number | undefined;
-      const loadSessionUsageStartedAt = Date.now();
-      if (this.sessionUsageService) {
-        const sessionUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
-        if (sessionUsage) {
-          const allUsage = sumUsageHistory(Object.values(sessionUsage.byModel));
-          sessionCostsUsd = getTotalCost(allUsage);
-        }
-      }
-      recordStartupPhaseTiming("loadSessionUsageMs", loadSessionUsageStartedAt);
 
       // Get model-specific tools with workspace path (correct for local or remote)
       emitStartupBreadcrumb("loading_tools");

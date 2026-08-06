@@ -289,6 +289,26 @@ export function extractToolInstructions(
  * @param agentInstructions - Optional agent definition body (searched first for tool sections)
  * @returns Map of tool names to their additional instructions
  */
+export function toolInstructionsFromSources(
+  sources: InstructionSources,
+  metadata: WorkspaceMetadata,
+  modelString: string,
+  agentInstructions?: readonly string[]
+): Record<string, string> {
+  return extractToolInstructions(
+    collectInstructionContents([sources.global]),
+    collectInstructionContents(sources.context),
+    modelString,
+    {
+      ...getToolAvailabilityOptions({
+        workspaceId: metadata.id,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+      }),
+      agentInstructions,
+    }
+  );
+}
+
 export async function readToolInstructions(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
@@ -296,21 +316,9 @@ export async function readToolInstructions(
   modelString: string,
   agentInstructions?: readonly string[]
 ): Promise<Record<string, string>> {
-  // Tool instructions read the same `AGENTS.md` files as the system prompt;
-  // anchor at the workspace root so sub-project workspaces still see parent
-  // project tool sections (see `loadInstructionSources` doc).
   const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
   const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
-  const globalContents = collectInstructionContents([sources.global]);
-  const contextContents = collectInstructionContents(sources.context);
-
-  return extractToolInstructions(globalContents, contextContents, modelString, {
-    ...getToolAvailabilityOptions({
-      workspaceId: metadata.id,
-      parentWorkspaceId: metadata.parentWorkspaceId,
-    }),
-    agentInstructions,
-  });
+  return toolInstructionsFromSources(sources, metadata, modelString, agentInstructions);
 }
 
 /**
@@ -461,11 +469,12 @@ export async function loadInstructionSources(
   // (root + subProject) for a sub-project workspace would silently lose the
   // parent project's AGENTS.md, so we require root explicitly. See
   // `resolveWorkspaceRootPath` in `@/node/runtime/runtimeHelpers`.
-  const global = await readInstructionSet(getSystemDirectory(), INSTRUCTION_SCOPE.GLOBAL);
-  const context = isMultiProject(metadata)
-    ? await readMultiProjectContextInstructions(metadata, runtime, workspaceRootPath)
-    : await readSingleProjectContextInstructions(metadata, runtime, workspaceRootPath);
-
+  const [global, context] = await Promise.all([
+    readInstructionSet(getSystemDirectory(), INSTRUCTION_SCOPE.GLOBAL),
+    isMultiProject(metadata)
+      ? readMultiProjectContextInstructions(metadata, runtime, workspaceRootPath)
+      : readSingleProjectContextInstructions(metadata, runtime, workspaceRootPath),
+  ]);
   return { global, context };
 }
 
@@ -517,6 +526,7 @@ export async function buildSystemMessage(
      * injected <mode-...> tag. Duplicates are ignored.
      */
     modes?: readonly string[];
+    instructionSources?: InstructionSources;
   }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
@@ -552,7 +562,9 @@ export async function buildSystemMessage(
   // back to the resolved root so the parent project's AGENTS.md is still read.
   // For non-sub-project workspaces this is a no-op (root === execution path).
   const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
-  const instructionSources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+  const instructionSources =
+    options?.instructionSources ??
+    (await loadInstructionSources(metadata, runtime, workspaceRootPath));
   // Mux-dedicated per-file contents (<dir>/.mux/AGENTS.md context files, then
   // the global ~/.mux/AGENTS.md set, which is Mux-dedicated by construction).
   // Scoped Model:/Mode: directives are honored ONLY in Mux-dedicated sources

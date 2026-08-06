@@ -147,50 +147,48 @@ async function readInstructionSetWith(
   // are honored there and we must not look for a nested ~/.mux/.mux/AGENTS.md.
   const isGlobalScope = scope === INSTRUCTION_SCOPE.GLOBAL;
 
-  const base = await readBaseInstructionFile(reader, directory, scope, projectName, isGlobalScope);
-
-  const local = base.exists
-    ? await readSingleFile(
-        reader,
-        directory,
-        LOCAL_INSTRUCTION_FILENAME,
-        scope,
-        true,
-        projectName,
-        isGlobalScope
-      )
-    : ({ exists: false } satisfies ReadInstructionFileResult);
-
-  // Mux-dedicated companion: <dir>/.mux/AGENTS.md (+ .local.md). Read
-  // independently of the shared base file so a repo can provide only
-  // Mux-specific instructions. Skipped for the global set (see above).
-  let muxBase: ReadInstructionFileResult = { exists: false };
-  let muxLocal: ReadInstructionFileResult = { exists: false };
-  if (!isGlobalScope) {
-    const muxDirectory = path.join(directory, MUX_INSTRUCTION_SUBDIR);
-    muxBase = await readSingleFile(
-      reader,
-      muxDirectory,
-      MUX_INSTRUCTION_FILENAME,
-      scope,
-      false,
-      projectName,
-      true
-    );
-    if (muxBase.exists) {
-      muxLocal = await readSingleFile(
-        reader,
-        muxDirectory,
-        LOCAL_INSTRUCTION_FILENAME,
-        scope,
-        true,
-        projectName,
-        true
-      );
-    }
-  }
-
+  const muxDirectory = isGlobalScope ? null : path.join(directory, MUX_INSTRUCTION_SUBDIR);
+  // Shared base + mux base are independent; parallelize to cut remote round-trips.
+  const [base, muxBase] = await Promise.all([
+    readBaseInstructionFile(reader, directory, scope, projectName, isGlobalScope),
+    muxDirectory
+      ? readSingleFile(
+          reader,
+          muxDirectory,
+          MUX_INSTRUCTION_FILENAME,
+          scope,
+          false,
+          projectName,
+          true
+        )
+      : Promise.resolve({ exists: false } satisfies ReadInstructionFileResult),
+  ]);
   if (!base.exists && !muxBase.exists) return null;
+
+  const [local, muxLocal] = await Promise.all([
+    base.exists
+      ? readSingleFile(
+          reader,
+          directory,
+          LOCAL_INSTRUCTION_FILENAME,
+          scope,
+          true,
+          projectName,
+          isGlobalScope
+        )
+      : Promise.resolve({ exists: false } satisfies ReadInstructionFileResult),
+    muxDirectory && muxBase.exists
+      ? readSingleFile(
+          reader,
+          muxDirectory,
+          LOCAL_INSTRUCTION_FILENAME,
+          scope,
+          true,
+          projectName,
+          true
+        )
+      : Promise.resolve({ exists: false } satisfies ReadInstructionFileResult),
+  ]);
 
   const files: InstructionFile[] = [
     base.exists ? base.file : null,

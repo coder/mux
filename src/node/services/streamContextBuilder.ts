@@ -43,7 +43,9 @@ import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/age
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
-import { buildSystemMessage } from "./systemMessage";
+import { buildSystemMessage, loadInstructionSources } from "./systemMessage";
+import { resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
+import type { InstructionSources } from "@/common/types/instructions";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { log } from "./log";
@@ -217,7 +219,6 @@ export async function buildPlanInstructions(
       }
     }
   }
-
   return { effectiveAdditionalInstructions, planFilePath, planContentForTransition };
 }
 
@@ -292,6 +293,7 @@ export interface StreamSystemContextResult {
   availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
   /** Exact ancestor plan files surfaced in the prompt and forwarded through tool configuration. */
   ancestorPlanFilePaths: string[];
+  instructionSources: InstructionSources;
 }
 
 const MAX_ANCESTOR_PLAN_PATH_HOPS = 32;
@@ -441,7 +443,6 @@ function resolveAncestorPlanContext(args: {
     });
     ancestorPlanFilePaths.push(normalizedPlanFilePath);
   }
-
   return {
     entries: filteredEntries,
     ancestorPlanFilePaths,
@@ -526,85 +527,79 @@ export async function buildStreamSystemContext(
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
 
-  // Resolve the body with inheritance (prompt.append merges with base).
-  // Use agentDefinition.id (may have fallen back to exec) instead of effectiveAgentId.
-  const resolvedBody = await resolveAgentBody(
-    agentDiscoveryRuntime,
-    agentDiscoveryPath,
-    agentDefinition.id,
-    {
-      skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
-    }
-  );
-
-  let subagentAppendPrompt: string | undefined;
-  if (isSubagentWorkspace) {
-    try {
-      const resolvedFrontmatter = await resolveAgentFrontmatter(
-        agentDiscoveryRuntime,
-        agentDiscoveryPath,
-        agentDefinition.id,
-        {
-          skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
-        }
-      );
-      subagentAppendPrompt = resolvedFrontmatter.subagent?.append_prompt;
-    } catch (error: unknown) {
-      workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
-        agentId: agentDefinition.id,
-        error: getErrorMessage(error),
-      });
-    }
-  }
-
-  const agentSystemPromptSections = [resolvedBody];
-  if (isSubagentWorkspace && subagentAppendPrompt) {
-    agentSystemPromptSections.push(subagentAppendPrompt);
-  }
-  if (advisorToolAvailable) {
-    // Keep prompt guidance in lockstep with actual tool availability for the agent.
-    agentSystemPromptSections.push(buildAdvisorGuidanceSection());
-  }
-  if (opts.memoryToolAvailable) {
-    // Same lockstep rule: the post-policy system-context rebuild strips this
-    // section when tool policy removes the memory tool.
-    agentSystemPromptSections.push(buildMemoryGuidanceSection());
-  }
-
-  // Discover available agent definitions for sub-agent context (only for top-level workspaces).
-  //
-  // NOTE: discoverAgentDefinitions returns disabled agents too, so Settings can surface them.
-  // For tool descriptions (task tool), filter to agents that are effectively enabled.
-  let agentDefinitions: Awaited<ReturnType<typeof discoverAgentDefinitions>> | undefined;
-  if (!isSubagentWorkspace) {
-    agentDefinitions = await discoverAvailableSubagentsForToolContext({
-      runtime: agentDiscoveryRuntime,
-      workspacePath: agentDiscoveryPath,
-      cfg,
-      loadDesktopCapability,
-    });
-  }
-
-  // Discover available skills for tool description context
   const skillCtx = resolveSkillStorageContext({
     runtime,
     workspacePath,
     muxScope,
     includeClaudeSkills: opts.claudeSkillsCompatEnabled,
   });
+  const workspaceRootPath = metadata.subProjectPath?.trim()
+    ? resolveWorkspaceRootPath(metadata, runtime)
+    : workspacePath;
 
-  let availableSkills: Awaited<ReturnType<typeof discoverAgentSkills>> | undefined;
-  try {
-    availableSkills = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
-      roots: skillCtx.roots,
-      containment: skillCtx.containment,
-      // Used only for the project-runtime default-roots fallback (skillCtx.roots undefined).
-      includeClaudeSkills: opts.claudeSkillsCompatEnabled,
-    });
-  } catch (error) {
-    workspaceLog.warn("Failed to discover agent skills for tool description", { error });
+  const [
+    resolvedBody,
+    subagentAppendPrompt,
+    agentDefinitions,
+    availableSkills,
+    instructionSources,
+  ] = await Promise.all([
+    resolveAgentBody(agentDiscoveryRuntime, agentDiscoveryPath, agentDefinition.id, {
+      skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+    }),
+    isSubagentWorkspace
+      ? (async (): Promise<string | undefined> => {
+          try {
+            const resolvedFrontmatter = await resolveAgentFrontmatter(
+              agentDiscoveryRuntime,
+              agentDiscoveryPath,
+              agentDefinition.id,
+              {
+                skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
+              }
+            );
+            return resolvedFrontmatter.subagent?.append_prompt;
+          } catch (error: unknown) {
+            workspaceLog.debug("Failed to resolve agent frontmatter for subagent append_prompt", {
+              agentId: agentDefinition.id,
+              error: getErrorMessage(error),
+            });
+            return undefined;
+          }
+        })()
+      : Promise.resolve(undefined),
+    !isSubagentWorkspace
+      ? discoverAvailableSubagentsForToolContext({
+          runtime: agentDiscoveryRuntime,
+          workspacePath: agentDiscoveryPath,
+          cfg,
+          loadDesktopCapability,
+        })
+      : Promise.resolve(undefined),
+    (async () => {
+      try {
+        return await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
+          roots: skillCtx.roots,
+          containment: skillCtx.containment,
+          includeClaudeSkills: opts.claudeSkillsCompatEnabled,
+        });
+      } catch (error) {
+        workspaceLog.warn("Failed to discover agent skills for tool description", { error });
+        return undefined;
+      }
+    })(),
+    loadInstructionSources(metadata, runtime, workspaceRootPath),
+  ]);
+  const agentSystemPromptSections = [resolvedBody];
+  if (isSubagentWorkspace && subagentAppendPrompt) {
+    agentSystemPromptSections.push(subagentAppendPrompt);
   }
-
+  if (advisorToolAvailable) {
+    agentSystemPromptSections.push(buildAdvisorGuidanceSection());
+  }
+  if (opts.memoryToolAvailable) {
+    agentSystemPromptSections.push(buildMemoryGuidanceSection());
+  }
   const ancestorPlanContext = resolveAncestorPlanContext({
     metadata,
     workspaceId,
@@ -618,8 +613,6 @@ export async function buildStreamSystemContext(
     formatAncestorPlanPathInstructions(ancestorPlanContext.entries),
     effectiveAdditionalInstructions
   );
-
-  // Build system message from workspace metadata
   let systemMessage = await buildSystemMessage(
     metadata,
     runtime,
@@ -627,27 +620,18 @@ export async function buildStreamSystemContext(
     mergedAdditionalInstructions,
     modelString,
     mcpServers,
-    // "Mode: <mode>" sections in Mux-dedicated instruction sources match the
-    // effective mode (so "Mode: plan" also covers custom plan-like agents)
-    // and the agent id (so per-agent sections work). The effective mode names
-    // the injected <mode-...> tag; agentDefinition.id (may have fallen back
-    // to exec) is the prompt actually in effect.
-    { agentSystemPromptSections, modes: [effectiveMode, agentDefinition.id] }
+    {
+      agentSystemPromptSections,
+      modes: [effectiveMode, agentDefinition.id],
+      instructionSources,
+    }
   );
-
-  // Append the hot-memories block (memory-hot-set sub-experiment). Placed at
-  // the end of the system message so the most recent stable prompt prefix
-  // stays byte-identical for provider prompt caching. The memory index lives
-  // in the memory tool description (same disclosure mechanic as skills).
   if (opts.memoryToolAvailable && opts.hotMemoriesBlock) {
     systemMessage = `${systemMessage}\n\n${opts.hotMemoriesBlock}`;
   }
-
-  // Count system message tokens for cost tracking
   const metadataModel = resolveModelForMetadata(modelString, providersConfig ?? null);
   const tokenizer = await getTokenizerForModel(modelString, metadataModel);
   const systemMessageTokens = await tokenizer.countTokens(systemMessage);
-
   return {
     agentSystemPromptSections,
     systemMessage,
@@ -655,6 +639,7 @@ export async function buildStreamSystemContext(
     agentDefinitions,
     availableSkills,
     ancestorPlanFilePaths: ancestorPlanContext.ancestorPlanFilePaths,
+    instructionSources,
   };
 }
 
