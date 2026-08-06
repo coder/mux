@@ -22,6 +22,7 @@ export const EXPERIMENT_IDS = {
   MEMORY_CONSOLIDATION: "memory-consolidation",
   TOOL_SEARCH: "tool-search",
   CLAUDE_SKILLS_COMPAT: "claude-skills-compat",
+  AGENT_PLUGINS: "agent-plugins",
   SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
   TIMELINE: "timeline",
 } as const;
@@ -174,6 +175,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Claude skills compatibility",
     description:
       "Also discover Agent Skills from .claude/skills and ~/.claude/skills (read-only, lowest precedence within each scope)",
+    enabledByDefault: false,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.AGENT_PLUGINS]: {
+    id: EXPERIMENT_IDS.AGENT_PLUGINS,
+    name: "Agent Plugins",
+    description:
+      "Discover Agent Plugins (agent-plugins.org 1.0.0) from .mux/plugins, .agents/plugins, ~/.mux/plugins, and ~/.agents/plugins: plugin skills join skill discovery and plugin MCP servers appear disabled by default",
     enabledByDefault: false,
     showInSettings: true,
   },
