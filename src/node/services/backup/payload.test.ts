@@ -2704,7 +2704,7 @@ describe("backup payload", () => {
     await write(existing, "mcp.jsonc", "{}\n");
     await fs.chmod(path.join(existing, "mcp.jsonc"), 0o644);
 
-    // Pinned, because a restrictive ambient umask makes every restored file owner-only on its
+    // Pinned, because a restrictive ambient umask makes a fresh destination owner-only on its
     // own and would hide a missing mode.
     const previousUmask = process.umask(0o022);
     try {
@@ -2714,10 +2714,38 @@ describe("backup payload", () => {
       process.umask(previousUmask);
     }
 
-    expect((await fs.stat(path.join(fresh, "mcp.jsonc"))).mode & 0o077).toBe(0);
-    expect((await fs.stat(path.join(existing, "mcp.jsonc"))).mode & 0o077).toBe(0);
-    // Only the owner-only class is narrowed; everything else keeps following the umask.
+    expect((await fs.stat(path.join(fresh, "mcp.jsonc"))).mode & 0o7777).toBe(0o600);
+    expect((await fs.stat(path.join(existing, "mcp.jsonc"))).mode & 0o7777).toBe(0o600);
     expect((await fs.stat(path.join(fresh, "AGENTS.md"))).mode & 0o077).not.toBe(0);
+  });
+
+  it("keeps a severed hard link's permissions when the umask is stricter", async () => {
+    if (process.platform === "win32") return;
+    await write(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "source",
+      preferences: {},
+    });
+
+    const restoreRoot = path.join(tempDir, "sever-mode-root");
+    await write(restoreRoot, "skills/demo/SKILL.md", "local\n");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await fs.link(destination, path.join(restoreRoot, "skills/demo/alias.md"));
+    await fs.chmod(destination, 0o644);
+
+    // The severing path recreates the file, so a stricter umask would silently narrow it below
+    // the permissions the replaced file had.
+    const previousUmask = process.umask(0o077);
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+    } finally {
+      process.umask(previousUmask);
+    }
+
+    expect((await fs.stat(destination)).mode & 0o777).toBe(0o644);
+    expect((await fs.stat(destination)).nlink).toBe(1);
   });
 
   it("restores backed-up files without deleting local-only files", async () => {

@@ -522,9 +522,10 @@ async function writeCheckedFile(
     // Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the read and
     // write bits to the local umask rather than inventing a source mode.
     let next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
-    // A creation mode does nothing when the destination already exists, so owner-only files are
-    // narrowed here as well, matching a writer that replaces the file on every write.
-    if (ownerOnly) next &= ~0o077;
+    // Set rather than masked, and applied even though the open above requests it, because a
+    // creation mode does nothing when the destination already exists. Masking would carry an
+    // existing file's setuid, setgid, sticky, and owner-execute bits into a config file.
+    if (ownerOnly) next = 0o600;
     if (next !== stat.mode) await handle.chmod(next);
   } finally {
     await handle.close();
@@ -567,11 +568,13 @@ async function openSeveredWriteHandle(
   const fresh = await fs.open(
     destination,
     fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollowFlag(),
-    // This replaces a file that already existed, so it carries that file's permissions forward
-    // rather than widening them to the umask default.
     options.mode ?? severedMode
   );
   try {
+    // A creation mode is filtered by the umask, which would silently narrow the replacement
+    // below the permissions the file being replaced already had. chmod is not filtered, so the
+    // mode is reapplied here to land exactly what was asked for.
+    await fresh.chmod(options.mode ?? severedMode);
     const stat = await fresh.stat();
     await assertOpenedFileContained(root, relativePath, stat);
     return { handle: fresh, stat };
