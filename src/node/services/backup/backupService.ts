@@ -188,13 +188,11 @@ export class BackupService {
   private readonly locks = new MutexMap<string>();
 
   /**
-   * Snapshots owned by a restore that has not returned yet. `locks` is keyed per repository, so
-   * restores of different repositories overlap, and this instance is the only place that knows
-   * they do. A reap runs only when this is empty, so it cannot delete a snapshot whose restore
-   * is still able to hand the path back. The `.released` marker covers the same risk for another
-   * process, which this set cannot see.
+   * `locks` is keyed per repository, so different repository and branch tuples overlap on the one
+   * Mux root every payload adapter reads and writes: a push can publish a half-restored mixture.
+   * Held only around local payload work, so git and network work stays parallel.
    */
-  private readonly unreturnedSnapshots = new Set<string>();
+  private readonly localPayload = new MutexMap<string>();
 
   constructor(
     private readonly config: Config,
@@ -249,14 +247,18 @@ export class BackupService {
     return this.withRepoLock(settings, async (normalized) => {
       try {
         const repository = await this.dependencies.gitRepo.prepare(normalized);
-        const restorePreview = await this.dependencies.payload.previewRestore({
-          repositoryRoot: repository.rootDir,
-          managedPath: normalized.path,
-        });
-        const exported = await this.dependencies.payload.exportTo({
-          repositoryRoot: repository.rootDir,
-          managedPath: normalized.path,
-        });
+        // One critical section: the reported restore plan and the exported payload must describe
+        // the same local state, or the two halves of the preview disagree.
+        const { restorePreview, exported } = await this.withLocalPayload(async () => ({
+          restorePreview: await this.dependencies.payload.previewRestore({
+            repositoryRoot: repository.rootDir,
+            managedPath: normalized.path,
+          }),
+          exported: await this.dependencies.payload.exportTo({
+            repositoryRoot: repository.rootDir,
+            managedPath: normalized.path,
+          }),
+        }));
         const pushChanges = await this.dependencies.gitRepo.getPushChanges(
           repository,
           normalized.path
@@ -292,10 +294,12 @@ export class BackupService {
     return this.withRepoLock(settings, async (normalized) => {
       try {
         const repository = await this.dependencies.gitRepo.prepare(normalized);
-        const exported = await this.dependencies.payload.exportTo({
-          repositoryRoot: repository.rootDir,
-          managedPath: normalized.path,
-        });
+        const exported = await this.withLocalPayload(() =>
+          this.dependencies.payload.exportTo({
+            repositoryRoot: repository.rootDir,
+            managedPath: normalized.path,
+          })
+        );
         // Approval is bound to the exact flagged bytes, so an override the user granted for
         // one payload cannot publish a different one another window wrote in between.
         if (exported.secretFiles.length > 0 && approvedSecretDigest !== exported.secretApproval) {
@@ -339,53 +343,57 @@ export class BackupService {
     return this.withRepoLock(settings, async (normalized) => {
       try {
         const repository = await this.dependencies.gitRepo.prepare(normalized);
-        if (repository.remoteCommit == null) {
+        // Bound to a local because the narrowing does not survive into the closure below.
+        const remoteCommit = repository.remoteCommit;
+        if (remoteCommit == null) {
           throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
         }
 
-        // Before the snapshot, so a restore blocked on command approval does not leave an
-        // unredacted copy of the local settings on disk.
-        await this.dependencies.payload.validateRestore({
-          repositoryRoot: repository.rootDir,
-          managedPath: normalized.path,
-          approvedCommandTokens,
-        });
-        const snapshotPath = await this.createSnapshotPath();
-        this.unreturnedSnapshots.add(snapshotPath);
-        try {
-          await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
-        } catch (error) {
-          // Nothing has been restored yet, so a snapshot that did not finish is an empty or
-          // partial unredacted copy that no recovery can use, and every retry would add one.
-          await fs.rm(snapshotPath, { recursive: true, force: true });
-          throw error;
-        }
-        try {
-          const restored = await this.dependencies.payload.restore({
+        // One critical section from the check through the write loop: a concurrent push must not
+        // collect a half-restored Mux root, and a concurrent restore must not interleave its
+        // writes with this one.
+        return await this.withLocalPayload(async () => {
+          // Before the snapshot, so a restore blocked on command approval does not leave an
+          // unredacted copy of the local settings on disk.
+          await this.dependencies.payload.validateRestore({
             repositoryRoot: repository.rootDir,
             managedPath: normalized.path,
             approvedCommandTokens,
           });
-          await this.persistSettings(normalized, { lastRestoredCommit: repository.remoteCommit });
-          return Ok({
-            commit: repository.remoteCommit,
-            snapshotPath,
-            changedFiles: restored.changedFiles,
-            localOnlyFiles: restored.localOnlyFiles,
-          });
-        } catch (error) {
-          // Past the snapshot, the restore may have overwritten files before failing, and
-          // the snapshot is the only recovery path, so the failure must carry it.
-          return Err({ ...toOperationError(error), snapshotPath });
-        } finally {
-          // Released only now, because until this restore returns its snapshot is the recovery
-          // point it may still hand back.
-          this.unreturnedSnapshots.delete(snapshotPath);
-          await releaseSnapshot(snapshotPath);
-          if (this.unreturnedSnapshots.size === 0) {
+          const snapshotPath = await this.createSnapshotPath();
+          try {
+            await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
+          } catch (error) {
+            // Nothing has been restored yet, so a snapshot that did not finish is an empty or
+            // partial unredacted copy that no recovery can use, and every retry would add one.
+            await fs.rm(snapshotPath, { recursive: true, force: true });
+            throw error;
+          }
+          try {
+            const restored = await this.dependencies.payload.restore({
+              repositoryRoot: repository.rootDir,
+              managedPath: normalized.path,
+              approvedCommandTokens,
+            });
+            await this.persistSettings(normalized, { lastRestoredCommit: remoteCommit });
+            return Ok({
+              commit: remoteCommit,
+              snapshotPath,
+              changedFiles: restored.changedFiles,
+              localOnlyFiles: restored.localOnlyFiles,
+            });
+          } catch (error) {
+            // Past the snapshot, the restore may have overwritten files before failing, and
+            // the snapshot is the only recovery path, so the failure must carry it.
+            return Err({ ...toOperationError(error), snapshotPath });
+          } finally {
+            // Released only now, because until this restore returns its snapshot is the recovery
+            // point it may still hand back. Reaping is safe here rather than gated on other
+            // restores because the local payload lock already excludes them.
+            await releaseSnapshot(snapshotPath);
             await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
           }
-        }
+        });
       } catch (error) {
         return Err(toOperationError(error));
       }
@@ -491,6 +499,14 @@ export class BackupService {
     // uniqueness, since two restores can start in the same millisecond.
     const stamp = new Date().toISOString().replaceAll(/[:.]/g, "-");
     return fs.mkdtemp(path.join(cacheRoot, `${SNAPSHOT_NAME_PREFIX}${stamp}-`));
+  }
+
+  /**
+   * One key, because the resource is the Mux root itself rather than any repository. Taken inside
+   * `withRepoLock` everywhere, so the two are always acquired in the same order.
+   */
+  private withLocalPayload<T>(operation: () => Promise<T>): Promise<T> {
+    return this.localPayload.withLock("mux-root", operation);
   }
 
   private withRepoLock<T>(

@@ -187,54 +187,48 @@ describe("BackupService", () => {
     }
   });
 
-  test("does not reap while another restore is still running", async () => {
-    let releaseSecond: (() => void) | undefined;
-    const secondStarted = new Promise<void>((resolve) => {
-      releaseSecond = resolve;
+  test("holds a push out of a Mux root a restore is still writing", async () => {
+    const events: string[] = [];
+    let releaseRestore: (() => void) | undefined;
+    const restoreHeld = new Promise<void>((resolve) => {
+      releaseRestore = resolve;
     });
-    let blockNext = false;
-    let blockedOnce = false;
-    let heldReachedRestore: (() => void) | undefined;
-    const heldOwnsSnapshot = new Promise<void>((resolve) => {
-      heldReachedRestore = resolve;
+    let restoreEntered: (() => void) | undefined;
+    const restoreInFlight = new Promise<void>((resolve) => {
+      restoreEntered = resolve;
     });
     const service = new BackupService(createTestConfig(tempDir), {
       gitRepo: createGitRepo(),
       payload: createPayload({
-        writeSafetySnapshot: async (snapshotRoot) => {
-          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
-        },
         restore: async () => {
-          // Holds one restore between its snapshot and its return, which is the state a reap
-          // must not act on. Different repositories are not serialized by withRepoLock.
-          if (blockNext && !blockedOnce) {
-            blockedOnce = true;
-            // Reached only after this restore's snapshot exists and is registered, so the
-            // overlapping restore below cannot start before the state under test is real.
-            heldReachedRestore?.();
-            await secondStarted;
-          }
+          events.push("restore-start");
+          restoreEntered?.();
+          await restoreHeld;
+          events.push("restore-end");
           return { changedFiles: ["AGENTS.md"], localOnlyFiles: [] };
+        },
+        exportTo: () => {
+          events.push("export");
+          return Promise.resolve({ redactions: [], secretFiles: [], secretApproval: "digest" });
         },
       }),
     });
 
-    for (let seed = 0; seed < 4; seed++) {
-      const result = await service.restore(SETTINGS);
-      if (!result.success) throw new Error(result.error.message);
-    }
-    expect((await snapshotDirectories(path.join(tempDir, "backup-cache"))).length).toBe(3);
+    const restoring = service.restore(SETTINGS);
+    await restoreInFlight;
+    // A different repository, so withRepoLock does not serialize these two.
+    const pushing = service.push({ ...SETTINGS, repoUrl: `${SETTINGS.repoUrl}-other` });
+    // Every step between push() and its export is a microtask here (the git repo is a test double),
+    // so draining the queue parks the push on the payload lock instead of merely unscheduled. Without
+    // the drain the push exports after this restore regardless, and the test passes with no lock.
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+    releaseRestore?.();
+    const [restored, pushed] = await Promise.all([restoring, pushing]);
 
-    blockNext = true;
-    const held = service.restore({ ...SETTINGS, repoUrl: `${SETTINGS.repoUrl}-other` });
-    await heldOwnsSnapshot;
-    const overlapping = await service.restore(SETTINGS);
-    if (!overlapping.success) throw new Error(overlapping.error.message);
-    // The held restore still owns an unreturned snapshot, so nothing was reclaimed.
-    expect((await snapshotDirectories(path.join(tempDir, "backup-cache"))).length).toBe(5);
-
-    releaseSecond?.();
-    await held;
+    expect(restored.success).toBe(true);
+    expect(pushed.success).toBe(true);
+    // The export must read the root after the restore finished writing it, not during.
+    expect(events).toEqual(["restore-start", "restore-end", "export"]);
   });
 
   test("never reaps a snapshot whose restore has not returned", async () => {
