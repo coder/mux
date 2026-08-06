@@ -50,9 +50,7 @@ export interface TerminalAttentionNotification {
   ownerWorkspaceId: string;
   sourceKind: TerminalAttentionSourceKind;
   sourceId: string;
-  /** Retained on disk for downgrade compatibility; current delivery derives behavior from sourceKind. */
   outputDelivery: TerminalAttentionOutputDelivery;
-  /** Retained on disk for downgrade compatibility; current delivery reads authoritative result stores. */
   terminalOutcome: TerminalAttentionOutcome;
   status: TerminalAttentionStatus;
   createdAt: string;

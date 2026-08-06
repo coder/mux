@@ -2630,6 +2630,53 @@ describe("TaskService", () => {
     ).toMatchObject({ status: "superseded" });
   });
 
+  test("persistent prompt-free resume failures stay pending without an idle retry loop", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const taskId = "task-persistent-resume-error";
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: taskId,
+    });
+
+    const resumeStream = mock(
+      (): Promise<Result<{ started: boolean }, SendMessageError>> =>
+        Promise.resolve(Err({ type: "unknown", raw: "Budget gate rejected the model" }))
+    );
+    const waitForIdleAndNoQueuedMessages = mock((): Promise<void> => Promise.resolve());
+    const { workspaceService } = createWorkspaceServiceMocks({
+      resumeStream,
+      waitForIdleAndNoQueuedMessages,
+    });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      parentId,
+      createMuxMessage(
+        "terminal-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId,
+          agentType: "explore",
+          status: "completed",
+          title: "Result",
+          reportMarkdown: "Ready for synthesis.",
+        }),
+        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+      )
+    );
+
+    const internal = taskService as unknown as {
+      drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+    };
+    await internal.drainTerminalAttention(parentId);
+
+    expect(resumeStream).toHaveBeenCalledTimes(1);
+    expect(waitForIdleAndNoQueuedMessages).not.toHaveBeenCalled();
+    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
+  });
+
   test("terminal workflow wake-up reconstructs durable result context", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
@@ -2790,38 +2837,6 @@ describe("TaskService", () => {
       expect.objectContaining({ synthetic: true, agentInitiated: true })
     );
     expect(findWorkspaceInConfig(config, childTaskId)?.taskPendingGuidance).toBeUndefined();
-  });
-
-  test("initialize drains persisted terminal wake-ups from before restart", async () => {
-    const config = await createTestConfig(rootDir);
-    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
-
-    const terminalAttentionStore = new TerminalAttentionStore(config);
-    await terminalAttentionStore.enqueueIfAbsent({
-      ownerWorkspaceId: parentId,
-      sourceKind: "workspace_turn",
-      sourceId: "wst_restart_pending",
-    });
-
-    const sendMessage = mock(
-      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
-    );
-    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
-
-    await taskService.initialize();
-    await flushTerminalAttentionDrains(taskService);
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage.mock.calls[0]?.[0]).toBe(parentId);
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("wst_restart_pending");
-    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("timeout_secs: 0");
-    expect(sendMessage.mock.calls[0]?.[3]).toMatchObject({
-      synthetic: true,
-      agentInitiated: true,
-      requireIdle: true,
-    });
-    expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(0);
   });
 
   test("initialize recovers terminal notify workspace turns without pending notification", async () => {

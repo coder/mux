@@ -5570,11 +5570,16 @@ export class TaskService {
       const resumeResult = await this.workspaceService.resumeStream(ownerWorkspaceId, sendOptions, {
         agentInitiated: true,
       });
-      if (!resumeResult.success || !resumeResult.data.started) {
-        log.debug("Prompt-free sub-agent resume was not started; leaving attention pending", {
+      if (!resumeResult.success) {
+        // Persistent failures (for example a budget/model gate) are not made retryable by waiting for
+        // idle—the owner is already idle here. Keep the outbox entry pending for a later real signal.
+        log.warn("Prompt-free sub-agent resume failed; leaving attention pending", {
           ownerWorkspaceId,
-          error: resumeResult.success ? undefined : resumeResult.error,
+          error: resumeResult.error,
         });
+        return;
+      }
+      if (!resumeResult.data.started) {
         this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
         return;
       }
