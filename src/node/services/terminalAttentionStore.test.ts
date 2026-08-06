@@ -4,7 +4,10 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
-import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
+import {
+  TERMINAL_ATTENTION_DIR,
+  TerminalAttentionStore,
+} from "@/node/services/terminalAttentionStore";
 
 function makeConfig(rootDir: string): {
   sessionsDir: string;
@@ -31,8 +34,6 @@ describe("TerminalAttentionStore", () => {
       ownerWorkspaceId: "owner-1",
       sourceKind: "workspace_turn",
       sourceId: "wst_abc",
-      outputDelivery: "requires_task_await",
-      terminalOutcome: "completed",
     });
     expect(created).not.toBeNull();
     expect(created?.status).toBe("pending");
@@ -41,14 +42,36 @@ describe("TerminalAttentionStore", () => {
     expect(pending.map((n) => n.sourceId)).toEqual(["wst_abc"]);
   });
 
+  test("loads pending notifications written with legacy derived fields", async () => {
+    const config = makeConfig(rootDir);
+    const dir = path.join(config.getSessionDir("owner-1"), TERMINAL_ATTENTION_DIR);
+    await fsPromises.mkdir(dir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(dir, `${encodeURIComponent("agent_task:task-1")}.json`),
+      JSON.stringify({
+        id: "agent_task:task-1",
+        ownerWorkspaceId: "owner-1",
+        sourceKind: "agent_task",
+        sourceId: "task-1",
+        outputDelivery: "already_injected",
+        terminalOutcome: "completed",
+        status: "pending",
+        createdAt: "2026-08-01T00:00:00.000Z",
+      })
+    );
+
+    expect((await new TerminalAttentionStore(config).listPending("owner-1"))[0]).toMatchObject({
+      sourceId: "task-1",
+      status: "pending",
+    });
+  });
+
   test("enqueueIfAbsent is idempotent by source kind + id", async () => {
     const store = new TerminalAttentionStore(makeConfig(rootDir));
     const base = {
       ownerWorkspaceId: "owner-1",
       sourceKind: "agent_task" as const,
       sourceId: "task-1",
-      outputDelivery: "already_injected" as const,
-      terminalOutcome: "completed" as const,
     };
     const first = await store.enqueueIfAbsent(base);
     const second = await store.enqueueIfAbsent(base);
@@ -64,8 +87,6 @@ describe("TerminalAttentionStore", () => {
       ownerWorkspaceId: "owner-1",
       sourceKind: "workspace_turn",
       sourceId: "wst_done",
-      outputDelivery: "requires_task_await",
-      terminalOutcome: "completed",
     });
     await store.markDelivered("owner-1", created!.id);
 
@@ -78,8 +99,6 @@ describe("TerminalAttentionStore", () => {
         ownerWorkspaceId: "owner-1",
         sourceKind: "workspace_turn",
         sourceId: "wst_done",
-        outputDelivery: "requires_task_await",
-        terminalOutcome: "completed",
       })
     ).toBeNull();
   });
@@ -90,16 +109,12 @@ describe("TerminalAttentionStore", () => {
       ownerWorkspaceId: "owner-1",
       sourceKind: "agent_task",
       sourceId: "task-a",
-      outputDelivery: "already_injected",
-      terminalOutcome: "completed",
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     await store.enqueueIfAbsent({
       ownerWorkspaceId: "owner-1",
       sourceKind: "workspace_turn",
       sourceId: "wst-b",
-      outputDelivery: "requires_task_await",
-      terminalOutcome: "completed",
       createdAt: "2026-01-01T00:00:01.000Z",
     });
     const pending = await store.listPending("owner-1");
@@ -112,15 +127,11 @@ describe("TerminalAttentionStore", () => {
       ownerWorkspaceId: "owner-b",
       sourceKind: "workspace_turn",
       sourceId: "wst-b",
-      outputDelivery: "requires_task_await",
-      terminalOutcome: "completed",
     });
     const delivered = await store.enqueueIfAbsent({
       ownerWorkspaceId: "owner-a",
       sourceKind: "agent_task",
       sourceId: "task-a",
-      outputDelivery: "already_injected",
-      terminalOutcome: "completed",
     });
     expect(delivered).not.toBeNull();
     await store.markDelivered("owner-a", delivered!.id);
