@@ -127,45 +127,58 @@ async function nonInteractiveSshCommand(
     // spaces only survives becoming part of a shell command line if it is quoted.
     (program !== null ? shellQuote(program) : "ssh");
   const flag = nonInteractiveFlag(base, options);
-  return flag === null ? null : insertNonInteractiveFlag(base, flag);
+  if (flag === null) return null;
+  const insertAt = sshFlagInsertion(base);
+  return insertAt === null ? null : `${base.slice(0, insertAt)} ${flag}${base.slice(insertAt)}`;
 }
 
 /**
- * Placed before the configured command's own options, not after: OpenSSH keeps the first value
- * it obtains for an option (verified with `ssh -G -o BatchMode=no -o BatchMode=yes`, which
- * reports `batchmode no`), so appending leaves a configured `BatchMode=no` in force and lets a
- * prompt block until the git timeout.
+ * Where the flag goes, or null when the client cannot be located on the line. The offset is right
+ * after the program and before the command's own options, because OpenSSH keeps the first value it
+ * obtains for an option (verified with `ssh -G -o BatchMode=no -o BatchMode=yes`, which reports
+ * `batchmode no`), so appending would leave a configured `BatchMode=no` in force.
+ *
+ * An explicit `GIT_SSH_VARIANT` says which option a client accepts, never where that client sits,
+ * so it cannot stand in for this. A launcher like `env FOO=bar ssh` would otherwise be handed
+ * `-o BatchMode=yes` itself and fail with `invalid option`. Refusing whenever the program is
+ * unrecognized covers every launcher without naming any, which is why no list of them exists.
  */
-function insertNonInteractiveFlag(command: string, flag: string): string {
+function sshFlagInsertion(command: string): number | null {
   const program = sshProgram(command);
-  if (program === null) return `${flag} ${command}`;
-  return `${command.slice(0, program.end)} ${flag}${command.slice(program.end)}`;
+  if (program === null) return null;
+  // Recognized by name, so this word is the client no matter what follows it. Otherwise only a
+  // lone word can be the client, because any following word could be the real program.
+  if (NON_INTERACTIVE_FLAGS.has(programName(program.executable))) return program.end;
+  return command.slice(program.end).trim() === "" ? program.end : null;
 }
 
 /**
  * Git's own variant list (`GIT_SSH_VARIANT`): only OpenSSH takes `-o BatchMode=yes`, while the
  * PuTTY family spells it `-batch`, and git passes no options at all to anything else. Nothing
- * is appended for an unrecognised client for the same reason.
+ * is appended for an unrecognised client for the same reason. A Map rather than an object so an
+ * inherited key like `constructor` cannot resolve to a flag.
  */
+const NON_INTERACTIVE_FLAGS = new Map([
+  ["ssh", "-o BatchMode=yes"],
+  ["plink", "-batch"],
+  ["putty", "-batch"],
+  ["tortoiseplink", "-batch"],
+]);
+
 function nonInteractiveFlag(command: string, options: GitCredentialOptions): string | null {
-  switch (options.env?.GIT_SSH_VARIANT ?? process.env.GIT_SSH_VARIANT ?? sshVariant(command)) {
-    case "ssh":
-      return "-o BatchMode=yes";
-    case "plink":
-    case "putty":
-    case "tortoiseplink":
-      return "-batch";
-    default:
-      return null;
-  }
+  const variant =
+    options.env?.GIT_SSH_VARIANT ?? process.env.GIT_SSH_VARIANT ?? sshVariant(command);
+  return NON_INTERACTIVE_FLAGS.get(variant) ?? null;
+}
+
+function programName(executable: string): string {
+  // Split on both separators rather than `path.basename`: a `core.sshCommand` written on Windows
+  // is read verbatim wherever the config is used, and basename only knows the host's separator.
+  return (executable.split(/[\\/]/).pop() ?? "").toLowerCase().replace(/\.exe$/, "");
 }
 
 function sshVariant(command: string): string {
-  // Split on both separators rather than `path.basename`: a `core.sshCommand` written on Windows
-  // is read verbatim wherever the config is used, and basename only knows the host's separator.
-  const executable = sshProgram(command)?.executable ?? "";
-  const program = executable.split(/[\\/]/).pop() ?? "";
-  return program.toLowerCase().replace(/\.exe$/, "");
+  return programName(sshProgram(command)?.executable ?? "");
 }
 
 function ambientValue(

@@ -710,6 +710,58 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(`"/opt/unterminated/ssh`);
   });
 
+  it("adds no option to a launcher even when the variant is forced", async () => {
+    const logPath = path.join(tempDir, "launcher.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // The variant names the option a client takes, not where the client is. `env` would
+        // receive `-o BatchMode=yes` itself and exit on `invalid option`, so nothing is added.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_VARIANT: "ssh",
+          GIT_SSH_COMMAND: "env FOO=bar ssh -i /keys/id",
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe("env FOO=bar ssh -i /keys/id");
+  });
+
+  it("does not prepend an option when a forced variant meets an unparseable command", async () => {
+    const logPath = path.join(tempDir, "forced-unparseable.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // The variant is forced, so the flag is chosen without reading the program. Putting it
+        // before an unlocatable one would make the shell run `-o BatchMode=yes` as the command.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_VARIANT: "ssh",
+          GIT_SSH_COMMAND: `"/opt/unterminated/ssh`,
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(`"/opt/unterminated/ssh`);
+  });
+
   it("keeps the separators of an unquoted Windows ssh path", async () => {
     const logPath = path.join(tempDir, "bare-windows.log");
     await writeExecutable(
