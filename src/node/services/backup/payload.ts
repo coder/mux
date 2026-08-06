@@ -1244,8 +1244,11 @@ export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[
       const content = file.content.toString("utf-8");
       if (SECRET_PATTERNS.some((pattern) => pattern.test(content))) return true;
       if (file.path === "mcp.jsonc" && mcpConfigRequiresPublishApproval(content)) return true;
+      // Every collected file, not just the recursive ones: `agents/` is collected by name and
+      // its `.md` filter would otherwise auto-publish `agents/api-key.md`.
+      if (hasCredentialPathHint(file.path)) return true;
       if (!isRecursivelyCollected(file.path)) return false;
-      return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || hasCredentialPathHint(file.path);
+      return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path);
     })
     .map((file) => file.path)
     .sort();

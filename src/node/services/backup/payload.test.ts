@@ -2598,8 +2598,12 @@ describe("backup payload", () => {
     }
   });
 
-  it("holds back non-documentation and credential-named recursive files", async () => {
+  it("holds back non-documentation and credential-named collected files", async () => {
     await write(muxRoot, "skills/demo/SKILL.md", "a normal skill\n");
+    // `agents/` is collected by name rather than recursively, so it reaches the gate by a
+    // different route than `skills/`; the same name must still earn review.
+    await write(muxRoot, "agents/api-key.md", "PASSWORD=hunter2\n");
+    await write(muxRoot, "agents/reviewer.md", "an ordinary agent\n");
     await write(muxRoot, "skills/api/key.md", "ordinary documentation\n");
     await write(muxRoot, "skills/private/key.md", "ordinary documentation\n");
     await write(muxRoot, "skills/acme/auth-guide.md", "ordinary documentation\n");
@@ -2629,8 +2633,10 @@ describe("backup payload", () => {
     expect(payloadPaths).toContain("skills/api/key.md");
     expect(payloadPaths).toContain("skills/private/key.md");
     expect(payloadPaths).toContain("skills/acme/auth-guide.md");
+    expect(payloadPaths).toContain("agents/reviewer.md");
 
     expect(scanBackupFilesForSecrets(payload.files)).toEqual([
+      "agents/api-key.md",
       "memory/global/api-key.txt",
       "memory/global/api-keys.txt",
       "memory/global/api_key.txt",
