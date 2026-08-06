@@ -34,10 +34,16 @@ export const AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0 =
 
 const PLUGIN_SERVER_KEY_PREFIX = "plugin:";
 
-/** Stable plugin-instance identity keyed on the canonical root path (not name/content). */
-export function computePluginInstanceId(rootPath: string): string {
-  assert(path.isAbsolute(rootPath), "computePluginInstanceId: rootPath must be absolute");
-  return createHash("sha256").update(rootPath).digest("hex").slice(0, 16);
+/**
+ * Stable plugin-instance identity. Global plugins hash their canonical root
+ * path; project plugins hash `<projectKey>\0<container-relative location>` so
+ * the same plugin gets the same instance ID from every worktree of a project
+ * (worktree realpaths differ per workspace, but the project identity and the
+ * plugin's location inside the repo do not).
+ */
+export function computePluginInstanceId(identity: string): string {
+  assert(identity.length > 0, "computePluginInstanceId: identity must be non-empty");
+  return createHash("sha256").update(identity).digest("hex").slice(0, 16);
 }
 
 /** Client-managed persistent data directory for a plugin instance (§9.1). */
@@ -329,11 +335,13 @@ function normalizeRemoteEntry(
 
 /**
  * Load and normalize a plugin's `mcp.json` into default-disabled Mux server
- * records keyed by `plugin:<instanceId>:<serverName>`.
+ * records keyed by `plugin:<instanceId>:<serverName>`. The instance ID
+ * defaults to hashing the canonical plugin root; callers pass an explicit
+ * `instanceId` when a more stable identity exists (project plugins).
  */
 export async function loadPluginMcpServers(
   plugin: AgentPluginInfo,
-  ctx: { muxHome: string }
+  ctx: { muxHome: string; instanceId?: string }
 ): Promise<LoadPluginMcpServersResult> {
   assert(
     plugin.mcpConfigPath !== undefined && path.isAbsolute(plugin.mcpConfigPath),
@@ -384,7 +392,7 @@ export async function loadPluginMcpServers(
     return disableMcp("mcp.json 'mcpServers' is required and must be an object");
   }
 
-  const instanceId = computePluginInstanceId(plugin.rootPath);
+  const instanceId = ctx.instanceId ?? computePluginInstanceId(plugin.rootPath);
   const dataPath = getPluginDataPath(ctx.muxHome, instanceId);
   const normalizeCtx: NormalizeContext = {
     plugin,
@@ -442,9 +450,27 @@ export async function loadPluginMcpServers(
   return { servers, diagnostics };
 }
 
-export interface AgentPluginsMcpProviderArgs {
-  /** Host project root for project-scope plugin containers (when applicable). */
-  projectPath?: string;
+/**
+ * Where and how plugin MCP discovery runs for a call.
+ *
+ * `projectRoot` is the host checkout whose `.mux/plugins` / `.agents/plugins`
+ * containers are scanned. For workspace flows this is the ACTIVE worktree (so
+ * plugin content follows the branch, matching skill discovery); for
+ * project-level flows (Settings, workspace MCP modal) it is the project path.
+ *
+ * `projectKey` is the stable project identity (`metadata.projectPath`) used to
+ * key project plugin instances. Because instance IDs hash
+ * `projectKey + container-relative location` rather than the checkout
+ * realpath, the engine (scanning a worktree) and the UI (scanning the project
+ * checkout) agree on `plugin:<id>:<name>` keys, so workspace `enabledServers`
+ * overrides and `PLUGIN_DATA` stay coherent across worktrees.
+ */
+export interface AgentPluginsMcpContext {
+  projectRoot?: string;
+  projectKey?: string;
+}
+
+export interface AgentPluginsMcpProviderArgs extends AgentPluginsMcpContext {
   /** Whether repo-local (project-scope) plugin config is allowed (Project Trust). */
   trusted: boolean;
 }
@@ -452,6 +478,20 @@ export interface AgentPluginsMcpProviderArgs {
 export type AgentPluginsMcpProvider = (
   args: AgentPluginsMcpProviderArgs
 ) => Promise<Record<string, MCPServerInfo>>;
+
+/** Stable instance identity for a project-scope plugin (see AgentPluginsMcpContext). */
+function computeProjectPluginInstanceId(args: {
+  projectKey: string;
+  projectRoot: string;
+  plugin: AgentPluginInfo;
+}): string {
+  // Lexical container-relative location, e.g. ".mux/plugins/hello-plugin".
+  const relativeLocation = path.join(
+    path.relative(args.projectRoot, args.plugin.containerPath),
+    args.plugin.dirName
+  );
+  return computePluginInstanceId(`${args.projectKey}\0${relativeLocation}`);
+}
 
 /**
  * Build the MCP server provider for Agent Plugins containers. Returns an empty
@@ -473,11 +513,12 @@ export function createAgentPluginsMcpProvider(ctx: {
       return {};
     }
 
+    const projectRoot = args.projectRoot;
     const containers: AgentPluginContainer[] = [];
-    if (args.projectPath !== undefined && args.trusted && path.isAbsolute(args.projectPath)) {
-      containers.push({ path: path.join(args.projectPath, ".mux", "plugins"), scope: "project" });
+    if (projectRoot !== undefined && args.trusted && path.isAbsolute(projectRoot)) {
+      containers.push({ path: path.join(projectRoot, ".mux", "plugins"), scope: "project" });
       containers.push({
-        path: path.join(args.projectPath, ".agents", "plugins"),
+        path: path.join(projectRoot, ".agents", "plugins"),
         scope: "project",
       });
     }
@@ -491,20 +532,29 @@ export function createAgentPluginsMcpProvider(ctx: {
         if (plugin.mcpConfigPath === undefined) {
           continue;
         }
-        // Project plugin roots keep the repo-symlink posture of repo config:
-        // the plugin root itself must stay inside the project root.
-        if (plugin.scope === "project" && args.projectPath !== undefined) {
+        let instanceId: string | undefined;
+        if (plugin.scope === "project" && projectRoot !== undefined) {
+          // Project plugin roots keep the repo-symlink posture of repo config:
+          // the plugin root itself must stay inside the scanned checkout.
           try {
-            await ensurePathContained(args.projectPath, plugin.rootPath);
+            await ensurePathContained(projectRoot, plugin.rootPath);
           } catch (error) {
             log.warn(
               `Skipping project plugin '${plugin.name}' MCP config: plugin root escapes the project root: ${getErrorMessage(error)}`
             );
             continue;
           }
+          instanceId = computeProjectPluginInstanceId({
+            projectKey: args.projectKey ?? projectRoot,
+            projectRoot,
+            plugin,
+          });
         }
         try {
-          const { servers } = await loadPluginMcpServers(plugin, { muxHome: ctx.muxHome });
+          const { servers } = await loadPluginMcpServers(plugin, {
+            muxHome: ctx.muxHome,
+            ...(instanceId !== undefined ? { instanceId } : {}),
+          });
           Object.assign(merged, servers);
         } catch (error) {
           // §11.3: one broken plugin never affects the others.

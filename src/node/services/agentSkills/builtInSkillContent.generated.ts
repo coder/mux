@@ -3159,6 +3159,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "- **Read-only** — they cannot be edited or removed, and are never written into `mcp.jsonc`",
       "- **Trust-gated** — servers from a repo's `.mux/plugins` / `.agents/plugins` only appear once the project is trusted",
       "- **Host-only** — plugin servers are skipped for SSH and devcontainer workspaces",
+      "- **Branch-following** — in a workspace, repo plugin servers load from the workspace's own checkout (matching skill discovery), while server identities stay stable across worktrees of the same project",
       "",
       "Stdio plugin servers launch with the spec's `PLUGIN_ROOT` and `PLUGIN_DATA` environment variables; per-plugin data directories live under `~/.mux/plugin-data/`.",
       "",

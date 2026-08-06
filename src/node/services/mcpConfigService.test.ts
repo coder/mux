@@ -171,8 +171,8 @@ describe("MCP server disable filtering", () => {
     });
   });
 
-  test("listServers passes projectPath and trust through to the provider", async () => {
-    const seenArgs: Array<{ projectPath?: string; trusted: boolean }> = [];
+  test("listServers resolves the Agent Plugins context: default, explicit, and null", async () => {
+    const seenArgs: Array<{ projectRoot?: string; projectKey?: string; trusted: boolean }> = [];
     const withProvider = new MCPConfigService(config, {
       agentPluginsMcpProvider: (args) => {
         seenArgs.push(args);
@@ -180,14 +180,22 @@ describe("MCP server disable filtering", () => {
       },
     });
 
+    // Default: scan under projectPath, keyed by projectPath (project-level flows).
     await withProvider.listServers();
     await withProvider.listServers("/proj", false);
     await withProvider.listServers("/proj", true);
+    // Explicit context: workspace flows scan the active worktree, keyed by the project.
+    await withProvider.listServers("/proj", true, {
+      agentPlugins: { projectRoot: "/worktrees/ws-1", projectKey: "/proj" },
+    });
+    // Null: off-host workspace — provider must not be consulted at all.
+    await withProvider.listServers("/proj", true, { agentPlugins: null });
 
     expect(seenArgs).toEqual([
-      { projectPath: undefined, trusted: false },
-      { projectPath: "/proj", trusted: false },
-      { projectPath: "/proj", trusted: true },
+      { projectRoot: undefined, projectKey: undefined, trusted: false },
+      { projectRoot: "/proj", projectKey: "/proj", trusted: false },
+      { projectRoot: "/proj", projectKey: "/proj", trusted: true },
+      { projectRoot: "/worktrees/ws-1", projectKey: "/proj", trusted: true },
     ]);
   });
 

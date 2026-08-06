@@ -37,6 +37,8 @@ async function makePlugin(
     name,
     scope: options?.scope ?? "global",
     rootPath,
+    containerPath: baseDir,
+    dirName: name,
     manifest: { schemaId: AGENT_PLUGIN_SCHEMA_ID_1_0_0, name },
     mcpConfigPath,
   };
@@ -525,11 +527,11 @@ describe("createAgentPluginsMcpProvider", () => {
           .sort();
 
       // Untrusted project: only global containers contribute.
-      const untrusted = await provider({ projectPath: project.path, trusted: false });
+      const untrusted = await provider({ projectRoot: project.path, trusted: false });
       expect(pluginNamesOf(untrusted)).toEqual(["global-plugin", "universal-plugin"]);
 
       // Trusted project: project containers contribute too.
-      const trusted = await provider({ projectPath: project.path, trusted: true });
+      const trusted = await provider({ projectRoot: project.path, trusted: true });
       expect(pluginNamesOf(trusted)).toEqual([
         "global-plugin",
         "project-plugin",
@@ -557,6 +559,64 @@ describe("createAgentPluginsMcpProvider", () => {
       const servers = await provider({ trusted: false });
 
       expect(Object.values(servers).map((s) => s.plugin?.pluginName)).toEqual(["healthy"]);
+    });
+  });
+
+  test("project plugin keys are stable across checkouts of the same project", async () => {
+    using home = new DisposableTempDir("plugin-provider-home");
+    using muxHome = new DisposableTempDir("plugin-provider-mux");
+    using projectDir = new DisposableTempDir("plugin-provider-checkout-a");
+    using worktreeDir = new DisposableTempDir("plugin-provider-checkout-b");
+    await withHomeDir(home.path, async () => {
+      // Same plugin at the same repo-relative location in two checkouts
+      // (project checkout + workspace worktree).
+      for (const checkout of [projectDir.path, worktreeDir.path]) {
+        await writeDiscoverablePlugin(
+          path.join(checkout, ".mux", "plugins"),
+          "shared-plugin",
+          mcpDoc({ srv: STDIO_ENTRY })
+        );
+      }
+
+      const provider = createAgentPluginsMcpProvider({
+        muxHome: muxHome.path,
+        isEnabled: () => true,
+      });
+
+      // Engine flow: scans the worktree, keys by the project identity.
+      const fromWorktree = await provider({
+        projectRoot: worktreeDir.path,
+        projectKey: projectDir.path,
+        trusted: true,
+      });
+      // UI flow (Settings / workspace modal): scans the project checkout.
+      const fromProject = await provider({
+        projectRoot: projectDir.path,
+        projectKey: projectDir.path,
+        trusted: true,
+      });
+
+      expect(Object.keys(fromWorktree)).toHaveLength(1);
+      expect(Object.keys(fromWorktree)).toEqual(Object.keys(fromProject));
+
+      // PLUGIN_DATA is shared too, but PLUGIN_ROOT follows the scanned checkout.
+      const worktreeInfo = Object.values(fromWorktree)[0] as MCPStdioServerInfo;
+      const projectInfo = Object.values(fromProject)[0] as MCPStdioServerInfo;
+      expect(worktreeInfo.env?.PLUGIN_DATA).toBe(projectInfo.env?.PLUGIN_DATA ?? "");
+      expect(worktreeInfo.env?.PLUGIN_ROOT).toBe(
+        path.join(await fs.realpath(worktreeDir.path), ".mux", "plugins", "shared-plugin")
+      );
+      expect(projectInfo.env?.PLUGIN_ROOT).toBe(
+        path.join(await fs.realpath(projectDir.path), ".mux", "plugins", "shared-plugin")
+      );
+
+      // A different project identity yields different keys even for the same rel path.
+      const otherProject = await provider({
+        projectRoot: projectDir.path,
+        projectKey: "/some/other/project",
+        trusted: true,
+      });
+      expect(Object.keys(otherProject)).not.toEqual(Object.keys(fromProject));
     });
   });
 });

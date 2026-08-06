@@ -13,6 +13,7 @@ import {
 } from "./mcpServerManager";
 import type { MCPConfigService } from "./mcpConfigService";
 import type { Runtime } from "@/node/runtime/Runtime";
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import type { Tool } from "ai";
@@ -984,8 +985,12 @@ describe("MCPServerManager", () => {
       workspaceRequest("ws-trusted-mcp", { trusted: true })
     );
 
-    expect(configService.listServers).toHaveBeenNthCalledWith(1, PROJECT_PATH, false);
-    expect(configService.listServers).toHaveBeenNthCalledWith(2, PROJECT_PATH, true);
+    expect(configService.listServers).toHaveBeenNthCalledWith(1, PROJECT_PATH, false, {
+      agentPlugins: undefined,
+    });
+    expect(configService.listServers).toHaveBeenNthCalledWith(2, PROJECT_PATH, true, {
+      agentPlugins: undefined,
+    });
     expect(Object.keys(untrustedResult.tools)).toEqual(["global_tool"]);
     expect(Object.keys(trustedResult.tools).sort()).toEqual(["global_tool", "repo_tool"]);
 
@@ -1213,20 +1218,44 @@ describe("MCPServerManager", () => {
     expect(Object.keys(startedServers)).toEqual([PLUGIN_KEY]);
   });
 
-  test("plugin servers are excluded on remote runtimes", async () => {
+  test("plugin servers are excluded on off-host runtimes (remote and devcontainer)", async () => {
     configService.listServers = mock(() => Promise.resolve(pluginStdioConfig()));
     spyOn(access, "startServers").mockImplementation(() => Promise.resolve(startResult([])));
 
-    // Runtime identity is all the gate needs; RemoteRuntime is abstract.
-    const remoteRuntime = Object.create(RemoteRuntime.prototype) as Runtime;
-    const result = await manager.getToolsForWorkspace(
-      workspaceRequest("ws-plugin-remote", {
-        runtime: remoteRuntime,
-        overrides: { enabledServers: [PLUGIN_KEY] },
-      })
-    );
+    // Runtime identity is all the gate needs; both classes exec off-host.
+    // DevcontainerRuntime extends LocalBaseRuntime but execs inside the container.
+    const offHostRuntimes: Array<[string, Runtime]> = [
+      ["ws-plugin-remote", Object.create(RemoteRuntime.prototype) as Runtime],
+      ["ws-plugin-devcontainer", Object.create(DevcontainerRuntime.prototype) as Runtime],
+    ];
+    for (const [workspaceId, runtime] of offHostRuntimes) {
+      const result = await manager.getToolsForWorkspace(
+        workspaceRequest(workspaceId, {
+          runtime,
+          overrides: { enabledServers: [PLUGIN_KEY] },
+        })
+      );
 
-    expect(result.stats.enabledServerCount).toBe(0);
+      expect(result.stats.enabledServerCount).toBe(0);
+    }
+  });
+
+  test("threads the agentPlugins context through to config listing", async () => {
+    configService.listServers = mock(() => Promise.resolve({}));
+    spyOn(access, "startServers").mockImplementation(() => Promise.resolve(startResult([])));
+
+    const context = { projectRoot: "/worktrees/ws-1", projectKey: PROJECT_PATH };
+    await manager.getToolsForWorkspace(
+      workspaceRequest("ws-plugin-ctx", { agentPlugins: context })
+    );
+    expect(configService.listServers).toHaveBeenLastCalledWith(PROJECT_PATH, false, {
+      agentPlugins: context,
+    });
+
+    await manager.listServers(PROJECT_PATH, undefined, true, null);
+    expect(configService.listServers).toHaveBeenLastCalledWith(PROJECT_PATH, true, {
+      agentPlugins: null,
+    });
   });
 
   test("stdio config signature includes args/env/cwd so plugin mcp.json edits recycle servers", async () => {

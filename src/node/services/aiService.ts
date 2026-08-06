@@ -35,6 +35,10 @@ import {
 import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { LocalBaseRuntime } from "@/node/runtime/LocalBaseRuntime";
+import type { AgentPluginsMcpContext } from "@/node/services/agentPlugins/mcpConfig";
 import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
@@ -370,6 +374,28 @@ export function resolveMuxProjectRootForHostFs(
 ): string {
   const runtimeType = metadata.runtimeConfig.type;
   return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
+}
+
+/**
+ * Agent Plugins MCP context for a workspace, or null when plugin servers must
+ * not be offered because runtime.exec() does not run on the host filesystem
+ * (SSH/Docker remotes, devcontainers, multi-project fan-out). Discovery scans
+ * the ACTIVE host checkout so plugin content follows the workspace branch
+ * (matching skill discovery), while `projectKey` keeps instance IDs stable
+ * across worktrees of the same project.
+ */
+export function resolveAgentPluginsMcpContext(
+  runtime: Runtime,
+  metadata: WorkspaceMetadata,
+  workspacePath: string
+): AgentPluginsMcpContext | null {
+  if (!(runtime instanceof LocalBaseRuntime) || runtime instanceof DevcontainerRuntime) {
+    return null;
+  }
+  return {
+    projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
+    projectKey: metadata.projectPath,
+  };
 }
 
 function resolveMuxToolScope(
@@ -1550,13 +1576,22 @@ export class AIService extends EventEmitter {
       }
       recordStartupPhaseTiming("loadWorkspaceMcpOverridesMs", loadWorkspaceMcpOverridesStartedAt);
 
+      // Agent Plugins: discovery follows the active checkout and is disabled
+      // for runtimes that exec off-host (SSH/Docker/devcontainer).
+      const agentPluginsMcpContext = resolveAgentPluginsMcpContext(
+        runtime,
+        metadata,
+        workspacePath
+      );
+
       // Fetch MCP server config for system prompt (before building message).
       const listMcpServersStartedAt = Date.now();
       const mcpServers = this.mcpServerManager
         ? await this.mcpServerManager.listServers(
             metadata.projectPath,
             mcpOverrides,
-            projectTrusted
+            projectTrusted,
+            agentPluginsMcpContext
           )
         : undefined;
       recordStartupPhaseTiming("listMcpServersMs", listMcpServersStartedAt);
@@ -1703,6 +1738,7 @@ export class AIService extends EventEmitter {
             trusted: projectTrusted,
             overrides: mcpOverrides,
             projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
+            agentPlugins: agentPluginsMcpContext,
           });
 
           mcpTools = result.tools;

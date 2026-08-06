@@ -17,7 +17,9 @@ import type {
 import assert from "@/common/utils/assert";
 import { shellQuote } from "@/common/utils/shell";
 import type { Runtime } from "@/node/runtime/Runtime";
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
+import type { AgentPluginsMcpContext } from "@/node/services/agentPlugins/mcpConfig";
 import type { PolicyService } from "@/node/services/policyService";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import {
@@ -803,11 +805,12 @@ export class MCPServerManager {
    */
   private async getAllServers(
     projectPath: string,
-    trusted = false
+    trusted = false,
+    agentPlugins?: AgentPluginsMcpContext | null
   ): Promise<Record<string, MCPServerInfo>> {
     const configServers = this.ignoreConfigFile
       ? {}
-      : await this.configService.listServers(projectPath, trusted);
+      : await this.configService.listServers(projectPath, trusted, { agentPlugins });
     // Inline servers override config file servers (always enabled)
     const inlineAsInfo: Record<string, MCPServerInfo> = {};
     for (const [name, command] of Object.entries(this.inlineServers)) {
@@ -827,13 +830,16 @@ export class MCPServerManager {
    *
    * @param projectPath - Project path to get servers for
    * @param overrides - Optional workspace-level overrides
+   * @param trusted - Whether repo-local MCP config is allowed
+   * @param agentPlugins - Agent Plugins discovery context (null = off-host workspace, no plugin servers)
    */
   async listServers(
     projectPath: string,
     overrides?: WorkspaceMCPOverrides,
-    trusted = false
+    trusted = false,
+    agentPlugins?: AgentPluginsMcpContext | null
   ): Promise<MCPServerMap> {
-    const allServers = await this.getAllServers(projectPath, trusted);
+    const allServers = await this.getAllServers(projectPath, trusted, agentPlugins);
     const enabled = this.applyServerOverrides(allServers, overrides);
     return this.filterServersByPolicy(enabled);
   }
@@ -966,6 +972,8 @@ export class MCPServerManager {
     overrides?: WorkspaceMCPOverrides;
     /** Project secrets, used for resolving {secret: "KEY"} header references. */
     projectSecrets?: Record<string, string>;
+    /** Agent Plugins discovery context (null = off-host workspace, no plugin servers). */
+    agentPlugins?: AgentPluginsMcpContext | null;
   }): Promise<MCPToolsForWorkspaceResult> {
     const {
       workspaceId,
@@ -975,17 +983,22 @@ export class MCPServerManager {
       trusted = false,
       overrides,
       projectSecrets,
+      agentPlugins,
     } = options;
 
     // Fetch full server info for project-level allowlists and server filtering
-    const allServers = await this.getAllServers(projectPath, trusted);
+    const allServers = await this.getAllServers(projectPath, trusted, agentPlugins);
 
-    // Agent Plugins v1: plugin roots are host filesystem paths, so plugin
-    // servers are only offered when the workspace runtime executes on the host.
+    // Agent Plugins v1: plugin servers launch via host fs paths (command, cwd,
+    // PLUGIN_ROOT/PLUGIN_DATA), so they are only offered when the runtime
+    // executes on the host. Backstop for callers that omit agentPlugins: SSH /
+    // Docker remotes exec remotely, and DevcontainerRuntime execs inside the
+    // container even though it extends LocalBaseRuntime.
     const fullServerInfo: Record<string, MCPServerInfo> = {};
+    const execsOffHost = runtime instanceof RemoteRuntime || runtime instanceof DevcontainerRuntime;
     for (const [name, info] of Object.entries(allServers)) {
-      if (info.plugin !== undefined && runtime instanceof RemoteRuntime) {
-        log.debug("[MCP] Skipping Agent Plugin server on remote runtime", { workspaceId, name });
+      if (info.plugin !== undefined && execsOffHost) {
+        log.debug("[MCP] Skipping Agent Plugin server on off-host runtime", { workspaceId, name });
         continue;
       }
       fullServerInfo[name] = info;

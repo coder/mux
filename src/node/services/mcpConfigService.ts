@@ -12,7 +12,10 @@ import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import assert from "@/common/utils/assert";
 import type { Config } from "@/node/config";
-import type { AgentPluginsMcpProvider } from "@/node/services/agentPlugins/mcpConfig";
+import type {
+  AgentPluginsMcpContext,
+  AgentPluginsMcpProvider,
+} from "@/node/services/agentPlugins/mcpConfig";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -230,12 +233,25 @@ export class MCPConfigService {
    * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
    * - Agent Plugins servers (when the experiment provider is wired) are merged
    *   at the lowest precedence: user config always wins on key collisions.
+   *
+   * `options.agentPlugins` controls plugin discovery: `null` disables it for
+   * this call (workspace executes off-host: SSH/devcontainer), an explicit
+   * context scans that host checkout, and omitting it defaults to scanning
+   * under `projectPath` (project-level flows: Settings, workspace MCP modal).
    */
-  async listServers(projectPath?: string, trusted = false): Promise<Record<string, MCPServerInfo>> {
+  async listServers(
+    projectPath?: string,
+    trusted = false,
+    options?: { agentPlugins?: AgentPluginsMcpContext | null }
+  ): Promise<Record<string, MCPServerInfo>> {
     let pluginServers: Record<string, MCPServerInfo> = {};
-    if (this.agentPluginsMcpProvider) {
+    if (this.agentPluginsMcpProvider && options?.agentPlugins !== null) {
+      const pluginContext = options?.agentPlugins ?? {
+        projectRoot: projectPath,
+        projectKey: projectPath,
+      };
       try {
-        pluginServers = await this.agentPluginsMcpProvider({ projectPath, trusted });
+        pluginServers = await this.agentPluginsMcpProvider({ ...pluginContext, trusted });
       } catch (error) {
         // Plugin discovery failures must never break MCP config listing.
         log.warn("[MCP] Agent Plugins server discovery failed", { error });

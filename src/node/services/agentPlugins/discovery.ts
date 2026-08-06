@@ -37,6 +37,10 @@ export interface AgentPluginInfo {
   scope: AgentPluginScope;
   /** Canonical (realpath) plugin root directory. */
   rootPath: string;
+  /** Lexical container directory this plugin was discovered in (as configured). */
+  containerPath: string;
+  /** Directory entry name under the container (lexical, pre-realpath). */
+  dirName: string;
   manifest: AgentPluginManifest;
   /** Canonical `skills/` directory; present only when it exists, is a directory, and stays inside the root (§6.2). */
   skillsDir?: string;
@@ -133,6 +137,8 @@ async function resolveComponentPath(args: {
 
 async function discoverPluginAt(args: {
   pluginDir: string;
+  containerPath: string;
+  dirName: string;
   scope: AgentPluginScope;
   diagnostics: AgentPluginDiagnostic[];
 }): Promise<AgentPluginInfo | null> {
@@ -232,6 +238,8 @@ async function discoverPluginAt(args: {
     name: validation.manifest.name,
     scope,
     rootPath: rootReal,
+    containerPath: args.containerPath,
+    dirName: args.dirName,
     manifest: validation.manifest,
     ...(skillsDir !== undefined ? { skillsDir } : {}),
     ...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
@@ -265,6 +273,8 @@ export async function discoverAgentPlugins(
     for (const entryName of await listChildDirectories(container.path)) {
       const plugin = await discoverPluginAt({
         pluginDir: path.join(container.path, entryName),
+        containerPath: container.path,
+        dirName: entryName,
         scope: container.scope,
         diagnostics,
       });
