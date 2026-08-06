@@ -20,7 +20,7 @@ const NON_INTERACTIVE_ENV = {
  * wrong is not just a missed variant: an option inserted at the wrong offset lands inside the
  * path and git fails outright.
  */
-const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*"((?:[^"\\]|\\.)*)"|^\s*(\S+)/;
+const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*"((?:[^"\\]|\\.)*)"|^\s*((?:[^\s\\]|\\.)+)/;
 
 function sshProgram(command: string): { executable: string; end: number } | null {
   const match = SSH_PROGRAM_TOKEN.exec(command);
@@ -34,7 +34,10 @@ function sshProgram(command: string): { executable: string; end: number } | null
           // the separators in `"C:\Program Files\OpenSSH\ssh.exe"`, which is the spelling this
           // quoting exists to support.
           doubleQuoted.replaceAll(/\\(["\\])/g, "$1")
-        : (bare ?? "");
+        : // Unquoted, a shell escapes whitespace with a backslash, but an unquoted Windows path
+          // uses backslashes as separators and this config is read on any host. Decoding only
+          // escaped whitespace and backslash keeps `/opt/OpenSSH\ Tools/ssh` and `C:\a\ssh.exe`.
+          (bare?.replaceAll(/\\([\s\\])/g, "$1") ?? "");
   return { executable, end: match.index + match[0].length };
 }
 

@@ -605,6 +605,60 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
+  it("recognizes an unquoted ssh path whose spaces are backslash-escaped", async () => {
+    const logPath = path.join(tempDir, "escaped-space.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // git hands this to a shell, so the escaped space is one path ending in `ssh`. Stopping
+        // at the space would both miss the variant and splice the option inside the path.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_COMMAND: String.raw`/opt/OpenSSH\ Tools/ssh -i /keys/id`,
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      String.raw`/opt/OpenSSH\ Tools/ssh -o BatchMode=yes -i /keys/id`
+    );
+  });
+
+  it("keeps the separators of an unquoted Windows ssh path", async () => {
+    const logPath = path.join(tempDir, "bare-windows.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // Unquoted, so every separator here looks like a shell escape. Decoding them would
+        // leave `C:Windowsssh.exe`, which no variant matches.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_COMMAND: String.raw`C:\Windows\ssh.exe -i /keys/id`,
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      String.raw`C:\Windows\ssh.exe -o BatchMode=yes -i /keys/id`
+    );
+  });
+
   it("reports a Windows drive path as a local repository, not ssh", async () => {
     await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexit 0\n");
     const platform = process.platform;
