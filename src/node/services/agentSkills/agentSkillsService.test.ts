@@ -1287,7 +1287,10 @@ describe("agentSkillsService agent plugins", () => {
     ]);
     const container = path.join(project.path, ".mux", "plugins");
     await fs.mkdir(container, { recursive: true });
-    await fs.symlink(path.join(elsewhere.path, "linked-plugin"), path.join(container, "linked-plugin"));
+    await fs.symlink(
+      path.join(elsewhere.path, "linked-plugin"),
+      path.join(container, "linked-plugin")
+    );
 
     const runtime = new LocalRuntime(project.path);
     const roots = {

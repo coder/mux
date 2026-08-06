@@ -49,6 +49,17 @@ These overrides are stored in a workspace-local file: `.mux/mcp.local.jsonc`.
 
 This means you configure servers once (globally or with repo overrides), but each workspace (branch) gets isolated server instances with independent state.
 
+## Agent Plugins servers (experiment)
+
+With the **Agent Plugins** experiment enabled (Settings → Experiments), MCP servers declared in an [Agent Plugin's](https://agent-plugins.org) `mcp.json` also appear in server listings. Plugin servers are:
+
+- **Disabled by default** — enable them per workspace via the Workspace MCP dialog; there is no global enable
+- **Read-only** — they cannot be edited or removed, and are never written into `mcp.jsonc`
+- **Trust-gated** — servers from a repo's `.mux/plugins` / `.agents/plugins` only appear once the project is trusted
+- **Host-only** — plugin servers are skipped for SSH and devcontainer workspaces
+
+Stdio plugin servers launch with the spec's `PLUGIN_ROOT` and `PLUGIN_DATA` environment variables; per-plugin data directories live under `~/.mux/plugin-data/`.
+
 ## Behavior
 
 - **Hot reload** — Config changes apply on your next message (no restart needed)
