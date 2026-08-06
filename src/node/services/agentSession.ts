@@ -84,7 +84,7 @@ import {
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { MessageQueue } from "./messageQueue";
+import { isBashMonitorWakeMetadata, MessageQueue } from "./messageQueue";
 import {
   copyStreamLifecycleSnapshot,
   type RuntimeStatusEvent,
@@ -5624,8 +5624,7 @@ export class AgentSession {
     if (this.messageQueue.isNextEntryBashMonitorWake()) {
       return true;
     }
-    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
-    return dispatching?.type === "bash-monitor-wake";
+    return isBashMonitorWakeMetadata(this.dispatchingQueuedEntryMuxMetadata);
   }
 
   /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */
