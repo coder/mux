@@ -13,45 +13,90 @@ const NON_INTERACTIVE_ENV = {
   LANGUAGE: "C",
 } as const;
 
-/**
- * The leading program of an ssh command line: a quoted path in either style, or a bare token.
- * Double quotes matter because that is how a Windows `core.sshCommand` spells a path with
- * spaces, and both the variant check and the flag insertion read this same boundary. Getting it
- * wrong is not just a missed variant: an option inserted at the wrong offset lands inside the
- * path and git fails outright.
- */
-const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*"((?:[^"\\]|\\.)*)"|^\s*((?:[^\s\\]|\\.)+)/;
+/** A leading `NAME=` on an unquoted segment, which makes the word an assignment. */
+const SHELL_ASSIGNMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
- * A shell runs `FOO=bar ssh` with `ssh` as the program, so an assignment prefix is not the
- * executable. Skipped rather than parsed: naming it the program both hides the variant and puts
- * the inserted option before `ssh`, where it becomes another assignment instead of a flag.
+ * One shell word, as a shell would split it: quoted runs and backslash escapes hold a word
+ * together, so the same word can mix all three styles (`FOO=a\ b`, `/opt/"My Tools"/ssh`).
+ *
+ * Earlier versions matched the whole word with one alternation per quoting style, which meant
+ * every unhandled combination surfaced as a new defect. This models the three constructs once
+ * instead. `value` is what the program is identified by and `end` is where the flag is inserted,
+ * so they are produced together rather than by separate patterns that can disagree.
+ *
+ * Returns null on an unterminated quote: the boundary is then unknown, and guessing it would
+ * insert an option into the middle of a command that works today.
  */
-const SHELL_ASSIGNMENT_PREFIX = /^\s*[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"]*)/;
-
-function sshProgram(command: string): { executable: string; end: number } | null {
-  let offset = 0;
-  for (;;) {
-    const assignment = SHELL_ASSIGNMENT_PREFIX.exec(command.slice(offset));
-    if (assignment === null) break;
-    offset += assignment[0].length;
+function readShellWord(
+  command: string,
+  from: number
+): { value: string; start: number; end: number } | null {
+  let index = from;
+  while (index < command.length && /\s/.test(command[index])) index++;
+  const start = index;
+  let value = "";
+  while (index < command.length && !/\s/.test(command[index])) {
+    const char = command[index];
+    if (char === "'") {
+      const close = command.indexOf("'", index + 1);
+      if (close < 0) return null;
+      value += command.slice(index + 1, close);
+      index = close + 1;
+    } else if (char === '"') {
+      index++;
+      let closed = false;
+      while (index < command.length) {
+        if (command[index] === '"') {
+          closed = true;
+          index++;
+          break;
+        }
+        // Inside double quotes a backslash escapes only these two, so every other backslash is
+        // literal. That is what keeps `"C:\Program Files\OpenSSH\ssh.exe"` intact.
+        if (
+          command[index] === "\\" &&
+          (command[index + 1] === '"' || command[index + 1] === "\\")
+        ) {
+          value += command[index + 1];
+          index += 2;
+          continue;
+        }
+        value += command[index];
+        index++;
+      }
+      if (!closed) return null;
+    } else if (char === "\\" && index + 1 < command.length) {
+      // Unquoted, a backslash escapes the next character, but an unquoted Windows path spells its
+      // separators this way and is read on any host. Only an escaped whitespace or backslash is
+      // decoded, so `/opt/OpenSSH\ Tools/ssh` and `C:\Windows\ssh.exe` both survive.
+      const next = command[index + 1];
+      value += /[\s\\]/.test(next) ? next : `\\${next}`;
+      index += 2;
+    } else {
+      value += char;
+      index++;
+    }
   }
-  const match = SSH_PROGRAM_TOKEN.exec(command.slice(offset));
-  if (match === null) return null;
-  const [, singleQuoted, doubleQuoted, bare] = match;
-  const executable =
-    singleQuoted !== undefined
-      ? singleQuoted.replaceAll(`'\\''`, "'")
-      : doubleQuoted !== undefined
-        ? // Only escaped quotes and backslashes are decoded. Decoding every backslash would eat
-          // the separators in `"C:\Program Files\OpenSSH\ssh.exe"`, which is the spelling this
-          // quoting exists to support.
-          doubleQuoted.replaceAll(/\\(["\\])/g, "$1")
-        : // Unquoted, a shell escapes whitespace with a backslash, but an unquoted Windows path
-          // uses backslashes as separators and this config is read on any host. Decoding only
-          // escaped whitespace and backslash keeps `/opt/OpenSSH\ Tools/ssh` and `C:\a\ssh.exe`.
-          (bare?.replaceAll(/\\([\s\\])/g, "$1") ?? "");
-  return { executable, end: offset + match.index + match[0].length };
+  return start === index ? null : { value, start, end: index };
+}
+
+/**
+ * A shell runs `FOO=bar ssh` with `ssh` as the program, so leading assignments are skipped rather
+ * than read as the executable. Naming one the program hides the variant and puts the inserted
+ * option before `ssh`, where the shell takes it as another assignment or tries to execute it.
+ */
+function sshProgram(command: string): { executable: string; end: number } | null {
+  let from = 0;
+  for (;;) {
+    const word = readShellWord(command, from);
+    if (word === null) return null;
+    // Tested on the raw text, so an escaped `FOO\=bar` is a program name, not an assignment.
+    if (!SHELL_ASSIGNMENT_NAME.test(command.slice(word.start, word.end))) {
+      return { executable: word.value, end: word.end };
+    }
+    from = word.end;
+  }
 }
 
 const DOS_DRIVE_PREFIX = /^[A-Za-z]:/;

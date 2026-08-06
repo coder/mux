@@ -660,6 +660,56 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
+  it("finds the ssh program past an assignment whose value is escaped or quoted", async () => {
+    const logPath = path.join(tempDir, "escaped-assignment.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // The escape holds the assignment value together, so `ssh` is still the program. Ending
+        // the word at the escaped space would call `b` the executable and insert before `ssh`.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_COMMAND: String.raw`FOO=a\ b BAR="c d" ssh -i /keys/id`,
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      String.raw`FOO=a\ b BAR="c d" ssh -o BatchMode=yes -i /keys/id`
+    );
+  });
+
+  it("leaves a command with an unterminated quote alone", async () => {
+    const logPath = path.join(tempDir, "unterminated.log");
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // No arguments, so swallowing the quote would still yield the basename `ssh` and append
+        // a flag onto a path whose quoting the shell never closed. The boundary is unknowable, so
+        // nothing is inserted and the timeout bounds a client that decides to prompt.
+        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: `"/opt/unterminated/ssh` },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(`"/opt/unterminated/ssh`);
+  });
+
   it("keeps the separators of an unquoted Windows ssh path", async () => {
     const logPath = path.join(tempDir, "bare-windows.log");
     await writeExecutable(
