@@ -163,7 +163,23 @@ function rawAuthorityHasCredentials(repoUrl: string): boolean {
   const userInfoEnd = authority.lastIndexOf("@");
   if (userInfoEnd < 0) return false;
   const userInfo = authority.slice(0, userInfoEnd);
-  return !isSshTransportScheme(scheme) || userInfo.includes(":");
+  return !isSshTransportScheme(scheme) || userInfoHasPassword(userInfo);
+}
+
+/**
+ * Git decodes userinfo before invoking ssh, so `user%3Apw@host` and `user:pw@host` reach ssh as the
+ * same bytes. `new URL` does not decode, leaving `%3A` in `username` with an empty `password`.
+ */
+function userInfoHasPassword(userInfo: string): boolean {
+  if (userInfo.includes(":")) return true;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(userInfo);
+  } catch {
+    // Malformed escapes cannot be resolved to a delimiter either way, so judge the raw text.
+    return false;
+  }
+  return decoded.includes(":");
 }
 
 /**

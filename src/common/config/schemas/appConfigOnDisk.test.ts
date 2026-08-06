@@ -123,6 +123,10 @@ describe("AppConfigOnDiskSchema", () => {
       "ssh://user:hunter2@example.com/repo.git",
       "ssh://user:hunter2@",
       "ssh:user:hunter2@",
+      // Git decodes userinfo, so these reach ssh as the same bytes as the literal spellings above.
+      "ssh://user%3Ahunter2@example.com/repo.git",
+      "ssh://user%3ahunter2@example.com/repo.git",
+      "git+ssh://user%3Ahunter2@example.com/repo.git",
       "git+ssh://user:hunter2@example.com/repo.git",
       "ssh+git://user:hunter2@example.com/repo.git",
       "ssh+git:user:hunter2@",
@@ -137,6 +141,9 @@ describe("AppConfigOnDiskSchema", () => {
       "https://github.com/me/dotfiles.git?code=review&key=branch&session=docs",
       "https://github.com/me/dotfiles.git#section=backup",
       "ssh://git@example.com/repo.git",
+      // Encoding alone is not a credential: neither decodes to a delimiter.
+      "ssh://git%2Duser@example.com/repo.git",
+      "ssh://user%zz@example.com/repo.git",
       "git+ssh://git@example.com/repo.git",
       "ssh+git://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",
