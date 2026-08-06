@@ -1137,6 +1137,43 @@ describe("agentSkillsService agent plugins", () => {
     expect(onRoots.globalPluginRoots).toBeUndefined();
   });
 
+  test("default discovery (no containment options) rejects project plugins symlinked outside the checkout", async () => {
+    using project = new DisposableTempDir("agent-skills-plugin-escape");
+    using outside = new DisposableTempDir("agent-skills-plugin-escape-outside");
+    using global = new DisposableTempDir("agent-skills-plugin-escape-global");
+
+    // A committed .mux/plugins/<name> symlink to an external plugin dir must
+    // stay invisible even for callers that pass no containment (UI list/get
+    // default discovery), matching stream discovery and the skill tools.
+    const externalPlugin = await writePlugin(outside.path, "external-plugin", [
+      { name: "escaping-skill", description: "outside the checkout" },
+    ]);
+    await fs.mkdir(path.join(project.path, ".mux", "plugins"), { recursive: true });
+    await fs.symlink(externalPlugin, path.join(project.path, ".mux", "plugins", "external-plugin"));
+    await writePlugin(path.join(project.path, ".mux", "plugins"), "contained-plugin", [
+      { name: "contained-skill", description: "inside the checkout" },
+    ]);
+
+    const runtime = new LocalRuntime(project.path);
+    const roots = {
+      ...getDefaultAgentSkillsRoots(runtime, project.path, { includeAgentPlugins: true }),
+      globalRoot: global.path,
+      universalRoot: "",
+      globalPluginRoots: [],
+    };
+
+    const skills = await discoverAgentSkills(runtime, project.path, { roots });
+
+    expect(skills.find((s) => s.name === "escaping-skill")).toBeUndefined();
+    // Sanity: sibling contained plugin still discovered, so absence is containment-specific.
+    expect(skills.find((s) => s.name === "contained-skill")).toMatchObject({ scope: "project" });
+
+    // Read path applies the same intrinsic containment.
+    expect(
+      readAgentSkill(runtime, project.path, SkillNameSchema.parse("escaping-skill"), { roots })
+    ).rejects.toThrow("not found");
+  });
+
   test("experiment off: plugin skills stay invisible with default-shaped roots", async () => {
     using project = new DisposableTempDir("agent-skills-plugin-off");
     using global = new DisposableTempDir("agent-skills-plugin-off-global");

@@ -199,7 +199,13 @@ async function buildScanCandidates(
     containers: roots.projectPluginRoots ?? [],
     scope: "project",
     workspacePath,
-    projectContainmentRoot: containment.kind === "local" ? containment.root : undefined,
+    // Project plugin roots ALWAYS keep the repo-symlink posture: even callers
+    // without project containment (UI list/get default discovery) must not
+    // resolve a committed .mux/plugins/<name> symlink outside the checkout —
+    // otherwise the UI would offer plugin skills that stream discovery and
+    // the skill tools reject. Default containers derive from workspacePath,
+    // so it is the correct fallback anchor.
+    projectContainmentRoot: containment.kind === "local" ? containment.root : workspacePath,
   });
   const globalPluginCandidates = await buildPluginScanCandidates({
     containers: roots.globalPluginRoots ?? [],
