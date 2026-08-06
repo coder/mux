@@ -123,6 +123,9 @@ describe("AppConfigOnDiskSchema", () => {
       "ssh://user:hunter2@example.com/repo.git",
       "ssh://user:hunter2@",
       "ssh:user:hunter2@",
+      "git+ssh://user:hunter2@example.com/repo.git",
+      "ssh+git://user:hunter2@example.com/repo.git",
+      "ssh+git:user:hunter2@",
       "https://example.com/repo.git?access_token=hunter2",
       "https://example.com/repo.git#access_token=hunter2",
     ]) {
@@ -134,6 +137,8 @@ describe("AppConfigOnDiskSchema", () => {
       "https://github.com/me/dotfiles.git?code=review&key=branch&session=docs",
       "https://github.com/me/dotfiles.git#section=backup",
       "ssh://git@example.com/repo.git",
+      "git+ssh://git@example.com/repo.git",
+      "ssh+git://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",
       "github.com:team@archive.git",
     ]) {

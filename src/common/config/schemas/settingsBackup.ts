@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SSH_PROTOCOL_SCHEMES } from "@/constants/git";
 
 /**
  * Backup paths must be portable to Git for Windows. This rejects reserved device names,
@@ -145,16 +146,24 @@ export function hasCredentialUrlParameters(
   );
 }
 
+/** Non-SSH schemes whose slashless spellings Git still resolves, e.g. `https:user:pw@host`. */
+const SLASHLESS_NON_SSH_SCHEMES = /^(?:https?|ftps?|git)$/;
+
+function isSshTransportScheme(scheme: string): boolean {
+  return SSH_PROTOCOL_SCHEMES.has(`${scheme}:`);
+}
+
 function rawAuthorityHasCredentials(repoUrl: string): boolean {
   const match = /^([a-z][a-z0-9+.-]*):([\\/]*)([^\\/?#]*)/i.exec(repoUrl);
   if (match == null) return false;
   const scheme = match[1].toLowerCase();
-  if (match[2] === "" && !/^(?:https?|ftps?|ssh|git)$/.test(scheme)) return false;
+  const isUrlScheme = SLASHLESS_NON_SSH_SCHEMES.test(scheme) || isSshTransportScheme(scheme);
+  if (match[2] === "" && !isUrlScheme) return false;
   const authority = match[3];
   const userInfoEnd = authority.lastIndexOf("@");
   if (userInfoEnd < 0) return false;
   const userInfo = authority.slice(0, userInfoEnd);
-  return scheme !== "ssh" || userInfo.includes(":");
+  return !isSshTransportScheme(scheme) || userInfo.includes(":");
 }
 
 /**
@@ -166,7 +175,7 @@ export function hasUrlCredentials(repoUrl: string): boolean {
   if (hasCredentialUrlParameters(repoUrl) || rawAuthorityHasCredentials(repoUrl)) return true;
   try {
     const url = new URL(repoUrl);
-    return url.password !== "" || (url.protocol !== "ssh:" && url.username !== "");
+    return url.password !== "" || (!SSH_PROTOCOL_SCHEMES.has(url.protocol) && url.username !== "");
   } catch {
     return false;
   }

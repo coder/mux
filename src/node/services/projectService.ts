@@ -1,5 +1,6 @@
 import type { Config, ProjectConfig } from "@/node/config";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
+import { SSH_PROTOCOL_SCHEMES } from "@/constants/git";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
 import {
@@ -293,9 +294,6 @@ function parseScpStyleSshUrl(url: string): { host: string } | undefined {
 
   return { host: scpLikeMatch[1] };
 }
-
-/** Protocol schemes that Git routes through SSH transport. */
-const SSH_PROTOCOL_SCHEMES = new Set(["ssh:", "git+ssh:", "ssh+git:"]);
 
 type CloneTransport =
   | { kind: "ssh"; hostname: string; port: number }
