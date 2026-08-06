@@ -269,6 +269,12 @@ export interface ExecFileAsyncOptions {
   timeoutMs?: number;
   /** Optional signal used to cancel the process. */
   signal?: AbortSignal;
+  /**
+   * Optional cap on buffered stdout. The child is killed and the promise rejects once its output
+   * exceeds this, which is opt-in because the default is deliberately unbounded for commands like
+   * `git clone` whose output is large but trusted.
+   */
+  maxStdoutBytes?: number;
 }
 
 /**
@@ -332,8 +338,19 @@ export function execFileAsync(
     let exitCode: number | null = null;
     let exitSignal: string | null = null;
 
+    let stdoutOverflow = false;
+    const maxStdoutBytes = options?.maxStdoutBytes;
+
     child.stdout?.on("data", (data) => {
+      if (stdoutOverflow) return;
       stdout += data;
+      // Checked as it streams rather than after exit, so a remote that never stops talking cannot
+      // grow this process's heap without bound while we wait for it to finish.
+      if (maxStdoutBytes !== undefined && Buffer.byteLength(stdout, "utf-8") > maxStdoutBytes) {
+        stdoutOverflow = true;
+        stdout = "";
+        child.kill("SIGKILL");
+      }
     });
     child.stderr?.on("data", (data: Buffer) => {
       const chunk = data.toString();
@@ -351,11 +368,14 @@ export function execFileAsync(
       if (exitCode === 0 && exitSignal === null) {
         resolve({ stdout, stderr });
       } else {
-        const errorMsg =
-          stderr.trim() ||
-          (exitSignal
-            ? `Command killed by signal ${exitSignal}`
-            : `Command failed with exit code ${exitCode ?? "unknown"}`);
+        const errorMsg = stdoutOverflow
+          ? // Named before stderr, because the kill is why this failed and the signal message
+            // alone would read as an unexplained crash.
+            `Command produced more than ${maxStdoutBytes ?? 0} bytes of output`
+          : stderr.trim() ||
+            (exitSignal
+              ? `Command killed by signal ${exitSignal}`
+              : `Command failed with exit code ${exitCode ?? "unknown"}`);
         const error = new Error(errorMsg) as Error & {
           code: number | null;
           signal: string | null;

@@ -339,6 +339,26 @@ describe("disposableExec", () => {
     await expect(proc.result).rejects.toThrow();
   });
 
+  test("maxStdoutBytes rejects and kills a process that outruns the cap", async () => {
+    using proc = execFileAsync("sh", ["-c", "yes abcdefghij | head -c 200000; sleep 30"], {
+      maxStdoutBytes: 1024,
+    });
+    activeProcesses.add((proc as any).child);
+
+    await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
+    // Killed rather than drained, so the `sleep` never delays this.
+    expect((proc as any).child.killed).toBe(true);
+  });
+
+  test("maxStdoutBytes leaves output under the cap untouched", async () => {
+    using proc = execFileAsync("sh", ["-c", "printf 'small output'"], { maxStdoutBytes: 1024 });
+    activeProcesses.add((proc as any).child);
+
+    const { stdout } = await proc.result;
+
+    expect(stdout).toBe("small output");
+  });
+
   test("close event waits for stdio to flush", async () => {
     // Generate large output to test stdio buffering
     const largeOutput = "x".repeat(100000);

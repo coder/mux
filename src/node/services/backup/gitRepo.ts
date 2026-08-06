@@ -36,6 +36,14 @@ function isRemoteMovedRejection(text: string): boolean {
 }
 
 /**
+ * `ls-remote` is asked for every ref rather than only the configured branch, because emptiness
+ * decides whether a repository can be initialized and any ref at all answers that. A backup
+ * repository is writable by whoever holds the credential, so the answer is bounded instead: this
+ * admits far more refs than a settings repository has, while refusing to buffer without end.
+ */
+const MAX_LS_REMOTE_OUTPUT_BYTES = 1024 * 1024;
+
+/**
  * Applied to every git command that runs against the cache. The cache directory is reachable
  * by other processes, and these two git features execute or substitute based on repository
  * state that `sanitizeCacheConfig` cannot rewrite: an executable dropped into `.git/hooks`
@@ -546,13 +554,16 @@ export class BackupRepoCache {
     };
   }
 
-  private async networkGit(args: string[]) {
+  private async networkGit(args: string[], options: { maxStdoutBytes?: number } = {}) {
     // Hardening args go after the `-C` pair: the credential ladder recognizes the target
     // repository by `args[0]`. Commands without `-C` (clone, ls-remote) run before any cache
     // repository state exists, so there is nothing for the hardening to disable yet.
     const hardened =
       args[0] === "-C" ? [...args.slice(0, 2), ...GIT_HARDENING_ARGS, ...args.slice(2)] : args;
-    const result = await runGitWithCredentialLadder(hardened, this.credentialOptions());
+    const result = await runGitWithCredentialLadder(hardened, {
+      ...this.credentialOptions(),
+      ...options,
+    });
     this.usedCredential = result.credential;
     return result;
   }
@@ -562,7 +573,9 @@ export class BackupRepoCache {
   }
 
   async lsRemote(): Promise<RemoteRefs> {
-    const result = await this.networkGit(["ls-remote", this.repoUrl]);
+    const result = await this.networkGit(["ls-remote", this.repoUrl], {
+      maxStdoutBytes: MAX_LS_REMOTE_OUTPUT_BYTES,
+    });
     const refs = new Map<string, string>();
     for (const line of result.stdout.split(/\r?\n/)) {
       const match = /^([0-9a-f]{40,64})\s+(.+)$/.exec(line.trim());
