@@ -35,6 +35,13 @@ class TestConfig extends Config {
   }
 }
 
+async function snapshotDirectories(cacheRoot: string): Promise<string[]> {
+  const entries = await fs.readdir(cacheRoot, { withFileTypes: true });
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("restore-"))
+    .map((entry) => entry.name);
+}
+
 function createTestConfig(rootDir: string): Config {
   return new TestConfig(rootDir);
 }
@@ -148,15 +155,45 @@ describe("BackupService", () => {
       snapshots.push(result.data.snapshotPath);
     }
 
-    const surviving = new Set(
-      (await fs.readdir(cacheRoot)).filter((entry) => entry.startsWith("restore-"))
-    );
+    const surviving = new Set(await snapshotDirectories(cacheRoot));
     expect(surviving.size).toBe(3);
     // The newest are the ones a recovery would reach for.
     for (const kept of snapshots.slice(-3)) {
       expect(surviving.has(path.basename(kept))).toBe(true);
     }
     expect((await fs.stat(clone)).isDirectory()).toBe(true);
+  });
+
+  test("never reaps a snapshot whose restore has not returned", async () => {
+    const cacheRoot = path.join(tempDir, "backup-cache");
+    // withRepoLock is per repository, so this stands in for restores of other repositories
+    // that are still running while this one completes.
+    await fs.mkdir(cacheRoot, { recursive: true });
+    const inFlight: string[] = [];
+    for (const stamp of ["2020-01-01T00-00-00-000Z", "2020-01-02T00-00-00-000Z"]) {
+      const directory = path.join(cacheRoot, `restore-${stamp}-aaaaaa`);
+      await fs.mkdir(directory, { recursive: true });
+      inFlight.push(path.basename(directory));
+    }
+
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        writeSafetySnapshot: async (snapshotRoot) => {
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
+        },
+      }),
+    });
+
+    for (let restore = 0; restore < 4; restore++) {
+      const result = await service.restore(SETTINGS);
+      if (!result.success) throw new Error(result.error.message);
+    }
+
+    const surviving = await snapshotDirectories(cacheRoot);
+    for (const unreleased of inFlight) {
+      expect(surviving).toContain(unreleased);
+    }
   });
 
   test("reports the completed snapshot when the restore fails after it", async () => {

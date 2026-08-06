@@ -76,6 +76,23 @@ type BackupErrorCode = BackupOperationError["code"];
 
 const SNAPSHOT_NAME_PREFIX = "restore-";
 
+/**
+ * Written beside a snapshot once the restore that owns it has returned, which is what makes the
+ * snapshot reapable. A sibling rather than a file inside, so the snapshot directory stays a
+ * payload that `readBackupPayload` can read for a manual recovery.
+ *
+ * Absent means the owning restore is still running, or was killed partway. Those are not
+ * distinguishable from outside, so both are left alone: leaking a snapshot the user can delete
+ * is recoverable, and deleting the recovery point of a live restore is not.
+ */
+const SNAPSHOT_RELEASED_SUFFIX = ".released";
+
+async function releaseSnapshot(snapshotPath: string): Promise<void> {
+  await fs
+    .writeFile(`${snapshotPath}${SNAPSHOT_RELEASED_SUFFIX}`, "", { mode: 0o600 })
+    .catch(() => undefined);
+}
+
 const STAMPED_SNAPSHOT_NAME = /^restore-(\d{4}-\d{2}-\d{2}T[\d-]+Z)-/;
 
 /**
@@ -333,9 +350,6 @@ export class BackupService {
           await fs.rm(snapshotPath, { recursive: true, force: true });
           throw error;
         }
-        // Outside the write's own failure handling, which deletes this snapshot: reclaiming
-        // disk must never cost the recovery point this restore is about to depend on.
-        await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
         try {
           const restored = await this.dependencies.payload.restore({
             repositoryRoot: repository.rootDir,
@@ -353,6 +367,12 @@ export class BackupService {
           // Past the snapshot, the restore may have overwritten files before failing, and
           // the snapshot is the only recovery path, so the failure must carry it.
           return Err({ ...toOperationError(error), snapshotPath });
+        } finally {
+          // Released only now, because until this restore returns its snapshot is the recovery
+          // point it may still hand back. `withRepoLock` is per repository, so restores of
+          // other repositories are running concurrently and must not reap it before then.
+          await releaseSnapshot(snapshotPath);
+          await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
         }
       } catch (error) {
         return Err(toOperationError(error));
@@ -416,25 +436,33 @@ export class BackupService {
   /**
    * A snapshot is an unredacted copy of the whole local payload, and one is kept per restore as
    * its only recovery path, so they would otherwise grow without limit. Older ones are dropped
-   * once this many newer recovery points exist. Only entries older than the snapshot just
-   * written are considered, so a slower concurrent restore's snapshot is not a candidate.
+   * once this many newer released recovery points exist.
    */
   private static readonly RETAINED_SNAPSHOTS = 3;
 
   private async reapOldSnapshots(cacheRoot: string, keepFrom: string): Promise<void> {
     const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);
-    const newest = snapshotOrder(path.basename(keepFrom));
-    const older = entries
+    const released = new Set(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(SNAPSHOT_RELEASED_SUFFIX))
+        .map((entry) => entry.name.slice(0, -SNAPSHOT_RELEASED_SUFFIX.length))
+    );
+    const keepName = path.basename(keepFrom);
+    // Released only, which is what keeps a concurrent restore's snapshot out of reach; every
+    // candidate's own restore has returned, so the order below only chooses which recovery
+    // points to keep, never whether one is still in use.
+    const reapable = entries
       // `isDirectory` is false for a symlink here, so a link is never followed or removed.
       .filter((entry) => entry.isDirectory() && entry.name.startsWith(SNAPSHOT_NAME_PREFIX))
       .map((entry) => entry.name)
-      .filter((name) => snapshotOrder(name) < newest)
+      .filter((name) => name !== keepName && released.has(name))
       .sort((a, b) => (snapshotOrder(a) < snapshotOrder(b) ? 1 : -1));
-    for (const stale of older.slice(BackupService.RETAINED_SNAPSHOTS - 1)) {
+    for (const stale of reapable.slice(BackupService.RETAINED_SNAPSHOTS - 1)) {
       // Per entry, because one snapshot nobody can delete must not stop the rest from being
-      // reclaimed, and the restore it belongs to has already succeeded either way.
+      // reclaimed, and the restore it belongs to has already returned either way.
       await fs
         .rm(path.join(cacheRoot, stale), { recursive: true, force: true })
+        .then(() => fs.rm(path.join(cacheRoot, `${stale}${SNAPSHOT_RELEASED_SUFFIX}`)))
         .catch(() => undefined);
     }
   }
