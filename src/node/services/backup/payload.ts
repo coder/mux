@@ -150,6 +150,15 @@ function toPosixPath(...parts: string[]): string {
   return parts.join("/");
 }
 
+/**
+ * `mcpConfigService` writes `mcp.jsonc` 0600 on every write because server definitions carry
+ * commands, URLs, and headers that can hold credentials. Restore writes the same secrets, so it
+ * holds the file to the same permissions instead of leaving them to the umask.
+ */
+function isOwnerOnlyPayloadPath(relativePath: string): boolean {
+  return relativePath === "mcp.jsonc";
+}
+
 function isAllowedPayloadPath(relativePath: string): boolean {
   if (relativePath === "AGENTS.md" || relativePath === "mcp.jsonc") return true;
   if (relativePath === "preferences.json") return true;
@@ -512,7 +521,10 @@ async function writeCheckedFile(
     }
     // Git records one bit per file, so mirror `chmod +x` / `chmod -x` and leave the read and
     // write bits to the local umask rather than inventing a source mode.
-    const next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
+    let next = executable ? stat.mode | ((stat.mode & 0o444) >> 2) : stat.mode & ~0o111;
+    // A creation mode does nothing when the destination already exists, so owner-only files are
+    // narrowed here as well, matching a writer that replaces the file on every write.
+    if (ownerOnly) next &= ~0o077;
     if (next !== stat.mode) await handle.chmod(next);
   } finally {
     await handle.close();
@@ -540,10 +552,12 @@ async function openSeveredWriteHandle(
     fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag() | nonBlockingFlag(),
     options.mode
   );
+  let severedMode: number;
   try {
     const stat = await opened.stat();
     await assertOpenedFileContained(root, relativePath, stat);
     if (stat.nlink <= 1) return { handle: opened, stat };
+    severedMode = stat.mode & 0o777;
   } catch (error) {
     await opened.close();
     throw error;
@@ -553,7 +567,9 @@ async function openSeveredWriteHandle(
   const fresh = await fs.open(
     destination,
     fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | noFollowFlag(),
-    options.mode
+    // This replaces a file that already existed, so it carries that file's permissions forward
+    // rather than widening them to the umask default.
+    options.mode ?? severedMode
   );
   try {
     const stat = await fresh.stat();
@@ -2256,7 +2272,9 @@ export async function restoreBackupPayload(
   const { localOnly } = await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths);
 
   for (const write of plan.writes) {
-    await writeCheckedFile(plan.root, write.path, write.content, write.executable);
+    await writeCheckedFile(plan.root, write.path, write.content, write.executable, {
+      ownerOnly: isOwnerOnlyPayloadPath(write.path),
+    });
   }
 
   return { backupPreferences: plan.backupPreferences, localOnlyFiles: localOnly };
