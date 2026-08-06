@@ -127,6 +127,11 @@ describe("AppConfigOnDiskSchema", () => {
       "ssh://user%3Ahunter2@example.com/repo.git",
       "ssh://user%3ahunter2@example.com/repo.git",
       "git+ssh://user%3Ahunter2@example.com/repo.git",
+      // Git decodes the valid triplet even though %zz makes the whole string undecodable:
+      // this reaches ssh as `user%zz:hunter2@example.com`.
+      "ssh://user%zz%3Ahunter2@example.com/repo.git",
+      // Decodes to `user%:hunter2`, still a delimiter.
+      "ssh://user%25%3Ahunter2@example.com/repo.git",
       "git+ssh://user:hunter2@example.com/repo.git",
       "ssh+git://user:hunter2@example.com/repo.git",
       "ssh+git:user:hunter2@",
@@ -141,9 +146,11 @@ describe("AppConfigOnDiskSchema", () => {
       "https://github.com/me/dotfiles.git?code=review&key=branch&session=docs",
       "https://github.com/me/dotfiles.git#section=backup",
       "ssh://git@example.com/repo.git",
-      // Encoding alone is not a credential: neither decodes to a delimiter.
+      // Encoding alone is not a credential: none of these decodes to a delimiter.
       "ssh://git%2Duser@example.com/repo.git",
       "ssh://user%zz@example.com/repo.git",
+      // Git decodes once, so this reaches ssh as the username `user%3Ahunter2`, not a delimiter.
+      "ssh://user%253Ahunter2@example.com/repo.git",
       "git+ssh://git@example.com/repo.git",
       "ssh+git://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",

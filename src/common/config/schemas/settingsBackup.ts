@@ -166,20 +166,16 @@ function rawAuthorityHasCredentials(repoUrl: string): boolean {
   return !isSshTransportScheme(scheme) || userInfoHasPassword(userInfo);
 }
 
+/** The only percent encoding that decodes to the userinfo delimiter. */
+const ENCODED_USERINFO_DELIMITER = /%3a/i;
+
 /**
- * Git decodes userinfo before invoking ssh, so `user%3Apw@host` and `user:pw@host` reach ssh as the
- * same bytes. `new URL` does not decode, leaving `%3A` in `username` with an empty `password`.
+ * Git percent-decodes userinfo in one pass, so `user%3Apw@host` reaches ssh as `user:pw@host`.
+ * Scanning beats decoding because one malformed escape makes `decodeURIComponent` throw while git
+ * still decodes the valid triplet: `user%zz%3Apw` reaches ssh as `user%zz:pw`.
  */
 function userInfoHasPassword(userInfo: string): boolean {
-  if (userInfo.includes(":")) return true;
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(userInfo);
-  } catch {
-    // Malformed escapes cannot be resolved to a delimiter either way, so judge the raw text.
-    return false;
-  }
-  return decoded.includes(":");
+  return userInfo.includes(":") || ENCODED_USERINFO_DELIMITER.test(userInfo);
 }
 
 /**
