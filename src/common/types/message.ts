@@ -532,6 +532,8 @@ export interface ModelFallbackRecord {
 
 // Our custom metadata type
 export interface MuxMetadata {
+  /** Highest persisted history sequence included in the provider request that produced this assistant. */
+  requestHistorySequence?: number;
   historySequence?: number; // Assigned by backend for global message ordering (required when writing to history)
   duration?: number;
   ttftMs?: number; // Time-to-first-token measured from stream start; omitted when unavailable

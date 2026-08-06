@@ -2228,7 +2228,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         compactionEpoch: 2,
         model: "openai:gpt-5.2",
       }),
-      createMuxMessage("latest-user", "user", "continue"),
+      createMuxMessage("latest-user", "user", "continue", { historySequence: 42 }),
     ];
 
     const result = await harness.service.streamMessage({
@@ -2251,6 +2251,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const startStreamMessageIds = messageIdsFromUnknownArray(startStreamCall[1]);
     expect(startStreamMessageIds).toEqual(["boundary-2", "latest-user"]);
+    expect(initialMetadataFromStartStreamCall(startStreamCall).requestHistorySequence).toBe(42);
 
     const openaiOptions = openAIOptionsFromStartStreamCall(startStreamCall);
     expect(openaiOptions.previousResponseId).toBeUndefined();

@@ -38,6 +38,21 @@ describe("TerminalAttentionStore", () => {
     expect(created).not.toBeNull();
     expect(created?.status).toBe("pending");
 
+    const persisted = JSON.parse(
+      await fsPromises.readFile(
+        path.join(
+          makeConfig(rootDir).getSessionDir("owner-1"),
+          TERMINAL_ATTENTION_DIR,
+          `${encodeURIComponent("workspace_turn:wst_abc")}.json`
+        ),
+        "utf-8"
+      )
+    ) as unknown;
+    expect(persisted).toMatchObject({
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+
     const pending = await store.listPending("owner-1");
     expect(pending.map((n) => n.sourceId)).toEqual(["wst_abc"]);
   });

@@ -16,17 +16,44 @@ import { isErrnoWithCode } from "@/node/utils/fs";
  */
 export const TERMINAL_ATTENTION_DIR = "terminal-attention";
 
+const TERMINAL_ATTENTION_OUTPUT_DELIVERIES = [
+  "already_injected",
+  "requires_task_await",
+  "workflow_result_context",
+] as const;
+export type TerminalAttentionOutputDelivery = (typeof TERMINAL_ATTENTION_OUTPUT_DELIVERIES)[number];
+
+const TERMINAL_ATTENTION_OUTCOMES = ["completed", "failed", "interrupted", "error"] as const;
+export type TerminalAttentionOutcome = (typeof TERMINAL_ATTENTION_OUTCOMES)[number];
+
 const TERMINAL_ATTENTION_SOURCE_KINDS = ["agent_task", "workspace_turn", "workflow_run"] as const;
 export type TerminalAttentionSourceKind = (typeof TERMINAL_ATTENTION_SOURCE_KINDS)[number];
 
 const TERMINAL_ATTENTION_STATUSES = ["pending", "delivered", "superseded"] as const;
 export type TerminalAttentionStatus = (typeof TERMINAL_ATTENTION_STATUSES)[number];
 
+function outputDeliveryForSource(
+  sourceKind: TerminalAttentionSourceKind
+): TerminalAttentionOutputDelivery {
+  switch (sourceKind) {
+    case "agent_task":
+      return "already_injected";
+    case "workspace_turn":
+      return "requires_task_await";
+    case "workflow_run":
+      return "workflow_result_context";
+  }
+}
+
 export interface TerminalAttentionNotification {
   id: string;
   ownerWorkspaceId: string;
   sourceKind: TerminalAttentionSourceKind;
   sourceId: string;
+  /** Retained on disk for downgrade compatibility; current delivery derives behavior from sourceKind. */
+  outputDelivery: TerminalAttentionOutputDelivery;
+  /** Retained on disk for downgrade compatibility; current delivery reads authoritative result stores. */
+  terminalOutcome: TerminalAttentionOutcome;
   status: TerminalAttentionStatus;
   createdAt: string;
   deliveredAt?: string;
@@ -37,6 +64,8 @@ const TerminalAttentionNotificationSchema = z.object({
   ownerWorkspaceId: z.string().min(1),
   sourceKind: z.enum(TERMINAL_ATTENTION_SOURCE_KINDS),
   sourceId: z.string().min(1),
+  outputDelivery: z.enum(TERMINAL_ATTENTION_OUTPUT_DELIVERIES),
+  terminalOutcome: z.enum(TERMINAL_ATTENTION_OUTCOMES),
   status: z.enum(TERMINAL_ATTENTION_STATUSES),
   createdAt: z.string().min(1),
   deliveredAt: z.string().optional(),
@@ -70,8 +99,12 @@ export class TerminalAttentionStore {
    * wake-up or duplicate a pending one.
    */
   async enqueueIfAbsent(
-    notification: Omit<TerminalAttentionNotification, "id" | "status" | "createdAt"> & {
+    notification: Omit<
+      TerminalAttentionNotification,
+      "id" | "status" | "createdAt" | "outputDelivery" | "terminalOutcome"
+    > & {
       createdAt?: string;
+      terminalOutcome?: TerminalAttentionOutcome;
     }
   ): Promise<TerminalAttentionNotification | null> {
     const id = TerminalAttentionStore.notificationId(
@@ -87,6 +120,8 @@ export class TerminalAttentionStore {
       ownerWorkspaceId: notification.ownerWorkspaceId,
       sourceKind: notification.sourceKind,
       sourceId: notification.sourceId,
+      outputDelivery: outputDeliveryForSource(notification.sourceKind),
+      terminalOutcome: notification.terminalOutcome ?? "completed",
       status: "pending",
       createdAt: notification.createdAt ?? new Date().toISOString(),
     };

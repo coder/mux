@@ -2386,7 +2386,12 @@ export class AIService extends EventEmitter {
         return Ok(undefined);
       }
 
+      const requestHistorySequence = providerRequestMessages.reduce(
+        (latest, message) => Math.max(latest, message.metadata?.historySequence ?? -1),
+        -1
+      );
       const assistantMessage = createMuxMessage(assistantMessageId, "assistant", "", {
+        ...(requestHistorySequence >= 0 ? { requestHistorySequence } : {}),
         timestamp: Date.now(),
         model: canonicalModelString,
         routedThroughGateway,
@@ -3009,6 +3014,7 @@ export class AIService extends EventEmitter {
         combinedAbortSignal,
         toolsForStream,
         {
+          ...(requestHistorySequence >= 0 ? { requestHistorySequence } : {}),
           systemMessageTokens,
           timestamp: Date.now(),
           agentId: effectiveAgentId,
