@@ -41,8 +41,19 @@ function isRemoteMovedRejection(text: string): boolean {
  * object's content at read time without changing the commit hash the stored settings pin.
  * Command-line options rather than config, so state written after the sanitize pass cannot
  * override them. Nothing exists under `os.devNull`, so no hook resolves.
+ *
+ * Auto gc detaches by default (`gc.autoDetach`), which would leave a git holding cache locks
+ * after the command that started it was awaited, so it is disabled here too.
  */
-const GIT_HARDENING_ARGS = ["--no-replace-objects", "-c", `core.hooksPath=${os.devNull}`];
+const GIT_HARDENING_ARGS = [
+  "--no-replace-objects",
+  "-c",
+  `core.hooksPath=${os.devNull}`,
+  "-c",
+  "gc.auto=0",
+  "-c",
+  "maintenance.auto=false",
+];
 
 /**
  * Only valid platform flags written by `git init` or `git clone`, plus recognized repository
@@ -281,9 +292,10 @@ async function assertOwnGitDirectory(cachePath: string): Promise<void> {
  * multiply-linked regular files are copied to cache-owned inodes before Git runs, so Git
  * cannot update an outside hard-link alias. New local clones also use `--no-hardlinks`.
  *
- * `*.lock` files are deleted rather than kept. Callers hold this cache's mutex and await
- * every git they spawn, so no live git owns a lock here; one that survived a kill would
- * otherwise fail every later index and ref write until deleted by hand.
+ * `*.lock` files are deleted rather than kept, because one that survived a kill blocks its
+ * metadata update until removed by hand. BackupService serializes each configured repository
+ * and awaits every git it spawns, and `GIT_HARDENING_ARGS` disables the auto gc that would
+ * otherwise detach, so no git this process started is still holding a lock here.
  */
 async function normalizeGitMetadataLinks(dir: string): Promise<void> {
   let entries: string[];

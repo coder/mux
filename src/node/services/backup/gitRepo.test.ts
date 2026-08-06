@@ -139,8 +139,6 @@ describe("BackupRepoCache", () => {
     const repo = createRepo();
     await repo.ensureCache();
     await repo.fetch();
-    // A kill during checkout or commit leaves these behind, and git then refuses every later
-    // index and ref write, so the cache would stay broken until deleted by hand.
     const gitDir = path.join(repo.cachePath, ".git");
     await fs.mkdir(path.join(gitDir, "refs", "heads"), { recursive: true });
     const staleLocks = [
