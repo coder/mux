@@ -62,6 +62,9 @@ export const PROVIDER_ENV_VARS: Partial<
   openrouter: {
     apiKey: ["OPENROUTER_API_KEY"],
   },
+  orcarouter: {
+    apiKey: ["ORCAROUTER_API_KEY"],
+  },
   deepseek: {
     apiKey: ["DEEPSEEK_API_KEY"],
   },

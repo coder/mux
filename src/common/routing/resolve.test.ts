@@ -512,6 +512,11 @@ describe("availableRoutes", () => {
         isConfigured: false,
       },
       {
+        route: "orcarouter",
+        displayName: "OrcaRouter",
+        isConfigured: false,
+      },
+      {
         route: "github-copilot",
         displayName: "GitHub Copilot",
         isConfigured: true,
@@ -573,6 +578,11 @@ describe("availableRoutes", () => {
         isConfigured: true,
       },
       {
+        route: "orcarouter",
+        displayName: "OrcaRouter",
+        isConfigured: false,
+      },
+      {
         route: "github-copilot",
         displayName: "GitHub Copilot",
         isConfigured: false,
@@ -616,6 +626,11 @@ describe("availableRoutes", () => {
       {
         route: "openrouter",
         displayName: "OpenRouter",
+        isConfigured: false,
+      },
+      {
+        route: "orcarouter",
+        displayName: "OrcaRouter",
         isConfigured: false,
       },
       {

@@ -22,6 +22,7 @@ export type ProviderName =
   | "deepseek"
   | "moonshotai"
   | "openrouter"
+  | "orcarouter"
   | "github-copilot"
   | "bedrock"
   | "ollama";
@@ -51,6 +52,12 @@ interface ProviderDefinition {
 
 const toSlashSeparatedGatewayModelId = (origin: string, modelId: string): string =>
   `${origin}/${modelId}`;
+
+/**
+ * OrcaRouter default API base URL (OpenAI-compatible gateway).
+ * Users can override it per-provider with `baseUrl` in providers.jsonc.
+ */
+export const ORCAROUTER_BASE_URL = "https://api.orcarouter.ai/v1";
 
 const fromSlashSeparatedGatewayModelId = (
   gatewayModelId: string
@@ -140,6 +147,17 @@ export const PROVIDER_DEFINITIONS = {
     displayName: "OpenRouter",
     import: () => import("@openrouter/ai-sdk-provider"),
     factoryName: "createOpenRouter",
+    requiresApiKey: true,
+    kind: "gateway",
+    routes: ["anthropic", "openai", "google", "xai", "deepseek", "moonshotai"],
+    passthrough: false,
+    toGatewayModelId: toSlashSeparatedGatewayModelId,
+    fromGatewayModelId: fromSlashSeparatedGatewayModelId,
+  },
+  orcarouter: {
+    displayName: "OrcaRouter",
+    import: () => import("@ai-sdk/openai-compatible"),
+    factoryName: "createOpenAICompatible",
     requiresApiKey: true,
     kind: "gateway",
     routes: ["anthropic", "openai", "google", "xai", "deepseek", "moonshotai"],

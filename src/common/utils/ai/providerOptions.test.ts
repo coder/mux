@@ -827,6 +827,42 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(copilotOptions?.include).toBeUndefined();
       expect(copilotOptions?.promptCacheKey).toBeUndefined();
     });
+
+    test("uses the resolved gateway namespace for OrcaRouter-routed OpenAI reasoning controls", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "medium",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "orcarouter"
+      );
+
+      expect(result).toEqual({
+        orcarouter: {
+          reasoningEffort: "medium",
+        },
+      });
+    });
+
+    test("returns no OrcaRouter-routed OpenAI provider options when thinking is off", () => {
+      const result = buildProviderOptions(
+        "openai:gpt-5.2",
+        "off",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        "orcarouter"
+      );
+
+      expect(result).toEqual({});
+    });
   });
 
   describe("reasoning summary compatibility", () => {

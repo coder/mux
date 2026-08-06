@@ -25,6 +25,7 @@ Most providers only need an API key. The UI handles validation and shows which p
 | **DeepSeek**       | DeepSeek Chat, Reasoner     | [platform.deepseek.com](https://platform.deepseek.com/) |
 | **Moonshot AI**    | Kimi K3                     | [platform.moonshot.ai](https://platform.moonshot.ai/)   |
 | **OpenRouter**     | 300+ models                 | [openrouter.ai](https://openrouter.ai/)                 |
+| **OrcaRouter**     | 300+ models, one key        | [orcarouter.ai](https://www.orcarouter.ai/)             |
 | **Ollama**         | Local models                | [ollama.com](https://ollama.com/) (no key needed)       |
 | **Bedrock**        | Claude via AWS              | AWS Console                                             |
 | **GitHub Copilot** | GPT-4o, Claude Sonnet, etc. | [GitHub Copilot](https://github.com/features/copilot)   |
@@ -42,6 +43,7 @@ Providers also read from environment variables as fallback:
 | Google         | `GOOGLE_GENERATIVE_AI_API_KEY` or `GOOGLE_API_KEY` |
 | xAI            | `XAI_API_KEY`                                      |
 | OpenRouter     | `OPENROUTER_API_KEY`                               |
+| OrcaRouter     | `ORCAROUTER_API_KEY`                               |
 | DeepSeek       | `DEEPSEEK_API_KEY`                                 |
 | Moonshot AI    | `MOONSHOT_API_KEY`                                 |
 | github-copilot | `GITHUB_COPILOT_TOKEN`                             |
@@ -201,6 +203,25 @@ Control which infrastructure providers handle your requests:
 - `data_collection`: `"allow"` or `"deny"` for training data policies
 
 See [OpenRouter Provider Routing docs](https://openrouter.ai/docs/features/provider-routing) for details.
+
+### OrcaRouter
+
+[OrcaRouter](https://www.orcarouter.ai/) is an OpenAI-compatible gateway that exposes
+300+ models from leading providers through a single API key. Configure it like any other
+gateway provider:
+
+```jsonc
+{
+  "orcarouter": {
+    "apiKey": "sk-orca-...",
+    // Optional: override the default endpoint (https://api.orcarouter.ai/v1)
+    // "baseUrl": "https://api.orcarouter.ai/v1",
+  },
+}
+```
+
+Models are addressed with the same `<vendor>/<model>` format as OpenRouter
+(e.g. `openai:gpt-5` routes to `orcarouter:openai/gpt-5`).
 
 ### xAI Search Orchestration
 

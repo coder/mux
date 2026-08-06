@@ -249,6 +249,7 @@ const PROVIDER_KEY_URLS: Partial<Record<ProviderName, string>> = {
   deepseek: "https://platform.deepseek.com/api_keys",
   moonshotai: "https://platform.moonshot.ai/console/api-keys",
   openrouter: "https://openrouter.ai/settings/keys",
+  orcarouter: "https://www.orcarouter.ai",
   // bedrock: AWS credential chain, no simple key URL
   // ollama: local service, no key needed
 };
