@@ -578,6 +578,33 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
+  it("recognizes a quoted Windows ssh path with its separators intact", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
+`
+    );
+
+    const result = await withPath(binDir, () =>
+      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+        repoUrl: "git@example.com:owner/repo.git",
+        // Variant detection has to find `ssh.exe` at the end of this, which it cannot if the
+        // backslashes are decoded away as escapes.
+        env: {
+          GIT_LOG: logPath,
+          GIT_SSH_COMMAND: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -i /keys/id`,
+        },
+      })
+    );
+
+    expect(result.credential).toBe("ssh");
+    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
+      String.raw`"C:\Program Files\OpenSSH\ssh.exe" -o BatchMode=yes -i /keys/id`
+    );
+  });
+
   it("reports a Windows drive path as a local repository, not ssh", async () => {
     await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexit 0\n");
     const platform = process.platform;

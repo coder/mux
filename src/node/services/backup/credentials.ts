@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import type { BackupCredentialKind } from "@/common/orpc/schemas/backup";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import { SSH_PROTOCOL_SCHEMES } from "@/constants/git";
@@ -31,7 +30,10 @@ function sshProgram(command: string): { executable: string; end: number } | null
     singleQuoted !== undefined
       ? singleQuoted.replaceAll(`'\\''`, "'")
       : doubleQuoted !== undefined
-        ? doubleQuoted.replaceAll(/\\(.)/g, "$1")
+        ? // Only the two characters double-quoted syntax actually escapes. Decoding every
+          // backslash would eat the separators in `"C:\Program Files\OpenSSH\ssh.exe"`, which
+          // is the spelling this quoting exists to support.
+          doubleQuoted.replaceAll(/\\(["\\])/g, "$1")
         : (bare ?? "");
   return { executable, end: match.index + match[0].length };
 }
@@ -98,10 +100,11 @@ function nonInteractiveFlag(command: string, options: GitCredentialOptions): str
 }
 
 function sshVariant(command: string): string {
-  return path
-    .basename(sshProgram(command)?.executable ?? "")
-    .toLowerCase()
-    .replace(/\.exe$/, "");
+  // Split on both separators rather than `path.basename`: a `core.sshCommand` written on Windows
+  // is read verbatim wherever the config is used, and basename only knows the host's separator.
+  const executable = sshProgram(command)?.executable ?? "";
+  const program = executable.split(/[\\/]/).pop() ?? "";
+  return program.toLowerCase().replace(/\.exe$/, "");
 }
 
 function ambientValue(
