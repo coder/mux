@@ -132,6 +132,11 @@ describe("AppConfigOnDiskSchema", () => {
       "ssh://user%zz%3Ahunter2@example.com/repo.git",
       // Decodes to `user%:hunter2`, still a delimiter.
       "ssh://user%25%3Ahunter2@example.com/repo.git",
+      // An encoded `@` ends the userinfo once git decodes it, so `user:hunter2` reaches ssh's
+      // user field even though the raw text holds no delimiter at all.
+      "ssh://user:hunter2%40example.com/repo",
+      "ssh://user%3Apw%40example.com/repo",
+      "https://user:pw%40example.com/repo",
       "git+ssh://user:hunter2@example.com/repo.git",
       "ssh+git://user:hunter2@example.com/repo.git",
       "ssh+git:user:hunter2@",
@@ -149,8 +154,11 @@ describe("AppConfigOnDiskSchema", () => {
       // Encoding alone is not a credential: none of these decodes to a delimiter.
       "ssh://git%2Duser@example.com/repo.git",
       "ssh://user%zz@example.com/repo.git",
-      // Git decodes once, so this reaches ssh as the username `user%3Ahunter2`, not a delimiter.
+      // Git decodes once, so these reach ssh as the text `%3A`/`%40`, not a delimiter.
       "ssh://user%253Ahunter2@example.com/repo.git",
+      "ssh://user%2540example.com/repo",
+      // An encoded `@` with no password is still just a username.
+      "ssh://user%40example.com/repo",
       "git+ssh://git@example.com/repo.git",
       "ssh+git://git@example.com/repo.git",
       "git@github.com:me/dotfiles.git",

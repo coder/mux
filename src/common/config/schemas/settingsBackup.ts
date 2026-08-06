@@ -159,23 +159,27 @@ function rawAuthorityHasCredentials(repoUrl: string): boolean {
   const scheme = match[1].toLowerCase();
   const isUrlScheme = SLASHLESS_NON_SSH_SCHEMES.test(scheme) || isSshTransportScheme(scheme);
   if (match[2] === "" && !isUrlScheme) return false;
-  const authority = match[3];
+  const authority = decodeDelimitersOnce(match[3]);
   const userInfoEnd = authority.lastIndexOf("@");
   if (userInfoEnd < 0) return false;
   const userInfo = authority.slice(0, userInfoEnd);
-  return !isSshTransportScheme(scheme) || userInfoHasPassword(userInfo);
+  return !isSshTransportScheme(scheme) || userInfo.includes(":");
 }
 
-/** The only percent encoding that decodes to the userinfo delimiter. */
-const ENCODED_USERINFO_DELIMITER = /%3a/i;
-
 /**
- * Git percent-decodes userinfo in one pass, so `user%3Apw@host` reaches ssh as `user:pw@host`.
- * Scanning beats decoding because one malformed escape makes `decodeURIComponent` throw while git
- * still decodes the valid triplet: `user%zz%3Apw` reaches ssh as `user%zz:pw`.
+ * Git decodes the authority before handing it to ssh, so a delimiter acts the same encoded or
+ * literal: `ssh://user:pw%40host/r` arrives as `user:pw@host`, putting `user:pw` in ssh's user
+ * field. Resolving them here first means the split above sees what ssh will.
+ *
+ * One pass, like git, so `%2540` becomes the text `%40` rather than a delimiter. Per triplet
+ * rather than `decodeURIComponent`, which throws on the whole string over one malformed escape
+ * while git still decodes the valid ones. Encoded UTF-8 bytes all sit above the ASCII
+ * delimiters, so decoding bytewise cannot invent one.
  */
-function userInfoHasPassword(userInfo: string): boolean {
-  return userInfo.includes(":") || ENCODED_USERINFO_DELIMITER.test(userInfo);
+function decodeDelimitersOnce(authority: string): string {
+  return authority.replaceAll(/%([0-9a-f]{2})/gi, (_whole, hex: string) =>
+    String.fromCharCode(Number.parseInt(hex, 16))
+  );
 }
 
 /**
