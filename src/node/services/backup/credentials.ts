@@ -22,8 +22,21 @@ const NON_INTERACTIVE_ENV = {
  */
 const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*"((?:[^"\\]|\\.)*)"|^\s*((?:[^\s\\]|\\.)+)/;
 
+/**
+ * A shell runs `FOO=bar ssh` with `ssh` as the program, so an assignment prefix is not the
+ * executable. Skipped rather than parsed: naming it the program both hides the variant and puts
+ * the inserted option before `ssh`, where it becomes another assignment instead of a flag.
+ */
+const SHELL_ASSIGNMENT_PREFIX = /^\s*[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'"]*)/;
+
 function sshProgram(command: string): { executable: string; end: number } | null {
-  const match = SSH_PROGRAM_TOKEN.exec(command);
+  let offset = 0;
+  for (;;) {
+    const assignment = SHELL_ASSIGNMENT_PREFIX.exec(command.slice(offset));
+    if (assignment === null) break;
+    offset += assignment[0].length;
+  }
+  const match = SSH_PROGRAM_TOKEN.exec(command.slice(offset));
   if (match === null) return null;
   const [, singleQuoted, doubleQuoted, bare] = match;
   const executable =
@@ -38,7 +51,7 @@ function sshProgram(command: string): { executable: string; end: number } | null
           // uses backslashes as separators and this config is read on any host. Decoding only
           // escaped whitespace and backslash keeps `/opt/OpenSSH\ Tools/ssh` and `C:\a\ssh.exe`.
           (bare?.replaceAll(/\\([\s\\])/g, "$1") ?? "");
-  return { executable, end: match.index + match[0].length };
+  return { executable, end: offset + match.index + match[0].length };
 }
 
 const DOS_DRIVE_PREFIX = /^[A-Za-z]:/;
