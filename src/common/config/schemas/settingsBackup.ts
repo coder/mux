@@ -145,13 +145,23 @@ export function hasCredentialUrlParameters(
   );
 }
 
+function rawAuthorityHasCredentials(repoUrl: string): boolean {
+  const match = /^([a-z][a-z0-9+.-]*):[\\/]+([^\\/?#]*)/i.exec(repoUrl);
+  if (match == null) return false;
+  const authority = match[2];
+  const userInfoEnd = authority.lastIndexOf("@");
+  if (userInfoEnd < 0) return false;
+  const userInfo = authority.slice(0, userInfoEnd);
+  return match[1].toLowerCase() !== "ssh" || userInfo.includes(":");
+}
+
 /**
  * Repository URLs are persisted in config and cache git metadata, so userinfo credentials and
  * known credential parameters are rejected. SSH usernames are routing data; scp-like remotes have
  * no password field and remain allowed.
  */
 export function hasUrlCredentials(repoUrl: string): boolean {
-  if (hasCredentialUrlParameters(repoUrl)) return true;
+  if (hasCredentialUrlParameters(repoUrl) || rawAuthorityHasCredentials(repoUrl)) return true;
   try {
     const url = new URL(repoUrl);
     return url.password !== "" || (url.protocol !== "ssh:" && url.username !== "");

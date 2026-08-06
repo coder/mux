@@ -66,6 +66,17 @@ async function rejection(promise: Promise<unknown>): Promise<unknown> {
   throw new Error("Expected the operation to reject");
 }
 
+function expectNonblockingOpen(
+  open: ReturnType<typeof spyOn<typeof fs, "open">>,
+  matches: (target: Parameters<typeof fs.open>[0], flags: Parameters<typeof fs.open>[1]) => boolean
+): void {
+  const call = open.mock.calls.find(([target, flags]) => matches(target, flags));
+  expect(call).toBeDefined();
+  const flags = call?.[1];
+  if (typeof flags !== "number") throw new Error("Expected numeric open flags");
+  expect(flags & fs.constants.O_NONBLOCK).not.toBe(0);
+}
+
 function payloadFile(
   payload: Awaited<ReturnType<typeof createBackupPayload>>,
   relativePath: string
@@ -1000,13 +1011,7 @@ describe("backup payload", () => {
     const open = spyOn(fs, "open");
     try {
       await resolveRestoredContent(muxRoot, mcpFile);
-      const readCall = open.mock.calls.find(
-        ([target]) => target === path.join(muxRoot, "mcp.jsonc")
-      );
-      expect(readCall).toBeDefined();
-      const flags = readCall?.[1];
-      if (typeof flags !== "number") throw new Error("Expected numeric open flags");
-      expect(flags & fs.constants.O_NONBLOCK).not.toBe(0);
+      expectNonblockingOpen(open, (target) => target === path.join(muxRoot, "mcp.jsonc"));
     } finally {
       open.mockRestore();
     }
@@ -2236,6 +2241,33 @@ describe("backup payload", () => {
 
     const rejected = await rejection(planRestoreWrites(restoreRoot, payload));
     expect((rejected as Error).message).toContain("regular file");
+  });
+
+  it("opens restore destinations nonblocking", async () => {
+    if (process.platform === "win32") return;
+    await write(muxRoot, "AGENTS.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    const restoreRoot = path.join(tempDir, "nonblocking-restore");
+    await write(restoreRoot, "AGENTS.md", "local\n");
+    const destination = path.join(restoreRoot, "AGENTS.md");
+
+    const open = spyOn(fs, "open");
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+      expectNonblockingOpen(
+        open,
+        (target, flags) =>
+          target === destination &&
+          typeof flags === "number" &&
+          (flags & fs.constants.O_WRONLY) !== 0
+      );
+    } finally {
+      open.mockRestore();
+    }
   });
 
   it("refuses to restore a file onto an existing directory", async () => {

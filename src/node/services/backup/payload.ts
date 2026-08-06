@@ -534,7 +534,7 @@ async function openSeveredWriteHandle(
 ): Promise<{ handle: fs.FileHandle; stat: Stats }> {
   const opened = await fs.open(
     destination,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag(),
+    fs.constants.O_WRONLY | fs.constants.O_CREAT | noFollowFlag() | nonBlockingFlag(),
     options.mode
   );
   try {

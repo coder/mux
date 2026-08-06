@@ -116,7 +116,11 @@ describe("AppConfigOnDiskSchema", () => {
       // A bare https username is the common PAT spelling, not routing.
       "https://hunter2token@github.com/me/dotfiles.git",
       "https://oauth2:hunter2@example.com/repo.git",
+      "https://oauth2:hunter2@",
+      "https:/oauth2:hunter2@",
+      "https:\\oauth2:hunter2@",
       "ssh://user:hunter2@example.com/repo.git",
+      "ssh://user:hunter2@",
       "https://example.com/repo.git?access_token=hunter2",
       "https://example.com/repo.git#access_token=hunter2",
     ]) {
