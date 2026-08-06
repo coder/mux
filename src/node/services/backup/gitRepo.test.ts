@@ -245,6 +245,18 @@ describe("BackupRepoCache", () => {
     expect(await pathExists(path.join(reopened.cachePath, ".git"))).toBe(true);
   });
 
+  it("reaps a cache left by an interrupted discard", async () => {
+    const repo = createRepo();
+    await repo.ensureCache();
+    const tombstone = `${repo.cachePath}.discarded-1234-abcd`;
+    await fs.rename(repo.cachePath, tombstone);
+
+    await createRepo().ensureCache();
+
+    expect(await pathExists(tombstone)).toBe(false);
+    expect(await pathExists(path.join(repo.cachePath, ".git"))).toBe(true);
+  });
+
   it("refuses a cache path holding content it did not create", async () => {
     const repo = createRepo();
     await fs.mkdir(repo.cachePath, { recursive: true });

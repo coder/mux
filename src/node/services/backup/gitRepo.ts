@@ -500,6 +500,9 @@ export function backupCachePath(cacheRoot: string, repoUrl: string, branch: stri
   return path.join(cacheRoot, key);
 }
 
+const CACHE_SUFFIX_DISCARDED = ".discarded-";
+const DISCARDED_CACHE_NAME = new RegExp(`^[0-9a-f]{12}\\${CACHE_SUFFIX_DISCARDED}`);
+
 export class BackupRepoCache {
   readonly cachePath: string;
   private readonly repoUrl: string;
@@ -618,13 +621,33 @@ export class BackupRepoCache {
   }
 
   /**
+   * A crash after `discardCache` renames a cache leaves a tombstone holding a whole repository.
+   * Reaping is best effort, so one that cannot be deleted keeps its disk rather than failing
+   * every later backup.
+   */
+  private async reapDiscardedCaches(): Promise<void> {
+    const entries = await fs.readdir(this.options.cacheRoot).catch(() => []);
+    for (const entry of entries) {
+      if (!DISCARDED_CACHE_NAME.test(entry)) continue;
+      // `fs.rm` unlinks a symlink rather than following it, so a planted tombstone link cannot
+      // reach the directory it names.
+      await fs
+        .rm(path.join(this.options.cacheRoot, entry), {
+          recursive: true,
+          force: true,
+        })
+        .catch(() => undefined);
+    }
+  }
+
+  /**
    * Renames before deleting, because a recursive delete is not atomic: a kill partway through
    * would leave the cache directory populated but without a `.git`, which is indistinguishable
    * from content this cache must never delete. The rename is a single operation inside one
    * directory, so an interrupted discard leaves either the whole cache or nothing at its path.
    */
   private async discardCache(): Promise<void> {
-    const tombstone = `${this.cachePath}.discarded-${process.pid}-${randomUUID()}`;
+    const tombstone = `${this.cachePath}${CACHE_SUFFIX_DISCARDED}${process.pid}-${randomUUID()}`;
     try {
       await fs.rename(this.cachePath, tombstone);
     } catch (error) {
@@ -644,6 +667,7 @@ export class BackupRepoCache {
     // that assume nobody else can traverse this far. Owner-only at the top is the boundary
     // that keeps every file below private, including caches made before this rule.
     await fs.chmod(this.options.cacheRoot, 0o700);
+    await this.reapDiscardedCaches();
     await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
     // Before any branch below, because each one writes: a `.git` that resolves to another
