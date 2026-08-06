@@ -551,6 +551,35 @@ printf '%s\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
+  it("reports a Windows drive path as a local repository, not ssh", async () => {
+    await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexit 0\n");
+    const platform = process.platform;
+    const asPlatform = (value: string) =>
+      Object.defineProperty(process, "platform", { value, configurable: true });
+
+    try {
+      asPlatform("win32");
+      const windows = await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "C:\\backups\\mux.git"], {
+          repoUrl: "C:\\backups\\mux.git",
+        })
+      );
+      expect(windows.credential).not.toBe("ssh");
+
+      // Everywhere else git reads the same string as scp-like and dials host `C`, so the ssh
+      // rung it needs must stay selected.
+      asPlatform("linux");
+      const others = await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "C:/backups/mux.git"], {
+          repoUrl: "C:/backups/mux.git",
+        })
+      );
+      expect(others.credential).toBe("ssh");
+    } finally {
+      asPlatform(platform);
+    }
+  });
+
   it("overrides a configured BatchMode=no instead of being ignored after it", async () => {
     if (process.platform === "win32") return;
     await writeExecutable(

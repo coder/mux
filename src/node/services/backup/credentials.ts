@@ -17,6 +17,8 @@ const NON_INTERACTIVE_ENV = {
 /** The leading program of an ssh command line, either a single-quoted path or a bare token. */
 const SSH_PROGRAM_TOKEN = /^\s*'((?:[^']|'\\'')*)'|^\s*(\S+)/;
 
+const DOS_DRIVE_PREFIX = /^[A-Za-z]:/;
+
 /**
  * A prompt for a password, a key passphrase, or host key confirmation is unanswerable behind
  * a UI button, so the ssh client is asked to fail instead of asking. The client's own command
@@ -179,6 +181,10 @@ function isSshRepoUrl(repoUrl: string): boolean {
   if (schemeEnd >= 0) {
     return SSH_PROTOCOL_SCHEMES.has(`${repoUrl.slice(0, schemeEnd).toLowerCase()}:`);
   }
+  // Windows only, mirroring git's own `has_dos_drive_prefix`: elsewhere git reads `C:/repo`
+  // as scp-like and really does dial host `C`, so excluding a drive prefix on every platform
+  // would drop the ssh rung from a remote that needs it.
+  if (process.platform === "win32" && DOS_DRIVE_PREFIX.test(repoUrl)) return false;
   return /^(?:[^@]+@)?[^:/]+:/.test(repoUrl);
 }
 
