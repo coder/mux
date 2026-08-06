@@ -146,7 +146,7 @@ export function hasCredentialUrlParameters(
   );
 }
 
-/** Non-SSH schemes whose slashless spellings Git still resolves, e.g. `https:user:pw@host`. */
+/** Slashless spellings like `https:user:pw@host` are read as URLs so credentials cannot slip through. */
 const SLASHLESS_NON_SSH_SCHEMES = /^(?:https?|ftps?|git)$/;
 
 function isSshTransportScheme(scheme: string): boolean {
