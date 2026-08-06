@@ -79,7 +79,7 @@ const SNAPSHOT_NAME_PREFIX = "restore-";
 /**
  * Written beside a snapshot once the restore that owns it has returned, which is what makes the
  * snapshot reapable. A sibling rather than a file inside, so the snapshot directory stays a
- * payload that `readBackupPayload` can read for a manual recovery.
+ * payload `readBackupPayload(dir, { portable: false })` can read for a manual recovery.
  *
  * Absent means the owning restore is still running, or was killed partway. Those are not
  * distinguishable from outside, so both are left alone: leaking a snapshot the user can delete
@@ -438,7 +438,7 @@ export class BackupService {
    * its only recovery path, so they would otherwise grow without limit. Older ones are dropped
    * once this many newer released recovery points exist.
    */
-  private static readonly RETAINED_SNAPSHOTS = 3;
+  static readonly RETAINED_SNAPSHOTS = 3;
 
   private async reapOldSnapshots(cacheRoot: string, keepFrom: string): Promise<void> {
     const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);

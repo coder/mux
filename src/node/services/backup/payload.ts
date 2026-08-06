@@ -1359,7 +1359,9 @@ async function readManifestIfPresent(
         }
       })
     ).content.toString("utf-8");
-    return { manifest: parseManifest(raw), raw };
+    // Portable: this manifest is the one already in the repository, which every platform that
+    // pulls the backup has to be able to write out.
+    return { manifest: parseManifest(raw, true), raw };
   } catch {
     return null;
   }
@@ -1437,7 +1439,7 @@ function isBackupRedactionPath(value: unknown): value is BackupRedactionPath {
   );
 }
 
-function parseManifest(raw: string): BackupManifest {
+function parseManifest(raw: string, portable: boolean): BackupManifest {
   const tree = jsonc.parseTree(raw);
   if (!tree) throw new Error("Invalid backup manifest");
   assertNoDuplicateKeys(tree, "backup manifest");
@@ -1476,7 +1478,7 @@ function parseManifest(raw: string): BackupManifest {
     ) {
       throw new Error("Invalid backup manifest file entry");
     }
-    assertAllowedPayloadPath(file.path);
+    assertAllowedPayloadPath(file.path, { portable });
   }
   return manifest as BackupManifest;
 }
@@ -1503,10 +1505,17 @@ function isFilesystemError(error: unknown): boolean {
  * Wraps validation failures so the service reports repository corruption as
  * `INVALID_BACKUP` rather than the `IO_ERROR` fallback. A genuine filesystem failure keeps
  * its own error, so a local disk problem is not blamed on the repository.
+ *
+ * `portable: false` for a local safety snapshot, matching the `writeBackupPayload` call that
+ * produced it: those keep names only this filesystem has to accept, so the cross-platform
+ * rules a repository payload needs would reject the copy a recovery reads.
  */
-export async function readBackupPayload(sourceDir: string): Promise<BackupPayload> {
+export async function readBackupPayload(
+  sourceDir: string,
+  options: { portable?: boolean } = {}
+): Promise<BackupPayload> {
   try {
-    return await readBackupPayloadUnchecked(sourceDir);
+    return await readBackupPayloadUnchecked(sourceDir, options.portable !== false);
   } catch (error) {
     if (isFilesystemError(error)) throw error;
     throw new BackupInvalidPayloadError(error);
@@ -1538,7 +1547,10 @@ async function readManifestEntry(
   }
 }
 
-async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayload> {
+async function readBackupPayloadUnchecked(
+  sourceDir: string,
+  portable: boolean
+): Promise<BackupPayload> {
   const budget = createByteBudget();
   const root = await resolveRoot(sourceDir);
   await resolveContainedPath(root.path, BACKUP_MANIFEST_FILE);
@@ -1547,11 +1559,11 @@ async function readBackupPayloadUnchecked(sourceDir: string): Promise<BackupPayl
   const manifestRaw = await readCheckedFile(root, BACKUP_MANIFEST_FILE, (size) => {
     budget(BACKUP_MANIFEST_FILE, size);
   });
-  const manifest = parseManifest(manifestRaw.content.toString("utf-8"));
+  const manifest = parseManifest(manifestRaw.content.toString("utf-8"), portable);
   const files: BackupFile[] = [];
   const seen = new Set<string>();
   for (const manifestFile of manifest.files) {
-    const key = collisionKey(manifestFile.path);
+    const key = portable ? collisionKey(manifestFile.path) : manifestFile.path;
     if (seen.has(key)) throw new Error(`Duplicate backup path '${manifestFile.path}'`);
     seen.add(key);
     const content = await readManifestEntry(root, manifestFile.path, budget);

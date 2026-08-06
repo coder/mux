@@ -164,6 +164,29 @@ describe("BackupService", () => {
     expect((await fs.stat(clone)).isDirectory()).toBe(true);
   });
 
+  test("keeps a returned snapshot until later restores have replaced it", async () => {
+    const service = new BackupService(createTestConfig(tempDir), {
+      gitRepo: createGitRepo(),
+      payload: createPayload({
+        writeSafetySnapshot: async (snapshotRoot) => {
+          await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
+        },
+      }),
+    });
+
+    const first = await service.restore(SETTINGS);
+    if (!first.success) throw new Error(first.error.message);
+    // The path handed to the caller has to stay readable for as many later restores as the
+    // retention promises, which is what makes it usable after the call returns.
+    for (let later = 0; later < BackupService.RETAINED_SNAPSHOTS - 1; later++) {
+      const next = await service.restore(SETTINGS);
+      if (!next.success) throw new Error(next.error.message);
+      expect(await fs.readFile(path.join(first.data.snapshotPath, "AGENTS.md"), "utf8")).toBe(
+        "before restore"
+      );
+    }
+  });
+
   test("never reaps a snapshot whose restore has not returned", async () => {
     const cacheRoot = path.join(tempDir, "backup-cache");
     // withRepoLock is per repository, so this stands in for restores of other repositories

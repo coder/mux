@@ -518,6 +518,29 @@ describe("backup payload", () => {
     );
   });
 
+  it("reads back a local snapshot holding names no repository payload may carry", async () => {
+    await write(muxRoot, "skills/demo/a:b.txt", "colon name\n");
+    await write(muxRoot, "skills/demo/Foo.md", "upper\n");
+    await write(muxRoot, "skills/demo/foo.md", "lower\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      keepLocalSecrets: true,
+    });
+    const snapshot = path.join(tempDir, "safety-snapshot");
+    await writeBackupPayload(snapshot, payload, { portable: false, ownerOnly: true });
+
+    const recovered = await readBackupPayload(snapshot, { portable: false });
+
+    expect(recovered.files.map((file) => file.path)).toContain("skills/demo/a:b.txt");
+    expect(recovered.files.map((file) => file.path)).toContain("skills/demo/Foo.md");
+    expect(recovered.files.map((file) => file.path)).toContain("skills/demo/foo.md");
+    // A repository payload still may not carry them, since another platform has to write it out.
+    const asRepository = await rejection(readBackupPayload(snapshot));
+    expect((asRepository as { code?: string }).code).toBe("INVALID_BACKUP");
+  });
+
   it("refuses to export a servers map that is not an object", async () => {
     // `McpConfigService.readConfigFile` calls `Object.entries` on this, so an array element
     // is a runnable stdio command named `0` rather than a value the runtime ignores. Restore
