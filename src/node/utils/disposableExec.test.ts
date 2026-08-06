@@ -340,13 +340,15 @@ describe("disposableExec", () => {
   });
 
   test("maxStdoutBytes rejects and kills a process that outruns the cap", async () => {
-    using proc = execFileAsync("sh", ["-c", "yes abcdefghij | head -c 200000; sleep 30"], {
+    // The sleep is backgrounded before the flood so it always holds the inherited stdout pipe
+    // once the cap trips. A bail-out that waited for stdio to drain would block on it and blow
+    // this test's timeout instead of rejecting.
+    using proc = execFileAsync("sh", ["-c", "sleep 15 & yes abcdefghij | head -c 200000; wait"], {
       maxStdoutBytes: 1024,
     });
     activeProcesses.add((proc as any).child);
 
     await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
-    // Killed rather than drained, so the `sleep` never delays this.
     expect((proc as any).child.killed).toBe(true);
   });
 

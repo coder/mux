@@ -350,6 +350,11 @@ export function execFileAsync(
         stdoutOverflow = true;
         stdout = "";
         child.kill("SIGKILL");
+        // "close" only fires once every stdio pipe is released, and descendants of the killed
+        // child inherit those pipes. Waiting for them would let the flood we are bailing out of
+        // decide how long the bail-out takes, so stop reading the output we just discarded.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
       }
     });
     child.stderr?.on("data", (data: Buffer) => {
