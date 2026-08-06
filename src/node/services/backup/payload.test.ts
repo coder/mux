@@ -477,6 +477,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const exported = payloadFileText(payload, "mcp.jsonc");
     for (const secret of ["top-level-secret", "hunter2", "swordfish"]) {
@@ -598,6 +599,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const mcp = jsonc.parse(payloadFileText(payload, "mcp.jsonc")) as {
       servers: {
@@ -664,6 +666,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "mixed-entry");
     await writeBackupPayload(destination, payload);
@@ -939,6 +942,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "symlinked-local");
     await writeBackupPayload(destination, payload);
@@ -972,6 +976,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const mcpFile = payloadFile(payload, "mcp.jsonc");
 
@@ -1005,6 +1010,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const mcpFile = payloadFile(payload, "mcp.jsonc");
 
@@ -1076,6 +1082,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "shape-swap");
     await writeBackupPayload(destination, payload);
@@ -1115,6 +1122,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const commentedPayload = withPayloadFileText(
       payload,
@@ -1170,6 +1178,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
 
     await write(
@@ -1272,6 +1281,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "command-approval");
     await writeBackupPayload(destination, payload);
@@ -1331,6 +1341,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
 
     expect(await collectMcpCommandApprovals(muxRoot, payload.files)).toEqual([]);
@@ -1350,6 +1361,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "url-shadowed-command");
     await writeBackupPayload(destination, payload);
@@ -1387,6 +1399,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const variant = withPayloadFileText(
       payload,
@@ -1418,6 +1431,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "reenable-approval");
     await writeBackupPayload(destination, payload);
@@ -1448,6 +1462,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "disabled-approval");
     await writeBackupPayload(destination, payload);
@@ -1488,6 +1503,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
 
     await write(
@@ -1510,6 +1526,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "malformed-local");
     await writeBackupPayload(destination, payload);
@@ -1534,6 +1551,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const destination = path.join(tempDir, "shorthand-approval");
     await writeBackupPayload(destination, payload);
@@ -1613,6 +1631,7 @@ describe("backup payload", () => {
       muxRoot,
       muxVersion: "1.2.3",
       sourceLabel: "test-host",
+      reportSecrets: true,
     });
     const legacyPayload = withPayloadFileText(
       payload,
@@ -1900,6 +1919,34 @@ describe("backup payload", () => {
       expect(exported.servers.private.url).toBe(url);
       expect(scanBackupFilesForSecrets(payload.files)).toEqual(["mcp.jsonc"]);
       expect(payload.redactions).toEqual([]);
+    }
+  });
+
+  it("requires exact-payload approval for MCP commands without rewriting them", async () => {
+    const commands = ["npx notes-mcp", REDACTED_BACKUP_VALUE];
+    for (const command of commands) {
+      for (const server of [{ command }, command]) {
+        await write(muxRoot, "mcp.jsonc", JSON.stringify({ servers: { private: server } }));
+        const blocked = await rejection(
+          createBackupPayload({
+            muxRoot,
+            muxVersion: "1.2.3",
+            sourceLabel: "test-host",
+          })
+        );
+        expect((blocked as Error).message).toContain("mcp.jsonc");
+
+        const payload = await createBackupPayload({
+          muxRoot,
+          muxVersion: "1.2.3",
+          sourceLabel: "test-host",
+          reportSecrets: true,
+        });
+        expect(jsonc.parse(payloadFileText(payload, "mcp.jsonc"))).toEqual({
+          servers: { private: server },
+        });
+        expect(scanBackupFilesForSecrets(payload.files)).toEqual(["mcp.jsonc"]);
+      }
     }
   });
 

@@ -49,6 +49,12 @@ describe("BackupService against a real repository", () => {
     });
   }
 
+  async function pushOrThrow(target: BackupService = service) {
+    const pushed = await target.push(settings);
+    if (!pushed.success) throw new Error(pushed.error.message);
+    return pushed;
+  }
+
   async function cloneOrigin(name: string): Promise<string> {
     const target = path.join(tempDir, name);
     await git(["clone", "--quiet", originPath, target]);
@@ -90,8 +96,7 @@ describe("BackupService against a real repository", () => {
     "referenced": {
       "url": "https://example.com/mcp",
       "headers": { "Authorization": { "secret": "MCP_TOKEN" } }
-    },
-    "command": "npx docs-mcp --stdio"
+    }
   }
 }
 `
@@ -106,7 +111,7 @@ describe("BackupService against a real repository", () => {
   });
 
   it("pushes the portable payload and leaks no secret file", async () => {
-    const pushed = await service.push(settings);
+    const pushed = await pushOrThrow();
     expect(pushed.success).toBe(true);
 
     const clone = await cloneOrigin("verify");
@@ -130,9 +135,8 @@ describe("BackupService against a real repository", () => {
     }
   });
 
-  it("keeps MCP commands and URLs while redacting a literal header value", async () => {
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+  it("keeps MCP URLs while redacting a literal header value", async () => {
+    const pushed = await pushOrThrow();
     expect(pushed.data.redactions.length).toBeGreaterThan(0);
 
     const clone = await cloneOrigin("verify");
@@ -140,19 +144,16 @@ describe("BackupService against a real repository", () => {
     expect(mcp).not.toContain("Bearer abc123");
     expect(mcp).toContain(REDACTED_BACKUP_VALUE);
     expect(mcp).toContain('"url": "https://example.com/mcp"');
-    expect(mcp).toContain('"command": "npx docs-mcp --stdio"');
     expect(mcp).toContain('"secret": "MCP_TOKEN"');
     // A comment is prose no projection can inspect, so it is not published at all.
     expect(mcp).not.toContain("comment-secret-abc123");
   });
 
   it("does not create a second commit when nothing changed", async () => {
-    const first = await service.push(settings);
-    if (!first.success) throw new Error(first.error.message);
+    await pushOrThrow();
     const commitsAfterFirst = await git(["--git-dir", originPath, "rev-list", "--count", "main"]);
 
-    const second = await service.push(settings);
-    if (!second.success) throw new Error(second.error.message);
+    const second = await pushOrThrow();
     expect(second.data.changed).toBe(false);
     expect(await git(["--git-dir", originPath, "rev-list", "--count", "main"])).toBe(
       commitsAfterFirst
@@ -194,9 +195,28 @@ describe("BackupService against a real repository", () => {
     expect(await fs.readFile(path.join(clone, "mux/mcp.jsonc"), "utf-8")).toContain(url);
   });
 
+  it("requires exact-payload approval before publishing an MCP command", async () => {
+    const command = "npx private-mcp";
+    await writeMuxFile("mcp.jsonc", JSON.stringify({ servers: { private: { command } } }));
+
+    const blocked = await service.push(settings);
+    expect(blocked.success).toBe(false);
+    if (blocked.success)
+      throw new Error("Expected the MCP command approval gate to block the push");
+    expect(blocked.error.code).toBe("SECRET_DETECTED");
+    expect(blocked.error.files).toEqual(["mcp.jsonc"]);
+    expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
+
+    const allowed = await service.push(settings, {
+      approvedSecretDigest: blocked.error.secretApproval ?? undefined,
+    });
+    expect(allowed.success).toBe(true);
+    const clone = await cloneOrigin("command-credential-verify");
+    expect(await fs.readFile(path.join(clone, "mux/mcp.jsonc"), "utf-8")).toContain(command);
+  });
+
   it("removes a safety snapshot that could not be written", async () => {
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+    await pushOrThrow();
 
     const payloadStore = createBackupPayloadStore({ config });
     const failing = new BackupService(config, {
@@ -238,8 +258,7 @@ describe("BackupService against a real repository", () => {
   it("refuses a pre-created per-repository cache symlink even when its target is a real clone", async () => {
     // The clone the link points at has the right origin, so the origin check accepts it and only
     // the link itself gives it away.
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+    await pushOrThrow();
     const cacheRoot = path.join(muxRoot, "backup-cache");
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     const outside = path.join(tempDir, "outside-clone");
@@ -256,8 +275,7 @@ describe("BackupService against a real repository", () => {
   });
 
   it("refuses to write a safety snapshot through a symlinked cache directory", async () => {
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+    await pushOrThrow();
 
     // The git cache lives elsewhere so the symlink below only affects the snapshot.
     const outside = path.join(tempDir, "outside-cache");
@@ -276,8 +294,7 @@ describe("BackupService against a real repository", () => {
   });
 
   it("leaves no safety snapshot behind when the restore is refused", async () => {
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+    await pushOrThrow();
 
     // Two backed-up files become one file locally, which the restore cannot write faithfully.
     await fs.rm(path.join(muxRoot, "agents/reviewer.md"));
@@ -299,8 +316,7 @@ describe("BackupService against a real repository", () => {
   });
 
   it("restores files, keeps local-only files, and records the restored commit", async () => {
-    const pushed = await service.push(settings);
-    if (!pushed.success) throw new Error(pushed.error.message);
+    const pushed = await pushOrThrow();
 
     await writeMuxFile("AGENTS.md", "locally edited\n");
     await writeMuxFile("agents/local-only.md", "local only\n");
@@ -329,7 +345,7 @@ describe("BackupService against a real repository", () => {
     if (!validated.success) throw new Error(validated.error.message);
     expect(validated.data.empty).toBe(true);
 
-    const pushed = await service.push(settings);
+    const pushed = await pushOrThrow();
     expect(pushed.success).toBe(true);
     expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toMatch(
       /^[0-9a-f]{40}$/

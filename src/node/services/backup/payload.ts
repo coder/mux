@@ -1115,7 +1115,7 @@ function urlHasCredentialComponents(rawUrl: string): boolean {
   );
 }
 
-function hasCredentialBearingMcpUrl(content: string): boolean {
+function mcpConfigRequiresPublishApproval(content: string): boolean {
   const errors: jsonc.ParseError[] = [];
   const parsed = readRecord(jsonc.parse(content, errors));
   if (errors.length > 0 || !parsed) return false;
@@ -1123,6 +1123,9 @@ function hasCredentialBearingMcpUrl(content: string): boolean {
   if (!servers) return false;
   for (const server of Object.values(servers)) {
     const serverRecord = readRecord(server);
+    const command =
+      typeof server === "string" ? server : serverRecord && readOwn(serverRecord, "command");
+    if (typeof command === "string" && command.trim() !== "") return true;
     if (!serverRecord) continue;
     const url = readOwn(serverRecord, "url");
     if (typeof url === "string" && urlHasCredentialComponents(url)) return true;
@@ -1143,7 +1146,7 @@ export function scanBackupFilesForSecrets(files: readonly BackupFile[]): string[
     .filter((file) => {
       const content = file.content.toString("utf-8");
       if (SECRET_PATTERNS.some((pattern) => pattern.test(content))) return true;
-      if (file.path === "mcp.jsonc" && hasCredentialBearingMcpUrl(content)) return true;
+      if (file.path === "mcp.jsonc" && mcpConfigRequiresPublishApproval(content)) return true;
       if (!isRecursivelyCollected(file.path)) return false;
       return !AUTO_PUBLISHED_RECURSIVE_FILE.test(file.path) || CREDENTIAL_PATH_HINT.test(file.path);
     })
