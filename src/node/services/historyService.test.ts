@@ -2163,6 +2163,49 @@ describe("HistoryService", () => {
       }
     });
 
+    it("preserves contextUsage when the cut removes only workflow display rows", async () => {
+      // Workflow trigger/run-card rows are filtered out before request
+      // assembly, so removing them leaves the provider context unchanged.
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("reset-boundary", "assistant", "", {
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        })
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage(
+          "workflow-display",
+          "user",
+          `workflow trigger display ${"x".repeat(2_000)}`,
+          { muxMetadata: { type: "workflow-trigger-display", rawCommand: "/wf", runId: "run-1" } }
+        )
+      );
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.activeContextTruncated).toBe(false);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        expect(remaining.data.find((msg) => msg.id === "workflow-display")).toBeUndefined();
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    });
+
     it("strips contextUsage when the cut removes an eligible post-reset row", async () => {
       // Mirror of the ineligible case: a replayable user turn in the same
       // position must still invalidate usage when removed.

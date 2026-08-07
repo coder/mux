@@ -26,6 +26,7 @@ import {
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
+import { filterWorkflowDisplayOnlyMessages } from "@/common/utils/workflowRunMessages";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -2017,9 +2018,10 @@ export class HistoryService {
         // boundaries are provider-visible (the row carries the summary), so
         // the window starts AT the boundary; reset boundaries are
         // provider-invisible markers, so the window starts AFTER them. Rows
-        // inside the window that requests never replay (e.g. reasoning-only
-        // assistant turns) leave the request, and therefore the usage
-        // snapshots measured from it, unchanged when removed.
+        // inside the window that requests never replay (workflow display-only
+        // rows, reasoning-only assistant turns) leave the request, and
+        // therefore the usage snapshots measured from it, unchanged when
+        // removed.
         const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
         const activeContextStart =
           latestBoundaryIndex < 0
@@ -2028,7 +2030,9 @@ export class HistoryService {
               ? latestBoundaryIndex + 1
               : latestBoundaryIndex;
         const activeContextTruncated = hasProviderEligibleMessages(
-          messages.slice(Math.min(activeContextStart, removeCount), removeCount)
+          filterWorkflowDisplayOnlyMessages(
+            messages.slice(Math.min(activeContextStart, removeCount), removeCount)
+          )
         );
 
         // Retained rows' contextUsage measured the pre-truncation context
