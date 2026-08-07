@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { HistoryService } from "./historyService";
 import { Config } from "@/node/config";
@@ -1763,6 +1763,15 @@ describe("HistoryService", () => {
       return path.join(config.getSessionDir(workspaceId), "chat-archive.jsonl");
     }
 
+    async function fileExists(filePath: string): Promise<boolean> {
+      try {
+        await fs.access(filePath);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     it("rotates the sealed prefix into the archive when a boundary is appended", async () => {
       await appendNumberedMessages(service, wsId, 3); // seq 0..2
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
@@ -2139,6 +2148,115 @@ describe("HistoryService", () => {
         const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
         expect(activeAssistant).toBeDefined();
         expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      }
+    });
+
+    it("succeeds despite tombstone-removal failure without resurrecting cut rows", async () => {
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply")
+      );
+      expect(await fs.readFile(archivePath(wsId), "utf-8")).not.toBe("");
+
+      // Fail every post-commit archive cleanup (parked tombstone or direct
+      // archive delete); rotation migration inside the read paths also uses
+      // fs.rm, so other paths stay real.
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+        if (args[0] === archivePath(wsId) || args[0] === `${archivePath(wsId)}.trash`) {
+          return Promise.reject(
+            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+          );
+        }
+        return realRm(...args);
+      });
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.25);
+        expect(truncateResult.success).toBe(true);
+        if (truncateResult.success) {
+          expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
+
+          const remaining = await readJsonlFile(chatPath(wsId));
+          const remainingIds = new Set(remaining.map((msg) => msg.id));
+          for (const seq of truncateResult.data.deletedSequences) {
+            expect(remaining.some((msg) => msg.metadata?.historySequence === seq)).toBe(false);
+          }
+          expect(remainingIds.has("assistant-active")).toBe(true);
+          // The archive was parked, not left in place, so cut rows cannot
+          // resurrect through the archive read path.
+          expect(await fileExists(archivePath(wsId))).toBe(false);
+        }
+      } finally {
+        rmSpy.mockRestore();
+      }
+    });
+
+    it("leaves history untouched when parking the archive fails", async () => {
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply")
+      );
+
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
+      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
+
+      // Fail only the archive-parking rename; rotation migration inside the
+      // read paths also uses fs.rename.
+      const realRename = fs.rename;
+      const renameSpy = spyOn(fs, "rename").mockImplementation(
+        (...args: Parameters<typeof fs.rename>) => {
+          if (args[0] === archivePath(wsId)) {
+            return Promise.reject(
+              Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+            );
+          }
+          return realRename(...args);
+        }
+      );
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.25);
+        expect(truncateResult.success).toBe(false);
+        // A failed truncation must not have mutated either history file, so
+        // the caller's success-only usage invalidation stays correct.
+        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
+        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+      } finally {
+        renameSpy.mockRestore();
+      }
+    });
+
+    it("keeps the active file intact when full clear fails on the second delete", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply")
+      );
+
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
+
+      // Full clear removes the archive first: if deleting chat.jsonl then
+      // fails, the active provider window is still intact and Err is correct.
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+        if (args[0] === chatPath(wsId)) {
+          return Promise.reject(
+            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+          );
+        }
+        return realRm(...args);
+      });
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 1.0);
+        expect(truncateResult.success).toBe(false);
+        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
+        expect(await fileExists(archivePath(wsId))).toBe(false);
+      } finally {
+        rmSpy.mockRestore();
       }
     });
 

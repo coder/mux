@@ -9671,6 +9671,8 @@ export class WorkspaceService extends EventEmitter {
     // chat.jsonl has already changed, and stale usage must not survive that.
     // A cut confined to sealed pre-boundary rows leaves the active provider
     // context (and its usage snapshots) valid, so it must not invalidate.
+    // The success-only guard is safe because HistoryService.truncateHistory
+    // orders its two-file rewrite so no failure changes the active window.
     const truncate = async () => {
       const result = await this.historyService.truncateHistory(workspaceId, effectivePercentage);
       if (result.success && result.data.activeContextTruncated) {

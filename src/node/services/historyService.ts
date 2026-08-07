@@ -1944,8 +1944,11 @@ export class HistoryService {
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
 
-          await fs.rm(historyPath, { force: true });
+          // Archive first: it holds only sealed pre-boundary rows, so if the
+          // second rm fails the active provider window is still intact and the
+          // caller's success-only usage invalidation remains correct.
           await fs.rm(archivePath, { force: true });
+          await fs.rm(historyPath, { force: true });
 
           // Reset sequence counter when clearing history
           this.sequenceCounters.set(workspaceId, 0);
@@ -2052,9 +2055,55 @@ export class HistoryService {
         // boundary write re-seals it.
         const historyEntries = this.serializeHistoryEntries(remainingMessages, workspaceId);
 
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(historyPath, historyEntries);
-        await fs.rm(archivePath, { force: true });
+        // Order the two-file rewrite so no failure can change the active
+        // provider window yet still return Err (the caller invalidates usage
+        // only on success). Park the archive under a tombstone name (atomic
+        // rename), commit chat.jsonl atomically, then discard the tombstone:
+        // a pre-commit failure rolls the archive back and leaves history
+        // untouched, while a post-commit tombstone-removal failure only strays
+        // a file that no read path consumes.
+        const tombstonePath = `${archivePath}.trash`;
+        let archiveParked = false;
+        try {
+          await fs.rename(archivePath, tombstonePath);
+          archiveParked = true;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+            throw error;
+          }
+        }
+
+        try {
+          // Atomic write prevents corruption if app crashes mid-write
+          await writeFileAtomic(historyPath, historyEntries);
+        } catch (error) {
+          if (archiveParked) {
+            try {
+              await fs.rename(tombstonePath, archivePath);
+            } catch (rollbackError) {
+              // Sealed pre-boundary rows stay parked in the tombstone; the
+              // active window in chat.jsonl is still intact.
+              log.error("Failed to restore parked chat archive after truncation write failure", {
+                workspaceId,
+                tombstonePath,
+                error: rollbackError,
+              });
+            }
+          }
+          throw error;
+        }
+
+        if (archiveParked) {
+          try {
+            await fs.rm(tombstonePath, { force: true });
+          } catch (error) {
+            log.warn("Failed to remove parked chat archive after truncation", {
+              workspaceId,
+              tombstonePath,
+              error,
+            });
+          }
+        }
         this.sealedRotationChecked.delete(workspaceId);
 
         // Update sequence counter to continue from where we are.
