@@ -2088,6 +2088,19 @@ export class HistoryService {
             this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
           );
         }
+        // Deleting the whole archive commits a window change only when the
+        // window extends into it (boundary inside the archive, or none at
+        // all). A normally rotated archive holds only sealed pre-boundary
+        // rows, so its deletion leaves the provider context unchanged and
+        // must not block the usage rollback in the catch below.
+        const archiveDeleteChangesWindow = hasProviderEligibleMessages(
+          filterWorkflowDisplayOnlyMessages(
+            messages.slice(
+              Math.min(activeContextStart, archivedMessages.length),
+              archivedMessages.length
+            )
+          )
+        );
         let windowChanged = false;
         try {
           if (removeCount < archivedMessages.length) {
@@ -2103,7 +2116,7 @@ export class HistoryService {
             // can only remove rows the cut targets.
             if (archivedMessages.length > 0) {
               await fs.rm(archivePath, { force: true });
-              windowChanged = true;
+              windowChanged = archiveDeleteChangesWindow;
             }
             const retainedChat = chatMessages
               .slice(removeCount - archivedMessages.length)

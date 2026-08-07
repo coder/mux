@@ -2514,6 +2514,53 @@ describe("HistoryService", () => {
       }
     });
 
+    it("restores chat usage when the chat cut fails after deleting a fully sealed archive", async () => {
+      // Normal rotated layout: the boundary is the first chat.jsonl row, so
+      // every archive row is sealed pre-boundary history and deleting the
+      // archive leaves the provider window unchanged. The failed chat cut
+      // must still roll back the pre-cut sanitization.
+      await appendNumberedMessages(service, wsId, 2);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
+
+      // Serialize call 1 is the pre-cut sanitization; call 2 is the chat cut.
+      const internals = service as unknown as {
+        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
+      };
+      const realSerialize = internals.serializeHistoryEntries.bind(service);
+      let serializeCalls = 0;
+      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
+        (messages: MuxMessage[], workspaceId: string) => {
+          serializeCalls += 1;
+          if (serializeCalls === 2) {
+            throw new Error("injected chat cut serialize failure");
+          }
+          return realSerialize(messages, workspaceId);
+        }
+      );
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        expect(truncateResult.success).toBe(false);
+        // Every archive row was a cut target, so its deletion stands.
+        expect(await fileExists(archivePath(wsId))).toBe(false);
+        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
+      } finally {
+        serializeSpy.mockRestore();
+      }
+    });
+
     it("keeps the active file intact when a remove-all cut fails on the archive delete", async () => {
       await appendNumberedMessages(service, wsId, 2);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
