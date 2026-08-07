@@ -2021,7 +2021,12 @@ export class HistoryService {
         // inside the window that requests never replay (workflow display-only
         // rows, reasoning-only assistant turns) leave the request, and
         // therefore the usage snapshots measured from it, unchanged when
-        // removed.
+        // removed. Deliberate asymmetry: Anthropic with thinking enabled
+        // replays reasoning-only rows (preserveReasoningOnly), but the next
+        // send's provider is unknowable here, so we preserve usage. That can
+        // only overestimate (compact early); flagging truncated would strip
+        // valid usage for every other provider and bypass required on-send
+        // compaction, the failure this feature exists to prevent.
         const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
         const activeContextStart =
           latestBoundaryIndex < 0
@@ -2061,30 +2066,32 @@ export class HistoryService {
         // Rewrite each file in place instead of collapsing the archive into
         // chat.jsonl: every step is either an atomic single-file write or a
         // deletion of rows the cut removes anyway, so no failure or crash can
-        // change the active provider window while returning Err (the caller
-        // invalidates usage only on success), lose retained rows, or leave
-        // duplicate rows behind.
+        // lose retained rows or leave duplicates behind.
+        //
+        // When retained usage must be stripped, sanitize chat.jsonl FIRST:
+        // it is a metadata-only atomic write (rows unchanged), so if a later
+        // step fails the provider window is intact and the Err is accurate,
+        // while a crash after a later step already changed the window cannot
+        // pair that change with stale persisted usage for a restart to
+        // reseed. The cost of the early write is only over-stripping (next
+        // provider response restores usage), never a compaction bypass.
+        if (activeContextTruncated) {
+          await writeFileAtomic(
+            historyPath,
+            this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
+          );
+        }
         if (removeCount < archivedMessages.length) {
-          // Cut confined to the archive: rewrite it atomically. chat.jsonl
-          // needs a rewrite only when retained rows must be sanitized (a
-          // malformed boundary-less archive state); ordering archive-first
-          // keeps a between-writes crash free of row loss or duplication.
+          // Cut confined to the archive: one atomic rewrite applies it.
           const retainedArchive = archivedMessages.slice(removeCount).map(sanitizeRetained);
           await writeFileAtomic(
             archivePath,
             this.serializeHistoryEntries(retainedArchive, workspaceId)
           );
-          if (activeContextTruncated) {
-            await writeFileAtomic(
-              historyPath,
-              this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
-            );
-          }
         } else {
-          // Cut consumes the whole archive: every archive row is being
-          // deleted, so removing the archive before committing chat.jsonl can
-          // only delete rows the cut targets. A failure after the rm returns
-          // Err with chat.jsonl (and the provider window) untouched.
+          // Cut consumes the whole archive: every archive row is a cut
+          // target, so deleting the archive before committing the chat cut
+          // can only remove rows the cut targets.
           if (archivedMessages.length > 0) {
             await fs.rm(archivePath, { force: true });
           }

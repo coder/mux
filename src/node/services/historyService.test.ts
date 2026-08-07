@@ -2349,26 +2349,125 @@ describe("HistoryService", () => {
         createMuxMessage("assistant-active", "assistant", "active reply")
       );
 
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-
-      // Abort between the archive delete and the chat.jsonl commit. Every
-      // archive row was a cut target, so the failure must leave chat.jsonl
-      // (the active window and all retained rows) untouched.
+      // Abort between the archive delete and the final chat.jsonl commit
+      // (serialize call 1 is the pre-cut usage sanitization, call 2 the cut).
+      // Every archive row was a cut target, so the failure must leave every
+      // chat.jsonl row (the active window and all retained rows) in place.
       const internals = service as unknown as {
         serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
       };
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementationOnce(
-        () => {
-          throw new Error("injected serialize failure");
+      const realSerialize = internals.serializeHistoryEntries.bind(service);
+      let serializeCalls = 0;
+      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
+        (messages: MuxMessage[], workspaceId: string) => {
+          serializeCalls += 1;
+          if (serializeCalls === 2) {
+            throw new Error("injected serialize failure");
+          }
+          return realSerialize(messages, workspaceId);
         }
       );
       try {
         const truncateResult = await service.truncateHistory(wsId, 0.5);
         expect(truncateResult.success).toBe(false);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        const chatIds = new Set(chatRows.map((msg) => msg.id));
+        expect(chatIds.has("boundary-1")).toBe(true);
+        expect(chatIds.has("user-heavy")).toBe(true);
+        expect(chatIds.has("assistant-active")).toBe(true);
         expect(await fileExists(archivePath(wsId))).toBe(false);
       } finally {
         serializeSpy.mockRestore();
+      }
+    });
+
+    it("strips chat usage before an archive-confined cut can change the window", async () => {
+      // Malformed boundary-less state: rotation created the archive, then the
+      // boundary row was deleted, so the whole file pair is one active window.
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
+      expect(deleteResult.success).toBe(true);
+
+      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
+
+      // Fail the archive rewrite (the only serialize whose rows are archive
+      // rows). The chat sanitization must already be durable at that point so
+      // a crash here cannot leave a shrunken window with reseedable usage.
+      const internals = service as unknown as {
+        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
+      };
+      const realSerialize = internals.serializeHistoryEntries.bind(service);
+      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
+        (messages: MuxMessage[], workspaceId: string) => {
+          if (messages.some((msg) => msg.id === "msg-5")) {
+            throw new Error("injected archive serialize failure");
+          }
+          return realSerialize(messages, workspaceId);
+        }
+      );
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.25);
+        expect(truncateResult.success).toBe(false);
+        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+        const activeAssistant = (await readJsonlFile(chatPath(wsId))).find(
+          (msg) => msg.id === "assistant-active"
+        );
+        expect(activeAssistant).toBeDefined();
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      } finally {
+        serializeSpy.mockRestore();
+      }
+    });
+
+    it("strips chat usage before a whole-archive cut can change the window", async () => {
+      // Same malformed boundary-less state, but the cut consumes the archive:
+      // the archive delete must find chat usage already stripped.
+      await appendNumberedMessages(service, wsId, 2);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
+      expect(deleteResult.success).toBe(true);
+
+      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
+
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+        if (args[0] === archivePath(wsId)) {
+          return Promise.reject(
+            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+          );
+        }
+        return realRm(...args);
+      });
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        expect(truncateResult.success).toBe(false);
+        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        // Cut not applied: all chat rows survive, but usage is stripped.
+        expect(chatRows.some((msg) => msg.id === "user-heavy")).toBe(true);
+        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      } finally {
+        rmSpy.mockRestore();
       }
     });
 
