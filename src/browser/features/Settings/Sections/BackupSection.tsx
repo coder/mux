@@ -60,6 +60,10 @@ function toDraft(settings: SettingsBackupInput): BackupDraft {
   return { repoUrl: settings.repoUrl, branch: settings.branch, path: settings.path };
 }
 
+function draftsEqual(left: BackupDraft, right: BackupDraft): boolean {
+  return left.repoUrl === right.repoUrl && left.branch === right.branch && left.path === right.path;
+}
+
 function getOperationErrorMessage(error: BackupOperationError): string {
   if (!error.files?.length) return error.message;
   return `${error.message}: ${error.files.join(", ")}`;
@@ -114,6 +118,7 @@ export function BackupSection() {
   const [draft, setDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
   const [savedDraft, setSavedDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
   const [loading, setLoading] = useState(true);
+  const [settingsFresh, setSettingsFresh] = useState(false);
   const [activeAction, setActiveAction] = useState<
     "save" | "validate" | "preview" | "push" | "restore" | null
   >(null);
@@ -128,48 +133,99 @@ export function BackupSection() {
   const [commandApprovals, setCommandApprovals] = useState<BackupCommandApproval[]>([]);
   const [approveCommands, setApproveCommands] = useState(false);
   const [restoreConfirmationOpen, setRestoreConfirmationOpen] = useState(false);
+  const refreshGenerationRef = useRef(0);
+  const draftRef = useRef(draft);
+  const savedDraftRef = useRef(savedDraft);
+  draftRef.current = draft;
+  savedDraftRef.current = savedDraft;
 
-  const isDirty =
-    draft.repoUrl !== savedDraft.repoUrl ||
-    draft.branch !== savedDraft.branch ||
-    draft.path !== savedDraft.path;
-  const configured = savedDraft.repoUrl.trim() !== "";
+  const isDirty = !draftsEqual(draft, savedDraft);
+  const configured = settingsFresh && savedDraft.repoUrl.trim() !== "";
   const saving = activeAction === "save";
   const busy = activeAction !== null;
 
   useEffect(() => {
     if (!api) {
       setLoading(false);
+      setSettingsFresh(false);
       setSaveError("Backup settings are unavailable while disconnected.");
       return;
     }
 
-    let ignore = false;
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    let iterator: AsyncIterator<unknown> | null = null;
     setLoading(true);
+    setSettingsFresh(false);
     setSaveError(null);
 
-    void api.backup
-      .getSettings()
-      .then((settings) => {
-        if (ignore || !settings) return;
+    const refresh = async () => {
+      const version = (refreshGenerationRef.current += 1);
+      setSettingsFresh(false);
 
-        const nextDraft = toDraft(settings);
-        setDraft(nextDraft);
+      try {
+        const settings = await api.backup.getSettings();
+        if (signal.aborted || version !== refreshGenerationRef.current) return;
+
+        const nextDraft = settings ? toDraft(settings) : DEFAULT_DRAFT;
+        const previousSavedDraft = savedDraftRef.current;
+        if (draftsEqual(draftRef.current, previousSavedDraft)) {
+          draftRef.current = nextDraft;
+          setDraft(nextDraft);
+        }
+        savedDraftRef.current = nextDraft;
         setSavedDraft(nextDraft);
-      })
-      .catch((error: unknown) => {
-        if (!ignore) {
+        setSettingsFresh(true);
+        setSaveError(null);
+
+        if (!draftsEqual(previousSavedDraft, nextDraft)) {
+          setValidation(null);
+          setPreview(null);
+          setOverrideSecretScan(false);
+          setSecretScanBlocked(false);
+          setSecretScanApproval(null);
+          setCommandApprovals([]);
+          setApproveCommands(false);
+          setRestoreConfirmationOpen(false);
+          setActionError(null);
+          setStatusMessage(null);
+        }
+      } catch (error) {
+        if (!signal.aborted && version === refreshGenerationRef.current) {
           setSaveError(getErrorMessage(error));
         }
-      })
-      .finally(() => {
-        if (!ignore) {
+      } finally {
+        if (!signal.aborted && version === refreshGenerationRef.current) {
           setLoading(false);
         }
-      });
+      }
+    };
+
+    void (async () => {
+      try {
+        const subscribedIterator = await api.config.onConfigChanged(undefined, { signal });
+        if (signal.aborted) {
+          await subscribedIterator.return?.();
+          return;
+        }
+
+        iterator = subscribedIterator;
+        let nextEvent = subscribedIterator.next();
+        await refresh();
+        while (!signal.aborted) {
+          const event = await nextEvent;
+          if (event.done || signal.aborted) break;
+          nextEvent = subscribedIterator.next();
+          await refresh();
+        }
+      } catch {
+        // Keep the section mounted if the config subscription fails.
+      }
+    })();
 
     return () => {
-      ignore = true;
+      abortController.abort();
+      void iterator?.return?.();
     };
   }, [api]);
 
@@ -204,9 +260,13 @@ export function BackupSection() {
         return;
       }
 
+      refreshGenerationRef.current += 1;
       const nextDraft = toDraft(result.data);
+      draftRef.current = nextDraft;
+      savedDraftRef.current = nextDraft;
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
+      setSettingsFresh(true);
       setValidation(null);
       setPreview(null);
       // With the preview: they describe the repository that was previewed, and carrying
@@ -224,6 +284,10 @@ export function BackupSection() {
   }
 
   function requireSavedSettings(): boolean {
+    if (!settingsFresh) {
+      setActionError("Backup settings changed; wait for them to refresh.");
+      return false;
+    }
     if (!configured) {
       setActionError("Save a repository before using backup actions.");
       return false;

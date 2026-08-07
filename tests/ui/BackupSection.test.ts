@@ -1,6 +1,6 @@
 import "./dom";
 import React from "react";
-import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { APIProvider } from "@/browser/contexts/API";
 import { ThemeProvider } from "@/browser/contexts/ThemeContext";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
@@ -81,6 +81,37 @@ describe("BackupSection", () => {
     // Preview discards the export's secret scan, so an override offered here would let a
     // push publish secrets without ever showing the blocked-file list.
     expect(canvas.queryByRole("checkbox", { name: "Override secret scan" })).toBeNull();
+  });
+
+  test("refreshes backup settings changed by another window", async () => {
+    const { client, view } = renderBackupSection();
+    const canvas = within(view.container);
+    const repoInput = await canvas.findByLabelText("Repository URL");
+
+    expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+
+    await act(async () => {
+      await client.backup.saveSettings({
+        repoUrl: "git@github.com:example/other.git",
+        branch: "release",
+        path: "shared/",
+      });
+    });
+
+    await waitFor(() =>
+      expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/other.git")
+    );
+
+    const preview = jest.spyOn(client.backup, "preview");
+    fireEvent.click(canvas.getByRole("button", { name: "Preview changes" }));
+    await waitFor(() =>
+      expect(preview).toHaveBeenCalledWith({
+        repoUrl: "git@github.com:example/other.git",
+        branch: "release",
+        path: "shared/",
+      })
+    );
+    await canvas.findByText("Backup to repository");
   });
 
   test("wires keyboard actions through save, validate, preview, backup, and restore", async () => {

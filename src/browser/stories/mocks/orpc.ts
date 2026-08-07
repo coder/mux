@@ -741,6 +741,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getSettings: () => Promise.resolve(backupSettings),
       saveSettings: (input: Parameters<APIClient["backup"]["saveSettings"]>[0]) => {
         backupSettings = { ...input };
+        notifyConfigChanged();
         return Promise.resolve({ success: true as const, data: backupSettings });
       },
       validate: (_input: Parameters<APIClient["backup"]["validate"]>[0]) =>
