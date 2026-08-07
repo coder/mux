@@ -961,6 +961,51 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("edit truncation keeps history seeding available for the retained prefix", async () => {
+    const workspaceId = "ws-edit-truncation-preserves-seeding";
+    const { session, historyService } = await createSessionHarness({ workspaceId });
+
+    // Retained prefix: assistant row whose usage is valid post-edit.
+    // Suffix after the edit target gets truncated away.
+    const rows = [
+      createMuxMessage("user-1", "user", "first prompt", { timestamp: Date.now() - 5_000 }),
+      createMuxMessage("assistant-1", "assistant", "first reply", {
+        timestamp: Date.now() - 4_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+      }),
+      createMuxMessage("user-2", "user", "second prompt", { timestamp: Date.now() - 3_000 }),
+      createMuxMessage("assistant-2", "assistant", "second reply", {
+        timestamp: Date.now() - 2_000,
+        model: "openai:gpt-4o",
+      }),
+    ];
+    for (const row of rows) {
+      expect((await historyService.appendToHistory(workspaceId, row)).success).toBe(true);
+    }
+
+    const editResult = await session.sendMessage("second prompt, edited", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+      editMessageId: "user-2",
+    });
+    expect(editResult.success).toBe(true);
+
+    // The edit stream reported no usage (e.g. failed early); the next normal
+    // send must still seed from the retained prefix so compaction stays armed.
+    const seenUsages = installUsageCapturingMonitor(session);
+    const result = await session.sendMessage("follow-up send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
+
+    session.dispose();
+  });
+
   test("heartbeat reset rollback re-enables usage seeding for the queued turn", async () => {
     const workspaceId = "ws-heartbeat-rollback-reenables-seeding";
     const { session, historyService } = await createSessionHarness({ workspaceId });

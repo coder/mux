@@ -2739,7 +2739,9 @@ export class AgentSession {
         truncateTargetId
       );
       if (truncateResult.success) {
-        this.clearUsageState();
+        // Edits cut a suffix; the retained prefix's persisted usage is still
+        // valid, so keep history seeding available for the edited send chain.
+        this.clearUsageState({ preserveHistorySeeding: true });
       } else {
         const isMissingEditTarget =
           truncateResult.error.includes("Message with ID") &&
@@ -3431,10 +3433,17 @@ export class AgentSession {
    * because boundary-less rewrites (partial /clear) retain rows whose persisted
    * contextUsage still counts removed tokens; re-seeding those would restore
    * the same stale value.
+   *
+   * Pass preserveHistorySeeding for suffix-only rewrites (message edits): the
+   * retained prefix's persisted contextUsage still describes the active
+   * context, and seeding from it keeps on-send compaction armed for
+   * near-limit prefixes.
    */
-  clearUsageState(): void {
+  clearUsageState(options?: { preserveHistorySeeding?: boolean }): void {
     this.lastUsageState = undefined;
-    this.usageSeedingSuppressed = true;
+    if (options?.preserveHistorySeeding !== true) {
+      this.usageSeedingSuppressed = true;
+    }
   }
 
   /**
