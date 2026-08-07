@@ -2078,6 +2078,70 @@ describe("HistoryService", () => {
       }
     });
 
+    it("preserves contextUsage when the cut ends at a reset boundary", async () => {
+      // Reset boundaries are provider-invisible: the provider window starts
+      // after them, so deleting the marker (and nothing later) leaves the
+      // active context and its usage snapshots unchanged.
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("reset-boundary", "assistant", "", {
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        })
+      );
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "active prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.1);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.deletedSequences.length).toBe(1);
+        expect(truncateResult.data.activeContextTruncated).toBe(false);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        expect(remaining.data.find((msg) => msg.id === "reset-boundary")).toBeUndefined();
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    });
+
+    it("strips contextUsage when the cut removes a compaction boundary", async () => {
+      // Mirror of the reset case: compaction boundaries carry the summary the
+      // provider sees, so deleting the boundary row changes the active context.
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "active prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.1);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.deletedSequences.length).toBe(1);
+        expect(truncateResult.data.activeContextTruncated).toBe(true);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant).toBeDefined();
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      }
+    });
+
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

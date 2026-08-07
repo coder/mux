@@ -21,6 +21,7 @@ import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   findLatestContextBoundaryIndex,
+  getContextBoundaryKind,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
@@ -2007,13 +2008,21 @@ export class HistoryService {
           return Ok({ deletedSequences, activeContextTruncated: true });
         }
 
-        // The cut changes the active provider context only when it removes the
-        // latest durable boundary (or any row after it). A cut confined to
-        // sealed pre-boundary rows leaves the provider window and its usage
-        // snapshots valid.
+        // The cut changes the active provider context only when it removes a
+        // row inside the provider window. Compaction boundaries are
+        // provider-visible (the row carries the summary), so the window starts
+        // AT the boundary; reset boundaries are provider-invisible markers, so
+        // the window starts AFTER them and deleting the marker itself changes
+        // nothing the provider sees. Cuts confined before the window leave its
+        // usage snapshots valid.
         const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
-        const activeContextTruncated =
-          latestBoundaryIndex >= 0 ? removeCount > latestBoundaryIndex : true;
+        const activeContextStart =
+          latestBoundaryIndex < 0
+            ? 0
+            : getContextBoundaryKind(messages[latestBoundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
+              ? latestBoundaryIndex + 1
+              : latestBoundaryIndex;
+        const activeContextTruncated = removeCount > activeContextStart;
 
         // Keep messages after removeCount
         const remainingMessages = messages.slice(removeCount).map((msg) => {
