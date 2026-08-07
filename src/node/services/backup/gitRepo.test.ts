@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   BackupRepoCache,
   BackupCacheSafetyError,
@@ -10,6 +9,7 @@ import {
   BackupOriginMismatchError,
 } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
+import { commitAll, runGit } from "./testHelpers";
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -18,11 +18,6 @@ async function pathExists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-async function git(args: string[]): Promise<string> {
-  using process = execFileAsync("git", args);
-  return (await process.result).stdout.trim();
 }
 
 async function writeManagedFile(
@@ -57,7 +52,7 @@ describe("BackupRepoCache", () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-backup-git-"));
     originPath = path.join(tempDir, "origin.git");
     cacheRoot = path.join(tempDir, "cache");
-    await git(["init", "--bare", "--initial-branch=main", originPath]);
+    await runGit(["init", "--bare", "--initial-branch=main", originPath]);
   });
 
   afterEach(async () => {
@@ -75,43 +70,40 @@ describe("BackupRepoCache", () => {
 
   async function createSha256Origin(name: string, seedContent?: string): Promise<string> {
     const origin = path.join(tempDir, `${name}.git`);
-    await git(["init", "--bare", "--object-format=sha256", "--initial-branch=main", origin]);
+    await runGit(["init", "--bare", "--object-format=sha256", "--initial-branch=main", origin]);
     if (seedContent == null) return origin;
 
     const seed = path.join(tempDir, `${name}-seed`);
-    await git(["clone", origin, seed]);
+    await runGit(["clone", origin, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), seedContent, "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    await commitAll(seed, "seed");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
     return origin;
   }
 
   it("uses filtered transport for a local repository", async () => {
     const seed = path.join(tempDir, "local-clone-seed");
-    await git(["clone", originPath, seed]);
+    await runGit(["clone", originPath, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
     await fs.writeFile(path.join(seed, "unrelated.txt"), "outside managed path\n", "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    await commitAll(seed, "seed");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
 
     const repo = createRepo();
     await repo.ensureCache();
 
     expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
     const localObjects = async () =>
-      await git(["-C", repo.cachePath, "cat-file", "--batch-all-objects", "--batch-check"]);
+      await runGit(["-C", repo.cachePath, "cat-file", "--batch-all-objects", "--batch-check"]);
     expect(await localObjects()).not.toContain(" blob ");
 
     await fs.writeFile(path.join(seed, "mux", "second.md"), "second managed blob\n", "utf-8");
     await fs.writeFile(path.join(seed, "unrelated-2.txt"), "second unrelated blob\n", "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "next"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
-    const pushedCommit = await git(["-C", seed, "rev-parse", "HEAD"]);
+    await commitAll(seed, "next");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+    const pushedCommit = await runGit(["-C", seed, "rev-parse", "HEAD"]);
 
     expect(await repo.fetch()).toBe(pushedCommit);
     expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
@@ -133,7 +125,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
 
-    expect(await git(["-C", repo.cachePath, "config", "--get", "extensions.objectformat"])).toBe(
+    expect(await runGit(["-C", repo.cachePath, "config", "--get", "extensions.objectformat"])).toBe(
       "sha256"
     );
     expect(await fs.readFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
@@ -165,26 +157,42 @@ describe("BackupRepoCache", () => {
     for (const lock of staleLocks) expect(await pathExists(lock)).toBe(false);
   });
 
-  it("rebuilds a cache whose .git was left incomplete", async () => {
-    const repo = createRepo();
-    await repo.ensureCache();
-    await repo.fetch();
-    await repo.resetHardToRemote();
-    await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
-    const seeded = await repo.stageAndCommit("Back up settings");
-    if (seeded === null) throw new Error("Expected the seed commit");
-    await repo.push();
-
-    // What a kill between creating `.git` and writing its metadata leaves behind. The directory
-    // case covers a `HEAD` that exists but is the wrong type, which git rejects just as firmly.
-    for (const leaveBehind of [
-      () => fs.rm(path.join(repo.cachePath, ".git", "HEAD")),
-      async () => {
-        await fs.rm(path.join(repo.cachePath, ".git", "HEAD"));
-        await fs.mkdir(path.join(repo.cachePath, ".git", "HEAD"));
+  const incompleteCacheCases: Array<{
+    name: string;
+    damage: (cachePath: string) => Promise<void>;
+  }> = [
+    {
+      name: "rebuilds a cache missing .git/HEAD",
+      damage: (cachePath) => fs.rm(path.join(cachePath, ".git", "HEAD")),
+    },
+    {
+      name: "rebuilds a cache whose .git/HEAD is a directory",
+      damage: async (cachePath) => {
+        await fs.rm(path.join(cachePath, ".git", "HEAD"));
+        await fs.mkdir(path.join(cachePath, ".git", "HEAD"));
       },
-    ]) {
-      await leaveBehind();
+    },
+    {
+      name: "recovers when only the cache directory itself was created",
+      damage: async (cachePath) => {
+        await fs.rm(cachePath, { recursive: true, force: true });
+        await fs.mkdir(cachePath, { recursive: true });
+      },
+    },
+  ];
+
+  for (const testCase of incompleteCacheCases) {
+    it(testCase.name, async () => {
+      const repo = createRepo();
+      await repo.ensureCache();
+      await repo.fetch();
+      await repo.resetHardToRemote();
+      await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
+      const seeded = await repo.stageAndCommit("Back up settings");
+      if (seeded === null) throw new Error("Expected the seed commit");
+      await repo.push();
+
+      await testCase.damage(repo.cachePath);
 
       const reopened = createRepo();
       await reopened.ensureCache();
@@ -194,31 +202,8 @@ describe("BackupRepoCache", () => {
       expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
         "before the interruption\n"
       );
-    }
-  });
-
-  it("recovers when only the cache directory itself was created", async () => {
-    const repo = createRepo();
-    await repo.ensureCache();
-    await repo.fetch();
-    await repo.resetHardToRemote();
-    await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
-    const seeded = await repo.stageAndCommit("Back up settings");
-    if (seeded === null) throw new Error("Expected the seed commit");
-    await repo.push();
-    await fs.rm(repo.cachePath, { recursive: true, force: true });
-    // What a kill between creating the directory and creating `.git` leaves behind.
-    await fs.mkdir(repo.cachePath, { recursive: true });
-
-    const reopened = createRepo();
-    await reopened.ensureCache();
-    await reopened.fetch();
-    await reopened.resetHardToRemote();
-
-    expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
-      "before the interruption\n"
-    );
-  });
+    });
+  }
 
   it("leaves no half-deleted cache behind when a discard is interrupted", async () => {
     const repo = createRepo();
@@ -366,34 +351,51 @@ describe("BackupRepoCache", () => {
     expect(await fs.readFile(bystander, "utf-8")).toBe("not mux's\n");
   });
 
-  it("creates a missing backup branch with the remote's SHA-256 object format", async () => {
-    const shaOrigin = await createSha256Origin("sha256-new-branch", "existing branch\n");
-    const repo = new BackupRepoCache({
-      repoUrl: shaOrigin,
-      branch: "backup",
-      cacheRoot,
-      managedPath: "mux",
+  const sha256BootstrapCases: Array<{
+    name: string;
+    originName: string;
+    seedContent?: string;
+  }> = [
+    {
+      name: "creates a missing backup branch with the remote's SHA-256 object format",
+      originName: "sha256-new-branch",
+      seedContent: "existing branch\n",
+    },
+    {
+      name: "creates a first backup in an empty SHA-256 repository",
+      originName: "sha256-empty",
+    },
+  ];
+
+  for (const testCase of sha256BootstrapCases) {
+    it(testCase.name, async () => {
+      const shaOrigin = await createSha256Origin(testCase.originName, testCase.seedContent);
+      const repo = new BackupRepoCache({
+        repoUrl: shaOrigin,
+        branch: "backup",
+        cacheRoot,
+        managedPath: "mux",
+      });
+
+      await repo.ensureCache();
+      expect(await repo.fetch()).toBeNull();
+      expect(await repo.resetHardToRemote()).toBeNull();
+      await writeManagedFile(repo, "AGENTS.md", "first backup\n");
+      const commit = await repo.stageAndCommit("Back up settings");
+      if (commit === null) throw new Error("Expected the bootstrap commit");
+
+      expect(commit).toMatch(/^[0-9a-f]{64}$/);
+      expect(await repo.push()).toBe(commit);
+      expect(await runGit(["--git-dir", shaOrigin, "rev-parse", "refs/heads/backup"])).toBe(commit);
     });
-
-    await repo.ensureCache();
-    expect(await repo.fetch()).toBeNull();
-    expect(await repo.resetHardToRemote()).toBeNull();
-    await writeManagedFile(repo, "AGENTS.md", "first backup\n");
-    const commit = await repo.stageAndCommit("Back up settings");
-    if (commit === null) throw new Error("Expected the bootstrap commit");
-
-    expect(commit).toMatch(/^[0-9a-f]{64}$/);
-    expect(await repo.push()).toBe(commit);
-    expect(await git(["--git-dir", shaOrigin, "rev-parse", "refs/heads/backup"])).toBe(commit);
-  });
+  }
 
   it("creates a missing SHA-1 branch despite a SHA-256 init default", async () => {
     const seed = path.join(tempDir, "sha1-new-branch-seed");
-    await git(["clone", originPath, seed]);
+    await runGit(["clone", originPath, seed]);
     await fs.writeFile(path.join(seed, "existing.txt"), "existing branch\n", "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    await commitAll(seed, "seed");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
     const repo = new BackupRepoCache({
       repoUrl: originPath,
       branch: "backup",
@@ -416,37 +418,16 @@ describe("BackupRepoCache", () => {
 
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
     expect(await repo.push()).toBe(commit);
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/backup"])).toBe(commit);
-  });
-
-  it("creates a first backup in an empty SHA-256 repository", async () => {
-    const shaOrigin = await createSha256Origin("sha256-empty");
-    const repo = new BackupRepoCache({
-      repoUrl: shaOrigin,
-      branch: "backup",
-      cacheRoot,
-      managedPath: "mux",
-    });
-
-    await repo.ensureCache();
-    expect(await repo.fetch()).toBeNull();
-    expect(await repo.resetHardToRemote()).toBeNull();
-    await writeManagedFile(repo, "AGENTS.md", "first backup\n");
-    const commit = await repo.stageAndCommit("Back up settings");
-    if (commit === null) throw new Error("Expected the bootstrap commit");
-
-    expect(commit).toMatch(/^[0-9a-f]{64}$/);
-    expect(await repo.push()).toBe(commit);
-    expect(await git(["--git-dir", shaOrigin, "rev-parse", "refs/heads/backup"])).toBe(commit);
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/backup"])).toBe(commit);
   });
 
   it("materializes a blob-filtered clone through the credential ladder", async () => {
     const seedPath = path.join(tempDir, "seed");
-    await git(["clone", originPath, seedPath]);
+    await runGit(["clone", originPath, seedPath]);
     await fs.mkdir(path.join(seedPath, "mux"), { recursive: true });
     await fs.writeFile(path.join(seedPath, "mux", "note.md"), "managed content\n", "utf-8");
-    await git(["-C", seedPath, "add", "."]);
-    await git([
+    await runGit(["-C", seedPath, "add", "."]);
+    await runGit([
       "-C",
       seedPath,
       "-c",
@@ -457,7 +438,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "seed",
     ]);
-    await git(["-C", seedPath, "push", "origin", "HEAD:main"]);
+    await runGit(["-C", seedPath, "push", "origin", "HEAD:main"]);
 
     const repo = new BackupRepoCache({
       repoUrl: `file://${originPath}`,
@@ -468,7 +449,7 @@ describe("BackupRepoCache", () => {
     await repo.ensureCache();
     await repo.fetch();
     // The clone really is blob-filtered, so the checkout below must lazy-fetch.
-    const objects = await git([
+    const objects = await runGit([
       "-C",
       repo.cachePath,
       "cat-file",
@@ -505,7 +486,7 @@ describe("BackupRepoCache", () => {
     if (commit === null) throw new Error("Expected the bootstrap commit");
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
     expect(await repo.push()).toBe(commit);
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
   });
 
   it("materializes only the managed path and preserves the rest of the branch", async () => {
@@ -517,9 +498,9 @@ describe("BackupRepoCache", () => {
     await fs.writeFile(path.join(seed, "outside", "keep.txt"), "outside\n", "utf-8");
     await fs.mkdir(path.join(seed, "mux", "skills", "demo"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "skills", "demo", "SKILL.md"), "skill\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -531,7 +512,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "outside content",
     ]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     const repo = createRepo();
     await repo.ensureCache();
@@ -547,7 +528,7 @@ describe("BackupRepoCache", () => {
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
-    const tracked = await git(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
+    const tracked = await runGit(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
     expect(tracked.split("\n")).toContain("outside/keep.txt");
     expect(tracked.split("\n")).toContain("mux/AGENTS.md");
   });
@@ -581,9 +562,9 @@ describe("BackupRepoCache", () => {
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "line one\nline two\n", "utf-8");
     // The backup repository asking for conversion itself, which outranks any config setting.
     await fs.writeFile(path.join(seed, ".gitattributes"), "* text=auto eol=crlf\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "-c", "core.autocrlf=false", "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "-c", "core.autocrlf=false", "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -595,7 +576,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "ask for crlf",
     ]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     // core.autocrlf=true is an ordinary Windows setting. The manifest records a SHA-256 per
     // file and a restore writes what it reads, so any conversion here corrupts both.
@@ -624,9 +605,9 @@ describe("BackupRepoCache", () => {
     // unexpanded bytes, so expansion makes every later Preview/Restore reject the backup.
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "ident line: $Id$\n", "utf-8");
     await fs.writeFile(path.join(seed, ".gitattributes"), "mux/** ident\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -638,7 +619,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "ask for ident",
     ]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     const repo = createRepo();
     await repo.ensureCache();
@@ -658,7 +639,7 @@ describe("BackupRepoCache", () => {
     const outside = path.join(tempDir, "outside-worktree");
     await fs.mkdir(path.join(outside, "mux"), { recursive: true });
     await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
-    await git(["-C", repo.cachePath, "config", "core.worktree", outside]);
+    await runGit(["-C", repo.cachePath, "config", "core.worktree", outside]);
 
     const failure = await repo.ensureCache().then(
       () => null,
@@ -690,12 +671,12 @@ describe("BackupRepoCache", () => {
 
   it("drops a cache-local pushInsteadOf rewrite so the push reaches the configured repository", async () => {
     const evil = path.join(tempDir, "evil.git");
-    await git(["init", "--bare", "--initial-branch=main", evil]);
+    await runGit(["init", "--bare", "--initial-branch=main", evil]);
     const repo = createRepo();
     await repo.ensureCache();
     // Cache-local config is not the user's own git configuration: this rewrite redirects the
     // push while the stored `remote.origin.url` still reads as the configured repository.
-    await git(["-C", repo.cachePath, "config", `url.${evil}.pushInsteadOf`, originPath]);
+    await runGit(["-C", repo.cachePath, "config", `url.${evil}.pushInsteadOf`, originPath]);
 
     await repo.ensureCache();
     await repo.fetch();
@@ -705,8 +686,8 @@ describe("BackupRepoCache", () => {
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
-    const evilRefs = await git(["--git-dir", evil, "show-ref"]).then(
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+    const evilRefs = await runGit(["--git-dir", evil, "show-ref"]).then(
       (refs) => refs,
       () => "none"
     );
@@ -727,7 +708,7 @@ describe("BackupRepoCache", () => {
     await repo.resetHardToRemote();
     // Post-sanitize tamper: the rebuilt config pins hooksPath off too, so drop that pin to
     // prove the per-invocation option protects commands after the config is altered again.
-    await git(["-C", repo.cachePath, "config", "--unset", "core.hookspath"]);
+    await runGit(["-C", repo.cachePath, "config", "--unset", "core.hookspath"]);
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
     expect(await repo.stageAndCommit("Back up settings")).not.toBeNull();
 
@@ -738,10 +719,21 @@ describe("BackupRepoCache", () => {
     const seed = path.join(tempDir, "replace-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "note.md"), "original\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", "s"]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "s",
+    ]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     const repo = createRepo();
     await repo.ensureCache();
@@ -751,7 +743,7 @@ describe("BackupRepoCache", () => {
     // A replace ref substitutes another object's bytes at read time without changing any
     // commit hash, so a tampered cache could hand later reads different content than the
     // commit everything else verified.
-    const original = await git([
+    const original = await runGit([
       "-C",
       repo.cachePath,
       "rev-parse",
@@ -759,8 +751,8 @@ describe("BackupRepoCache", () => {
     ]);
     const evilFile = path.join(tempDir, "evil-content");
     await fs.writeFile(evilFile, "evil\n", "utf-8");
-    const evil = await git(["-C", repo.cachePath, "hash-object", "-w", evilFile]);
-    await git(["-C", repo.cachePath, "update-ref", `refs/replace/${original}`, evil]);
+    const evil = await runGit(["-C", repo.cachePath, "hash-object", "-w", evilFile]);
+    await runGit(["-C", repo.cachePath, "update-ref", `refs/replace/${original}`, evil]);
     await fs.rm(path.join(repo.cachePath, "mux", "note.md"));
 
     await repo.resetHardToRemote();
@@ -778,8 +770,8 @@ describe("BackupRepoCache", () => {
     await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
     // `git sparse-checkout set` used to enable this extension, and the worktree-scoped file
     // it activates is trusted by git like the main config, including for `core.worktree`.
-    await git(["-C", repo.cachePath, "config", "extensions.worktreeConfig", "true"]);
-    await git(["-C", repo.cachePath, "config", "--worktree", "core.worktree", outside]);
+    await runGit(["-C", repo.cachePath, "config", "extensions.worktreeConfig", "true"]);
+    await runGit(["-C", repo.cachePath, "config", "--worktree", "core.worktree", outside]);
 
     await repo.ensureCache();
     await repo.fetch();
@@ -794,16 +786,27 @@ describe("BackupRepoCache", () => {
     const seed = path.join(tempDir, "env-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-q", "-m", "s"]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
+      "-C",
+      seed,
+      "-c",
+      "user.email=t@e",
+      "-c",
+      "user.name=T",
+      "commit",
+      "-q",
+      "-m",
+      "s",
+    ]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     // Mux may be launched from a git hook or alias, where these are exported. Git reads them
     // ahead of `-C`, so without stripping, checkout materializes under the outside worktree
     // and `clean -fdx -- mux` deletes the victim file there.
     const outside = path.join(tempDir, "outside-repo");
-    await git(["init", "-q", outside]);
+    await runGit(["init", "-q", outside]);
     await fs.mkdir(path.join(outside, "mux"), { recursive: true });
     await fs.writeFile(path.join(outside, "mux", "victim.txt"), "keep\n", "utf-8");
     const repo = new BackupRepoCache({
@@ -831,7 +834,7 @@ describe("BackupRepoCache", () => {
 
   it("ignores environment-supplied git config instead of letting it redirect the push", async () => {
     const evil = path.join(tempDir, "env-evil.git");
-    await git(["init", "--bare", "--initial-branch=main", evil]);
+    await runGit(["init", "--bare", "--initial-branch=main", evil]);
     // Command-scope config arrives through the environment (git -c exports it to hooks), so
     // the cache config rebuild cannot remove it: only stripping the variables can.
     const repo = new BackupRepoCache({
@@ -856,8 +859,8 @@ describe("BackupRepoCache", () => {
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
-    const evilRefs = await git(["--git-dir", evil, "show-ref"]).then(
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(commit);
+    const evilRefs = await runGit(["--git-dir", evil, "show-ref"]).then(
       (refs) => refs,
       () => "none"
     );
@@ -877,19 +880,19 @@ describe("BackupRepoCache", () => {
       ["extensions.partialclone", "origin"],
     ] as const;
     for (const [key, value] of retained) {
-      await git(["config", "--file", configPath, key, value]);
+      await runGit(["config", "--file", configPath, key, value]);
     }
 
     await repo.ensureCache();
     for (const [key, value] of retained) {
-      expect(await git(["config", "--file", configPath, "--get", key])).toBe(value);
+      expect(await runGit(["config", "--file", configPath, "--get", key])).toBe(value);
     }
 
     for (const [key] of retained) {
-      await git(["config", "--file", configPath, key, "garbage"]);
+      await runGit(["config", "--file", configPath, key, "garbage"]);
     }
-    await git(["config", "--file", configPath, "extensions.objectformat", "garbage"]);
-    await git(["config", "--file", configPath, "core.repositoryformatversion", "garbage"]);
+    await runGit(["config", "--file", configPath, "extensions.objectformat", "garbage"]);
+    await runGit(["config", "--file", configPath, "core.repositoryformatversion", "garbage"]);
 
     await repo.ensureCache();
     await repo.fetch();
@@ -897,7 +900,7 @@ describe("BackupRepoCache", () => {
 
     expect(await repo.porcelainStatus()).toBe("");
     expect(
-      await git(["config", "--file", configPath, "--get", "core.repositoryformatversion"])
+      await runGit(["config", "--file", configPath, "--get", "core.repositoryformatversion"])
     ).toBe("1");
     expect(await fs.readFile(configPath, "utf-8")).not.toContain("garbage");
   });
@@ -907,7 +910,7 @@ describe("BackupRepoCache", () => {
     await repo.ensureCache();
     // An interrupted tool or stray edit; preserved, it fails every worktree command with
     // "this operation must be run in a work tree" until the cache is deleted by hand.
-    await git(["-C", repo.cachePath, "config", "core.bare", "true"]);
+    await runGit(["-C", repo.cachePath, "config", "core.bare", "true"]);
 
     await repo.ensureCache();
     await repo.fetch();
@@ -1033,9 +1036,9 @@ describe("BackupRepoCache", () => {
     const seed = path.join(tempDir, "slash-seed");
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -1047,7 +1050,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "managed content",
     ]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     // The settings default is `mux/`, and an unnormalized `/mux//*` sparse pattern selects
     // nothing, so the backup reads as absent and a push lands outside the sparse definition.
@@ -1068,7 +1071,7 @@ describe("BackupRepoCache", () => {
     const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
-    expect(await git(["--git-dir", originPath, "show", "main:mux/AGENTS.md"])).toBe("updated");
+    expect(await runGit(["--git-dir", originPath, "show", "main:mux/AGENTS.md"])).toBe("updated");
   });
 
   it("treats a managed path containing glob characters literally", async () => {
@@ -1077,9 +1080,9 @@ describe("BackupRepoCache", () => {
     await fs.writeFile(path.join(seed, "mux[1]", "AGENTS.md"), "managed\n", "utf-8");
     await fs.mkdir(path.join(seed, "mux1"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux1", "other.txt"), "sibling\n", "utf-8");
-    await git(["-C", seed, "init", "-q"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "init", "-q"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -1091,7 +1094,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "glob siblings",
     ]);
-    await git(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
+    await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
     const repo = new BackupRepoCache({
       repoUrl: originPath,
@@ -1116,17 +1119,18 @@ describe("BackupRepoCache", () => {
     const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
-    expect(await git(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe("updated");
+    expect(await runGit(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe(
+      "updated"
+    );
   });
 
   it("anchors relative local repository paths to the cache root's parent", async () => {
     const seed = path.join(tempDir, "relative-origin-seed");
-    await git(["clone", originPath, seed]);
+    await runGit(["clone", originPath, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
     await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
-    await git(["-C", seed, "add", "-A"]);
-    await git(["-C", seed, "-c", "user.email=t@e", "-c", "user.name=T", "commit", "-m", "seed"]);
-    await git(["-C", seed, "push", "origin", "HEAD:main"]);
+    await commitAll(seed, "seed");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
 
     const stableRoot = path.join(tempDir, "mux-root");
     const relativeOrigin = path.relative(stableRoot, originPath);
@@ -1141,21 +1145,27 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
 
-    const storedOrigin = await git(["-C", repo.cachePath, "config", "--get", "remote.origin.url"]);
+    const storedOrigin = await runGit([
+      "-C",
+      repo.cachePath,
+      "config",
+      "--get",
+      "remote.origin.url",
+    ]);
     expect(path.isAbsolute(storedOrigin)).toBe(true);
     expect(await fs.realpath(storedOrigin)).toBe(await fs.realpath(originPath));
 
     for (const compatibleOrigin of [relativeOrigin, originPath]) {
-      await git(["-C", repo.cachePath, "remote", "set-url", "origin", compatibleOrigin]);
+      await runGit(["-C", repo.cachePath, "remote", "set-url", "origin", compatibleOrigin]);
       await repo.ensureCache();
-      expect(await git(["-C", repo.cachePath, "config", "--get", "remote.origin.url"])).toBe(
+      expect(await runGit(["-C", repo.cachePath, "config", "--get", "remote.origin.url"])).toBe(
         storedOrigin
       );
     }
 
     const other = path.join(tempDir, "relative-other.git");
-    await git(["init", "--bare", other]);
-    await git(["-C", repo.cachePath, "remote", "set-url", "origin", other]);
+    await runGit(["init", "--bare", other]);
+    await runGit(["-C", repo.cachePath, "remote", "set-url", "origin", other]);
     const failure = await repo.ensureCache().then(
       () => null,
       (error: unknown) => error
@@ -1166,7 +1176,7 @@ describe("BackupRepoCache", () => {
   it("reuses the cache and rejects an origin mismatch", async () => {
     const repo = createRepo();
     await repo.ensureCache();
-    await git([
+    await runGit([
       "-C",
       repo.cachePath,
       "remote",
@@ -1185,8 +1195,8 @@ describe("BackupRepoCache", () => {
 
   it("refuses a cache whose .git is a gitfile pointing at another repository", async () => {
     const outside = path.join(tempDir, "outside");
-    await git(["init", outside]);
-    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+    await runGit(["init", outside]);
+    await runGit(["-C", outside, "config", "core.autocrlf", "input"]);
 
     const repo = createRepo();
     await fs.mkdir(repo.cachePath, { recursive: true });
@@ -1205,13 +1215,13 @@ describe("BackupRepoCache", () => {
       expect(error.message).toContain("not a directory");
     }
     // The outside repository's config must not have taken the cache's writes.
-    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+    expect(await runGit(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
   });
 
   it("refuses a cache whose .git carries a commondir indirection", async () => {
     const outside = path.join(tempDir, "outside");
-    await git(["init", outside]);
-    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+    await runGit(["init", outside]);
+    await runGit(["-C", outside, "config", "core.autocrlf", "input"]);
 
     const repo = createRepo();
     await repo.ensureCache();
@@ -1228,7 +1238,7 @@ describe("BackupRepoCache", () => {
       if (!(error instanceof Error)) throw error;
       expect(error.message).toContain("redirects to another repository");
     }
-    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+    expect(await runGit(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
   });
 
   it("accepts a cache whose url the user's insteadOf rules rewrite", async () => {
@@ -1303,10 +1313,10 @@ describe("BackupRepoCache", () => {
     if (localCommit === null) throw new Error("Expected the local update commit");
 
     const otherPath = path.join(tempDir, "other");
-    await git(["clone", originPath, otherPath]);
+    await runGit(["clone", originPath, otherPath]);
     await fs.writeFile(path.join(otherPath, "remote.txt"), "remote update\n", "utf-8");
-    await git(["-C", otherPath, "add", "remote.txt"]);
-    await git([
+    await runGit(["-C", otherPath, "add", "remote.txt"]);
+    await runGit([
       "-C",
       otherPath,
       "-c",
@@ -1319,7 +1329,7 @@ describe("BackupRepoCache", () => {
       "-m",
       "Remote update",
     ]);
-    await git(["-C", otherPath, "push", "origin", "main"]);
+    await runGit(["-C", otherPath, "push", "origin", "main"]);
 
     try {
       await repo.push();
@@ -1352,7 +1362,7 @@ describe("BackupRepoCache", () => {
     const originalAssert = repo.assertRemoteUnchanged.bind(repo);
     repo.assertRemoteUnchanged = async () => {
       await originalAssert();
-      await git(["-C", originPath, "update-ref", "-d", "refs/heads/main"]);
+      await runGit(["-C", originPath, "update-ref", "-d", "refs/heads/main"]);
     };
 
     try {
@@ -1361,6 +1371,6 @@ describe("BackupRepoCache", () => {
     } catch (error) {
       expect(error).toBeInstanceOf(BackupNonFastForwardError);
     }
-    expect(await git(["-C", originPath, "for-each-ref", "refs/heads/main"])).toBe("");
+    expect(await runGit(["-C", originPath, "for-each-ref", "refs/heads/main"])).toBe("");
   });
 });

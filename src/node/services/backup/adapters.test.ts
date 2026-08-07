@@ -3,38 +3,10 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Config } from "@/node/config";
-import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
-import { execFileAsync } from "@/node/utils/disposableExec";
 import { createBackupGitRepo, createBackupPayloadStore } from "./adapters";
 import { BackupNonFastForwardError, backupCachePath } from "./gitRepo";
-
-async function git(args: string[]): Promise<string> {
-  using process = execFileAsync("git", args);
-  return (await process.result).stdout.trim();
-}
-
-class TestConfig extends Config {
-  state: ProjectsConfig = { projects: new Map() };
-  /**
-   * Runs once immediately before an edit sees the config, mirroring how the real queue
-   * re-reads disk: it stands in for another window saving while an operation is in flight.
-   */
-  beforeEdit: (() => void) | null = null;
-
-  override loadConfigOrDefault(): ProjectsConfig {
-    return this.state;
-  }
-
-  override editConfig(edit: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
-    const hook = this.beforeEdit;
-    this.beforeEdit = null;
-    hook?.();
-    this.state = edit(this.state);
-    return Promise.resolve();
-  }
-}
+import { TestBackupConfig, runGit, writeFixtureFile } from "./testHelpers";
 
 describe("backup adapters", () => {
   let tempDir: string;
@@ -42,7 +14,7 @@ describe("backup adapters", () => {
   let originPath: string;
   let cacheRoot: string;
   let settings: SettingsBackupInput;
-  let config: TestConfig;
+  let config: TestBackupConfig;
 
   beforeEach(async () => {
     tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-backup-adapters-"));
@@ -50,24 +22,18 @@ describe("backup adapters", () => {
     originPath = path.join(tempDir, "origin.git");
     cacheRoot = path.join(tempDir, "cache");
     await fs.mkdir(muxRoot, { recursive: true });
-    await git(["init", "--bare", "--initial-branch=main", originPath]);
+    await runGit(["init", "--bare", "--initial-branch=main", originPath]);
     settings = { repoUrl: originPath, branch: "main", path: "mux" };
-    config = new TestConfig(muxRoot);
+    config = new TestBackupConfig(muxRoot);
   });
 
   afterEach(async () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  async function writeMuxFile(relativePath: string, content: string): Promise<void> {
-    const absolutePath = path.join(muxRoot, relativePath);
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf-8");
-  }
-
   it("exports, pushes, and reports a second push as unchanged", async () => {
-    await writeMuxFile("AGENTS.md", "global instructions\n");
-    await writeMuxFile("skills/demo/SKILL.md", "demo skill\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "global instructions\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "demo skill\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -83,7 +49,7 @@ describe("backup adapters", () => {
       expectedRemoteCommit: repository.remoteCommit,
     });
     expect(pushed.changed).toBe(true);
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toBe(
       pushed.commit
     );
 
@@ -100,10 +66,10 @@ describe("backup adapters", () => {
 
   it("pushes payload files the target repository would otherwise ignore", async () => {
     const seed = path.join(tempDir, "seed");
-    await git(["clone", originPath, seed]);
+    await runGit(["clone", originPath, seed]);
     await fs.writeFile(path.join(seed, ".gitignore"), "preferences.json\n", "utf-8");
-    await git(["-C", seed, "add", "."]);
-    await git([
+    await runGit(["-C", seed, "add", "."]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -114,9 +80,9 @@ describe("backup adapters", () => {
       "-m",
       "seed ignore rules",
     ]);
-    await git(["-C", seed, "push", "origin", "main"]);
+    await runGit(["-C", seed, "push", "origin", "main"]);
 
-    await writeMuxFile("AGENTS.md", "global instructions\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "global instructions\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -127,16 +93,16 @@ describe("backup adapters", () => {
       expectedRemoteCommit: repository.remoteCommit,
     });
 
-    const tracked = await git(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
+    const tracked = await runGit(["--git-dir", originPath, "ls-tree", "-r", "--name-only", "main"]);
     expect(tracked.split("\n")).toContain("mux/preferences.json");
   });
 
   it("discards an ignored payload left in the cache by an earlier preview", async () => {
     const seed = path.join(tempDir, "seed");
-    await git(["clone", originPath, seed]);
+    await runGit(["clone", originPath, seed]);
     await fs.writeFile(path.join(seed, ".gitignore"), "mux/\n", "utf-8");
-    await git(["-C", seed, "add", "."]);
-    await git([
+    await runGit(["-C", seed, "add", "."]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -147,9 +113,9 @@ describe("backup adapters", () => {
       "-m",
       "ignore the managed path",
     ]);
-    await git(["-C", seed, "push", "origin", "main"]);
+    await runGit(["-C", seed, "push", "origin", "main"]);
 
-    await writeMuxFile("AGENTS.md", "never pushed\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "never pushed\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -167,7 +133,7 @@ describe("backup adapters", () => {
   });
 
   it("fails a preview whose restore could not run", async () => {
-    await writeMuxFile("agents/foo.md", "an agent\n");
+    await writeFixtureFile(muxRoot, "agents/foo.md", "an agent\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
     const prepared = await gitRepo.prepare(settings);
@@ -189,7 +155,7 @@ describe("backup adapters", () => {
   });
 
   it("reports drift when the remote moves before an unchanged push", async () => {
-    await writeMuxFile("AGENTS.md", "shared state\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "shared state\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -206,10 +172,10 @@ describe("backup adapters", () => {
 
     // Another client advances the branch after this cache fetched it.
     const other = path.join(tempDir, "other-client");
-    await git(["clone", originPath, other]);
+    await runGit(["clone", originPath, other]);
     await fs.writeFile(path.join(other, "unrelated.txt"), "from another client\n", "utf-8");
-    await git(["-C", other, "add", "."]);
-    await git([
+    await runGit(["-C", other, "add", "."]);
+    await runGit([
       "-C",
       other,
       "-c",
@@ -220,7 +186,7 @@ describe("backup adapters", () => {
       "-m",
       "other client",
     ]);
-    await git(["-C", other, "push", "origin", "main"]);
+    await runGit(["-C", other, "push", "origin", "main"]);
 
     try {
       await gitRepo.commitAndPush(second, {
@@ -234,7 +200,7 @@ describe("backup adapters", () => {
   });
 
   it("reads the remote backup after a preview modified the cache", async () => {
-    await writeMuxFile("AGENTS.md", "pushed state\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "pushed state\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -246,7 +212,7 @@ describe("backup adapters", () => {
     });
 
     // A preview rewrites the tracked payload in the cache without pushing it.
-    await writeMuxFile("AGENTS.md", "local only\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "local only\n");
     const second = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
 
@@ -261,7 +227,7 @@ describe("backup adapters", () => {
   it("does not fetch branches other than the configured one", async () => {
     // A settings backup often points at an existing dotfiles repo, whose other branches can
     // carry far more history than this feature will ever read.
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
     const first = await gitRepo.prepare(settings);
@@ -272,11 +238,11 @@ describe("backup adapters", () => {
     });
 
     const unrelated = path.join(tempDir, "unrelated-clone");
-    await git(["clone", "--quiet", originPath, unrelated]);
+    await runGit(["clone", "--quiet", originPath, unrelated]);
     await fs.writeFile(path.join(unrelated, "huge.bin"), "unrelated payload\n", "utf-8");
-    await git(["-C", unrelated, "checkout", "--quiet", "-b", "unrelated"]);
-    await git(["-C", unrelated, "add", "-A"]);
-    await git([
+    await runGit(["-C", unrelated, "checkout", "--quiet", "-b", "unrelated"]);
+    await runGit(["-C", unrelated, "add", "-A"]);
+    await runGit([
       "-C",
       unrelated,
       "-c",
@@ -288,12 +254,12 @@ describe("backup adapters", () => {
       "-m",
       "unrelated work",
     ]);
-    await git(["-C", unrelated, "push", "--quiet", "origin", "unrelated"]);
+    await runGit(["-C", unrelated, "push", "--quiet", "origin", "unrelated"]);
 
     await gitRepo.prepare(settings);
 
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
-    const refs = await git(["-C", cachePath, "for-each-ref", "--format=%(refname)"]);
+    const refs = await runGit(["-C", cachePath, "for-each-ref", "--format=%(refname)"]);
     expect(refs).not.toContain("unrelated");
   });
 
@@ -301,11 +267,11 @@ describe("backup adapters", () => {
     // The remote's default branch is not the backup branch, and none of its history is
     // reachable from the root commit a first backup makes.
     const seed = path.join(tempDir, "seed-default-branch");
-    await git(["clone", "--quiet", originPath, seed]);
+    await runGit(["clone", "--quiet", originPath, seed]);
     await fs.writeFile(path.join(seed, "unrelated.md"), "default branch content\n", "utf-8");
-    await git(["-C", seed, "checkout", "--quiet", "-b", "trunk"]);
-    await git(["-C", seed, "add", "-A"]);
-    await git([
+    await runGit(["-C", seed, "checkout", "--quiet", "-b", "trunk"]);
+    await runGit(["-C", seed, "add", "-A"]);
+    await runGit([
       "-C",
       seed,
       "-c",
@@ -317,16 +283,16 @@ describe("backup adapters", () => {
       "-m",
       "default branch work",
     ]);
-    await git(["-C", seed, "push", "--quiet", "origin", "trunk"]);
-    await git(["--git-dir", originPath, "symbolic-ref", "HEAD", "refs/heads/trunk"]);
+    await runGit(["-C", seed, "push", "--quiet", "origin", "trunk"]);
+    await runGit(["--git-dir", originPath, "symbolic-ref", "HEAD", "refs/heads/trunk"]);
 
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
 
     await gitRepo.prepare({ ...settings, branch: "mux-backup" });
 
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, "mux-backup");
-    const objects = await git(["-C", cachePath, "count-objects", "-v"]);
+    const objects = await runGit(["-C", cachePath, "count-objects", "-v"]);
     expect(objects).toContain("count: 0");
     expect(objects).toContain("in-pack: 0");
   });
@@ -335,34 +301,36 @@ describe("backup adapters", () => {
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     // What `git init` leaves behind when the process dies before the remote is added.
     await fs.mkdir(cachePath, { recursive: true });
-    await git(["init", "--quiet", "--initial-branch", settings.branch, cachePath]);
-    await writeMuxFile("AGENTS.md", "first\n");
+    await runGit(["init", "--quiet", "--initial-branch", settings.branch, cachePath]);
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
 
     const repository = await gitRepo.prepare(settings);
 
     expect(repository.rootDir).toBe(cachePath);
-    expect(await git(["-C", cachePath, "remote", "get-url", "origin"])).toBe(settings.repoUrl);
+    expect(await runGit(["-C", cachePath, "remote", "get-url", "origin"])).toBe(settings.repoUrl);
   });
 
   it("keeps blobs outside the managed path out of an initialized cache", async () => {
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
 
     await gitRepo.prepare(settings);
 
     // Without these a later fetch pulls every blob the branch reaches, including files
     // elsewhere in a dotfiles repo that sparse checkout never materializes.
-    expect(await git(["-C", cachePath, "config", "--get", "remote.origin.promisor"])).toBe("true");
+    expect(await runGit(["-C", cachePath, "config", "--get", "remote.origin.promisor"])).toBe(
+      "true"
+    );
     expect(
-      await git(["-C", cachePath, "config", "--get", "remote.origin.partialclonefilter"])
+      await runGit(["-C", cachePath, "config", "--get", "remote.origin.partialclonefilter"])
     ).toBe("blob:none");
   });
 
   it("exports payload files into the cache as owner-only", async () => {
-    await writeMuxFile("AGENTS.md", "instructions\n");
-    await writeMuxFile("skills/demo/SKILL.md", "skill\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "instructions\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "skill\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -385,14 +353,14 @@ describe("backup adapters", () => {
   });
 
   it("refuses a cache whose push url is not the configured repository", async () => {
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     await gitRepo.prepare(settings);
     // `pushurl` overrides the url for pushes only, so the fetch url stays the expected one.
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     const elsewhere = path.join(tempDir, "elsewhere.git");
-    await git(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
-    await git(["-C", cachePath, "config", "remote.origin.pushurl", elsewhere]);
+    await runGit(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
+    await runGit(["-C", cachePath, "config", "remote.origin.pushurl", elsewhere]);
 
     const refused = await createBackupGitRepo({ cacheRoot })
       .prepare(settings)
@@ -405,15 +373,15 @@ describe("backup adapters", () => {
   });
 
   it("refuses a cache with a second push url alongside the configured one", async () => {
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     await createBackupGitRepo({ cacheRoot }).prepare(settings);
     // `pushurl` is multi-valued and a push writes to every value, so reading only the first
     // would let this second destination through.
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     const elsewhere = path.join(tempDir, "second-destination.git");
-    await git(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
-    await git(["-C", cachePath, "config", "--add", "remote.origin.pushurl", settings.repoUrl]);
-    await git(["-C", cachePath, "config", "--add", "remote.origin.pushurl", elsewhere]);
+    await runGit(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
+    await runGit(["-C", cachePath, "config", "--add", "remote.origin.pushurl", settings.repoUrl]);
+    await runGit(["-C", cachePath, "config", "--add", "remote.origin.pushurl", elsewhere]);
 
     const refused = await createBackupGitRepo({ cacheRoot })
       .prepare(settings)
@@ -423,7 +391,7 @@ describe("backup adapters", () => {
       );
 
     expect((refused as Error | null)?.message).toContain("Backup cache origin");
-    expect(await git(["--git-dir", elsewhere, "for-each-ref", "refs/heads"])).toBe("");
+    expect(await runGit(["--git-dir", elsewhere, "for-each-ref", "refs/heads"])).toBe("");
   });
 
   it("adds no remote to another repository behind a symlinked .git", async () => {
@@ -431,11 +399,11 @@ describe("backup adapters", () => {
     // path, where a `remote add` and two `config` writes happen before the attributes write.
     const outside = path.join(tempDir, "outside-no-origin");
     await fs.mkdir(outside, { recursive: true });
-    await git(["init", "--quiet", "--initial-branch=main", outside]);
+    await runGit(["init", "--quiet", "--initial-branch=main", outside]);
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     await fs.mkdir(cachePath, { recursive: true });
     await fs.symlink(path.join(outside, ".git"), path.join(cachePath, ".git"));
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
 
     const refused = await createBackupGitRepo({ cacheRoot })
       .prepare(settings)
@@ -445,20 +413,20 @@ describe("backup adapters", () => {
       );
 
     expect((refused as Error | null)?.message).toContain("is a symlink");
-    expect(await git(["-C", outside, "remote"])).toBe("");
+    expect(await runGit(["-C", outside, "remote"])).toBe("");
   });
 
   it("changes no config in another repository behind a symlinked .git", async () => {
     const outside = path.join(tempDir, "outside-repo");
     await fs.mkdir(outside, { recursive: true });
-    await git(["init", "--quiet", "--initial-branch=main", outside]);
+    await runGit(["init", "--quiet", "--initial-branch=main", outside]);
     // Matching origin, so only the link itself distinguishes this from a legitimate cache.
-    await git(["-C", outside, "remote", "add", "origin", settings.repoUrl]);
-    await git(["-C", outside, "config", "core.autocrlf", "input"]);
+    await runGit(["-C", outside, "remote", "add", "origin", settings.repoUrl]);
+    await runGit(["-C", outside, "config", "core.autocrlf", "input"]);
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     await fs.mkdir(cachePath, { recursive: true });
     await fs.symlink(path.join(outside, ".git"), path.join(cachePath, ".git"));
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
 
     const refused = await createBackupGitRepo({ cacheRoot })
       .prepare(settings)
@@ -468,11 +436,11 @@ describe("backup adapters", () => {
       );
 
     expect((refused as Error | null)?.message).toContain("is a symlink");
-    expect(await git(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
+    expect(await runGit(["-C", outside, "config", "--get", "core.autocrlf"])).toBe("input");
   });
 
   it("refuses to write git attributes through a symlinked info directory", async () => {
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     await createBackupGitRepo({ cacheRoot }).prepare(settings);
     const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
     const outside = path.join(tempDir, "outside-info");
@@ -494,7 +462,7 @@ describe("backup adapters", () => {
   });
 
   it("does not recreate deleted history when the remote branch is gone", async () => {
-    await writeMuxFile("AGENTS.md", "first\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -506,9 +474,9 @@ describe("backup adapters", () => {
     });
 
     // The user deletes the branch remotely, e.g. to purge something they regret pushing.
-    await git(["--git-dir", originPath, "update-ref", "-d", "refs/heads/main"]);
+    await runGit(["--git-dir", originPath, "update-ref", "-d", "refs/heads/main"]);
 
-    await writeMuxFile("AGENTS.md", "second\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "second\n");
     const second = await gitRepo.prepare(settings);
     expect(second.remoteCommit).toBeNull();
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
@@ -517,12 +485,12 @@ describe("backup adapters", () => {
       expectedRemoteCommit: second.remoteCommit,
     });
 
-    const history = await git(["--git-dir", originPath, "rev-list", "--count", "main"]);
+    const history = await runGit(["--git-dir", originPath, "rev-list", "--count", "main"]);
     expect(history).toBe("1");
   });
 
   it("reports no restore changes when the backup matches local state", async () => {
-    await writeMuxFile("AGENTS.md", "unchanged\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "unchanged\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -539,7 +507,8 @@ describe("backup adapters", () => {
   it("does not report a value the backup redacted as a restore change", async () => {
     // Canonically formatted, because the export reserializes the document to keep comments out
     // of the payload: a local file that differs only in layout is a real restore change.
-    await writeMuxFile(
+    await writeFixtureFile(
+      muxRoot,
       "mcp.jsonc",
       `${JSON.stringify(
         {
@@ -565,7 +534,7 @@ describe("backup adapters", () => {
   });
 
   it("previews and restores a mode-only difference", async () => {
-    await writeMuxFile("skills/demo/run.sh", "#!/bin/sh\necho demo\n");
+    await writeFixtureFile(muxRoot, "skills/demo/run.sh", "#!/bin/sh\necho demo\n");
     await fs.chmod(path.join(muxRoot, "skills/demo/run.sh"), 0o755);
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
@@ -652,17 +621,17 @@ describe("backup adapters", () => {
   });
 
   it("previews restore changes against local files and keeps local-only files", async () => {
-    await writeMuxFile("AGENTS.md", "backed up\n");
-    await writeMuxFile("agents/shared.md", "shared agent\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "backed up\n");
+    await writeFixtureFile(muxRoot, "agents/shared.md", "shared agent\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
 
-    await writeMuxFile("AGENTS.md", "locally edited\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "locally edited\n");
     await fs.rm(path.join(muxRoot, "agents/shared.md"));
-    await writeMuxFile("agents/local-only.md", "local only\n");
+    await writeFixtureFile(muxRoot, "agents/local-only.md", "local only\n");
 
     const preview = await payload.previewRestore({
       repositoryRoot: repository.rootDir,
@@ -676,7 +645,11 @@ describe("backup adapters", () => {
   });
 
   it("surfaces MCP command approvals in the preview and blocks validation without them", async () => {
-    await writeMuxFile("mcp.jsonc", '{ "servers": { "notes": { "command": "npx notes-mcp" } } }\n');
+    await writeFixtureFile(
+      muxRoot,
+      "mcp.jsonc",
+      '{ "servers": { "notes": { "command": "npx notes-mcp" } } }\n'
+    );
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -724,15 +697,15 @@ describe("backup adapters", () => {
 
   it("restores files and persists merged preferences through config", async () => {
     config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
-    await writeMuxFile("AGENTS.md", "backed up\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "backed up\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
 
-    await writeMuxFile("AGENTS.md", "locally edited\n");
-    await writeMuxFile("agents/local-only.md", "local only\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "locally edited\n");
+    await writeFixtureFile(muxRoot, "agents/local-only.md", "local only\n");
     config.state = {
       projects: new Map(),
       userPreferences: {
@@ -760,7 +733,7 @@ describe("backup adapters", () => {
 
   it("reports a lost preferences write instead of restoring silently", async () => {
     config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
-    await writeMuxFile("AGENTS.md", "backed up\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "backed up\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
     const repository = await gitRepo.prepare(settings);
@@ -785,7 +758,7 @@ describe("backup adapters", () => {
 
   it("keeps preferences another window saved while the restore ran", async () => {
     config.state = { projects: new Map(), userPreferences: { appearance: { theme: "dark" } } };
-    await writeMuxFile("AGENTS.md", "backed up\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "backed up\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -813,8 +786,9 @@ describe("backup adapters", () => {
   });
 
   it("writes a safety snapshot of the current local files", async () => {
-    await writeMuxFile("AGENTS.md", "before restore\n");
-    await writeMuxFile(
+    await writeFixtureFile(muxRoot, "AGENTS.md", "before restore\n");
+    await writeFixtureFile(
+      muxRoot,
       "mcp.jsonc",
       `{"servers": {"local": {"url": "https://example.com/mcp", "headers": {"Authorization": "Bearer local-only-secret"}}}}`
     );
@@ -837,8 +811,8 @@ describe("backup adapters", () => {
   });
 
   it("keeps the safety snapshot readable by its owner alone", async () => {
-    await writeMuxFile("AGENTS.md", "before restore\n");
-    await writeMuxFile("skills/demo/SKILL.md", "skill\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "before restore\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "skill\n");
     const payload = createBackupPayloadStore({ config });
     const snapshotRoot = path.join(tempDir, "private-snapshot");
 
@@ -865,7 +839,7 @@ describe("backup adapters", () => {
     // Hard links give one file several names, as a case-insensitive or normalizing volume
     // does for `note.md`, `Note.md` and `NOTE.md`. The backup carries one spelling, so
     // restoring it changes what every other name reads and none of them is kept.
-    await writeMuxFile("skills/demo/note.md", "shared\n");
+    await writeFixtureFile(muxRoot, "skills/demo/note.md", "shared\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
     const repository = await gitRepo.prepare(settings);
@@ -890,8 +864,8 @@ describe("backup adapters", () => {
   it("snapshots case-distinct local files that no published backup could carry", async () => {
     // Both names coexist on a case-sensitive filesystem and both are collected, so folding
     // them here would refuse the snapshot and block the restore that depends on it.
-    await writeMuxFile("skills/demo/Foo.md", "upper\n");
-    await writeMuxFile("skills/demo/foo.md", "lower\n");
+    await writeFixtureFile(muxRoot, "skills/demo/Foo.md", "upper\n");
+    await writeFixtureFile(muxRoot, "skills/demo/foo.md", "lower\n");
     const payload = createBackupPayloadStore({ config });
     const snapshotRoot = path.join(tempDir, "case-snapshot");
 
@@ -906,7 +880,7 @@ describe("backup adapters", () => {
   });
 
   it("reports a renamed managed file by its destination path", async () => {
-    await writeMuxFile("agents/first.md", "agent\n");
+    await writeFixtureFile(muxRoot, "agents/first.md", "agent\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 
@@ -929,7 +903,7 @@ describe("backup adapters", () => {
   it("reports a non-ASCII path as it is named on disk", async () => {
     // Git C-quotes this in its default porcelain output, so the preview would show the user
     // `caf\303\251.md` rather than the file they have.
-    await writeMuxFile("skills/café/SKILL.md", "accented\n");
+    await writeFixtureFile(muxRoot, "skills/café/SKILL.md", "accented\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
 

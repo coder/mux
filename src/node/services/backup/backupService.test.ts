@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Config } from "@/node/config";
-import type { ProjectsConfig } from "@/common/types/project";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
 import { BackupNonFastForwardError } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
@@ -15,6 +13,7 @@ import {
   type BackupPayloadStore,
   type PreparedBackupRepository,
 } from "./backupService";
+import { TestBackupConfig } from "./testHelpers";
 
 const SETTINGS: SettingsBackupInput = {
   repoUrl: "git@github.com:example/settings.git",
@@ -22,28 +21,11 @@ const SETTINGS: SettingsBackupInput = {
   path: "mux",
 };
 
-class TestConfig extends Config {
-  private state: ProjectsConfig = { projects: new Map() };
-
-  override loadConfigOrDefault(): ProjectsConfig {
-    return this.state;
-  }
-
-  override editConfig(edit: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
-    this.state = edit(this.state);
-    return Promise.resolve();
-  }
-}
-
 async function snapshotDirectories(cacheRoot: string): Promise<string[]> {
   const entries = await fs.readdir(cacheRoot, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("restore-"))
     .map((entry) => entry.name);
-}
-
-function createTestConfig(rootDir: string): Config {
-  return new TestConfig(rootDir);
 }
 
 function createRepository(
@@ -79,6 +61,19 @@ function createPayload(overrides: Partial<BackupPayloadStore> = {}): BackupPaylo
     ...overrides,
   };
 }
+function createService(
+  rootDir: string,
+  overrides: {
+    config?: TestBackupConfig;
+    gitRepo?: BackupGitRepo;
+    payload?: BackupPayloadStore;
+  } = {}
+): BackupService {
+  return new BackupService(overrides.config ?? new TestBackupConfig(rootDir), {
+    gitRepo: overrides.gitRepo ?? createGitRepo(),
+    payload: overrides.payload ?? createPayload(),
+  });
+}
 
 describe("BackupService", () => {
   let tempDir: string;
@@ -93,8 +88,7 @@ describe("BackupService", () => {
 
   test("creates a safety snapshot before restoring and records the restored commit", async () => {
     const events: string[] = [];
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         validateRestore: () => {
           events.push("validate");
@@ -134,8 +128,7 @@ describe("BackupService", () => {
   });
 
   test("keeps a bounded number of restore snapshots", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         writeSafetySnapshot: async (snapshotRoot) => {
           await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
@@ -165,8 +158,7 @@ describe("BackupService", () => {
   });
 
   test("keeps a returned snapshot until later restores have replaced it", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         writeSafetySnapshot: async (snapshotRoot) => {
           await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
@@ -197,8 +189,7 @@ describe("BackupService", () => {
     const restoreInFlight = new Promise<void>((resolve) => {
       restoreEntered = resolve;
     });
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         restore: async () => {
           events.push("restore-start");
@@ -243,8 +234,7 @@ describe("BackupService", () => {
       inFlight.push(path.basename(directory));
     }
 
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         writeSafetySnapshot: async (snapshotRoot) => {
           await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
@@ -264,8 +254,7 @@ describe("BackupService", () => {
   });
 
   test("reports the completed snapshot when the restore fails after it", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         writeSafetySnapshot: async (snapshotRoot) => {
           await fs.writeFile(path.join(snapshotRoot, "AGENTS.md"), "before restore", "utf8");
@@ -287,8 +276,7 @@ describe("BackupService", () => {
   });
 
   test("does not attach a snapshot path to failures before the snapshot exists", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         validateRestore: () => Promise.reject(new Error("no backup here")),
       }),
@@ -305,7 +293,7 @@ describe("BackupService", () => {
 
   test("computes restore preview before materializing the local export", async () => {
     const events: string[] = [];
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         getPushChanges: () => {
           events.push("push-preview");
@@ -335,7 +323,7 @@ describe("BackupService", () => {
   });
 
   test("returns repository drift as expected Result data without updating settings", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         commitAndPush: () => {
           throw new BackupServiceError(
@@ -344,7 +332,6 @@ describe("BackupService", () => {
           );
         },
       }),
-      payload: createPayload(),
     });
 
     const result = await service.push(SETTINGS);
@@ -362,7 +349,7 @@ describe("BackupService", () => {
 
   test("blocks a push when the payload secret scan reports files", async () => {
     let commitAttempted = false;
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         commitAndPush: () => {
           commitAttempted = true;
@@ -394,8 +381,7 @@ describe("BackupService", () => {
   });
 
   test("rejects an override issued for a payload that has since changed", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         exportTo: () =>
           Promise.resolve({
@@ -416,11 +402,10 @@ describe("BackupService", () => {
   });
 
   test("maps a real non-fast-forward failure to repository drift", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         commitAndPush: () => Promise.reject(new BackupNonFastForwardError()),
       }),
-      payload: createPayload(),
     });
 
     const result = await service.push(SETTINGS);
@@ -432,11 +417,10 @@ describe("BackupService", () => {
   });
 
   test("surfaces an unreachable remote to the client as REMOTE_UNREACHABLE", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         validate: () => Promise.reject(new BackupRemoteUnreachableError(new Error("no dns"))),
       }),
-      payload: createPayload(),
     });
 
     const result = await service.validate(SETTINGS);
@@ -446,24 +430,29 @@ describe("BackupService", () => {
     expect(result.error.code).toBe("REMOTE_UNREACHABLE");
   });
 
-  test("rejects a managed path that targets the git directory", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
+  const managedPathRejectionCases = [
+    { name: "rejects a managed path that targets the git directory", managedPath: ".git" },
+    { name: "rejects a reserved Windows device name", managedPath: "CON/mux" },
+    { name: "rejects a Windows path containing a colon", managedPath: "foo:bar/mux" },
+    { name: "rejects a Windows path ending in a period", managedPath: "mux." },
+  ];
+
+  for (const testCase of managedPathRejectionCases) {
+    test(testCase.name, async () => {
+      const service = createService(tempDir);
+
+      const result = await service.saveSettings({ ...SETTINGS, path: testCase.managedPath });
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error(`Expected '${testCase.managedPath}' to be rejected`);
+      expect(result.error.code).toBe("INVALID_BACKUP");
     });
-
-    const result = await service.saveSettings({ ...SETTINGS, path: ".git" });
-
-    expect(result.success).toBe(false);
-    if (result.success) throw new Error("Expected the .git path to be rejected");
-    expect(result.error.code).toBe("INVALID_BACKUP");
-  });
+  }
 
   test("reports a config write that never landed instead of claiming success", async () => {
-    const config = createTestConfig(tempDir);
-    const service = new BackupService(config, {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
+    const config = new TestBackupConfig(tempDir);
+    const service = createService(tempDir, {
+      config,
     });
     // saveConfig logs and swallows write errors, so a full disk looks exactly like this:
     // the edit callback runs, editConfig resolves, and the stored config never changes.
@@ -480,10 +469,9 @@ describe("BackupService", () => {
   });
 
   test("rejects and does not persist a repository URL that embeds a credential", async () => {
-    const config = createTestConfig(tempDir);
-    const service = new BackupService(config, {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
+    const config = new TestBackupConfig(tempDir);
+    const service = createService(tempDir, {
+      config,
     });
 
     for (const repoUrl of [
@@ -505,10 +493,11 @@ describe("BackupService", () => {
   });
 
   test("rejects invalid settings before config or repository access", async () => {
-    const config = createTestConfig(tempDir);
+    const config = new TestBackupConfig(tempDir);
     let validateCalls = 0;
     let prepareCalls = 0;
-    const service = new BackupService(config, {
+    const service = createService(tempDir, {
+      config,
       gitRepo: createGitRepo({
         validate: () => {
           validateCalls += 1;
@@ -519,7 +508,6 @@ describe("BackupService", () => {
           return Promise.resolve(createRepository());
         },
       }),
-      payload: createPayload(),
     });
 
     for (const settings of [
@@ -550,14 +538,13 @@ describe("BackupService", () => {
 
   test("normalizes direct service input like the ORPC schema", async () => {
     const seen: SettingsBackupInput[] = [];
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         validate: (settings) => {
           seen.push(settings);
           return Promise.resolve({ credential: "ssh", empty: false });
         },
       }),
-      payload: createPayload(),
     });
     const input = {
       repoUrl: ` ${SETTINGS.repoUrl} `,
@@ -578,8 +565,7 @@ describe("BackupService", () => {
     const approvals = [
       { path: "servers.notes.command", command: "npx notes-mcp", token: "token-notes" },
     ];
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
+    const service = createService(tempDir, {
       payload: createPayload({
         validateRestore: () => Promise.reject(new BackupCommandApprovalRequiredError(approvals)),
       }),
@@ -597,10 +583,9 @@ describe("BackupService", () => {
   });
 
   test("does not revert a repository saved while a push was still running", async () => {
-    const config = createTestConfig(tempDir);
-    const service = new BackupService(config, {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
+    const config = new TestBackupConfig(tempDir);
+    const service = createService(tempDir, {
+      config,
     });
     await service.saveSettings(SETTINGS);
 
@@ -612,25 +597,11 @@ describe("BackupService", () => {
     expect(stored?.repoUrl).toBe(other.repoUrl);
   });
 
-  test("rejects a managed path Git for Windows could not check out", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
-    });
-
-    for (const managedPath of ["CON/mux", "foo:bar/mux", "mux."]) {
-      const result = await service.saveSettings({ ...SETTINGS, path: managedPath });
-      expect(result.success).toBe(false);
-      if (result.success) throw new Error(`Expected '${managedPath}' to be rejected`);
-      expect(result.error.code).toBe("INVALID_BACKUP");
-    }
-  });
-
   test("serializes operations for the same repository", async () => {
     const firstCanFinish = Promise.withResolvers<void>();
     const starts: string[] = [];
     let prepareCount = 0;
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         prepare: async () => {
           prepareCount += 1;
@@ -641,7 +612,6 @@ describe("BackupService", () => {
           return createRepository();
         },
       }),
-      payload: createPayload(),
     });
 
     const first = service.preview(SETTINGS);
@@ -658,7 +628,7 @@ describe("BackupService", () => {
   test("rejects invalid settings before waiting for the repository lock", async () => {
     const firstStarted = Promise.withResolvers<void>();
     const firstCanFinish = Promise.withResolvers<void>();
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         prepare: async () => {
           firstStarted.resolve();
@@ -666,7 +636,6 @@ describe("BackupService", () => {
           return createRepository();
         },
       }),
-      payload: createPayload(),
     });
 
     const first = service.preview(SETTINGS);
@@ -692,7 +661,7 @@ describe("BackupService", () => {
     const firstStarted = Promise.withResolvers<void>();
     const firstCanFinish = Promise.withResolvers<void>();
     const prepared: SettingsBackupInput[] = [];
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         prepare: async (settings) => {
           prepared.push(settings);
@@ -703,7 +672,6 @@ describe("BackupService", () => {
           return createRepository();
         },
       }),
-      payload: createPayload(),
     });
 
     const first = service.preview(SETTINGS);
@@ -722,7 +690,7 @@ describe("BackupService", () => {
     const firstCanFinish = Promise.withResolvers<void>();
     let prepareCalls = 0;
     let pushCalls = 0;
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         prepare: async () => {
           prepareCalls += 1;
@@ -769,7 +737,7 @@ describe("BackupService", () => {
       { path: "servers.notes.command", command: "npx notes-mcp", token: "approved-token" },
     ];
     const seenTokens: string[][] = [];
-    const service = new BackupService(createTestConfig(tempDir), {
+    const service = createService(tempDir, {
       gitRepo: createGitRepo({
         prepare: async () => {
           prepareCalls += 1;
@@ -806,10 +774,7 @@ describe("BackupService", () => {
   });
 
   test("preserves commit metadata when saving the same repository settings", async () => {
-    const service = new BackupService(createTestConfig(tempDir), {
-      gitRepo: createGitRepo(),
-      payload: createPayload(),
-    });
+    const service = createService(tempDir);
 
     const pushed = await service.push(SETTINGS);
     expect(pushed.success).toBe(true);

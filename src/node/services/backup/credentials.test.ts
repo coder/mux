@@ -603,216 +603,91 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
     );
   });
 
-  it("recognizes a quoted Windows ssh path with its separators intact", async () => {
-    if (process.platform === "win32") return;
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
+  const sshCommandRewriteCases: Array<{
+    name: string;
+    command: string;
+    expectedCommand: string;
+    variant?: string;
+    skipOnWindows?: boolean;
+  }> = [
+    {
+      name: "recognizes a quoted Windows ssh path with its separators intact",
+      // Variant detection has to find `ssh.exe` at the end without decoding the separators.
+      command: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -i /keys/id`,
+      expectedCommand: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -o BatchMode=yes -i /keys/id`,
+      skipOnWindows: true,
+    },
+    {
+      name: "recognizes an unquoted ssh path whose spaces are backslash-escaped",
+      // The escaped space belongs to the path, so the option must land after the executable.
+      command: String.raw`/opt/OpenSSH\ Tools/ssh -i /keys/id`,
+      expectedCommand: String.raw`/opt/OpenSSH\ Tools/ssh -o BatchMode=yes -i /keys/id`,
+    },
+    {
+      name: "finds the ssh program past a shell assignment prefix",
+      // The assignment is applied by the shell and is not the executable receiving the option.
+      command: "SSH_AUTH_SOCK=/tmp/agent.sock ssh -i /keys/id",
+      expectedCommand: "SSH_AUTH_SOCK=/tmp/agent.sock ssh -o BatchMode=yes -i /keys/id",
+    },
+    {
+      name: "finds the ssh program past an assignment whose value is escaped or quoted",
+      // Escaped and quoted assignment values remain one word before the ssh executable.
+      command: String.raw`FOO=a\ b BAR="c d" ssh -i /keys/id`,
+      expectedCommand: String.raw`FOO=a\ b BAR="c d" ssh -o BatchMode=yes -i /keys/id`,
+    },
+    {
+      name: "leaves a command with an unterminated quote alone",
+      // The executable boundary is unknowable, so the timeout must bound the unchanged command.
+      command: `"/opt/unterminated/ssh`,
+      expectedCommand: `"/opt/unterminated/ssh`,
+    },
+    {
+      name: "adds no option to a launcher even when the variant is forced",
+      // The variant names the client option, not where a launcher places the client.
+      command: "env FOO=bar ssh -i /keys/id",
+      expectedCommand: "env FOO=bar ssh -i /keys/id",
+      variant: "ssh",
+    },
+    {
+      name: "does not prepend an option when a forced variant meets an unparseable command",
+      // A forced variant still cannot identify a safe insertion point in an unparseable command.
+      command: `"/opt/unterminated/ssh`,
+      expectedCommand: `"/opt/unterminated/ssh`,
+      variant: "ssh",
+    },
+    {
+      name: "keeps the separators of an unquoted Windows ssh path",
+      // Decoding the separators would turn the executable into a different unmatched basename.
+      command: String.raw`C:\Windows\ssh.exe -i /keys/id`,
+      expectedCommand: String.raw`C:\Windows\ssh.exe -o BatchMode=yes -i /keys/id`,
+    },
+  ];
+
+  for (const testCase of sshCommandRewriteCases) {
+    it(testCase.name, async () => {
+      if (testCase.skipOnWindows && process.platform === "win32") return;
+      await writeExecutable(
+        path.join(binDir, "git"),
+        `#!/bin/sh
 printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
 `
-    );
+      );
 
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // Variant detection has to find `ssh.exe` at the end of this, which it cannot if the
-        // backslashes are decoded away as escapes.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_COMMAND: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -i /keys/id`,
-        },
-      })
-    );
+      const result = await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
+          repoUrl: "git@example.com:owner/repo.git",
+          env: {
+            GIT_LOG: logPath,
+            GIT_SSH_COMMAND: testCase.command,
+            ...(testCase.variant === undefined ? {} : { GIT_SSH_VARIANT: testCase.variant }),
+          },
+        })
+      );
 
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      String.raw`"C:\Program Files\OpenSSH\ssh.exe" -o BatchMode=yes -i /keys/id`
-    );
-  });
-
-  it("recognizes an unquoted ssh path whose spaces are backslash-escaped", async () => {
-    const logPath = path.join(tempDir, "escaped-space.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // git hands this to a shell, so the escaped space is one path ending in `ssh`. Stopping
-        // at the space would both miss the variant and splice the option inside the path.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_COMMAND: String.raw`/opt/OpenSSH\ Tools/ssh -i /keys/id`,
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      String.raw`/opt/OpenSSH\ Tools/ssh -o BatchMode=yes -i /keys/id`
-    );
-  });
-
-  it("finds the ssh program past a shell assignment prefix", async () => {
-    const logPath = path.join(tempDir, "assignment.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // A shell applies the assignment and runs `ssh`. Reading `SSH_AUTH_SOCK=...` as the
-        // program would miss the variant, and inserting before it would make the option a
-        // third assignment rather than an ssh flag.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_COMMAND: "SSH_AUTH_SOCK=/tmp/agent.sock ssh -i /keys/id",
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      "SSH_AUTH_SOCK=/tmp/agent.sock ssh -o BatchMode=yes -i /keys/id"
-    );
-  });
-
-  it("finds the ssh program past an assignment whose value is escaped or quoted", async () => {
-    const logPath = path.join(tempDir, "escaped-assignment.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // The escape holds the assignment value together, so `ssh` is still the program. Ending
-        // the word at the escaped space would call `b` the executable and insert before `ssh`.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_COMMAND: String.raw`FOO=a\ b BAR="c d" ssh -i /keys/id`,
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      String.raw`FOO=a\ b BAR="c d" ssh -o BatchMode=yes -i /keys/id`
-    );
-  });
-
-  it("leaves a command with an unterminated quote alone", async () => {
-    const logPath = path.join(tempDir, "unterminated.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // No arguments, so swallowing the quote would still yield the basename `ssh` and append
-        // a flag onto a path whose quoting the shell never closed. The boundary is unknowable, so
-        // nothing is inserted and the timeout bounds a client that decides to prompt.
-        env: { GIT_LOG: logPath, GIT_SSH_COMMAND: `"/opt/unterminated/ssh` },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(`"/opt/unterminated/ssh`);
-  });
-
-  it("adds no option to a launcher even when the variant is forced", async () => {
-    const logPath = path.join(tempDir, "launcher.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // The variant names the option a client takes, not where the client is. `env` would
-        // receive `-o BatchMode=yes` itself and exit on `invalid option`, so nothing is added.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_VARIANT: "ssh",
-          GIT_SSH_COMMAND: "env FOO=bar ssh -i /keys/id",
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe("env FOO=bar ssh -i /keys/id");
-  });
-
-  it("does not prepend an option when a forced variant meets an unparseable command", async () => {
-    const logPath = path.join(tempDir, "forced-unparseable.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // The variant is forced, so the flag is chosen without reading the program. Putting it
-        // before an unlocatable one would make the shell run `-o BatchMode=yes` as the command.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_VARIANT: "ssh",
-          GIT_SSH_COMMAND: `"/opt/unterminated/ssh`,
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(`"/opt/unterminated/ssh`);
-  });
-
-  it("keeps the separators of an unquoted Windows ssh path", async () => {
-    const logPath = path.join(tempDir, "bare-windows.log");
-    await writeExecutable(
-      path.join(binDir, "git"),
-      `#!/bin/sh
-printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
-`
-    );
-
-    const result = await withPath(binDir, () =>
-      runGitWithCredentialLadder(["ls-remote", "git@example.com:owner/repo.git"], {
-        repoUrl: "git@example.com:owner/repo.git",
-        // Unquoted, so every separator here looks like a shell escape. Decoding them would
-        // leave `C:Windowsssh.exe`, which no variant matches.
-        env: {
-          GIT_LOG: logPath,
-          GIT_SSH_COMMAND: String.raw`C:\Windows\ssh.exe -i /keys/id`,
-        },
-      })
-    );
-
-    expect(result.credential).toBe("ssh");
-    expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(
-      String.raw`C:\Windows\ssh.exe -o BatchMode=yes -i /keys/id`
-    );
-  });
+      expect(result.credential).toBe("ssh");
+      expect((await fs.readFile(logPath, "utf-8")).trim()).toBe(testCase.expectedCommand);
+    });
+  }
 
   it("reports a Windows drive path as a local repository, not ssh", async () => {
     await writeExecutable(path.join(binDir, "git"), "#!/bin/sh\nexit 0\n");

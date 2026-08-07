@@ -54,6 +54,11 @@ function renderBackupSection(overrides: Partial<NonNullable<MockOptions>> = {}) 
 
   return { client, view };
 }
+async function confirmRestore(canvas: ReturnType<typeof within>): Promise<void> {
+  fireEvent.click(canvas.getByRole("button", { name: /^Restore$/ }));
+  const dialog = await within(document.body).findByRole("dialog");
+  fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
+}
 
 describe("BackupSection", () => {
   afterEach(() => {
@@ -277,13 +282,7 @@ describe("BackupSection", () => {
         commandApprovals: [drifted],
       },
     });
-    async function confirmRestore() {
-      fireEvent.click(canvas.getByRole("button", { name: /^Restore$/ }));
-      const dialog = await within(document.body).findByRole("dialog");
-      fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
-    }
-
-    await confirmRestore();
+    await confirmRestore(canvas);
     await waitFor(() =>
       expect(restore).toHaveBeenLastCalledWith(
         expect.objectContaining({ approvedCommandTokens: [] })
@@ -294,7 +293,7 @@ describe("BackupSection", () => {
 
     fireEvent.click(approve);
     await waitFor(() => expect(approve.getAttribute("data-state")).toBe("checked"));
-    await confirmRestore();
+    await confirmRestore(canvas);
     await waitFor(() =>
       expect(restore).toHaveBeenLastCalledWith(
         expect.objectContaining({ approvedCommandTokens: [drifted.token] })
@@ -339,9 +338,7 @@ describe("BackupSection", () => {
     expect(canvas.queryByText(approval.command)).toBeNull();
 
     const restore = jest.spyOn(client.backup, "restore");
-    fireEvent.click(canvas.getByRole("button", { name: "Restore" }));
-    const dialog = await within(document.body).findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
+    await confirmRestore(canvas);
     await waitFor(() =>
       expect(restore).toHaveBeenLastCalledWith(
         expect.objectContaining({ approvedCommandTokens: [] })
@@ -364,9 +361,7 @@ describe("BackupSection", () => {
       },
     });
 
-    fireEvent.click(canvas.getByRole("button", { name: "Restore" }));
-    const dialog = await within(document.body).findByRole("dialog");
-    fireEvent.click(within(dialog).getByRole("button", { name: /Restore settings/i }));
+    await confirmRestore(canvas);
 
     await canvas.findByText(/no files changed/i);
   });

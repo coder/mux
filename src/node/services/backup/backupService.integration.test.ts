@@ -4,11 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { Config } from "@/node/config";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
-import { execFileAsync } from "@/node/utils/disposableExec";
 import { createBackupGitRepo, createBackupPayloadStore } from "./adapters";
 import { backupCachePath } from "./gitRepo";
 import { BackupService } from "./backupService";
 import { REDACTED_BACKUP_VALUE } from "./payload";
+import { runGit, writeFixtureFile } from "./testHelpers";
 
 const SECRET_FILES = [
   "providers.jsonc",
@@ -18,11 +18,6 @@ const SECRET_FILES = [
   "serverAuthSessions.json",
 ];
 const DECOY = "DECOY_SECRET_MUST_NOT_LEAK";
-
-async function git(args: string[]): Promise<string> {
-  using process = execFileAsync("git", args);
-  return (await process.result).stdout.trim();
-}
 
 /**
  * Exercises the service against a real bare repository and a real MUX_ROOT, so the
@@ -35,12 +30,6 @@ describe("BackupService against a real repository", () => {
   let config: Config;
   let service: BackupService;
   let settings: SettingsBackupInput;
-
-  async function writeMuxFile(relativePath: string, content: string): Promise<void> {
-    const absolutePath = path.join(muxRoot, relativePath);
-    await fs.mkdir(path.dirname(absolutePath), { recursive: true });
-    await fs.writeFile(absolutePath, content, "utf-8");
-  }
 
   function createService(): BackupService {
     return new BackupService(config, {
@@ -57,7 +46,7 @@ describe("BackupService against a real repository", () => {
 
   async function cloneOrigin(name: string): Promise<string> {
     const target = path.join(tempDir, name);
-    await git(["clone", "--quiet", originPath, target]);
+    await runGit(["clone", "--quiet", originPath, target]);
     return target;
   }
 
@@ -75,16 +64,17 @@ describe("BackupService against a real repository", () => {
     muxRoot = path.join(tempDir, "mux-root");
     originPath = path.join(tempDir, "origin.git");
     await fs.mkdir(muxRoot, { recursive: true });
-    await git(["init", "--bare", "--initial-branch=main", originPath]);
+    await runGit(["init", "--bare", "--initial-branch=main", originPath]);
     settings = { repoUrl: originPath, branch: "main", path: "mux" };
     config = new Config(muxRoot);
     service = createService();
 
-    await writeMuxFile("AGENTS.md", "global instructions\n");
-    await writeMuxFile("agents/reviewer.md", "reviewer agent\n");
-    await writeMuxFile("skills/demo/SKILL.md", "demo skill\n");
-    await writeMuxFile("memory/global/note.md", "remembered fact\n");
-    await writeMuxFile(
+    await writeFixtureFile(muxRoot, "AGENTS.md", "global instructions\n");
+    await writeFixtureFile(muxRoot, "agents/reviewer.md", "reviewer agent\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "demo skill\n");
+    await writeFixtureFile(muxRoot, "memory/global/note.md", "remembered fact\n");
+    await writeFixtureFile(
+      muxRoot,
       "mcp.jsonc",
       `{
   // Deploy token: comment-secret-abc123
@@ -102,7 +92,7 @@ describe("BackupService against a real repository", () => {
 `
     );
     for (const secretFile of SECRET_FILES) {
-      await writeMuxFile(secretFile, `${DECOY}\n`);
+      await writeFixtureFile(muxRoot, secretFile, `${DECOY}\n`);
     }
   });
 
@@ -151,24 +141,34 @@ describe("BackupService against a real repository", () => {
 
   it("does not create a second commit when nothing changed", async () => {
     await pushOrThrow();
-    const commitsAfterFirst = await git(["--git-dir", originPath, "rev-list", "--count", "main"]);
+    const commitsAfterFirst = await runGit([
+      "--git-dir",
+      originPath,
+      "rev-list",
+      "--count",
+      "main",
+    ]);
 
     const second = await pushOrThrow();
     expect(second.data.changed).toBe(false);
-    expect(await git(["--git-dir", originPath, "rev-list", "--count", "main"])).toBe(
+    expect(await runGit(["--git-dir", originPath, "rev-list", "--count", "main"])).toBe(
       commitsAfterFirst
     );
   });
 
   it("blocks a push when a backed-up file contains a token, and proceeds once allowed", async () => {
-    await writeMuxFile("AGENTS.md", "token ghp_123456789012345678901234567890123456\n");
+    await writeFixtureFile(
+      muxRoot,
+      "AGENTS.md",
+      "token ghp_123456789012345678901234567890123456\n"
+    );
 
     const blocked = await service.push(settings);
     expect(blocked.success).toBe(false);
     if (blocked.success) throw new Error("Expected the secret scan to block the push");
     expect(blocked.error.code).toBe("SECRET_DETECTED");
     expect(blocked.error.files).toContain("AGENTS.md");
-    expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
+    expect(await runGit(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
 
     const allowed = await service.push(settings, {
       approvedSecretDigest: blocked.error.secretApproval ?? undefined,
@@ -178,14 +178,14 @@ describe("BackupService against a real repository", () => {
 
   it("gates a low-entropy MCP URL credential until the exact payload is approved", async () => {
     const url = "https://user:hunter2@example.com/mcp?api_key=abc123";
-    await writeMuxFile("mcp.jsonc", JSON.stringify({ servers: { private: { url } } }));
+    await writeFixtureFile(muxRoot, "mcp.jsonc", JSON.stringify({ servers: { private: { url } } }));
 
     const blocked = await service.push(settings);
     expect(blocked.success).toBe(false);
     if (blocked.success) throw new Error("Expected the URL credential gate to block the push");
     expect(blocked.error.code).toBe("SECRET_DETECTED");
     expect(blocked.error.files).toEqual(["mcp.jsonc"]);
-    expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
+    expect(await runGit(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
 
     const allowed = await service.push(settings, {
       approvedSecretDigest: blocked.error.secretApproval ?? undefined,
@@ -197,7 +197,11 @@ describe("BackupService against a real repository", () => {
 
   it("requires exact-payload approval before publishing an MCP command", async () => {
     const command = "npx private-mcp";
-    await writeMuxFile("mcp.jsonc", JSON.stringify({ servers: { private: { command } } }));
+    await writeFixtureFile(
+      muxRoot,
+      "mcp.jsonc",
+      JSON.stringify({ servers: { private: { command } } })
+    );
 
     const blocked = await service.push(settings);
     expect(blocked.success).toBe(false);
@@ -205,7 +209,7 @@ describe("BackupService against a real repository", () => {
       throw new Error("Expected the MCP command approval gate to block the push");
     expect(blocked.error.code).toBe("SECRET_DETECTED");
     expect(blocked.error.files).toEqual(["mcp.jsonc"]);
-    expect(await git(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
+    expect(await runGit(["--git-dir", originPath, "rev-list", "--count", "--all"])).toBe("0");
 
     const allowed = await service.push(settings, {
       approvedSecretDigest: blocked.error.secretApproval ?? undefined,
@@ -264,7 +268,7 @@ describe("BackupService against a real repository", () => {
     const outside = path.join(tempDir, "outside-clone");
     await fs.rename(cachePath, outside);
     await fs.symlink(outside, cachePath);
-    await writeMuxFile("AGENTS.md", "changed after the link went in\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "changed after the link went in\n");
 
     const refused = await service.push(settings);
 
@@ -315,8 +319,8 @@ describe("BackupService against a real repository", () => {
   it("restores files, keeps local-only files, and records the restored commit", async () => {
     const pushed = await pushOrThrow();
 
-    await writeMuxFile("AGENTS.md", "locally edited\n");
-    await writeMuxFile("agents/local-only.md", "local only\n");
+    await writeFixtureFile(muxRoot, "AGENTS.md", "locally edited\n");
+    await writeFixtureFile(muxRoot, "agents/local-only.md", "local only\n");
 
     const restored = await service.restore(settings);
     if (!restored.success) throw new Error(restored.error.message);
@@ -344,7 +348,7 @@ describe("BackupService against a real repository", () => {
 
     const pushed = await pushOrThrow();
     expect(pushed.success).toBe(true);
-    expect(await git(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toMatch(
+    expect(await runGit(["--git-dir", originPath, "rev-parse", "refs/heads/main"])).toMatch(
       /^[0-9a-f]{40}$/
     );
   });
@@ -364,10 +368,10 @@ describe("BackupService against a real repository", () => {
 
   it("refuses to restore when the branch has commits but no backup payload", async () => {
     const clone = path.join(tempDir, "seed");
-    await git(["clone", "--quiet", originPath, clone]);
+    await runGit(["clone", "--quiet", originPath, clone]);
     await fs.writeFile(path.join(clone, "README.md"), "unrelated repository\n", "utf-8");
-    await git(["-C", clone, "add", "README.md"]);
-    await git([
+    await runGit(["-C", clone, "add", "README.md"]);
+    await runGit([
       "-C",
       clone,
       "-c",
@@ -379,7 +383,7 @@ describe("BackupService against a real repository", () => {
       "-m",
       "unrelated",
     ]);
-    await git(["-C", clone, "push", "--quiet", "origin", "HEAD:refs/heads/main"]);
+    await runGit(["-C", clone, "push", "--quiet", "origin", "HEAD:refs/heads/main"]);
 
     const restored = await service.restore(settings);
     expect(restored.success).toBe(false);
