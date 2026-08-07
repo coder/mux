@@ -45,6 +45,36 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
   return isPositiveInteger(metadata.compactionEpoch);
 }
 
+// Compaction boundaries are provider-visible (the row carries the summary),
+// so the active window starts AT the boundary; reset boundaries are
+// provider-invisible markers, so the window starts AFTER them.
+function activeProviderWindowStart(messages: MuxMessage[]): number {
+  const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
+  if (latestBoundaryIndex < 0) {
+    return 0;
+  }
+  return getContextBoundaryKind(messages[latestBoundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
+    ? latestBoundaryIndex + 1
+    : latestBoundaryIndex;
+}
+
+// A prefix cut changes the active provider context only when it removes a
+// provider-replayable row inside the provider window. Rows inside the window
+// that requests never replay (workflow display-only rows, reasoning-only
+// assistant turns) leave the request, and therefore the usage snapshots
+// measured from it, unchanged when removed. Deliberate asymmetry: Anthropic
+// with thinking enabled replays reasoning-only rows (preserveReasoningOnly),
+// but the next send's provider is unknowable here, so we preserve usage.
+// That can only overestimate (compact early); flagging truncated would strip
+// valid usage for every other provider and bypass required on-send
+// compaction, the failure this feature exists to prevent.
+function cutChangesActiveWindow(messages: MuxMessage[], cutEnd: number): boolean {
+  const start = activeProviderWindowStart(messages);
+  return hasProviderEligibleMessages(
+    filterWorkflowDisplayOnlyMessages(messages.slice(Math.min(start, cutEnd), cutEnd))
+  );
+}
+
 function getCompactionMetadataToPreserve(
   workspaceId: string,
   existingMessage: MuxMessage,
@@ -1921,6 +1951,10 @@ export class HistoryService {
    * Truncate history by removing approximately the given percentage of tokens from the beginning
    * @param workspaceId The workspace ID
    * @param percentage Percentage to truncate (0.0 to 1.0). 1.0 = delete all
+   * @param onActiveContextTruncated Invoked at most once, the moment a
+   *        committed step first removes provider-eligible rows from the
+   *        active window. Fires even when a later step fails, so callers can
+   *        invalidate cached usage for mutations an Err result leaves on disk.
    * @returns Result with deleted historySequence numbers plus whether the cut
    *          reached the active provider-context window (at or past the latest
    *          durable boundary). Callers use that flag to decide whether cached
@@ -1928,9 +1962,24 @@ export class HistoryService {
    */
   async truncateHistory(
     workspaceId: string,
-    percentage: number
+    percentage: number,
+    onActiveContextTruncated?: () => void
   ): Promise<Result<{ deletedSequences: number[]; activeContextTruncated: boolean }, string>> {
     return this.fileLocks.withLock(workspaceId, async () => {
+      let contextChangeNotified = false;
+      const notifyActiveContextTruncated = () => {
+        if (contextChangeNotified) {
+          return;
+        }
+        contextChangeNotified = true;
+        try {
+          onActiveContextTruncated?.();
+        } catch (error) {
+          // A notification failure must not corrupt an already-committed
+          // rewrite (the catch below would roll back a successful cut).
+          log.error("truncateHistory context-change callback failed", { workspaceId, error });
+        }
+      };
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
         const archivePath = this.getChatArchivePath(workspaceId);
@@ -1938,19 +1987,22 @@ export class HistoryService {
         // Fast path: 100% truncation = delete entire history (active + sealed archive)
         if (percentage >= 1.0) {
           // Need sequence numbers for return value before deleting
-          const messages = [
-            ...(await this.readArchivedHistory(workspaceId)),
-            ...(await this.readChatHistory(workspaceId)),
-          ];
+          const archivedMessages = await this.readArchivedHistory(workspaceId);
+          const messages = [...archivedMessages, ...(await this.readChatHistory(workspaceId))];
           const deletedSequences = messages
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
 
-          // Archive first: it holds only sealed pre-boundary rows, so if the
-          // second rm fails the active provider window is still intact and the
-          // caller's success-only usage invalidation remains correct.
+          // Archive first: normally it holds only sealed pre-boundary rows,
+          // so if the second rm fails the active provider window is still
+          // intact. A malformed boundary-less archive IS window content, so
+          // notify at commit; the caller must not trust a later Err.
           await fs.rm(archivePath, { force: true });
+          if (cutChangesActiveWindow(messages, archivedMessages.length)) {
+            notifyActiveContextTruncated();
+          }
           await fs.rm(historyPath, { force: true });
+          notifyActiveContextTruncated();
 
           // Reset sequence counter when clearing history
           this.sequenceCounters.set(workspaceId, 0);
@@ -2002,10 +2054,15 @@ export class HistoryService {
         }
 
         // If we're removing all messages, use fast path. Archive first for
-        // the same failure-ordering reason as the full-clear branch above.
+        // the same failure-ordering reason as the full-clear branch above,
+        // with the same commit-time notifications.
         if (removeCount >= messages.length) {
           await fs.rm(archivePath, { force: true });
+          if (cutChangesActiveWindow(messages, archivedMessages.length)) {
+            notifyActiveContextTruncated();
+          }
           await fs.rm(historyPath, { force: true });
+          notifyActiveContextTruncated();
           this.sequenceCounters.set(workspaceId, 0);
           const deletedSequences = messages
             .map((msg) => msg.metadata?.historySequence)
@@ -2013,32 +2070,7 @@ export class HistoryService {
           return Ok({ deletedSequences, activeContextTruncated: true });
         }
 
-        // The cut changes the active provider context only when it removes a
-        // provider-replayable row inside the provider window. Compaction
-        // boundaries are provider-visible (the row carries the summary), so
-        // the window starts AT the boundary; reset boundaries are
-        // provider-invisible markers, so the window starts AFTER them. Rows
-        // inside the window that requests never replay (workflow display-only
-        // rows, reasoning-only assistant turns) leave the request, and
-        // therefore the usage snapshots measured from it, unchanged when
-        // removed. Deliberate asymmetry: Anthropic with thinking enabled
-        // replays reasoning-only rows (preserveReasoningOnly), but the next
-        // send's provider is unknowable here, so we preserve usage. That can
-        // only overestimate (compact early); flagging truncated would strip
-        // valid usage for every other provider and bypass required on-send
-        // compaction, the failure this feature exists to prevent.
-        const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
-        const activeContextStart =
-          latestBoundaryIndex < 0
-            ? 0
-            : getContextBoundaryKind(messages[latestBoundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
-              ? latestBoundaryIndex + 1
-              : latestBoundaryIndex;
-        const activeContextTruncated = hasProviderEligibleMessages(
-          filterWorkflowDisplayOnlyMessages(
-            messages.slice(Math.min(activeContextStart, removeCount), removeCount)
-          )
-        );
+        const activeContextTruncated = cutChangesActiveWindow(messages, removeCount);
 
         // Retained rows' contextUsage measured the pre-truncation context
         // (including the removed prefix). Persisting it would reseed stale
@@ -2093,13 +2125,9 @@ export class HistoryService {
         // all). A normally rotated archive holds only sealed pre-boundary
         // rows, so its deletion leaves the provider context unchanged and
         // must not block the usage rollback in the catch below.
-        const archiveDeleteChangesWindow = hasProviderEligibleMessages(
-          filterWorkflowDisplayOnlyMessages(
-            messages.slice(
-              Math.min(activeContextStart, archivedMessages.length),
-              archivedMessages.length
-            )
-          )
+        const archiveDeleteChangesWindow = cutChangesActiveWindow(
+          messages,
+          archivedMessages.length
         );
         let windowChanged = false;
         try {
@@ -2117,6 +2145,9 @@ export class HistoryService {
             if (archivedMessages.length > 0) {
               await fs.rm(archivePath, { force: true });
               windowChanged = archiveDeleteChangesWindow;
+              if (archiveDeleteChangesWindow) {
+                notifyActiveContextTruncated();
+              }
             }
             const retainedChat = chatMessages
               .slice(removeCount - archivedMessages.length)
@@ -2140,6 +2171,9 @@ export class HistoryService {
             }
           }
           throw error;
+        }
+        if (activeContextTruncated) {
+          notifyActiveContextTruncated();
         }
         this.sealedRotationChecked.delete(workspaceId);
 
@@ -2180,8 +2214,11 @@ export class HistoryService {
     });
   }
 
-  async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
-    const result = await this.truncateHistory(workspaceId, 1.0);
+  async clearHistory(
+    workspaceId: string,
+    onActiveContextTruncated?: () => void
+  ): Promise<Result<number[], string>> {
+    const result = await this.truncateHistory(workspaceId, 1.0, onActiveContextTruncated);
     if (!result.success) {
       return Err(result.error);
     }

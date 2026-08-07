@@ -3491,7 +3491,10 @@ export class WorkspaceService extends EventEmitter {
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
       clearHistoryForHardRestart: ({ monitorHistoryLockHeld }) => {
-        const clear = () => this.historyService.clearHistory(workspaceId);
+        const clear = () =>
+          this.historyService.clearHistory(workspaceId, () =>
+            this.sessions.get(workspaceId)?.clearUsageState()
+          );
         const options = { discardUnacceptedOnSuccess: true };
         return monitorHistoryLockHeld
           ? this.clearHistoryWithRetiredBashMonitorWakesUnlocked(workspaceId, clear, options)
@@ -9666,20 +9669,17 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
-    // Invalidate usage inside the truncate step, immediately after the rewrite
-    // commits: later wrapper steps (monitor-wake restoration) can fail after
-    // chat.jsonl has already changed, and stale usage must not survive that.
-    // A cut confined to sealed pre-boundary rows leaves the active provider
-    // context (and its usage snapshots) valid, so it must not invalidate.
-    // The success-only guard is safe because HistoryService.truncateHistory
-    // orders its two-file rewrite so no failure changes the active window.
-    const truncate = async () => {
-      const result = await this.historyService.truncateHistory(workspaceId, effectivePercentage);
-      if (result.success && result.data.activeContextTruncated) {
-        this.sessions.get(workspaceId)?.clearUsageState();
-      }
-      return result;
-    };
+    // Invalidate usage the moment a window-changing step commits, via the
+    // truncation callback: the cut can fail AFTER deleting provider-eligible
+    // archive rows (boundary-less rotated layout), and later wrapper steps
+    // (monitor-wake restoration) can fail after chat.jsonl has changed, so a
+    // success-only guard would leave stale usage alive across both windows.
+    // A cut confined to sealed pre-boundary rows never fires the callback,
+    // keeping the still-valid usage seedable.
+    const truncate = () =>
+      this.historyService.truncateHistory(workspaceId, effectivePercentage, () =>
+        this.sessions.get(workspaceId)?.clearUsageState()
+      );
     const truncateResult =
       effectivePercentage > 0
         ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate, {
@@ -9877,14 +9877,15 @@ export class WorkspaceService extends EventEmitter {
 
         const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
           workspaceId,
-          () => this.historyService.clearHistory(workspaceId),
+          () =>
+            this.historyService.clearHistory(workspaceId, () =>
+              this.sessions.get(workspaceId)?.clearUsageState()
+            ),
           { discardUnacceptedOnSuccess: true }
         );
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
         }
-        // History is already gone even if the summary append below fails.
-        this.sessions.get(workspaceId)?.clearUsageState();
         this.timelineRecorder.record(workspaceId, {
           kind: "history.cleared",
           source: { system: "chat" },

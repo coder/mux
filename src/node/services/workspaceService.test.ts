@@ -42,7 +42,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
@@ -4508,6 +4508,104 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       expect((thrown as Error).message).toBe("injected wake restore failure");
       expect(clearUsageState).toHaveBeenCalledTimes(1);
       restoreSpy.mockRestore();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("session usage is cleared when the cut fails after deleting window content", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "truncate-usage-clear-on-partial-commit";
+    try {
+      await config.addWorkspace("/tmp/truncate-partial-commit-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "truncate-partial-commit-project",
+        projectPath: "/tmp/truncate-partial-commit-project",
+        runtimeConfig: { type: "local" },
+      });
+      // Boundary-less rotated layout: the boundary append seals a prefix into
+      // the archive, then deleting the boundary row makes the archive rows
+      // active-window content.
+      for (let i = 0; i < 2; i++) {
+        expect(
+          (
+            await historyService.appendToHistory(
+              workspaceId,
+              createMuxMessage(`msg-${i}`, "user", `message ${i}`)
+            )
+          ).success
+        ).toBe(true);
+      }
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("boundary-1", "assistant", "Summary 1", {
+              compactionBoundary: true,
+              compacted: "user",
+              compactionEpoch: 1,
+            })
+          )
+        ).success
+      ).toBe(true);
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
+          )
+        ).success
+      ).toBe(true);
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("assistant-active", "assistant", "active reply", {
+              contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+              model: "openai:gpt-4o",
+            })
+          )
+        ).success
+      ).toBe(true);
+      expect((await historyService.deleteMessage(workspaceId, "boundary-1")).success).toBe(true);
+
+      const clearUsageState = mock(() => undefined);
+      const session = {
+        isBusy: mock(() => false),
+        emitChatEvent: mock(() => undefined),
+        clearUsageState,
+        clearFileState: mock(() => undefined),
+      } as unknown as AgentSession;
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        session
+      );
+
+      // Fail the chat cut (serialize call 2) after the whole-archive delete
+      // commits: truncation returns Err, but window content is already gone,
+      // so the session's usage must still be invalidated.
+      const internals = historyService as unknown as {
+        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
+      };
+      const realSerialize = internals.serializeHistoryEntries.bind(historyService);
+      let serializeCalls = 0;
+      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
+        (messages: MuxMessage[], wsId: string) => {
+          serializeCalls += 1;
+          if (serializeCalls === 2) {
+            throw new Error("injected chat cut serialize failure");
+          }
+          return realSerialize(messages, wsId);
+        }
+      );
+      try {
+        const result = await workspaceService.truncateHistory(workspaceId, 0.5);
+        expect(result.success).toBe(false);
+        expect(clearUsageState).toHaveBeenCalledTimes(1);
+      } finally {
+        serializeSpy.mockRestore();
+      }
     } finally {
       await cleanup();
     }

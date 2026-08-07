@@ -4613,7 +4613,7 @@ export class AgentSession {
       ? await this.clearHistoryForHardRestart({
           monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
         })
-      : await this.historyService.clearHistory(this.workspaceId);
+      : await this.historyService.clearHistory(this.workspaceId, () => this.clearUsageState());
     if (!clearResult.success) {
       log.warn("Failed to clear history for exec subagent hard restart", {
         workspaceId: this.workspaceId,

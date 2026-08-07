@@ -2040,8 +2040,12 @@ describe("HistoryService", () => {
         })
       );
 
-      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      let notified = 0;
+      const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
+        notified += 1;
+      });
       expect(truncateResult.success).toBe(true);
+      expect(notified).toBe(1);
       if (truncateResult.success) {
         expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
         expect(truncateResult.data.activeContextTruncated).toBe(true);
@@ -2072,8 +2076,12 @@ describe("HistoryService", () => {
         })
       );
 
-      const truncateResult = await service.truncateHistory(wsId, 0.25);
+      let notified = 0;
+      const truncateResult = await service.truncateHistory(wsId, 0.25, () => {
+        notified += 1;
+      });
       expect(truncateResult.success).toBe(true);
+      expect(notified).toBe(0);
       if (truncateResult.success) {
         expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
         expect(truncateResult.data.activeContextTruncated).toBe(false);
@@ -2500,8 +2508,14 @@ describe("HistoryService", () => {
         }
       );
       try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        // The archive delete removed window content, so the caller must be
+        // notified at commit time despite the Err result.
+        let notified = 0;
+        const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
+          notified += 1;
+        });
         expect(truncateResult.success).toBe(false);
+        expect(notified).toBe(1);
         expect(await fileExists(archivePath(wsId))).toBe(false);
         const chatRows = await readJsonlFile(chatPath(wsId));
         // Chat cut not applied: rows survive, but usage stays stripped.
@@ -2551,8 +2565,14 @@ describe("HistoryService", () => {
         }
       );
       try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        // Sealed rows leaving cannot change the window, and the chat cut
+        // rolled back, so the caller must NOT be told to drop usage.
+        let notified = 0;
+        const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
+          notified += 1;
+        });
         expect(truncateResult.success).toBe(false);
+        expect(notified).toBe(0);
         // Every archive row was a cut target, so its deletion stands.
         expect(await fileExists(archivePath(wsId))).toBe(false);
         expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
