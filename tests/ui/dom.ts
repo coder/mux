@@ -225,6 +225,16 @@ export function installDom(): () => void {
       previous.IntersectionObserver;
     (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver =
       previous.ResizeObserver;
+
+    // Self-heal: some test files tear down with `globalThis.document = undefined`.
+    // If that poison leaked into our snapshot, restoring it would propagate a
+    // document-less environment (with baseline observers still present) to later
+    // test files, crashing module evals that probe the DOM (e.g. @react-dnd/asap
+    // calls document.createTextNode when MutationObserver exists). Re-bootstrap a
+    // baseline instead of re-exposing the poisoned snapshot.
+    if (typeof globalThis.document === "undefined") {
+      installDom();
+    }
   };
 }
 
@@ -243,3 +253,15 @@ export function installDom(): () => void {
 if (typeof globalThis.document === "undefined") {
   installDom();
 }
+
+// Evaluate react-dnd's module graph once while the DOM baseline is healthy.
+// bun test runs every file in one process; if a poisoned environment (document
+// undefined, MutationObserver present) reaches react-dnd's first evaluation,
+// @react-dnd/asap throws at module scope and leaves the package's internal
+// exports in TDZ, so every later import (including `?real=1` re-evals) fails
+// with "Cannot access 'DragPreviewImage' before initialization". Caching the
+// healthy evaluation here makes later re-evals resolve initialized internals.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require("react-dnd");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require("react-dnd-html5-backend");
