@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/require-await */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import {
@@ -54,6 +54,11 @@ interface MockDialogTriggerChildProps {
   "aria-expanded"?: boolean;
   "aria-haspopup"?: "dialog";
 }
+
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
+
+// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
+const realDialogExports = { ...RealDialogModule };
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: {
@@ -3939,4 +3944,7 @@ describe("WorkflowRunToolCall", () => {
     expect(view.getByText("executing")).toBeTruthy();
     expect(view.queryByText("completed")).toBeNull();
   });
+});
+afterAll(() => {
+  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
 });

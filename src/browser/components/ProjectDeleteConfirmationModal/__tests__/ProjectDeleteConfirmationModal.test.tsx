@@ -1,10 +1,15 @@
 import "../../../../../tests/ui/dom";
 
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, KeyboardEvent, ReactNode } from "react";
 import { installDom } from "../../../../../tests/ui/dom";
+
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
+
+// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
+const realDialogExports = { ...RealDialogModule };
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: {
@@ -222,4 +227,7 @@ describe("ProjectDeleteConfirmationModal", () => {
     const reopenedInput = getByPlaceholderText('Type "alpha" to confirm') as HTMLInputElement;
     expect(reopenedInput.value).toBe("");
   });
+});
+afterAll(() => {
+  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
 });

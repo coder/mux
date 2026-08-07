@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, render, waitFor } from "@testing-library/react";
 
@@ -14,6 +14,11 @@ interface MockApiClient {
 }
 
 let mockApi: MockApiClient | null = null;
+
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
+
+// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
+const realDialogExports = { ...RealDialogModule };
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: { open: boolean; children: ReactNode }) =>
@@ -147,4 +152,7 @@ describe("PlanFileDialog", () => {
       expect(view.getByTestId("plan-file-dialog-error").textContent).toContain("API unavailable");
     });
   });
+});
+afterAll(() => {
+  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
 });
