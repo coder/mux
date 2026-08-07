@@ -70,6 +70,31 @@ printf 'prompt=%s,%s,%s\n' "$GIT_TERMINAL_PROMPT" "$GH_PROMPT_DISABLED" "$GCM_IN
     expect(log).toContain("prompt=0,1,never");
   });
 
+  it("forwards the output cap to the git subprocess", async () => {
+    if (process.platform === "win32") return;
+    await writeExecutable(
+      path.join(binDir, "git"),
+      "#!/bin/sh\nprintf '%0800d' 0\nprintf '%0800d' 0 >&2\nexec sleep 1\n"
+    );
+
+    let thrown: unknown;
+    try {
+      await withPath(binDir, () =>
+        runGitWithCredentialLadder(["ls-remote", tempDir], {
+          repoUrl: tempDir,
+          maxOutputBytes: 1024,
+        })
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(BackupRemoteUnreachableError);
+    const cause = (thrown as Error & { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toContain("more than 1024 bytes of output");
+  });
+
   it("picks the ssh rung for git's ssh alias schemes even when gh is authenticated", async () => {
     if (process.platform === "win32") return;
     // An authenticated gh makes the gh rung available, so a remote misread as non-SSH would

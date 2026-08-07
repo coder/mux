@@ -554,7 +554,7 @@ export class BackupRepoCache {
     };
   }
 
-  private async networkGit(args: string[], options: { maxStdoutBytes?: number } = {}) {
+  private async networkGit(args: string[], options: { maxOutputBytes?: number } = {}) {
     // Hardening args go after the `-C` pair: the credential ladder recognizes the target
     // repository by `args[0]`. Commands without `-C` (clone, ls-remote) run before any cache
     // repository state exists, so there is nothing for the hardening to disable yet.
@@ -574,7 +574,7 @@ export class BackupRepoCache {
 
   async lsRemote(): Promise<RemoteRefs> {
     const result = await this.networkGit(["ls-remote", this.repoUrl], {
-      maxStdoutBytes: MAX_LS_REMOTE_OUTPUT_BYTES,
+      maxOutputBytes: MAX_LS_REMOTE_OUTPUT_BYTES,
     });
     const refs = new Map<string, string>();
     for (const line of result.stdout.split(/\r?\n/)) {

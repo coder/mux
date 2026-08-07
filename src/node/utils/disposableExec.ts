@@ -270,11 +270,11 @@ export interface ExecFileAsyncOptions {
   /** Optional signal used to cancel the process. */
   signal?: AbortSignal;
   /**
-   * Optional cap on buffered stdout. The child is killed and the promise rejects once its output
-   * exceeds this, which is opt-in because the default is deliberately unbounded for commands like
+   * Optional cap on buffered stdout and stderr. The child is killed and the promise rejects once
+   * their cumulative output exceeds this. The default is deliberately unbounded for commands like
    * `git clone` whose output is large but trusted.
    */
-  maxStdoutBytes?: number;
+  maxOutputBytes?: number;
 }
 
 /**
@@ -317,7 +317,7 @@ export function execFileAsync(
     // group, so a terminal interrupt would no longer reach it, which is why every other command
     // stays in the group it would otherwise be interrupted with. Never on Windows, where
     // `detached` opens a console window and `killProcessTree` walks the tree with `taskkill /T`.
-    detached: options?.maxStdoutBytes !== undefined && process.platform !== "win32",
+    detached: options?.maxOutputBytes !== undefined && process.platform !== "win32",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
@@ -344,34 +344,37 @@ export function execFileAsync(
     let exitCode: number | null = null;
     let exitSignal: string | null = null;
 
-    let stdoutOverflow = false;
-    let stdoutBytes = 0;
-    const maxStdoutBytes = options?.maxStdoutBytes;
+    let outputOverflow = false;
+    let outputBytes = 0;
+    const maxOutputBytes = options?.maxOutputBytes;
+    const acceptOutput = (data: Buffer): boolean => {
+      if (outputOverflow) return false;
+      // Accumulated per chunk across both streams rather than measured over the whole strings,
+      // which would be quadratic in chunk count. Checking while streaming prevents an endless
+      // remote from growing the heap without bound while the command is still running.
+      outputBytes += data.length;
+      if (maxOutputBytes === undefined || outputBytes <= maxOutputBytes) return true;
+
+      outputOverflow = true;
+      stdout = "";
+      stderr = "";
+      // The whole tree, because the command being cut off may have spawned the thing actually
+      // producing the flood (git's ssh transport, a credential helper), and killing only the
+      // direct child would leave it running.
+      if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
+      else child.kill("SIGKILL");
+      // The "close" event waits for stdio to close, and descendants may keep those pipes open.
+      // Destroy both streams so overflow rejects promptly.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      return false;
+    };
 
     child.stdout?.on("data", (data: Buffer) => {
-      if (stdoutOverflow) return;
-      stdout += data.toString();
-      // Accumulated per chunk rather than measured over the whole string, which is quadratic in
-      // chunk count: filling a 1 MiB cap in 64 byte chunks costs about 4.5s of CPU on this main
-      // process. Checked as it streams rather than after exit, so a remote that never stops
-      // talking cannot grow the heap without bound while we wait for it to finish.
-      stdoutBytes += data.length;
-      if (maxStdoutBytes !== undefined && stdoutBytes > maxStdoutBytes) {
-        stdoutOverflow = true;
-        stdout = "";
-        // The whole tree, because the command being cut off may have spawned the thing actually
-        // producing the flood (git's ssh transport, a credential helper), and killing only the
-        // direct child would leave it running.
-        if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
-        else child.kill("SIGKILL");
-        // "close" only fires once every stdio pipe is released, and descendants of the killed
-        // child inherit those pipes. Waiting for them would let the flood we are bailing out of
-        // decide how long the bail-out takes, so stop reading the output we just discarded.
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-      }
+      if (acceptOutput(data)) stdout += data.toString();
     });
     child.stderr?.on("data", (data: Buffer) => {
+      if (!acceptOutput(data)) return;
       const chunk = data.toString();
       stderr += chunk;
       options?.onStderrData?.(chunk);
@@ -384,13 +387,13 @@ export function execFileAsync(
 
     child.on("close", () => {
       cleanup();
-      if (exitCode === 0 && exitSignal === null) {
+      if (!outputOverflow && exitCode === 0 && exitSignal === null) {
         resolve({ stdout, stderr });
       } else {
-        const errorMsg = stdoutOverflow
+        const errorMsg = outputOverflow
           ? // Named before stderr, because the kill is why this failed and the signal message
             // alone would read as an unexplained crash.
-            `Command produced more than ${maxStdoutBytes ?? 0} bytes of output`
+            `Command produced more than ${maxOutputBytes ?? 0} bytes of output`
           : stderr.trim() ||
             (exitSignal
               ? `Command killed by signal ${exitSignal}`

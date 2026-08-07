@@ -339,38 +339,58 @@ describe("disposableExec", () => {
     await expect(proc.result).rejects.toThrow();
   });
 
-  test("maxStdoutBytes rejects and kills a process that outruns the cap", async () => {
-    // The sleep is backgrounded before the flood so it always holds the inherited stdout pipe
-    // once the cap trips. A bail-out that waited for stdio to drain would block on it and blow
-    // this test's timeout instead of rejecting.
-    using proc = execFileAsync("sh", ["-c", "sleep 15 & yes abcdefghij | head -c 200000; wait"], {
-      maxStdoutBytes: 1024,
+  test("maxOutputBytes rejects and kills a process when stdout outruns the cap", async () => {
+    // The final exec avoids a shell wrapper that could survive and hold the inherited pipes.
+    using proc = execFileAsync("sh", ["-c", "yes abcdefghij | head -c 200000; exec sleep 15"], {
+      maxOutputBytes: 1024,
     });
-    activeProcesses.add((proc as any).child);
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
 
     await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
-    // The signal rather than `killed`, which only records a kill sent through this handle and
-    // stays false when the process group is signalled instead.
-    expect((proc as any).child.signalCode).toBe("SIGKILL");
+    expect(child.signalCode).toBe("SIGKILL");
   });
 
-  test("maxStdoutBytes kills descendants of the capped command", async () => {
-    if (process.platform === "win32") return;
-    const marker = `mux-cap-descendant-${process.pid}-${Date.now()}`;
-    const pattern = `sleep 30; echo ${marker}`;
-    using proc = execFileAsync(
-      "sh",
-      ["-c", `sh -c '${pattern}' & yes abcdefghij | head -c 200000; wait`],
-      { maxStdoutBytes: 1024 }
-    );
-    activeProcesses.add((proc as any).child);
+  test("maxOutputBytes rejects after an overflowing command exits cleanly", async () => {
+    using proc = execFileAsync("sh", ["-c", "printf '%02000d' 0"], {
+      maxOutputBytes: 1024,
+    });
+    const child = (proc as unknown as { child: ChildProcess }).child;
 
     await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
+    expect(child.exitCode).toBe(0);
+    expect(child.signalCode).toBeNull();
+  });
+
+  test("maxOutputBytes rejects when stderr pushes cumulative output over the cap", async () => {
+    using proc = execFileAsync(
+      "sh",
+      ["-c", "printf '%0800d' 0; printf '%0800d' 0 >&2; exec sleep 15"],
+      { maxOutputBytes: 1024 }
+    );
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
+
+    await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
+    expect(child.signalCode).toBe("SIGKILL");
+  });
+
+  test("maxOutputBytes kills descendants of the capped command", async () => {
+    if (process.platform === "win32") return;
+    const marker = `mux-cap-descendant-${process.pid}-${Date.now()}`;
+    using proc = execFileAsync(
+      "sh",
+      ["-c", `bash -c 'exec -a ${marker} sleep 30' & yes abcdefghij | head -c 200000; wait`],
+      { maxOutputBytes: 1024 }
+    );
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
+
+    await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
+    expect(child.signalCode).toBe("SIGKILL");
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // Killing only the direct child would leave this shell running, holding whatever the real
-    // producer of the flood was (git's ssh transport, a credential helper).
-    using survivors = execFileAsync("pgrep", ["-fc", pattern]);
+    using survivors = execFileAsync("pgrep", ["-fc", marker]);
     const found = await survivors.result.then(
       (ok) => ok.stdout.trim(),
       () => "0" // pgrep exits non-zero when nothing matches
@@ -403,13 +423,16 @@ describe("disposableExec", () => {
     }
   });
 
-  test("maxStdoutBytes leaves output under the cap untouched", async () => {
-    using proc = execFileAsync("sh", ["-c", "printf 'small output'"], { maxStdoutBytes: 1024 });
-    activeProcesses.add((proc as any).child);
+  test("maxOutputBytes leaves output under the cap untouched", async () => {
+    using proc = execFileAsync("sh", ["-c", "printf 'small output'; printf 'small error' >&2"], {
+      maxOutputBytes: 1024,
+    });
+    activeProcesses.add((proc as unknown as { child: ChildProcess }).child);
 
-    const { stdout } = await proc.result;
+    const { stdout, stderr } = await proc.result;
 
     expect(stdout).toBe("small output");
+    expect(stderr).toBe("small error");
   });
 
   test("close event waits for stdio to flush", async () => {

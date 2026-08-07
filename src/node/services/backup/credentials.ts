@@ -424,6 +424,7 @@ export async function runGitWithCredentialLadder(
   options: GitCredentialOptions
 ): Promise<GitCredentialResult> {
   const baseOptions: ExecFileAsyncOptions = {
+    maxOutputBytes: options.maxOutputBytes,
     timeoutMs: options.timeoutMs,
     signal: options.signal,
     onStderrData: options.onStderrData,
