@@ -135,6 +135,66 @@ describe("BackupRepoCache", () => {
     expect(await localObjects()).not.toContain(" blob ");
   });
 
+  it("does not transfer 200 commits outside the managed path into the cache", async () => {
+    const seed = path.join(tempDir, "history-seed");
+    await runGit(["clone", originPath, seed]);
+    await runGit(["-C", seed, "config", "gc.auto", "0"]);
+    await runGit(["-C", seed, "config", "maintenance.auto", "false"]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.mkdir(path.join(seed, "outside"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await fs.writeFile(path.join(seed, "outside", "history.txt"), "0\n", "utf-8");
+    await commitAll(seed, "seed");
+    for (let index = 1; index <= 200; index++) {
+      await fs.writeFile(path.join(seed, "outside", "history.txt"), `${index}\n`, "utf-8");
+      await commitAll(seed, `outside history ${index}`);
+    }
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+
+    const repo = createRepo();
+    await repo.ensureCache();
+
+    const objectTypes = (
+      await runGit([
+        "-C",
+        repo.cachePath,
+        "cat-file",
+        "--batch-all-objects",
+        "--batch-check=%(objecttype)",
+      ])
+    ).split("\n");
+    expect(objectTypes.filter((type) => type === "commit")).toHaveLength(1);
+    expect(objectTypes.filter((type) => type === "tree")).toHaveLength(3);
+    expect(await runGit(["-C", repo.cachePath, "rev-list", "--count", "origin/main"])).toBe("1");
+  });
+
+  it("pushes after shallow materialization and a later depth-one fetch", async () => {
+    const seed = await seedManagedFiles({ "AGENTS.md": "first\n" });
+    const repo = createRepo();
+
+    await repo.materialize();
+    expect(await pathExists(path.join(repo.cachePath, ".git", "shallow"))).toBe(true);
+    await writeManagedFile(repo, "AGENTS.md", "second\n");
+    const firstPush = await repo.stageAndCommit("Back up settings");
+    if (firstPush === null) throw new Error("Expected the first shallow commit");
+    expect(await repo.push()).toBe(firstPush);
+
+    await runGit(["-C", seed, "fetch", "origin", "main"]);
+    await runGit(["-C", seed, "reset", "--hard", "origin/main"]);
+    await fs.writeFile(path.join(seed, "mux", "remote.md"), "remote\n", "utf-8");
+    await commitAll(seed, "remote update");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+    const remoteCommit = await runGit(["-C", seed, "rev-parse", "HEAD"]);
+
+    expect(await repo.materialize()).toBe(remoteCommit);
+    expect(await runGit(["-C", repo.cachePath, "rev-list", "--count", "origin/main"])).toBe("1");
+    await writeManagedFile(repo, "AGENTS.md", "third\n");
+    const secondPush = await repo.stageAndCommit("Back up settings again");
+    if (secondPush === null) throw new Error("Expected the second shallow commit");
+    expect(await repo.push()).toBe(secondPush);
+    expect(await runGit(["--git-dir", originPath, "show", "main:mux/AGENTS.md"])).toBe("third");
+  });
+
   it("caps diagnostic output from network Git commands", async () => {
     if (process.platform === "win32") return;
     const realGit = Bun.which("git");

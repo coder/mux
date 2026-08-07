@@ -25,6 +25,7 @@ import {
  * rather than up front. A dotfiles repository can hold anything elsewhere in its tree.
  */
 const BLOB_FILTER = "blob:none";
+const SHALLOW_FILTER_ARGS = ["--depth=1", `--filter=${BLOB_FILTER}`] as const;
 
 /**
  * True only for the rejections that mean the remote branch moved, which is what the user can fix
@@ -682,15 +683,15 @@ export class BackupRepoCache {
 
   private async cloneCache(branch?: string): Promise<void> {
     // `--no-checkout` defers materialization until `resetHardToRemote` applies sparse checkout.
-    // Local paths need the upload-pack transport so blob filtering is honored instead of
-    // Git copying the full object database before sparse checkout can limit the worktree.
+    // Bound unvalidated history to one commit. Local paths need the upload-pack transport
+    // for blob filtering instead of copying the full object database.
     await this.networkGit([
       "clone",
       ...localCloneArgs(this.repoUrl),
       "--no-hardlinks",
       "--no-checkout",
       "--single-branch",
-      `--filter=${BLOB_FILTER}`,
+      ...SHALLOW_FILTER_ARGS,
       ...(branch === undefined ? [] : ["--branch", branch]),
       "--origin",
       "origin",
@@ -931,6 +932,7 @@ export class BackupRepoCache {
       "-C",
       this.cachePath,
       "fetch",
+      ...SHALLOW_FILTER_ARGS,
       ...localUploadPackArgs(this.repoUrl),
       "origin",
       `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
@@ -1095,6 +1097,8 @@ export class BackupRepoCache {
         "-C",
         this.cachePath,
         "fetch",
+        // `--refetch` retrieves promised blobs from a shallow partial clone without deepening it.
+        "--refetch",
         "--no-tags",
         "--no-write-fetch-head",
         ...localUploadPackArgs(this.repoUrl),
