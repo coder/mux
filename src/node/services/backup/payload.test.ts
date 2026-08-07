@@ -18,6 +18,7 @@ import {
   backupSecretApprovalDigest,
   collectMcpCommandApprovals,
   createBackupPayload,
+  localOnlyPayloadFiles,
   mergeBackupPreferences,
   planRestoreWrites,
   serializeBackupPreferences,
@@ -2339,19 +2340,20 @@ describe("backup payload", () => {
       path.join(muxRoot, "skills/demo/second.md")
     );
 
-    await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
+    const result = await restoreBackupPayload({
+      muxRoot,
+      payload: await readBackupPayload(destination),
+    });
 
     const first = path.join(muxRoot, "skills/demo/first.md");
     const second = path.join(muxRoot, "skills/demo/second.md");
+    expect(result.localOnlyFiles).toEqual([]);
     expect(await fs.readFile(first, "utf-8")).toBe("first\n");
     expect(await fs.readFile(second, "utf-8")).toBe("second\n");
     expect((await fs.stat(first)).ino).not.toBe((await fs.stat(second)).ino);
   });
 
-  it("reports a local file the restore writes under another name as restored", async () => {
-    // Several names for one file, as a case-insensitive or normalizing volume makes of
-    // `note.md` and its other spellings. Restoring the backup's spelling rewrites what every
-    // one of them reads, so none is local-only.
+  it("reports every hard-linked alias omitted from the payload as local-only", async () => {
     await writeFixtureFile(muxRoot, "skills/demo/note.md", "shared\n");
     const payload = await createBackupPayload({
       muxRoot,
@@ -2372,7 +2374,7 @@ describe("backup payload", () => {
       payload: await readBackupPayload(destination),
     });
 
-    expect(result.localOnlyFiles).toEqual([]);
+    expect(result.localOnlyFiles).toEqual(["skills/demo/NOTE.md", "skills/demo/Note.md"]);
   });
 
   it("rejects manifest paths that differ only in Unicode normalization", async () => {
@@ -2443,8 +2445,10 @@ describe("backup payload", () => {
     expect(payload.files.map((file) => file.path)).toContain("skills/demo/alias.md");
   });
 
-  it("severs a hard-linked restore destination instead of writing through it", async () => {
-    await writeFixtureFile(muxRoot, "skills/demo/note.md", "from backup\n");
+  it("reports and preserves a hard-linked alias omitted from the payload", async () => {
+    const restoredPath = "skills/demo/note.md";
+    const aliasPath = "skills/demo/alias.md";
+    await writeFixtureFile(muxRoot, restoredPath, "from backup\n");
     const payload = await createBackupPayload({
       muxRoot,
       muxVersion: "1.2.3",
@@ -2452,22 +2456,25 @@ describe("backup payload", () => {
     });
     const destination = path.join(tempDir, "sever-payload");
     await writeBackupPayload(destination, payload);
-    await writeFixtureFile(muxRoot, "skills/demo/note.md", "edited locally\n");
+    await writeFixtureFile(muxRoot, restoredPath, "edited locally\n");
     // The payload restores only note.md; writing through the shared file would also rewrite
     // alias.md, a path the user never approved restoring, with backup-controlled bytes.
-    await fs.link(
-      path.join(muxRoot, "skills/demo/note.md"),
-      path.join(muxRoot, "skills/demo/alias.md")
-    );
+    await fs.link(path.join(muxRoot, restoredPath), path.join(muxRoot, aliasPath));
 
-    await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
+    const preview = await localOnlyPayloadFiles(
+      muxRoot,
+      [restoredPath, aliasPath],
+      new Set([restoredPath])
+    );
+    const result = await restoreBackupPayload({
+      muxRoot,
+      payload: await readBackupPayload(destination),
+    });
 
-    expect(await fs.readFile(path.join(muxRoot, "skills/demo/note.md"), "utf-8")).toBe(
-      "from backup\n"
-    );
-    expect(await fs.readFile(path.join(muxRoot, "skills/demo/alias.md"), "utf-8")).toBe(
-      "edited locally\n"
-    );
+    expect(preview.localOnly).toEqual([aliasPath]);
+    expect(result.localOnlyFiles).toEqual([aliasPath]);
+    expect(await fs.readFile(path.join(muxRoot, restoredPath), "utf-8")).toBe("from backup\n");
+    expect(await fs.readFile(path.join(muxRoot, aliasPath), "utf-8")).toBe("edited locally\n");
   });
 
   it("refuses to sever another owner's file in another owner's sticky directory before writing", async () => {

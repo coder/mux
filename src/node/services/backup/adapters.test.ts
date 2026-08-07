@@ -835,10 +835,7 @@ describe("backup adapters", () => {
     }
   });
 
-  it("does not promise to keep a local file the restore writes under another name", async () => {
-    // Hard links give one file several names, as a case-insensitive or normalizing volume
-    // does for `note.md`, `Note.md` and `NOTE.md`. The backup carries one spelling, so
-    // restoring it changes what every other name reads and none of them is kept.
+  it("reports hard-linked aliases that restore will preserve", async () => {
     await writeFixtureFile(muxRoot, "skills/demo/note.md", "shared\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     const payload = createBackupPayloadStore({ config });
@@ -857,7 +854,7 @@ describe("backup adapters", () => {
       managedPath: settings.path,
     });
 
-    expect(preview.localOnlyFiles).toEqual([]);
+    expect(preview.localOnlyFiles).toEqual(["skills/demo/NOTE.md", "skills/demo/Note.md"]);
     expect(preview.changes.map((change) => change.path)).toEqual(["skills/demo/note.md"]);
   });
 

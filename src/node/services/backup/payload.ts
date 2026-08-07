@@ -210,46 +210,45 @@ async function lstatOrNull(target: string) {
 }
 
 /**
- * Every collected local path that is the same file as a given payload path, absent when the
- * payload path names nothing collected, which is the ordinary case of a file restore creates.
- *
- * Comparing the spellings cannot answer this. On a case-insensitive or normalization-folding
- * volume `skills/demo/Foo.md` and `skills/demo/foo.md` are one file, and on a case-sensitive
- * one they are two, so folding is wrong on the second and a literal match is wrong on the
- * first. Only the filesystem knows which it is, so ask it: paths name one file when it
- * reports one identity for them. All of them are kept, because a hard link means an identity
- * can have any number of names and writing the file changes what every one of them reads.
+ * Filesystem identities distinguish aliases from distinct paths across case-sensitive,
+ * case-insensitive, and normalization-folding volumes.
  */
 async function localFilesOverwrittenByPayload(
   muxRoot: string,
   localPaths: Iterable<string>,
   payloadPaths: Iterable<string>
-): Promise<Map<string, string[]>> {
+): Promise<{ overwritten: Map<string, string[]>; multiLinkLocals: Set<string> }> {
   const byIdentity = new Map<string, string[]>();
+  const multiLinkLocals = new Set<string>();
   for (const localPath of localPaths) {
     const identity = await fileIdentity(muxRoot, localPath);
     if (identity === null) continue;
-    const names = byIdentity.get(identity);
-    if (names === undefined) byIdentity.set(identity, [localPath]);
+    if (identity.nlink > 1) multiLinkLocals.add(localPath);
+    const key = fileIdentityKey(identity);
+    const names = byIdentity.get(key);
+    if (names === undefined) byIdentity.set(key, [localPath]);
     else names.push(localPath);
   }
   const overwritten = new Map<string, string[]>();
   for (const payloadPath of payloadPaths) {
     const identity = await fileIdentity(muxRoot, payloadPath);
-    const names = identity === null ? undefined : byIdentity.get(identity);
+    const names = identity === null ? undefined : byIdentity.get(fileIdentityKey(identity));
     if (names !== undefined) overwritten.set(payloadPath, names);
   }
-  return overwritten;
+  return { overwritten, multiLinkLocals };
 }
 
-async function fileIdentity(muxRoot: string, relativePath: string): Promise<string | null> {
+async function fileIdentity(
+  muxRoot: string,
+  relativePath: string
+): Promise<FileIdentityStat | null> {
   const stat = await lstatOrNull(path.join(muxRoot, ...relativePath.split("/")));
-  return stat === null ? null : `${stat.dev}:${stat.ino}`;
+  return stat === null ? null : { dev: stat.dev, ino: stat.ino, nlink: stat.nlink };
 }
 
 /**
- * Local files a restore of this payload would leave untouched: the ones that share no name
- * with a restored path and are not the same file as one under another spelling.
+ * A hard-linked alias is local-only unless restored directly because writes sever the
+ * restored name.
  */
 export async function localOnlyPayloadFiles(
   muxRoot: string,
@@ -257,11 +256,18 @@ export async function localOnlyPayloadFiles(
   restoredPaths: ReadonlySet<string>
 ): Promise<{ localOnly: string[]; overwritten: Map<string, string[]> }> {
   const locals = [...localPaths];
-  const overwritten = await localFilesOverwrittenByPayload(muxRoot, locals, restoredPaths);
+  const { overwritten, multiLinkLocals } = await localFilesOverwrittenByPayload(
+    muxRoot,
+    locals,
+    restoredPaths
+  );
   const overwrittenLocals = new Set([...overwritten.values()].flat());
   return {
     localOnly: locals
-      .filter((file) => !restoredPaths.has(file) && !overwrittenLocals.has(file))
+      .filter(
+        (file) =>
+          !restoredPaths.has(file) && (!overwrittenLocals.has(file) || multiLinkLocals.has(file))
+      )
       .sort(),
     overwritten,
   };
@@ -460,12 +466,16 @@ interface FileIdentityStat {
  * set stay allowed: they are how a case-folding volume's one-file-many-spellings behaves,
  * and every one of them is content the backup already carries.
  */
+function fileIdentityKey(identity: FileIdentityStat): string {
+  return `${identity.dev}:${identity.ino}`;
+}
+
 function createHardLinkTracker() {
   const identities = new Map<string, { nlink: number; names: string[] }>();
   return {
     record(relativePath: string, identity: FileIdentityStat): void {
       if (identity.nlink <= 1) return;
-      const key = `${identity.dev}:${identity.ino}`;
+      const key = fileIdentityKey(identity);
       const entry = identities.get(key);
       if (entry === undefined) {
         identities.set(key, { nlink: identity.nlink, names: [relativePath] });
@@ -2372,9 +2382,7 @@ export async function restoreBackupPayload(
   );
 
   const plan = await planRestoreWrites(options.muxRoot, options.payload);
-  // Before the writes, like the preview that showed the user this restore: the report says
-  // which local files the backup does not cover, and a multi-link destination the write loop
-  // severs below would otherwise flip from covered to local-only between the two.
+  // Classify against the pre-restore filesystem state before writes change file identities.
   const { localOnly } = await localOnlyPayloadFiles(options.muxRoot, localPaths, restoredPaths);
 
   for (const write of plan.writes) {
