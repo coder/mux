@@ -35,6 +35,12 @@ function differentNonRootUid(uid: number): number {
   return uid === 1 ? 2 : 1;
 }
 
+async function setStickyDirectory(directory: string): Promise<void> {
+  using chmod = execFileAsync("chmod", ["1777", directory]);
+  await chmod.result;
+  expect((await fs.stat(directory)).mode & 0o1000).toBe(0o1000);
+}
+
 /** Rewrites a published payload the way someone with repository write access could. */
 async function tamperPayloadFile(
   destination: string,
@@ -2395,6 +2401,98 @@ describe("backup payload", () => {
     expect(await fs.readFile(path.join(muxRoot, "skills/demo/alias.md"), "utf-8")).toBe(
       "edited locally\n"
     );
+  });
+
+  it("refuses to sever another owner's file in another owner's sticky directory before writing", async () => {
+    if (process.platform === "win32" || process.getuid === undefined) return;
+    await writeFixtureFile(muxRoot, "AGENTS.md", "from backup\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    await fs.chmod(path.join(muxRoot, "skills/demo/SKILL.md"), 0o644);
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "sticky-foreign-owner");
+    await writeFixtureFile(restoreRoot, "AGENTS.md", "local instructions\n");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    const alias = path.join(restoreRoot, "skills/demo/alias.md");
+    await writeFixtureFile(restoreRoot, "skills/demo/SKILL.md", "local skill\n");
+    await fs.chmod(destination, 0o644);
+    await fs.link(destination, alias);
+    await setStickyDirectory(path.dirname(destination));
+    const existing = await fs.stat(destination);
+    const getuid = spyOn(process, "getuid").mockReturnValue(differentNonRootUid(existing.uid));
+
+    try {
+      const rejected = await captureRejection(
+        restoreBackupPayload({ muxRoot: restoreRoot, payload })
+      );
+      expect((rejected as Error).message).toBe(
+        "Cannot restore 'skills/demo/SKILL.md': the destination cannot be replaced"
+      );
+      expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe(
+        "local instructions\n"
+      );
+      expect(await fs.readFile(destination, "utf-8")).toBe("local skill\n");
+      expect(await fs.readFile(alias, "utf-8")).toBe("local skill\n");
+    } finally {
+      getuid.mockRestore();
+    }
+  });
+
+  it("severs an owned file in another owner's sticky directory", async () => {
+    if (process.platform === "win32" || process.getuid === undefined) return;
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "sticky-file-owner");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await writeFixtureFile(restoreRoot, "skills/demo/SKILL.md", "local skill\n");
+    await fs.chmod(destination, 0o644);
+    await fs.link(destination, path.join(restoreRoot, "skills/demo/alias.md"));
+    await setStickyDirectory(path.dirname(destination));
+    const existing = await fs.stat(destination);
+    const getuid = spyOn(process, "getuid").mockReturnValue(existing.uid);
+
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+    } finally {
+      getuid.mockRestore();
+    }
+
+    expect(await fs.readFile(destination, "utf-8")).toBe("from backup\n");
+  });
+
+  it("severs another owner's file in a non-sticky directory", async () => {
+    if (process.platform === "win32" || process.getuid === undefined) return;
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "non-sticky-foreign-owner");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await writeFixtureFile(restoreRoot, "skills/demo/SKILL.md", "local skill\n");
+    await fs.chmod(destination, 0o644);
+    await fs.link(destination, path.join(restoreRoot, "skills/demo/alias.md"));
+    const existing = await fs.stat(destination);
+    const getuid = spyOn(process, "getuid").mockReturnValue(differentNonRootUid(existing.uid));
+
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+    } finally {
+      getuid.mockRestore();
+    }
+
+    expect(await fs.readFile(destination, "utf-8")).toBe("from backup\n");
   });
 
   it("refuses to read a payload entry through a symlink", async () => {

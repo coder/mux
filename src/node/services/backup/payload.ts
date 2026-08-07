@@ -2228,7 +2228,21 @@ async function assertRestoreDestinationWritable(
   if (existing !== null && existing.nlink > 1) {
     // A multi-link destination is severed by unlinking it, which the directory holding the name
     // has to permit, not the file itself.
-    await assertDirectoryAccepts(path.dirname(destination), relativePath);
+    const directory = path.dirname(destination);
+    await assertDirectoryAccepts(directory, relativePath);
+    const dirStat = await fs.stat(directory);
+    const uid = process.getuid?.();
+    // Sticky directories reserve unlinking for privileged users or owners of the file or directory,
+    // even when the directory otherwise grants write and search access.
+    if (
+      (dirStat.mode & 0o1000) !== 0 &&
+      uid !== undefined &&
+      uid !== 0 &&
+      existing.uid !== uid &&
+      dirStat.uid !== uid
+    ) {
+      throw new Error(`Cannot restore '${relativePath}': the destination cannot be replaced`);
+    }
   }
   if (existing === null) {
     // The write's mkdir is recursive, so the directory that has to accept the new entry is the
