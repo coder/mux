@@ -1959,10 +1959,9 @@ export class HistoryService {
         // Structural rewrite requires full history content (oldest rows live in
         // the sealed archive). Percentage truncation is a rare recovery path
         // (compaction-failure retry), so the O(total-history) read is acceptable.
-        const messages = [
-          ...(await this.readArchivedHistory(workspaceId)),
-          ...(await this.readChatHistory(workspaceId)),
-        ];
+        const archivedMessages = await this.readArchivedHistory(workspaceId);
+        const chatMessages = await this.readChatHistory(workspaceId);
+        const messages = [...archivedMessages, ...chatMessages];
         if (messages.length === 0) {
           return Ok({ deletedSequences: [], activeContextTruncated: false }); // Nothing to truncate
         }
@@ -2001,10 +2000,11 @@ export class HistoryService {
           return Ok({ deletedSequences: [], activeContextTruncated: false });
         }
 
-        // If we're removing all messages, use fast path
+        // If we're removing all messages, use fast path. Archive first for
+        // the same failure-ordering reason as the full-clear branch above.
         if (removeCount >= messages.length) {
-          await fs.rm(historyPath, { force: true });
           await fs.rm(archivePath, { force: true });
+          await fs.rm(historyPath, { force: true });
           this.sequenceCounters.set(workspaceId, 0);
           const deletedSequences = messages
             .map((msg) => msg.metadata?.historySequence)
@@ -2031,12 +2031,11 @@ export class HistoryService {
           messages.slice(Math.min(activeContextStart, removeCount), removeCount)
         );
 
-        // Keep messages after removeCount
-        const remainingMessages = messages.slice(removeCount).map((msg) => {
-          // Retained rows' contextUsage measured the pre-truncation context
-          // (including the removed prefix). Persisting it would reseed stale
-          // auto-compaction pressure, even across app restarts. Strip it; the
-          // next provider response reports fresh usage.
+        // Retained rows' contextUsage measured the pre-truncation context
+        // (including the removed prefix). Persisting it would reseed stale
+        // auto-compaction pressure, even across app restarts. Strip it; the
+        // next provider response reports fresh usage.
+        const sanitizeRetained = (msg: MuxMessage): MuxMessage => {
           if (!activeContextTruncated || msg.metadata?.contextUsage === undefined) {
             return msg;
           }
@@ -2048,65 +2047,50 @@ export class HistoryService {
               contextProviderMetadata: undefined,
             },
           };
-        });
+        };
+        const remainingMessages = messages.slice(removeCount).map(sanitizeRetained);
         const deletedMessages = messages.slice(0, removeCount);
         const deletedSequences = deletedMessages
           .map((msg) => msg.metadata?.historySequence)
           .filter((s): s is number => isNonNegativeInteger(s));
 
-        // Collapse the remainder into chat.jsonl and drop the archive (the cut
-        // may fall anywhere inside it). It may contain old boundaries; a later
-        // boundary write re-seals it.
-        const historyEntries = this.serializeHistoryEntries(remainingMessages, workspaceId);
-
-        // Order the two-file rewrite so no failure can change the active
-        // provider window yet still return Err (the caller invalidates usage
-        // only on success). Park the archive under a tombstone name (atomic
-        // rename), commit chat.jsonl atomically, then discard the tombstone:
-        // a pre-commit failure rolls the archive back and leaves history
-        // untouched, while a post-commit tombstone-removal failure only strays
-        // a file that no read path consumes.
-        const tombstonePath = `${archivePath}.trash`;
-        let archiveParked = false;
-        try {
-          await fs.rename(archivePath, tombstonePath);
-          archiveParked = true;
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-            throw error;
+        // Rewrite each file in place instead of collapsing the archive into
+        // chat.jsonl: every step is either an atomic single-file write or a
+        // deletion of rows the cut removes anyway, so no failure or crash can
+        // change the active provider window while returning Err (the caller
+        // invalidates usage only on success), lose retained rows, or leave
+        // duplicate rows behind.
+        if (removeCount < archivedMessages.length) {
+          // Cut confined to the archive: rewrite it atomically. chat.jsonl
+          // needs a rewrite only when retained rows must be sanitized (a
+          // malformed boundary-less archive state); ordering archive-first
+          // keeps a between-writes crash free of row loss or duplication.
+          const retainedArchive = archivedMessages.slice(removeCount).map(sanitizeRetained);
+          await writeFileAtomic(
+            archivePath,
+            this.serializeHistoryEntries(retainedArchive, workspaceId)
+          );
+          if (activeContextTruncated) {
+            await writeFileAtomic(
+              historyPath,
+              this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
+            );
           }
-        }
-
-        try {
-          // Atomic write prevents corruption if app crashes mid-write
-          await writeFileAtomic(historyPath, historyEntries);
-        } catch (error) {
-          if (archiveParked) {
-            try {
-              await fs.rename(tombstonePath, archivePath);
-            } catch (rollbackError) {
-              // Sealed pre-boundary rows stay parked in the tombstone; the
-              // active window in chat.jsonl is still intact.
-              log.error("Failed to restore parked chat archive after truncation write failure", {
-                workspaceId,
-                tombstonePath,
-                error: rollbackError,
-              });
-            }
+        } else {
+          // Cut consumes the whole archive: every archive row is being
+          // deleted, so removing the archive before committing chat.jsonl can
+          // only delete rows the cut targets. A failure after the rm returns
+          // Err with chat.jsonl (and the provider window) untouched.
+          if (archivedMessages.length > 0) {
+            await fs.rm(archivePath, { force: true });
           }
-          throw error;
-        }
-
-        if (archiveParked) {
-          try {
-            await fs.rm(tombstonePath, { force: true });
-          } catch (error) {
-            log.warn("Failed to remove parked chat archive after truncation", {
-              workspaceId,
-              tombstonePath,
-              error,
-            });
-          }
+          const retainedChat = chatMessages
+            .slice(removeCount - archivedMessages.length)
+            .map(sanitizeRetained);
+          await writeFileAtomic(
+            historyPath,
+            this.serializeHistoryEntries(retainedChat, workspaceId)
+          );
         }
         this.sealedRotationChecked.delete(workspaceId);
 
