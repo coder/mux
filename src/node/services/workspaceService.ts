@@ -9677,6 +9677,8 @@ export class WorkspaceService extends EventEmitter {
       return Err(truncateResult.error);
     }
 
+    session?.clearUsageState();
+
     const deletedSequences = truncateResult.data;
     if (deletedSequences.length > 0) {
       const deleteMessage: DeleteMessage = {
@@ -9757,6 +9759,8 @@ export class WorkspaceService extends EventEmitter {
       if (!appendResult.success) {
         return Err(`Failed to append context reset boundary: ${appendResult.error}`);
       }
+
+      session?.clearUsageState();
 
       const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
       if (session) {
@@ -9883,6 +9887,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Emit through the session so ORPC subscriptions receive the events
       const session = this.sessions.get(workspaceId);
+      session?.clearUsageState();
       if (deletedSequences.length > 0) {
         const deleteMessage: DeleteMessage = {
           type: "delete",

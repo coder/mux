@@ -2,6 +2,9 @@ import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock }
 import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { IdleCompactionOutcome } from "./idleCompactionService";
 import type { AgentSession } from "./agentSession";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
+import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { askUserQuestionManager } from "./askUserQuestionManager";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -3832,6 +3835,21 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     return { aiService, config, historyService, workspaceService, goalService, cleanup };
   }
 
+  // Simulates the in-memory snapshot a previous stream left behind:
+  // 95k of gpt-4o's 128k window is past the 70% on-send compaction threshold.
+  function seedStaleHighContextUsage(session: AgentSession): void {
+    (session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState = {
+      lastContextUsage: createDisplayUsage(
+        { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+        "openai:gpt-4o"
+      ),
+    };
+  }
+
+  function getUsageState(session: AgentSession): AutoCompactionUsageState | undefined {
+    return (session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState;
+  }
+
   test("idle wait follows auto-retry startup into the resumed stream", async () => {
     const { workspaceService, cleanup } = await createServices();
     const workspaceId = "idle-wait-auto-retry-starting";
@@ -4269,6 +4287,163 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       expect(allMessages[0]).toBe("pre-reset-user");
       expect(allMessages[1]?.startsWith("context-reset-")).toBe(true);
     } finally {
+      await cleanup();
+    }
+  });
+
+  test("start-here replacement clears stale usage so the next send does not auto-compact", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "start-here-clears-usage-state";
+    const streamMessage = mock((..._args: unknown[]) => Promise.resolve(Ok(undefined)));
+    const harness = await createAgentSessionHarness({
+      workspaceId,
+      config,
+      historyService,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    try {
+      await config.addWorkspace("/tmp/start-here-usage-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "start-here-usage-project",
+        projectPath: "/tmp/start-here-usage-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-start-here-user", "user", "long conversation", {})
+          )
+        ).success
+      ).toBe(true);
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-start-here-assistant", "assistant", "long reply", {
+              model: "openai:gpt-4o",
+              contextUsage: { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+            })
+          )
+        ).success
+      ).toBe(true);
+
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        harness.session
+      );
+      seedStaleHighContextUsage(harness.session);
+
+      const replaceResult = await workspaceService.replaceHistory(
+        workspaceId,
+        createMuxMessage("start-here-summary", "assistant", "Start Here summary", {
+          compacted: "user",
+        }),
+        { mode: "append-compaction-boundary" }
+      );
+      expect(replaceResult.success).toBe(true);
+
+      const sendResult = await harness.session.sendMessage("follow-up after start here", {
+        model: "openai:gpt-4o",
+        agentId: "exec",
+      });
+      expect(sendResult.success).toBe(true);
+
+      const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(activeWindow.success).toBe(true);
+      const activeMessages = activeWindow.success ? activeWindow.data : [];
+      expect(
+        activeMessages.filter(
+          (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+        )
+      ).toHaveLength(0);
+      const followUp = activeMessages.find((message) => message.role === "user");
+      expect(followUp?.parts[0]).toMatchObject({
+        type: "text",
+        text: "follow-up after start here",
+      });
+      expect(streamMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("context reset clears stale session usage state", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-clears-usage-state";
+    const harness = await createAgentSessionHarness({ workspaceId, config, historyService });
+    try {
+      await config.addWorkspace("/tmp/context-reset-usage-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-usage-project",
+        projectPath: "/tmp/context-reset-usage-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-reset-user", "user", "before reset", {})
+          )
+        ).success
+      ).toBe(true);
+
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        harness.session
+      );
+      seedStaleHighContextUsage(harness.session);
+
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "reset",
+      });
+
+      expect(getUsageState(harness.session)).toBeUndefined();
+    } finally {
+      harness.session.dispose();
+      await cleanup();
+    }
+  });
+
+  test("full history clear clears stale session usage state", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "full-clear-clears-usage-state";
+    const harness = await createAgentSessionHarness({ workspaceId, config, historyService });
+    try {
+      await config.addWorkspace("/tmp/full-clear-usage-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "full-clear-usage-project",
+        projectPath: "/tmp/full-clear-usage-project",
+        runtimeConfig: { type: "local" },
+      });
+      expect(
+        (
+          await historyService.appendToHistory(
+            workspaceId,
+            createMuxMessage("pre-clear-user", "user", "before clear", {})
+          )
+        ).success
+      ).toBe(true);
+
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        harness.session
+      );
+      seedStaleHighContextUsage(harness.session);
+
+      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+
+      expect(result.success).toBe(true);
+      expect(getUsageState(harness.session)).toBeUndefined();
+    } finally {
+      harness.session.dispose();
       await cleanup();
     }
   });

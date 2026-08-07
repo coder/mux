@@ -3419,6 +3419,16 @@ export class AgentSession {
   }
 
   /**
+   * Called when history is rewritten to a fresh boundary outside the compaction
+   * stream path (Start Here, /reset, /clear): stale usage would make the next
+   * send auto-compact the already-cleared context. sendMessage re-seeds accurate
+   * usage from post-boundary history.
+   */
+  clearUsageState(): void {
+    this.lastUsageState = undefined;
+  }
+
+  /**
    * Persist a manual user message + emit a stream-error chat event when a
    * pre-stream gate (e.g. the unpriced-model budget gate) rejects a send.
    *
