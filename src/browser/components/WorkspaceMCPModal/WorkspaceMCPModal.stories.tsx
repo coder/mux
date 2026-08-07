@@ -396,3 +396,58 @@ export const ToggleServerEnabled: Story = {
     });
   },
 };
+
+/**
+ * Agent Plugin provenance with worst-case long names must not overflow the
+ * dialog horizontally — especially at the phone viewport, where an unbroken
+ * token would push the Fetch Tools button past the dialog edge. The play
+ * contract asserts no horizontal overflow at any viewport (the long fixture
+ * name overflows even the desktop max-w-2xl dialog without the min-w-0 fix);
+ * the Pixel phone variant guards the narrow rendering visually.
+ */
+export const WorkspaceMCPPluginServersNarrow: Story = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    ...meta.parameters,
+    pixel: {
+      matrix: { themes: ["dark"], viewports: ["phone"] },
+    },
+  },
+  render: () =>
+    renderWorkspaceMCPModal({
+      servers: {
+        "plugin:abc123:everything": {
+          transport: "stdio",
+          command: "bunx",
+          disabled: true,
+          plugin: {
+            // No hyphens: hyphenated names wrap naturally, but the name grammar
+            // also allows unbroken alphanumeric/dot tokens, which only wrap when
+            // the layout allows shrinking (min-w-0) and breaking (break-words).
+            pluginName: "extremelylongpluginnamethatkeepsgoingandgoingforawhile0123456789",
+            serverName: "verylongmcpservernamewithmanytokensandthensome",
+            sourceScope: "project",
+            sourceLocation:
+              ".agents/plugins/extremelylongpluginnamethatkeepsgoingandgoingforawhile0123456789",
+          },
+        },
+        mux: { transport: "stdio", command: "npx -y @anthropics/mux-server", disabled: false },
+      },
+      testResults: { mux: MOCK_TOOLS },
+      preCacheTools: true,
+    }),
+  play: async ({ canvasElement }) => {
+    const dialog = await findWorkspaceMCPDialog(canvasElement);
+    const modal = within(dialog);
+
+    await expect(
+      modal.findByText(/\.agents\/plugins\/extremelylongpluginname/)
+    ).resolves.toBeInTheDocument();
+
+    // No horizontal overflow: long unbroken provenance must wrap/break inside
+    // the dialog instead of widening its scrollable content.
+    await expect(dialog.scrollWidth).toBeLessThanOrEqual(dialog.clientWidth);
+  },
+};

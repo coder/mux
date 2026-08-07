@@ -335,8 +335,11 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                       !effectivelyEnabled && "opacity-50"
                     )}
                   >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-between gap-2">
+                      {/* min-w-0 chain: repo-controlled plugin/server names can be
+                          long unbroken tokens; without it they push the Fetch
+                          Tools button past the dialog edge at narrow widths. */}
+                      <div className="flex min-w-0 items-center gap-3">
                         <Switch
                           checked={effectivelyEnabled}
                           onCheckedChange={(checked) =>
@@ -344,10 +347,14 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           }
                           aria-label={`Toggle ${displayName} MCP server`}
                         />
-                        <div>
-                          <div className="font-medium">{displayName}</div>
+                        <div className="min-w-0">
+                          {/* wrap-anywhere (not truncate/break-words): repo-controlled
+                              names must stay fully readable, and only overflow-wrap:
+                              anywhere shrinks intrinsic min-content so the dialog's
+                              grid track cannot be inflated by an unbroken token. */}
+                          <div className="font-medium wrap-anywhere">{displayName}</div>
                           {info.plugin ? (
-                            <div className="text-muted text-xs">
+                            <div className="text-muted text-xs wrap-anywhere">
                               Agent Plugin ({info.plugin.sourceScope} · {info.plugin.sourceLocation}
                               ) — disabled by default
                             </div>

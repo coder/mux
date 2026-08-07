@@ -1197,12 +1197,16 @@ export const MCPSettingsSection: React.FC = () => {
                           </TooltipContent>
                         </Tooltip>
                         <div className={cn("min-w-0", !isEnabled && "opacity-50")}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-foreground text-sm font-medium">
+                          {/* flex-wrap + wrap-anywhere: repo-controlled plugin names and
+                              install locations can be long unbroken tokens; wrap-anywhere
+                              shrinks their min-content so they cannot starve the actions
+                              column at ~375px. */}
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-foreground min-w-0 text-sm font-medium wrap-anywhere">
                               {displayName}
                             </span>
                             {entry.plugin && (
-                              <span className="text-muted bg-background rounded px-1.5 py-0.5 text-xs">
+                              <span className="text-muted bg-background min-w-0 rounded px-1.5 py-0.5 text-xs wrap-anywhere">
                                 {/* Include the install location: same-name plugins can
                                     exist in sibling containers (.mux vs .agents). */}
                                 plugin · {entry.plugin.sourceLocation}
