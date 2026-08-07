@@ -100,6 +100,7 @@ import {
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
+import type { WorkspaceChatMessage } from "@/common/orpc/types";
 import {
   isActiveWorkflowRunStatus,
   isTerminalWorkflowRunStatus,
@@ -820,6 +821,36 @@ function isErrorEvent(value: unknown): value is ErrorEvent {
   return isTypedWorkspaceEvent(value, "error");
 }
 
+// Exhaustive map so adding a StreamErrorType to the schema fails typecheck until
+// this lookup is updated — otherwise a new retryable type would not be cached and
+// auto-retry-abandoned settlement would fall back to a generic abandon reason.
+const STREAM_ERROR_TYPE_LOOKUP = {
+  authentication: true,
+  rate_limit: true,
+  server_error: true,
+  api: true,
+  retry_failed: true,
+  aborted: true,
+  network: true,
+  context_exceeded: true,
+  quota: true,
+  model_not_found: true,
+  runtime_not_ready: true,
+  runtime_start_failed: true,
+  empty_output: true,
+  stream_truncated: true,
+  max_output_tokens: true,
+  model_refusal: true,
+  unknown: true,
+} as const satisfies Record<StreamErrorType, true>;
+
+function isStreamErrorType(value: unknown): value is StreamErrorType {
+  return (
+    typeof value === "string" &&
+    Object.prototype.hasOwnProperty.call(STREAM_ERROR_TYPE_LOOKUP, value)
+  );
+}
+
 function hasAncestorWorkspaceId(
   entry: { ancestorWorkspaceIds?: unknown } | null | undefined,
   ancestorWorkspaceId: string
@@ -1236,6 +1267,17 @@ export class TaskService {
   // Cache completed reports so callers can retrieve them without re-reading disk.
   // Bounded by max entries; disk persistence is the source of truth for restart-safety.
   private readonly completedReportsByTaskId = new Map<string, CompletedAgentReportCacheEntry>();
+
+  /**
+   * Last observed stream-error for a child workspace. Used when auto-retry is later
+   * abandoned (retry callback failed, user disabled retries, missing resume options):
+   * the original error event may have kept the parent handle alive because a retry was
+   * pending, and abandonment itself carries only a reason string, not the stream error.
+   */
+  private readonly lastStreamErrorByWorkspaceId = new Map<
+    string,
+    { error: string; errorType: StreamErrorType }
+  >();
 
   // Task workspace removals that outlived their termination timeout. Retries must
   // await the ORIGINAL removal outcome: WorkspaceService.remove() short-circuits Ok
@@ -1696,6 +1738,32 @@ export class TaskService {
           log.error("TaskService.handleTaskStreamError failed", { error });
         });
     });
+
+    // Auto-retry lifecycle is a chat event (not an AIService stream event). When a child
+    // schedules a retry, stream-error handling leaves parent waiters blocked; if that retry
+    // is later abandoned without a new stream-error, nothing else settles the handle and
+    // the parent blocks until timeout. Listen here so abandonment fails the task gracefully.
+    this.workspaceService.on(
+      "chat",
+      (event: { workspaceId: string; message: WorkspaceChatMessage }) => {
+        if (event.message.type !== "auto-retry-abandoned") {
+          return;
+        }
+        const workspaceId = event.workspaceId;
+        const reason = event.message.reason;
+        void this.workspaceEventLocks
+          .withLock(workspaceId, async () => {
+            await this.handleTaskAutoRetryAbandoned(workspaceId, reason);
+          })
+          .catch((error: unknown) => {
+            log.error("TaskService.handleTaskAutoRetryAbandoned failed", {
+              workspaceId,
+              reason,
+              error,
+            });
+          });
+      }
+    );
   }
 
   setTimelineRecorder(recorder: TimelineRecorder): void {
@@ -9402,6 +9470,8 @@ export class TaskService {
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const workspaceId = event.workspaceId;
+    // A successful stream-end supersedes any cached stream-error used for abandon settlement.
+    this.lastStreamErrorByWorkspaceId.delete(workspaceId);
 
     // Ensure any in-flight notify_on_terminal persistence (from a just-detached foreground wait)
     // has settled so the config we read below reflects the durable non-blocking policy.
@@ -9909,13 +9979,29 @@ export class TaskService {
   }
 
   private async handleTaskStreamError(event: ErrorEvent): Promise<void> {
+    // Remember the latest stream failure so a later auto-retry-abandoned event can
+    // surface the original error text when settling parent waiters.
+    if (event.errorType != null && isStreamErrorType(event.errorType) && event.error.length > 0) {
+      this.lastStreamErrorByWorkspaceId.set(event.workspaceId, {
+        error: event.error,
+        errorType: event.errorType,
+      });
+    }
+
     if (await this.finalizeWorkspaceTurnFromStreamError(event)) {
+      // Workspace-turn path settled (or kept running for a pending retry). Clear the
+      // cache only on true terminal settlement — pending-retry keeps the handle live.
+      const active = await this.getActiveWorkspaceTurnRecordForWorkspace(event.workspaceId);
+      if (active == null) {
+        this.lastStreamErrorByWorkspaceId.delete(event.workspaceId);
+      }
       return;
     }
     const workspaceId = event.workspaceId;
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, workspaceId);
     if (!entry?.workspace.parentWorkspaceId) {
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
       return;
     }
 
@@ -9923,6 +10009,7 @@ export class TaskService {
     // Stream errors only need settlement handling while the task is mid-run
     // (running) or waiting on its completion tool (awaiting_report).
     if (status !== "running" && status !== "awaiting_report") {
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
       return;
     }
     const taskIndex = this.buildAgentTaskIndex(cfg);
@@ -9935,6 +10022,7 @@ export class TaskService {
         taskIndex
       )
     ) {
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
       return;
     }
 
@@ -9968,12 +10056,47 @@ export class TaskService {
         errorType: event.errorType ?? "unknown",
         errorMessage: event.error,
       });
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
       return;
     }
 
     if (status !== "awaiting_report") {
-      // Retryable errors during `running` are handled by the agent session's
-      // retry loop; TaskService only intervenes once the task owes its report.
+      // Retryable (or non-settling non-retryable) errors during `running` are owned by
+      // the agent session's recovery loop. Wait for that decision, then:
+      // - if a retry/stream is in flight, keep the parent blocked and rely on
+      //   auto-retry-abandoned / a later stream-end to settle;
+      // - if nothing is recovering (auto-retry disabled, exhausted immediately),
+      //   settle now so the parent is not blocked until waitForAgentReport times out.
+      // Keep lastStreamError cached when a retry is pending so abandon can reuse it.
+      await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+      if (
+        this.aiService.isStreaming(workspaceId) ||
+        this.workspaceService.hasPendingAutoRetry(workspaceId)
+      ) {
+        return;
+      }
+      // context_exceeded / aborted have non-auto-retry in-session recovery paths
+      // (compaction, user follow-up); do not terminal-fail those here.
+      if (
+        event.errorType != null &&
+        WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType)
+      ) {
+        return;
+      }
+      log.error(
+        "Task stream error left no in-flight recovery; interrupting task so the parent is not blocked",
+        {
+          workspaceId,
+          taskStatus: status,
+          errorType: event.errorType,
+          error: event.error,
+        }
+      );
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: event.errorType ?? "unknown",
+        errorMessage: event.error,
+      });
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
       return;
     }
 
@@ -9990,6 +10113,112 @@ export class TaskService {
       reason: "error",
       error: event,
     });
+  }
+
+  /**
+   * When a child session abandons auto-retry without emitting a new stream-error
+   * that settles the task (retry callback failed, missing resume options, user
+   * disabled retries after a scheduled attempt), parent waiters would otherwise
+   * stay blocked until waitForAgentReport's timeout. Settle workspace-turn handles
+   * and agent tasks terminally using the last known stream error when available.
+   *
+   * `disabled_by_user` is excluded: the user may still manually continue the child,
+   * and treating that as a hard parent-visible failure would be surprising.
+   */
+  private async handleTaskAutoRetryAbandoned(workspaceId: string, reason: string): Promise<void> {
+    assert(workspaceId.length > 0, "handleTaskAutoRetryAbandoned: workspaceId must be non-empty");
+    if (reason === "disabled_by_user") {
+      return;
+    }
+
+    // If a retry was re-scheduled (or a stream restarted) between the abandon
+    // emission and this locked handler, leave the handle running.
+    if (
+      this.aiService.isStreaming(workspaceId) ||
+      this.workspaceService.hasPendingAutoRetry(workspaceId)
+    ) {
+      return;
+    }
+
+    const cached = this.lastStreamErrorByWorkspaceId.get(workspaceId);
+    const errorMessage =
+      cached?.error ??
+      (reason.length > 0
+        ? `Auto-retry abandoned (${reason})`
+        : "Auto-retry abandoned without completing the turn");
+    const errorType = cached?.errorType ?? "unknown";
+
+    // Prefer the workspace-turn settlement path when an active handle exists.
+    const turnRecord = await this.getActiveWorkspaceTurnRecordForWorkspace(workspaceId);
+    if (turnRecord != null) {
+      // Mirror finalizeWorkspaceTurnFromStreamError's recoverable gate: if an
+      // in-session recovery path is still in flight, do not settle.
+      if (
+        WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(errorType) &&
+        (await this.hasRecoverableWorkspaceTurnRetryInFlight(workspaceId, {
+          requireAutoRetry: false,
+        }))
+      ) {
+        return;
+      }
+      log.error("Workspace-turn auto-retry abandoned; settling handle as failed", {
+        workspaceId,
+        handleId: turnRecord.handleId,
+        reason,
+        errorType,
+        error: errorMessage,
+      });
+      const next: WorkspaceTurnTaskHandleRecord = {
+        ...turnRecord,
+        status: "error",
+        updatedAt: getIsoNow(),
+        error: errorMessage,
+      };
+      await this.settleWorkspaceTurn({
+        record: turnRecord,
+        next,
+        waiterSettlement: { status: "error", error: new Error(errorMessage) },
+      });
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
+      return;
+    }
+
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, workspaceId);
+    if (!entry?.workspace.parentWorkspaceId) {
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
+      return;
+    }
+
+    const status = entry.workspace.taskStatus;
+    if (status !== "running" && status !== "awaiting_report") {
+      this.lastStreamErrorByWorkspaceId.delete(workspaceId);
+      return;
+    }
+
+    const taskIndex = this.buildAgentTaskIndex(cfg);
+    if (await this.hasActiveTaskOwnedWork(workspaceId, taskIndex)) {
+      return;
+    }
+
+    // User-steerable pause: do not terminal-fail on abandon when the last error was
+    // an explicit abort (the user may still send a follow-up).
+    if (errorType === "aborted") {
+      return;
+    }
+
+    log.error("Task auto-retry abandoned; interrupting task so the parent is not blocked", {
+      workspaceId,
+      taskStatus: status,
+      reason,
+      errorType,
+      error: errorMessage,
+    });
+    await this.failAgentTaskTerminally(workspaceId, entry, {
+      errorType,
+      errorMessage,
+    });
+    this.lastStreamErrorByWorkspaceId.delete(workspaceId);
   }
 
   /**
