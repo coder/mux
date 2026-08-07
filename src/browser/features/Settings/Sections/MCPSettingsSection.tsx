@@ -1413,16 +1413,21 @@ export const MCPSettingsSection: React.FC = () => {
                           )}
                         </div>
                       )}
-                      {cached?.result.success && cached.result.tools.length > 0 && !isEditing && (
-                        <div className="border-border-medium border-t px-3 py-2">
-                          <ToolAllowlistSection
-                            serverName={name}
-                            availableTools={cached.result.tools}
-                            currentAllowlist={entry.toolAllowlist}
-                            testedAt={cached.testedAt}
-                          />
-                        </div>
-                      )}
+                      {/* Plugin servers are read-only here (setToolAllowlist rejects
+                          plugin keys); their allowlists live in Workspace MCP. */}
+                      {!isPluginEntry &&
+                        cached?.result.success &&
+                        cached.result.tools.length > 0 &&
+                        !isEditing && (
+                          <div className="border-border-medium border-t px-3 py-2">
+                            <ToolAllowlistSection
+                              serverName={name}
+                              availableTools={cached.result.tools}
+                              currentAllowlist={entry.toolAllowlist}
+                              testedAt={cached.testedAt}
+                            />
+                          </div>
+                        )}
                     </div>
                   );
                 })
