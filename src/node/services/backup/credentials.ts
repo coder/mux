@@ -241,7 +241,7 @@ export class BackupAuthFailedError extends Error {
   }
 }
 
-export interface GitCredentialOptions extends ExecFileAsyncOptions {
+export interface GitCredentialOptions extends Omit<ExecFileAsyncOptions, "killTreeOnTermination"> {
   repoUrl: string;
 }
 
@@ -283,7 +283,10 @@ async function run(
   args: string[],
   options: ExecFileAsyncOptions
 ): Promise<{ stdout: string; stderr: string }> {
-  using process = execFileAsync(file, args, options);
+  using process = execFileAsync(file, args, {
+    ...options,
+    killTreeOnTermination: true,
+  });
   return await process.result;
 }
 

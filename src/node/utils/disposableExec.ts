@@ -60,9 +60,7 @@ export function killProcessTree(pid: number): void {
   }
 }
 
-function terminateCappedCommand(child: ChildProcess): void {
-  // Capped commands may delegate work to descendants such as Git transports or credential helpers,
-  // so killing only the direct child can leave work running.
+function terminateCommandTree(child: ChildProcess): void {
   if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
   else child.kill("SIGKILL");
   // The "close" event waits for stdio to close, and descendants may keep those pipes open.
@@ -285,6 +283,8 @@ export interface ExecFileAsyncOptions {
    * `git clone` whose output is large but trusted.
    */
   maxOutputBytes?: number;
+  /** Kill descendants that may keep inherited stdio open after timeout or abort. */
+  killTreeOnTermination?: boolean;
 }
 
 /**
@@ -319,15 +319,15 @@ export function execFileAsync(
     return new DisposableExec(result);
   }
 
+  const killsProcessTree =
+    options?.maxOutputBytes !== undefined || options?.killTreeOnTermination === true;
   const child = spawn(file, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ? { ...process.env, ...options.env } : undefined,
-    // Only for a capped command, which is the one that has to kill descendants and so needs a
-    // group to signal. A detached child also stops receiving the signals sent to this process's
-    // group, so a terminal interrupt would no longer reach it, which is why every other command
-    // stays in the group it would otherwise be interrupted with. Never on Windows, where
-    // `detached` opens a console window and `killProcessTree` walks the tree with `taskkill /T`.
-    detached: options?.maxOutputBytes !== undefined && process.platform !== "win32",
+    // Commands that kill descendants need a group to signal. Detaching also prevents terminal
+    // signals from reaching them, so other commands stay in this process's group. Windows uses
+    // `taskkill /T` because detached processes open a console window there.
+    detached: killsProcessTree && process.platform !== "win32",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
@@ -335,10 +335,10 @@ export function execFileAsync(
     options?.signal?.removeEventListener("abort", onAbort);
   };
   const killChild = () => {
-    if (options?.maxOutputBytes !== undefined) {
+    if (killsProcessTree) {
       // Even after the leader exits: a descendant holding the inherited pipes keeps `close`
       // from firing, and the group outlives its leader while any member survives.
-      terminateCappedCommand(child);
+      terminateCommandTree(child);
     } else if (child.exitCode === null && child.signalCode === null) {
       child.kill();
     }
@@ -371,7 +371,7 @@ export function execFileAsync(
       outputOverflow = true;
       stdout = "";
       stderr = "";
-      terminateCappedCommand(child);
+      terminateCommandTree(child);
       return false;
     };
 

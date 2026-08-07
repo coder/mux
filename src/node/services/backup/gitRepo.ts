@@ -259,6 +259,7 @@ async function runLocalGit(
   using process = execFileAsync("git", args, {
     ...options,
     env: { ...options.env, ...GIT_SCOPE_ENV_UNSET },
+    killTreeOnTermination: true,
   });
   return await process.result;
 }

@@ -450,6 +450,75 @@ describe("disposableExec", () => {
     }
   });
 
+  test("timeout kills descendants when tree termination is requested without waiting for inherited pipes", async () => {
+    if (process.platform === "win32") return;
+    const pidFile = path.join(
+      os.tmpdir(),
+      `mux-tree-timeout-descendant-${process.pid}-${Date.now()}`
+    );
+    using proc = execFileAsync("sh", ["-c", 'sleep 30 & echo $! > "$1"; wait', "sh", pidFile], {
+      killTreeOnTermination: true,
+      timeoutMs: 100,
+    });
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
+    let descendantPid: number | undefined;
+    let passed = false;
+
+    try {
+      const rejected = await Promise.race([
+        proc.result.then(
+          () => {
+            throw new Error("Expected the timeout to reject");
+          },
+          (error: unknown) => error
+        ),
+        new Promise<never>((_, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("timeout result did not settle promptly")),
+            2_000
+          );
+          timeout.unref?.();
+        }),
+      ]);
+      expect((rejected as { signal?: string }).signal).toMatch(/SIGKILL/);
+
+      descendantPid = Number((await fs.readFile(pidFile, "utf-8")).trim());
+      let descendantRunning = true;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch {
+          descendantRunning = false;
+          break;
+        }
+      }
+      expect(descendantRunning).toBe(false);
+      passed = true;
+    } finally {
+      if (!passed && child.pid !== undefined) killProcessTree(child.pid);
+      if (!passed && descendantPid === undefined) {
+        descendantPid = await fs
+          .readFile(pidFile, "utf-8")
+          .then((value) => Number(value.trim()))
+          .catch(() => undefined);
+      }
+      if (!passed && descendantPid !== undefined) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {
+          // The descendant may already have exited.
+        }
+      }
+      if (!passed) {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+      await fs.rm(pidFile, { force: true });
+    }
+  });
+
   test("timeout kills a capped command's group after the leader already exited", async () => {
     if (process.platform === "win32") return;
     const pidFile = path.join(os.tmpdir(), `mux-leader-exited-${process.pid}-${Date.now()}`);
