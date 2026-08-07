@@ -379,22 +379,27 @@ describe("disposableExec", () => {
   });
 
   test("an uncapped command stays in this process's group", async () => {
-    if (process.platform === "win32") return;
-    const readGroupOf = async (pid: number) => {
-      using ps = execFileAsync("ps", ["-o", "pgid=", "-p", String(pid)]);
-      return (await ps.result).stdout.trim();
+    // Reads /proc rather than spawning ps, so the assertion cannot be slower than the process it
+    // is inspecting. Linux-only, which is where the unit suite runs.
+    if (process.platform !== "linux") return;
+    const groupOf = async (pid: number) => {
+      const stat = await fs.readFile(`/proc/${pid}/stat`, "utf-8");
+      // Everything after the executable name, whose parens can contain spaces; pgrp is field 5.
+      return stat.slice(stat.lastIndexOf(") ") + 2).split(" ")[2];
     };
 
-    const proc = execFileAsync("sh", ["-c", "sleep 5"]);
+    const proc = execFileAsync("sleep", ["30"]);
     const child: ChildProcess = (proc as any).child;
+    activeProcesses.add(child);
+    void proc.result.catch(() => undefined);
+
     try {
       // Detaching would give it its own group, where a signal sent to this process's group (a
-      // terminal interrupt) would never reach it. Only the capped path pays that to gain a
-      // group it can kill.
-      expect(await readGroupOf(child.pid!)).toBe(await readGroupOf(process.pid));
+      // terminal interrupt) would never reach it. Only the capped path pays that cost, because
+      // it is the one that needs a group to kill.
+      expect(await groupOf(child.pid!)).toBe(await groupOf(process.pid));
     } finally {
-      proc[Symbol.dispose]();
-      await proc.result.catch(() => undefined);
+      child.kill("SIGKILL");
     }
   });
 

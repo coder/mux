@@ -345,14 +345,18 @@ export function execFileAsync(
     let exitSignal: string | null = null;
 
     let stdoutOverflow = false;
+    let stdoutBytes = 0;
     const maxStdoutBytes = options?.maxStdoutBytes;
 
-    child.stdout?.on("data", (data) => {
+    child.stdout?.on("data", (data: Buffer) => {
       if (stdoutOverflow) return;
-      stdout += data;
-      // Checked as it streams rather than after exit, so a remote that never stops talking cannot
-      // grow this process's heap without bound while we wait for it to finish.
-      if (maxStdoutBytes !== undefined && Buffer.byteLength(stdout, "utf-8") > maxStdoutBytes) {
+      stdout += data.toString();
+      // Accumulated per chunk rather than measured over the whole string, which is quadratic in
+      // chunk count: filling a 1 MiB cap in 64 byte chunks costs about 4.5s of CPU on this main
+      // process. Checked as it streams rather than after exit, so a remote that never stops
+      // talking cannot grow the heap without bound while we wait for it to finish.
+      stdoutBytes += data.length;
+      if (maxStdoutBytes !== undefined && stdoutBytes > maxStdoutBytes) {
         stdoutOverflow = true;
         stdout = "";
         // The whole tree, because the command being cut off may have spawned the thing actually

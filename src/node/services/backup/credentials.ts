@@ -17,13 +17,12 @@ const NON_INTERACTIVE_ENV = {
 const SHELL_ASSIGNMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
- * One shell word, as a shell would split it: quoted runs and backslash escapes hold a word
- * together, so the same word can mix all three styles (`FOO=a\ b`, `/opt/"My Tools"/ssh`).
+ * One shell word, covering the three constructs that can hold one together: single quotes, double
+ * quotes, and backslash escapes, which the same word may mix (`FOO=a\ b`, `/opt/"My Tools"/ssh`).
+ * Expansions and substitutions are not interpreted, so this is not a general shell parser.
  *
- * Earlier versions matched the whole word with one alternation per quoting style, which meant
- * every unhandled combination surfaced as a new defect. This models the three constructs once
- * instead. `value` is what the program is identified by and `end` is where the flag is inserted,
- * so they are produced together rather than by separate patterns that can disagree.
+ * `value` is what the program is identified by and `end` is where the flag is inserted, produced
+ * together rather than by separate patterns that can disagree about the same word.
  *
  * Returns null on an unterminated quote: the boundary is then unknown, and guessing it would
  * insert an option into the middle of a command that works today.
@@ -140,8 +139,9 @@ async function nonInteractiveSshCommand(
  *
  * An explicit `GIT_SSH_VARIANT` says which option a client accepts, never where that client sits,
  * so it cannot stand in for this. A launcher like `env FOO=bar ssh` would otherwise be handed
- * `-o BatchMode=yes` itself and fail with `invalid option`. Refusing whenever the program is
- * unrecognized covers every launcher without naming any, which is why no list of them exists.
+ * `-o BatchMode=yes` itself and fail with `invalid option`. Every launcher carries the program it
+ * launches as a following word, so refusing an unrecognized program that has one covers them all
+ * without naming any, which is why no list of them exists.
  */
 function sshFlagInsertion(command: string): number | null {
   const program = sshProgram(command);
