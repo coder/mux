@@ -1,6 +1,6 @@
 import "../../../../tests/ui/dom";
 
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import type { SshPromptEvent, SshPromptRequest } from "@/common/orpc/schemas/ssh";
 import {
@@ -9,11 +9,10 @@ import {
 } from "@/browser/testUtils";
 import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
-
+import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
 import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
 
-// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
-const realDialogExports = { ...RealDialogModule };
+restoreModulesAfterSuite([["@/browser/components/Dialog/Dialog", { ...RealDialogModule }]]);
 
 // Self-contained dialog stub — bun's mock.module is process-global, so other
 // test files may register incomplete Dialog stubs that omit
@@ -337,8 +336,4 @@ describe("SshPromptDialog", () => {
     // Queue cleared → dialog dismissed
     expect(queryByRole("button", { name: "Reject" })).toBeNull();
   });
-});
-
-afterAll(() => {
-  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
 });

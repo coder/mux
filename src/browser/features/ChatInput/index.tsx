@@ -97,7 +97,12 @@ import {
   getInlineSkillSuggestions,
   shouldRefreshInlineSkillSuggestions,
 } from "@/browser/utils/agentSkills/inlineSkillSuggestions";
-import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
+import {
+  formatProjectHierarchyLabel,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
+import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
+import { CreationProjectSelect } from "./CreationProjectSelect";
 import { getCommandGhostHint } from "@/browser/utils/slashCommands/registry";
 import {
   getSlashCommandSuggestions,
@@ -3300,6 +3305,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
           {/* Creation header controls - shown above textarea for creation variant */}
           {creationControlsProps && <CreationControls {...creationControlsProps} />}
+
+          {/* Scratch chats have no CreationControls, but mobile users still
+              need the current scope visible and a way to reach a project's
+              creation page: on narrow viewports the sidebar auto-collapses
+              after opening the scratch page from it. */}
+          {variant === "creation" && props.kind === "scratch" && (
+            <div className="mb-3 flex items-center" data-component="ScratchProjectGroup">
+              <CreationProjectSelect
+                selected={SCRATCH_PROJECT_CONFIG_KEY}
+                selectedLabel={SCRATCH_PROJECT_NAME}
+                tooltip={SCRATCH_PROJECT_NAME}
+                options={[
+                  { value: SCRATCH_PROJECT_CONFIG_KEY, label: SCRATCH_PROJECT_NAME },
+                  ...Array.from(userProjects.keys()).map((path) => ({
+                    value: path,
+                    label: formatProjectHierarchyLabel(path, userProjects),
+                  })),
+                ]}
+                onChange={(path) => {
+                  if (path !== SCRATCH_PROJECT_CONFIG_KEY) {
+                    beginWorkspaceCreation(path);
+                  }
+                }}
+              />
+            </div>
+          )}
 
           <CodexOauthWarningBanner
             requiresCodexOauth={requiresCodexOauth(baseModel)}

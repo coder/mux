@@ -3,10 +3,14 @@
 // if `document` was undefined when react-dom loaded.
 import "../../../../../tests/ui/dom";
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createContext, type ReactNode } from "react";
 import { installDom } from "../../../../../tests/ui/dom";
+import { restoreModulesAfterSuite } from "../../../../../tests/ui/moduleMocks";
+import * as RealAPIModule from "@/browser/contexts/API";
+import * as RealExperimentsModule from "@/browser/hooks/useExperiments";
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type {
   MemoryConsolidationRecordPayload,
@@ -173,6 +177,12 @@ function createFakeMemoryApi(initialFiles: MemoryFileInfo[], options: FakeMemory
 
 let fake: ReturnType<typeof createFakeMemoryApi> | null = null;
 
+restoreModulesAfterSuite([
+  ["@/browser/contexts/API", { ...RealAPIModule }],
+  ["@/browser/hooks/useExperiments", { ...RealExperimentsModule }],
+  ["@/browser/components/Dialog/Dialog", { ...RealDialogModule }],
+]);
+
 void mock.module("@/browser/contexts/API", () => ({
   APIContext: createContext(null),
   useAPI: () => ({
@@ -188,11 +198,6 @@ void mock.module("@/browser/hooks/useExperiments", () => ({
   useExperimentValue: (experimentId: string) =>
     experimentId === EXPERIMENT_IDS.MEMORY_CONSOLIDATION,
 }));
-
-import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
-
-// bun test shares module mocks across suites; leaking this stub would hide later dialogs.
-const realDialogExports = { ...RealDialogModule };
 
 // The delete flow confirms through ConfirmationModal, which renders via a
 // Radix Dialog portal that happy-dom cannot see. Mock the Dialog primitives
@@ -585,7 +590,4 @@ describe("MemoryTab", () => {
       expect(queryByText("agent edited")).toBeNull();
     });
   });
-});
-afterAll(() => {
-  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
 });

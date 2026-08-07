@@ -5,6 +5,13 @@ import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
+import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
+import * as RealLottieModule from "lottie-react";
+import * as RealAPIModule from "@/browser/contexts/API";
+import * as RealProvidersConfigModule from "@/browser/hooks/useProvidersConfig";
+import * as RealConfiguredProvidersBarModule from "@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar";
+import * as RealProjectContextModule from "@/browser/contexts/ProjectContext";
+import * as RealChatInputModule from "@/browser/features/ChatInput/index";
 import type * as ProjectPageModule from "@/browser/components/ProjectPage/ProjectPage";
 import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 
@@ -12,12 +19,23 @@ let cleanupDom: (() => void) | null = null;
 let focusMock: ReturnType<typeof mock> | null = null;
 let readyCalls = 0;
 
+restoreModulesAfterSuite([
+  ["lottie-react", { ...RealLottieModule }],
+  ["@/browser/contexts/API", { ...RealAPIModule }],
+  ["@/browser/hooks/useProvidersConfig", { ...RealProvidersConfigModule }],
+  [
+    "@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar",
+    { ...RealConfiguredProvidersBarModule },
+  ],
+  ["@/browser/contexts/ProjectContext", { ...RealProjectContextModule }],
+  ["@/browser/features/ChatInput/index", { ...RealChatInputModule }],
+]);
+
 function registerProjectPageMocks() {
   // Re-register mocks before each test because afterEach restores them and this
   // file should not depend on top-level module mock state leaking across tests.
 
-  // Mock lottie-react so CreationCenterContent/WorkspaceShell imports don't execute
-  // lottie-web canvas initialization in happy-dom (which causes unhandled errors).
+  // Mock lottie-react so tests don't run lottie-web animation internals in happy-dom.
   void mock.module("lottie-react", () => ({
     __esModule: true,
     default: () => <div data-testid="LottieMock" />,

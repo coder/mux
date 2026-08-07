@@ -3,7 +3,34 @@ import "../../../../tests/ui/dom";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
-import { TaskGroupListItem } from "./TaskGroupListItem";
+import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
+import * as RealPositionedMenuModule from "../PositionedMenu/PositionedMenu";
+import type { TaskGroupListItem as TaskGroupListItemComponent } from "./TaskGroupListItem";
+
+// Radix portal content is unreliable in happy-dom (see AGENTS.md), so render
+// the menu inline. The row's shortcut handling under test only needs menu-item
+// events to bubble through the React tree, which the inline stub preserves.
+void mock.module("@/browser/components/PositionedMenu/PositionedMenu", () => ({
+  PositionedMenu: (props: { open: boolean; children: React.ReactNode }) =>
+    props.open ? <div>{props.children}</div> : null,
+  PositionedMenuItem: (props: {
+    label: string;
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => void;
+  }) => (
+    <button type="button" onClick={props.onClick}>
+      {props.label}
+    </button>
+  ),
+}));
+restoreModulesAfterSuite([
+  ["@/browser/components/PositionedMenu/PositionedMenu", { ...RealPositionedMenuModule }],
+]);
+
+/* eslint-disable @typescript-eslint/no-require-imports */
+const { TaskGroupListItem } = require("./TaskGroupListItem") as {
+  TaskGroupListItem: typeof TaskGroupListItemComponent;
+};
+/* eslint-enable @typescript-eslint/no-require-imports */
 
 function renderTaskGroup(overrides: Partial<React.ComponentProps<typeof TaskGroupListItem>> = {}) {
   return render(
