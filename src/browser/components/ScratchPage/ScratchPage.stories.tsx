@@ -2,6 +2,7 @@ import { userEvent, waitFor } from "@storybook/test";
 
 import { appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 
 // Integration: stories render the full app so the sidebar's "New scratch chat"
@@ -18,6 +19,11 @@ export default {
  * project's creation page.
  */
 export const ScratchCreationWithProjects: AppStory = {
+  // Mirrors the Pixel phone variant so local viewing reproduces the mobile flow
+  // the story covers; the test-runner ignores globals and plays at desktop width.
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
   parameters: {
     pixel: {
       matrix: { themes: ["dark", "light"], viewports: ["laptop", "phone"] },
@@ -28,7 +34,7 @@ export const ScratchCreationWithProjects: AppStory = {
       setup={() => {
         // Start expanded so the play function can click the sidebar entry
         // even in mobile viewport modes.
-        localStorage.setItem(LEFT_SIDEBAR_COLLAPSED_KEY, JSON.stringify(false));
+        updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, false);
         return createMockORPCClient({
           projects: new Map([
             ["/Users/dev/frontend-app", { workspaces: [] }],
@@ -75,7 +81,7 @@ export const ScratchCreationWithProjects: AppStory = {
     } finally {
       // Remove the sidebar-state override so later stories start from the
       // default expanded-on-desktop state even if assertions fail.
-      localStorage.removeItem(LEFT_SIDEBAR_COLLAPSED_KEY);
+      updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, null);
     }
   },
 };
