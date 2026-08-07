@@ -1006,6 +1006,56 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("editing a pre-reset turn re-enables seeding for the restored prefix", async () => {
+    const workspaceId = "ws-pre-reset-edit-reenables-seeding";
+    const { session, historyService } = await createSessionHarness({ workspaceId });
+
+    const rows = [
+      createMuxMessage("user-1", "user", "first prompt", { timestamp: Date.now() - 5_000 }),
+      createMuxMessage("assistant-1", "assistant", "first reply", {
+        timestamp: Date.now() - 4_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+      }),
+      createMuxMessage("user-2", "user", "second prompt", { timestamp: Date.now() - 3_000 }),
+      createMuxMessage("reset-boundary", "assistant", "context reset", {
+        timestamp: Date.now() - 2_000,
+        compacted: "user",
+        compactionBoundary: true,
+        compactionEpoch: 1,
+      }),
+    ];
+    for (const row of rows) {
+      expect((await historyService.appendToHistory(workspaceId, row)).success).toBe(true);
+    }
+
+    // The reset suppressed seeding (resetContext() calls clearUsageState()).
+    session.clearUsageState();
+
+    // Editing a pre-reset turn truncates the boundary away and restores the
+    // near-limit prefix as the active context.
+    const editResult = await session.sendMessage("second prompt, edited", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+      editMessageId: "user-2",
+    });
+    expect(editResult.success).toBe(true);
+
+    // The edit stream reported no usage; the next send must still seed from
+    // the restored assistant-1 row despite the earlier reset suppression.
+    const seenUsages = installUsageCapturingMonitor(session);
+    const result = await session.sendMessage("post-edit send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
+
+    session.dispose();
+  });
+
   test("heartbeat reset rollback re-enables usage seeding for the queued turn", async () => {
     const workspaceId = "ws-heartbeat-rollback-reenables-seeding";
     const { session, historyService } = await createSessionHarness({ workspaceId });
