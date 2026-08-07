@@ -348,7 +348,8 @@ export const WorkspaceMCPModal: React.FC<WorkspaceMCPModalProps> = ({
                           <div className="font-medium">{displayName}</div>
                           {info.plugin ? (
                             <div className="text-muted text-xs">
-                              Agent Plugin ({info.plugin.sourceScope}) — disabled by default
+                              Agent Plugin ({info.plugin.sourceScope} · {info.plugin.sourceLocation}
+                              ) — disabled by default
                             </div>
                           ) : (
                             projectDisabled && (

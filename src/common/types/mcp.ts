@@ -13,6 +13,12 @@ export interface MCPServerPluginProvenance {
   /** Server name as declared in the plugin's mcp.json (the map key is the instance key). */
   serverName: string;
   sourceScope: "project" | "global";
+  /**
+   * Human-readable installation location, e.g. ".mux/plugins/demo". Same-name
+   * plugins can be installed in sibling containers of one scope (.mux vs
+   * .agents), so the UI needs this discriminator to tell instances apart.
+   */
+  sourceLocation: string;
 }
 
 export interface MCPServerBaseInfo {

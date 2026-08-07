@@ -34,6 +34,8 @@ export const MCPServerPluginProvenanceSchema = z.object({
   pluginName: z.string(),
   serverName: z.string(),
   sourceScope: z.enum(["project", "global"]),
+  /** Installation location discriminator, e.g. ".mux/plugins/demo" (same-name plugins can sit in sibling containers). */
+  sourceLocation: z.string(),
 });
 
 export const MCPServerInfoSchema = z.discriminatedUnion("transport", [

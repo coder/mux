@@ -146,7 +146,12 @@ describe("MCP server disable filtering", () => {
     command: "bunx",
     args: ["-y", "some-server"],
     disabled: true,
-    plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" as const },
+    plugin: {
+      pluginName: "demo",
+      serverName: "srv",
+      sourceScope: "global" as const,
+      sourceLocation: ".mux/plugins/demo",
+    },
   };
 
   test("listServers merges Agent Plugins servers at the lowest precedence", async () => {

@@ -1192,6 +1192,7 @@ describe("MCPServerManager", () => {
           pluginName: "demo",
           serverName: "everything",
           sourceScope: "global" as const,
+          sourceLocation: ".mux/plugins/demo",
         },
         ...overrides,
       },
@@ -1314,7 +1315,12 @@ describe("prepareStdioLaunch", () => {
       env: { PLUGIN_ROOT: tmp.path, PLUGIN_DATA: dataPath },
       cwd: tmp.path,
       disabled: false,
-      plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" },
+      plugin: {
+        pluginName: "demo",
+        serverName: "srv",
+        sourceScope: "global",
+        sourceLocation: ".mux/plugins/demo",
+      },
     });
 
     expect((await fs.stat(dataPath)).isDirectory()).toBe(true);
@@ -1336,7 +1342,12 @@ describe("prepareStdioLaunch", () => {
       env: { PLUGIN_ROOT: tmp.path, PLUGIN_DATA: dataPath },
       cwd: nestedCwd,
       disabled: false,
-      plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" },
+      plugin: {
+        pluginName: "demo",
+        serverName: "srv",
+        sourceScope: "global",
+        sourceLocation: ".mux/plugins/demo",
+      },
     });
 
     // exec() requires an existing cwd; data-dir cwds are client-managed state.
@@ -1352,7 +1363,12 @@ describe("prepareStdioLaunch", () => {
         command: "bunx",
         args: [],
         disabled: false,
-        plugin: { pluginName: "demo", serverName: "srv", sourceScope: "global" },
+        plugin: {
+          pluginName: "demo",
+          serverName: "srv",
+          sourceScope: "global",
+          sourceLocation: ".mux/plugins/demo",
+        },
       })
     ).rejects.toThrow("PLUGIN_DATA");
   });

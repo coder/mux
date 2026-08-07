@@ -1201,9 +1201,11 @@ export const MCPSettingsSection: React.FC = () => {
                             <span className="text-foreground text-sm font-medium">
                               {displayName}
                             </span>
-                            {isPluginEntry && (
+                            {entry.plugin && (
                               <span className="text-muted bg-background rounded px-1.5 py-0.5 text-xs">
-                                plugin
+                                {/* Include the install location: same-name plugins can
+                                    exist in sibling containers (.mux vs .agents). */}
+                                plugin · {entry.plugin.sourceLocation}
                               </span>
                             )}
                             {cached?.result.success && !isEditing && isEnabled && (

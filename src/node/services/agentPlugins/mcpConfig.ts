@@ -166,6 +166,21 @@ async function ensureContainedAllowMissingRoot(root: string, candidate: string):
   }
 }
 
+/**
+ * Display discriminator for a plugin installation: the container's last two
+ * lexical segments plus the plugin dir, e.g. ".mux/plugins/demo" vs
+ * ".agents/plugins/demo". Same-name plugins can only collide across sibling
+ * containers of a scope, so this is unique per scope (cross-scope entries are
+ * already distinguished by the displayed sourceScope).
+ */
+function computePluginSourceLocation(plugin: AgentPluginInfo): string {
+  return path.join(
+    path.basename(path.dirname(plugin.containerPath)),
+    path.basename(plugin.containerPath),
+    plugin.dirName
+  );
+}
+
 interface NormalizeContext {
   plugin: AgentPluginInfo;
   dataPath: string;
@@ -350,6 +365,7 @@ async function normalizeStdioEntry(
         pluginName: ctx.plugin.name,
         serverName: "", // filled by caller
         sourceScope: ctx.plugin.scope,
+        sourceLocation: computePluginSourceLocation(ctx.plugin),
       },
     },
   };
@@ -413,6 +429,7 @@ function normalizeRemoteEntry(
         pluginName: ctx.plugin.name,
         serverName: "", // filled by caller
         sourceScope: ctx.plugin.scope,
+        sourceLocation: computePluginSourceLocation(ctx.plugin),
       },
     },
   };

@@ -94,6 +94,12 @@ describe("loadPluginMcpServers", () => {
       pluginName: "demo",
       serverName: "everything",
       sourceScope: "global",
+      // Last two container segments + plugin dir (makePlugin's container is tmp.path).
+      sourceLocation: path.join(
+        path.basename(path.dirname(tmp.path)),
+        path.basename(tmp.path),
+        "demo"
+      ),
     });
   });
 
@@ -545,6 +551,10 @@ describe("loadPluginMcpServers", () => {
     const dataA = (Object.values(resultA.servers)[0] as MCPStdioServerInfo).env?.PLUGIN_DATA;
     const dataB = (Object.values(resultB.servers)[0] as MCPStdioServerInfo).env?.PLUGIN_DATA;
     expect(dataA).not.toBe(dataB);
+    // Displayed provenance must also distinguish the two installations.
+    const locA = (Object.values(resultA.servers)[0] as MCPStdioServerInfo).plugin?.sourceLocation;
+    const locB = (Object.values(resultB.servers)[0] as MCPStdioServerInfo).plugin?.sourceLocation;
+    expect(locA).not.toBe(locB);
   });
 });
 
