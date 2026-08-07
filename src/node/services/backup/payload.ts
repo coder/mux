@@ -27,6 +27,9 @@ const BACKUP_MANIFEST_FILE = "manifest.json";
 export const MAX_BACKUP_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_BACKUP_TOTAL_BYTES = 64 * 1024 * 1024;
 export const MAX_BACKUP_FILE_COUNT = 4096;
+/** Bounds traversal work and the directory tree Preview or Restore may inspect or create. */
+export const MAX_BACKUP_PATH_DEPTH = 24;
+export const MAX_BACKUP_DIRECTORY_COUNT = 4096;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
 
 const FORBIDDEN_BASENAMES = new Set(
@@ -170,6 +173,16 @@ function isAllowedPayloadPath(relativePath: string): boolean {
   return /^memory\/global\/.+/.test(relativePath);
 }
 
+function backupPathSegments(relativePath: string): string[] {
+  const segments = relativePath.split("/");
+  if (segments.length > MAX_BACKUP_PATH_DEPTH) {
+    throw new Error(
+      `Backup path '${relativePath}' has more than ${MAX_BACKUP_PATH_DEPTH} path components`
+    );
+  }
+  return segments;
+}
+
 /**
  * Local safety snapshots use `portable: false` so cross-platform filename checks cannot block
  * a restore while protecting a file valid on the current filesystem. Containment and allowlist
@@ -179,6 +192,7 @@ function assertAllowedPayloadPath(
   relativePath: string,
   options: { portable: boolean } = { portable: true }
 ): void {
+  const segments = backupPathSegments(relativePath);
   if (
     !isAllowedPayloadPath(relativePath) ||
     path.isAbsolute(relativePath) ||
@@ -187,14 +201,12 @@ function assertAllowedPayloadPath(
     // destination once path.join runs there. A local snapshot never travels, and
     // resolveContainedPath still rejects traversal and symlinked ancestors either way.
     (options.portable && relativePath.includes("\\")) ||
-    relativePath
-      .split("/")
-      .some(
-        (segment) =>
-          segment === ".." ||
-          isHiddenName(segment) ||
-          (options.portable && isWindowsUnusableSegment(segment))
-      ) ||
+    segments.some(
+      (segment) =>
+        segment === ".." ||
+        isHiddenName(segment) ||
+        (options.portable && isWindowsUnusableSegment(segment))
+    ) ||
     isForbiddenBasename(path.posix.basename(relativePath))
   ) {
     throw new Error(`Backup contains disallowed path '${relativePath}'`);
@@ -299,6 +311,35 @@ function assertBackupFileCount(count: number): void {
   if (count > MAX_BACKUP_FILE_COUNT) {
     throw new Error(`Backup has more than ${MAX_BACKUP_FILE_COUNT} files`);
   }
+}
+
+function createBackupPathComplexityTracker(): (relativePath: string) => void {
+  const directories = new Set<string>();
+  return (relativePath: string): void => {
+    const segments = backupPathSegments(relativePath);
+    let prefix = "";
+    for (const segment of segments.slice(0, -1)) {
+      prefix = prefix ? `${prefix}/${segment}` : segment;
+      directories.add(prefix);
+      if (directories.size > MAX_BACKUP_DIRECTORY_COUNT) {
+        throw new Error(`Backup has more than ${MAX_BACKUP_DIRECTORY_COUNT} directories`);
+      }
+    }
+  };
+}
+
+export function assertBackupPathComplexity(relativePaths: readonly string[]): void {
+  const takePath = createBackupPathComplexityTracker();
+  for (const relativePath of relativePaths) takePath(relativePath);
+}
+
+function assertBackupPathLimits(
+  relativePaths: readonly string[],
+  options: { portable: boolean } = { portable: true }
+): void {
+  assertBackupFileCount(relativePaths.length);
+  assertBackupPathComplexity(relativePaths);
+  for (const relativePath of relativePaths) assertAllowedPayloadPath(relativePath, options);
 }
 
 function megabytes(bytes: number): string {
@@ -646,6 +687,8 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   const budget = createByteBudget();
   const links = createHardLinkTracker();
 
+  const takePathComplexity = createBackupPathComplexityTracker();
+
   async function collectDirectory(
     relativeRoot: string,
     filter: (relativePath: string, entry: Dirent) => boolean
@@ -668,9 +711,11 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
       const relativePath = toPosixPath(relativeRoot, entry.name);
       if (!filter(relativePath, entry)) continue;
       if (entry.isDirectory()) {
+        backupPathSegments(relativePath);
         await collectDirectory(relativePath, filter);
       } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
         assertBackupFileCount(files.length + 1);
+        takePathComplexity(relativePath);
         files.push(await readBackupFile(root, relativePath, budget, links));
       }
     }
@@ -678,6 +723,8 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
 
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     if (await isRegularFile(path.join(root.path, relativePath))) {
+      assertBackupFileCount(files.length + 1);
+      takePathComplexity(relativePath);
       files.push(await readBackupFile(root, relativePath, budget, links));
     }
   }
@@ -1316,7 +1363,11 @@ export async function createBackupPayload(
     path: "preferences.json",
     content: serializeBackupPreferences(options.preferences),
   });
+  // Count and complexity only: this payload may be a local snapshot, whose names keep
+  // current-filesystem forms that portable validation would refuse. Collection already
+  // validated each name under local rules; publication re-checks with portable rules.
   assertBackupFileCount(files.length);
+  assertBackupPathComplexity(files.map((file) => file.path));
   files.sort((a, b) => a.path.localeCompare(b.path));
 
   if (options.reportSecrets !== true) {
@@ -1409,13 +1460,18 @@ export async function writeBackupPayload(
   payload: BackupPayload,
   options: { portable?: boolean; ownerOnly?: boolean } = {}
 ): Promise<void> {
-  assertBackupFileCount(payload.files.length);
-  assertBackupFileCount(payload.manifest.files.length);
   const portable = options.portable !== false;
+  assertBackupPathLimits(
+    payload.files.map((file) => file.path),
+    { portable }
+  );
+  assertBackupPathLimits(
+    payload.manifest.files.map((file) => file.path),
+    { portable }
+  );
   const ownerOnly = options.ownerOnly === true;
   const claimed = new Set<string>();
   for (const file of payload.files) {
-    assertAllowedPayloadPath(file.path, { portable });
     // A published backup is read on filesystems that fold case and normalization, so a
     // collision only a case-sensitive source can produce would make it unreadable elsewhere.
     // A local snapshot goes back to the filesystem the files were just collected from, where
@@ -1499,8 +1555,11 @@ function parseManifest(raw: string, portable: boolean): BackupManifest {
     ) {
       throw new Error("Invalid backup manifest file entry");
     }
-    assertAllowedPayloadPath(file.path, { portable });
   }
+  assertBackupPathLimits(
+    manifest.files.map((file) => file.path),
+    { portable }
+  );
   return manifest as BackupManifest;
 }
 
@@ -2288,7 +2347,7 @@ export async function planRestoreWrites(
   muxRoot: string,
   payload: BackupPayload
 ): Promise<RestorePlan> {
-  assertBackupFileCount(payload.files.length);
+  assertBackupPathLimits(payload.files.map((file) => file.path));
   const root = await resolveRoot(muxRoot);
   let backupPreferences: unknown;
   const writes: RestorePlan["writes"] = [];
@@ -2298,7 +2357,6 @@ export async function planRestoreWrites(
   // values it asks for, so the result is charged to the same budget as any other backup byte.
   const budget = createByteBudget();
   for (const file of payload.files) {
-    assertAllowedPayloadPath(file.path);
     if (file.path === "preferences.json") {
       // Projected here so a document the merge would reject cannot reach the write loop, but
       // kept unmerged: the merge belongs to the config edit, against the config as it is when

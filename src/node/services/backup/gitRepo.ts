@@ -13,6 +13,7 @@ import {
   type GitCredentialOptions,
 } from "./credentials";
 import {
+  assertBackupPathComplexity,
   BackupInvalidPayloadError,
   MAX_BACKUP_FILE_BYTES,
   MAX_BACKUP_FILE_COUNT,
@@ -41,6 +42,9 @@ function isRemoteMovedRejection(text: string): boolean {
         /\((stale info|fetch first|non-fast-forward)\)/.test(line)
     );
 }
+
+/** Remote transports and credential helpers are untrusted and can emit output without bound. */
+export const MAX_NETWORK_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 /**
  * `ls-remote` is asked for every ref rather than only the configured branch, because emptiness
@@ -618,6 +622,7 @@ export class BackupRepoCache {
     const result = await runGitWithCredentialLadder(hardened, {
       ...this.credentialOptions(),
       ...options,
+      maxOutputBytes: options.maxOutputBytes ?? MAX_NETWORK_GIT_OUTPUT_BYTES,
     });
     this.usedCredential = result.credential;
     return result;
@@ -1057,6 +1062,19 @@ export class BackupRepoCache {
       throw new BackupInvalidPayloadError(
         new Error(`Backup has more than ${this.materializationLimits.maxFileCount} files`)
       );
+    }
+
+    const managedPrefix = `${safeRelativePath(this.options.managedPath)}/`;
+    try {
+      const payloadPaths = entries.map((entry) => {
+        if (!entry.path.startsWith(managedPrefix)) {
+          throw new Error(`Backup tree contains invalid path '${entry.path}'`);
+        }
+        return entry.path.slice(managedPrefix.length);
+      });
+      assertBackupPathComplexity(payloadPaths);
+    } catch (error) {
+      throw new BackupInvalidPayloadError(error);
     }
 
     let usedBytes = 0;

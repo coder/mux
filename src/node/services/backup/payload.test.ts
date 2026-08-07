@@ -10,8 +10,10 @@ import {
   BACKUP_SCHEMA_VERSION,
   BackupCommandApprovalRequiredError,
   assertBackupCommandsApproved,
+  MAX_BACKUP_DIRECTORY_COUNT,
   MAX_BACKUP_FILE_BYTES,
   MAX_BACKUP_FILE_COUNT,
+  MAX_BACKUP_PATH_DEPTH,
   MAX_BACKUP_TOTAL_BYTES,
   REDACTED_BACKUP_VALUE,
   backupCommandApprovalToken,
@@ -63,6 +65,27 @@ async function tamperPayloadFile(
 
 function sha256Hex(content: string): string {
   return createHash("sha256").update(Buffer.from(content, "utf-8")).digest("hex");
+}
+
+function skillPathsWithDirectoryCount(directoryCount: number): string[] {
+  const paths: string[] = [];
+  let remaining = directoryCount;
+  let index = 0;
+  while (remaining > 0) {
+    const addedDirectories = Math.min(
+      remaining,
+      index === 0 ? MAX_BACKUP_PATH_DEPTH - 1 : MAX_BACKUP_PATH_DEPTH - 2
+    );
+    const directories = ["skills"];
+    const uniqueDirectories = index === 0 ? addedDirectories - 1 : addedDirectories;
+    for (let depth = 0; depth < uniqueDirectories; depth++) {
+      directories.push(`branch-${index}-${depth}`);
+    }
+    paths.push([...directories, `file-${index}.md`].join("/"));
+    remaining -= addedDirectories;
+    index++;
+  }
+  return paths;
 }
 
 function expectNonblockingOpen(
@@ -442,6 +465,128 @@ describe("backup payload", () => {
     const boundary = await captureRejection(readBackupPayload(destination));
     expect((boundary as Error).message).toContain("Backup is missing");
     expect((boundary as Error).message).not.toContain("more than");
+  });
+
+  it("rejects a manifest path above the depth limit before reading the entry", async () => {
+    const destination = path.join(tempDir, "too-deep-manifest-path");
+    await fs.mkdir(destination);
+    const relativePath = [
+      "skills",
+      ...Array.from({ length: MAX_BACKUP_PATH_DEPTH - 1 }, (_, index) => `level-${index}`),
+      "file.md",
+    ].join("/");
+    await fs.writeFile(
+      path.join(destination, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: "2026-08-07T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        files: [{ path: relativePath, sha256: sha256Hex("") }],
+      }),
+      "utf-8"
+    );
+
+    const rejected = await captureRejection(readBackupPayload(destination));
+
+    expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((rejected as Error).message).toContain(
+      `more than ${MAX_BACKUP_PATH_DEPTH} path components`
+    );
+    expect((rejected as Error).message).not.toContain("Backup is missing");
+  });
+
+  it("rejects a manifest with too many distinct directories before reading its entries", async () => {
+    const destination = path.join(tempDir, "too-many-manifest-directories");
+    await fs.mkdir(destination);
+    const paths = skillPathsWithDirectoryCount(MAX_BACKUP_DIRECTORY_COUNT + 1);
+    await fs.writeFile(
+      path.join(destination, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: "2026-08-07T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        files: paths.map((relativePath) => ({ path: relativePath, sha256: sha256Hex("") })),
+      }),
+      "utf-8"
+    );
+
+    const rejected = await captureRejection(readBackupPayload(destination));
+
+    expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((rejected as Error).message).toBe(
+      `Backup has more than ${MAX_BACKUP_DIRECTORY_COUNT} directories`
+    );
+  });
+
+  it("accepts path depth and directory count at their exact limits", async () => {
+    const depthDestination = path.join(tempDir, "path-depth-boundary");
+    const relativePath = [
+      "skills",
+      ...Array.from({ length: MAX_BACKUP_PATH_DEPTH - 2 }, (_, index) => `level-${index}`),
+      "file.md",
+    ].join("/");
+    await writeFixtureFile(depthDestination, relativePath, "");
+    await fs.writeFile(
+      path.join(depthDestination, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: "2026-08-07T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        files: [{ path: relativePath, sha256: sha256Hex("") }],
+      }),
+      "utf-8"
+    );
+    expect((await readBackupPayload(depthDestination)).files.map((file) => file.path)).toEqual([
+      relativePath,
+    ]);
+
+    const directoryDestination = path.join(tempDir, "directory-count-boundary");
+    await fs.mkdir(directoryDestination);
+    const paths = skillPathsWithDirectoryCount(MAX_BACKUP_DIRECTORY_COUNT);
+    await fs.writeFile(
+      path.join(directoryDestination, "manifest.json"),
+      JSON.stringify({
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: "2026-08-07T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        files: paths.map((path) => ({ path, sha256: sha256Hex("") })),
+      }),
+      "utf-8"
+    );
+    const boundary = await captureRejection(readBackupPayload(directoryDestination));
+    expect((boundary as Error).message).toContain("Backup is missing");
+    expect((boundary as Error).message).not.toContain("directories");
+  });
+
+  it("bounds distinct directories during local collection", async () => {
+    const boundaryPaths = skillPathsWithDirectoryCount(MAX_BACKUP_DIRECTORY_COUNT);
+    for (const relativePath of boundaryPaths) {
+      await writeFixtureFile(muxRoot, relativePath, "");
+    }
+
+    const boundary = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+    expect(boundary.files).toHaveLength(boundaryPaths.length + 1);
+
+    const overLimitPaths = skillPathsWithDirectoryCount(MAX_BACKUP_DIRECTORY_COUNT + 1);
+    const boundarySet = new Set(boundaryPaths);
+    for (const relativePath of overLimitPaths) {
+      if (!boundarySet.has(relativePath)) await writeFixtureFile(muxRoot, relativePath, "");
+    }
+
+    const rejected = await captureRejection(
+      createBackupPayload({ muxRoot, muxVersion: "1.2.3", sourceLabel: "test-host" })
+    );
+    expect((rejected as Error).message).toBe(
+      `Backup has more than ${MAX_BACKUP_DIRECTORY_COUNT} directories`
+    );
   });
 
   it("refuses to publish more than the file count limit", async () => {

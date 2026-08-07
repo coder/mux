@@ -7,10 +7,11 @@ import {
   BackupCacheSafetyError,
   BackupNonFastForwardError,
   BackupOriginMismatchError,
+  MAX_NETWORK_GIT_OUTPUT_BYTES,
   type BackupRepoCacheOptions,
 } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
-import { BackupInvalidPayloadError } from "./payload";
+import { BackupInvalidPayloadError, MAX_BACKUP_PATH_DEPTH } from "./payload";
 import { commitAll, runGit } from "./testHelpers";
 
 async function pathExists(target: string): Promise<boolean> {
@@ -20,6 +21,11 @@ async function pathExists(target: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+async function writeExecutable(filePath: string, content: string): Promise<void> {
+  await fs.writeFile(filePath, content, "utf-8");
+  await fs.chmod(filePath, 0o755);
 }
 
 async function writeManagedFile(
@@ -127,6 +133,70 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBe(pushedCommit);
     expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
     expect(await localObjects()).not.toContain(" blob ");
+  });
+
+  it("caps diagnostic output from network Git commands", async () => {
+    if (process.platform === "win32") return;
+    const realGit = Bun.which("git");
+    if (realGit === null) throw new Error("git is required for this test");
+    await seedManagedFiles({ "AGENTS.md": "seed\n" });
+    const binDir = path.join(tempDir, "bin");
+    await fs.mkdir(binDir);
+    await writeExecutable(
+      path.join(binDir, "git"),
+      `#!/bin/sh
+for arg in "$@"; do
+  if [ "$arg" = "fetch" ]; then
+    head -c "$SPEW_BYTES" /dev/zero | tr '\\0' x >&2
+    exec sleep 30
+  fi
+done
+exec "$REAL_GIT" "$@"
+`
+    );
+    const repo = new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      timeoutMs: 2000,
+      env: {
+        PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}`,
+        REAL_GIT: realGit,
+        SPEW_BYTES: String(MAX_NETWORK_GIT_OUTPUT_BYTES + 1),
+      },
+    });
+    await repo.ensureCache();
+
+    const caught = await repo.fetch().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupRemoteUnreachableError);
+    expect((caught as Error).message).toBe(
+      "Could not reach the backup repository. Check the URL and your network connection."
+    );
+    const cause = (caught as Error & { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toContain(
+      `more than ${MAX_NETWORK_GIT_OUTPUT_BYTES} bytes of output`
+    );
+  });
+
+  it("refuses a remote tree path above the backup depth limit before checkout", async () => {
+    const relativePath = [
+      "skills",
+      ...Array.from({ length: MAX_BACKUP_PATH_DEPTH - 1 }, (_, index) => `level-${index}`),
+      "file.md",
+    ].join("/");
+    await seedManagedFiles({ [relativePath]: "deep" });
+    const repo = createRepo();
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain(
+      `more than ${MAX_BACKUP_PATH_DEPTH} path components`
+    );
+    expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
   });
 
   it("refuses a remote tree above the materialization file-count limit before checkout", async () => {
