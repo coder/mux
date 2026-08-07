@@ -612,52 +612,44 @@ printf '%s\\n' "$GIT_SSH_COMMAND" > "$GIT_LOG"
   }> = [
     {
       name: "recognizes a quoted Windows ssh path with its separators intact",
-      // Variant detection has to find `ssh.exe` at the end without decoding the separators.
       command: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -i /keys/id`,
       expectedCommand: String.raw`"C:\Program Files\OpenSSH\ssh.exe" -o BatchMode=yes -i /keys/id`,
       skipOnWindows: true,
     },
     {
       name: "recognizes an unquoted ssh path whose spaces are backslash-escaped",
-      // The escaped space belongs to the path, so the option must land after the executable.
       command: String.raw`/opt/OpenSSH\ Tools/ssh -i /keys/id`,
       expectedCommand: String.raw`/opt/OpenSSH\ Tools/ssh -o BatchMode=yes -i /keys/id`,
     },
     {
       name: "finds the ssh program past a shell assignment prefix",
-      // The assignment is applied by the shell and is not the executable receiving the option.
       command: "SSH_AUTH_SOCK=/tmp/agent.sock ssh -i /keys/id",
       expectedCommand: "SSH_AUTH_SOCK=/tmp/agent.sock ssh -o BatchMode=yes -i /keys/id",
     },
     {
       name: "finds the ssh program past an assignment whose value is escaped or quoted",
-      // Escaped and quoted assignment values remain one word before the ssh executable.
       command: String.raw`FOO=a\ b BAR="c d" ssh -i /keys/id`,
       expectedCommand: String.raw`FOO=a\ b BAR="c d" ssh -o BatchMode=yes -i /keys/id`,
     },
     {
       name: "leaves a command with an unterminated quote alone",
-      // The executable boundary is unknowable, so the timeout must bound the unchanged command.
       command: `"/opt/unterminated/ssh`,
       expectedCommand: `"/opt/unterminated/ssh`,
     },
     {
       name: "adds no option to a launcher even when the variant is forced",
-      // The variant names the client option, not where a launcher places the client.
       command: "env FOO=bar ssh -i /keys/id",
       expectedCommand: "env FOO=bar ssh -i /keys/id",
       variant: "ssh",
     },
     {
       name: "does not prepend an option when a forced variant meets an unparseable command",
-      // A forced variant still cannot identify a safe insertion point in an unparseable command.
       command: `"/opt/unterminated/ssh`,
       expectedCommand: `"/opt/unterminated/ssh`,
       variant: "ssh",
     },
     {
       name: "keeps the separators of an unquoted Windows ssh path",
-      // Decoding the separators would turn the executable into a different unmatched basename.
       command: String.raw`C:\Windows\ssh.exe -i /keys/id`,
       expectedCommand: String.raw`C:\Windows\ssh.exe -o BatchMode=yes -i /keys/id`,
     },

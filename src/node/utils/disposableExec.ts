@@ -349,9 +349,8 @@ export function execFileAsync(
     const maxOutputBytes = options?.maxOutputBytes;
     const acceptOutput = (data: Buffer): boolean => {
       if (outputOverflow) return false;
-      // Accumulated per chunk across both streams rather than measured over the whole strings,
-      // which would be quadratic in chunk count. Checking while streaming prevents an endless
-      // remote from growing the heap without bound while the command is still running.
+      // Count chunks across both streams; repeatedly measuring accumulated strings would be
+      // quadratic. For capped commands, checking here bounds heap growth before process exit.
       outputBytes += data.length;
       if (maxOutputBytes === undefined || outputBytes <= maxOutputBytes) return true;
 

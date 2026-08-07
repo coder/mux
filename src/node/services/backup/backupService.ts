@@ -326,7 +326,6 @@ export class BackupService {
       options.approvedCommandTokens == null ? undefined : [...options.approvedCommandTokens];
     return this.withRepoLock(settings, async (normalized) => {
       const repository = await this.dependencies.gitRepo.prepare(normalized);
-      // Bound to a local because the narrowing does not survive into the closure below.
       const remoteCommit = repository.remoteCommit;
       if (remoteCommit == null) {
         throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
