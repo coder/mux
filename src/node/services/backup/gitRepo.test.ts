@@ -7,8 +7,10 @@ import {
   BackupCacheSafetyError,
   BackupNonFastForwardError,
   BackupOriginMismatchError,
+  type BackupRepoCacheOptions,
 } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
+import { BackupInvalidPayloadError } from "./payload";
 import { commitAll, runGit } from "./testHelpers";
 
 async function pathExists(target: string): Promise<boolean> {
@@ -59,13 +61,30 @@ describe("BackupRepoCache", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  function createRepo(managedPath = "mux"): BackupRepoCache {
+  function createRepo(
+    managedPath = "mux",
+    materializationLimits?: BackupRepoCacheOptions["materializationLimits"]
+  ): BackupRepoCache {
     return new BackupRepoCache({
       repoUrl: originPath,
       branch: "main",
       cacheRoot,
       managedPath,
+      materializationLimits,
     });
+  }
+
+  async function seedManagedFiles(files: Readonly<Record<string, string>>): Promise<string> {
+    const seed = path.join(tempDir, "seed");
+    await runGit(["clone", originPath, seed]);
+    for (const [relativePath, content] of Object.entries(files)) {
+      const filePath = path.join(seed, "mux", relativePath);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf-8");
+    }
+    await commitAll(seed, "seed");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+    return seed;
   }
 
   async function createSha256Origin(name: string, seedContent?: string): Promise<string> {
@@ -108,6 +127,108 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBe(pushedCommit);
     expect(await findHardLinkedFiles(path.join(repo.cachePath, ".git"))).toEqual([]);
     expect(await localObjects()).not.toContain(" blob ");
+  });
+
+  it("refuses a remote tree above the materialization file-count limit before checkout", async () => {
+    await seedManagedFiles({
+      "one.txt": "one",
+      "two.txt": "two",
+      "three.txt": "three",
+    });
+    const repo = createRepo("mux", { maxFileCount: 2 });
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("more than 2 files");
+    expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
+  });
+
+  it("refuses an oversized remote blob before checkout", async () => {
+    await seedManagedFiles({ "oversized.txt": "12345" });
+    const repo = createRepo("mux", { maxFileBytes: 4 });
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("larger than the per-file limit");
+    expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
+  });
+
+  it("refuses a remote tree above the materialization total-byte limit", async () => {
+    await seedManagedFiles({
+      "one.txt": "123",
+      "two.txt": "456",
+    });
+    const repo = createRepo("mux", { maxFileBytes: 4, maxTotalBytes: 5 });
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("larger than the total limit");
+    expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
+  });
+
+  it("does not count gitlinks as materialized backup files", async () => {
+    const seed = await seedManagedFiles({ "one.txt": "one" });
+    const linkedCommit = await runGit(["-C", seed, "rev-parse", "HEAD"]);
+    await runGit([
+      "-C",
+      seed,
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${linkedCommit},mux/submodule`,
+    ]);
+    await runGit([
+      "-C",
+      seed,
+      "-c",
+      "user.email=mux@example.com",
+      "-c",
+      "user.name=Mux",
+      "commit",
+      "-m",
+      "add gitlink",
+    ]);
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+    const repo = createRepo("mux", { maxFileCount: 1 });
+
+    expect(await repo.materialize()).not.toBeNull();
+    expect(await fs.readFile(path.join(repo.cachePath, "mux", "one.txt"), "utf-8")).toBe("one");
+    expect((await fs.stat(path.join(repo.cachePath, "mux", "submodule"))).isDirectory()).toBe(true);
+  });
+
+  it("keeps the cache when remote materialization limits are exceeded", async () => {
+    await seedManagedFiles({
+      "one.txt": "one",
+      "two.txt": "two",
+    });
+    const repo = createRepo("mux", { maxFileCount: 1 });
+    await repo.ensureCache();
+    const marker = path.join(repo.cachePath, ".git", "mux-clone-marker");
+    await fs.writeFile(marker, "original\n", "utf-8");
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect(await fs.readFile(marker, "utf-8")).toBe("original\n");
+  });
+
+  it("materializes a remote tree under the default backup limits", async () => {
+    await seedManagedFiles({
+      "AGENTS.md": "instructions\n",
+      "skills/demo/SKILL.md": "skill\n",
+    });
+    const repo = createRepo();
+
+    expect(await repo.materialize()).not.toBeNull();
+    expect(await fs.readFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
+      "instructions\n"
+    );
+    expect(
+      await fs.readFile(path.join(repo.cachePath, "mux", "skills", "demo", "SKILL.md"), "utf-8")
+    ).toBe("skill\n");
   });
 
   it("recovers malformed cache config without losing SHA-256 object format", async () => {
@@ -448,7 +569,7 @@ describe("BackupRepoCache", () => {
     });
     await repo.ensureCache();
     await repo.fetch();
-    // The clone really is blob-filtered, so the checkout below must lazy-fetch.
+    // The blob-filtered clone forces pre-checkout validation to fetch the blob.
     const objects = await runGit([
       "-C",
       repo.cachePath,
@@ -458,8 +579,7 @@ describe("BackupRepoCache", () => {
     ]);
     expect(objects).not.toContain(" blob ");
 
-    // A fresh instance has recorded no credential yet, so the getter proves the
-    // materializing checkout ran through the ladder rather than as a bare local command.
+    // A fresh instance has no recorded credential, so this proves materialization used the ladder.
     const reader = new BackupRepoCache({
       repoUrl: `file://${originPath}`,
       branch: "main",

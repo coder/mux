@@ -12,6 +12,12 @@ import {
   type BackupCredential,
   type GitCredentialOptions,
 } from "./credentials";
+import {
+  BackupInvalidPayloadError,
+  MAX_BACKUP_FILE_BYTES,
+  MAX_BACKUP_FILE_COUNT,
+  MAX_BACKUP_TOTAL_BYTES,
+} from "./payload";
 
 /**
  * Only the managed directory is ever read out of the cache, so blobs are fetched on demand
@@ -143,7 +149,36 @@ export interface BackupRepoCacheOptions extends Omit<GitCredentialOptions, "repo
   cacheRoot: string;
   /** Scopes the sparse checkout, so nothing outside it is ever materialized. */
   managedPath: string;
+  materializationLimits?: {
+    maxFileBytes?: number;
+    maxTotalBytes?: number;
+    maxFileCount?: number;
+  };
 }
+
+type BackupMaterializationLimits = Required<
+  NonNullable<BackupRepoCacheOptions["materializationLimits"]>
+>;
+
+function resolveMaterializationLimit(
+  value: number | undefined,
+  maximum: number,
+  name: string
+): number {
+  if (value === undefined) return maximum;
+  if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`${name} must be a safe integer between 0 and ${maximum}`);
+  }
+  return value;
+}
+
+interface ManagedBlobEntry {
+  objectId: string;
+  path: string;
+  size: number | null;
+}
+
+const BLOB_PREFETCH_BATCH_SIZE = 16;
 
 export interface RemoteRefs {
   credential: BackupCredential;
@@ -534,12 +569,30 @@ const DISCARDED_CACHE_NAME = new RegExp(`^[0-9a-f]{12}\\${CACHE_SUFFIX_DISCARDED
 export class BackupRepoCache {
   readonly cachePath: string;
   private readonly repoUrl: string;
+  private readonly materializationLimits: BackupMaterializationLimits;
   private baseRemoteCommit: string | null | undefined;
   private usedCredential: BackupCredential | undefined;
 
   constructor(private readonly options: BackupRepoCacheOptions) {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
     this.repoUrl = repoUrlForGit(options.repoUrl, options.cacheRoot);
+    this.materializationLimits = {
+      maxFileBytes: resolveMaterializationLimit(
+        options.materializationLimits?.maxFileBytes,
+        MAX_BACKUP_FILE_BYTES,
+        "maxFileBytes"
+      ),
+      maxTotalBytes: resolveMaterializationLimit(
+        options.materializationLimits?.maxTotalBytes,
+        MAX_BACKUP_TOTAL_BYTES,
+        "maxTotalBytes"
+      ),
+      maxFileCount: resolveMaterializationLimit(
+        options.materializationLimits?.maxFileCount,
+        MAX_BACKUP_FILE_COUNT,
+        "maxFileCount"
+      ),
+    };
   }
 
   get credential(): BackupCredential | undefined {
@@ -570,8 +623,15 @@ export class BackupRepoCache {
     return result;
   }
 
-  private async localGit(args: string[]) {
-    return await runLocalGit(["-C", this.cachePath, ...GIT_HARDENING_ARGS, ...args], this.options);
+  private async localGit(
+    args: string[],
+    options: Pick<ExecFileAsyncOptions, "env" | "maxOutputBytes"> = {}
+  ) {
+    return await runLocalGit(["-C", this.cachePath, ...GIT_HARDENING_ARGS, ...args], {
+      ...this.options,
+      ...options,
+      env: { ...this.options.env, ...options.env },
+    });
   }
 
   async lsRemote(): Promise<RemoteRefs> {
@@ -905,6 +965,148 @@ export class BackupRepoCache {
     }
   }
 
+  private async listManagedBlobs(remoteCommit: string): Promise<ManagedBlobEntry[]> {
+    let stdout: string;
+    try {
+      ({ stdout } = await this.localGit(
+        [
+          "ls-tree",
+          "-r",
+          "-l",
+          "-z",
+          remoteCommit,
+          "--",
+          `:(top,literal)${safeRelativePath(this.options.managedPath)}`,
+        ],
+        {
+          env: { GIT_NO_LAZY_FETCH: "1" },
+          maxOutputBytes: MAX_BACKUP_TOTAL_BYTES,
+        }
+      ));
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === `Command produced more than ${MAX_BACKUP_TOTAL_BYTES} bytes of output`
+      ) {
+        throw new BackupInvalidPayloadError(
+          new Error("Backup tree is too large to validate before checkout")
+        );
+      }
+      throw error;
+    }
+
+    const entries: ManagedBlobEntry[] = [];
+    for (const record of stdout.split("\0")) {
+      if (!record) continue;
+      const separator = record.indexOf("\t");
+      if (separator < 0) {
+        throw new Error("Git returned an invalid managed tree entry");
+      }
+      const fields = record.slice(0, separator).trim().split(/\s+/);
+      if (fields.length !== 4) {
+        throw new Error("Git returned an invalid managed tree entry");
+      }
+      const [mode, objectType, objectId, sizeText] = fields;
+      if (objectType === "commit") continue;
+      if (objectType !== "blob") {
+        throw new Error("Git returned an unsupported managed tree entry");
+      }
+      if (
+        !mode ||
+        !objectId ||
+        !/^[0-9a-f]{40,64}$/.test(objectId) ||
+        (sizeText !== "BAD" && !/^\d+$/.test(sizeText ?? ""))
+      ) {
+        throw new Error("Git returned an invalid managed blob entry");
+      }
+      entries.push({
+        objectId,
+        path: record.slice(separator + 1),
+        size: sizeText === "BAD" ? null : Number(sizeText),
+      });
+    }
+    return entries;
+  }
+
+  private takeMaterializationBytes(
+    entry: ManagedBlobEntry,
+    size: number,
+    usedBytes: number
+  ): number {
+    if (size > this.materializationLimits.maxFileBytes) {
+      throw new BackupInvalidPayloadError(
+        new Error(
+          `'${entry.path}' is larger than the per-file limit (${this.materializationLimits.maxFileBytes} bytes)`
+        )
+      );
+    }
+    const nextUsedBytes = usedBytes + size;
+    if (nextUsedBytes > this.materializationLimits.maxTotalBytes) {
+      throw new BackupInvalidPayloadError(
+        new Error(
+          `Backup is larger than the total limit (${this.materializationLimits.maxTotalBytes} bytes)`
+        )
+      );
+    }
+    return nextUsedBytes;
+  }
+
+  private async validateManagedTreeBeforeCheckout(remoteCommit: string): Promise<void> {
+    const entries = await this.listManagedBlobs(remoteCommit);
+    if (entries.length > this.materializationLimits.maxFileCount) {
+      throw new BackupInvalidPayloadError(
+        new Error(`Backup has more than ${this.materializationLimits.maxFileCount} files`)
+      );
+    }
+
+    let usedBytes = 0;
+    const missingByObjectId = new Map<string, ManagedBlobEntry[]>();
+    for (const entry of entries) {
+      if (entry.size !== null) {
+        usedBytes = this.takeMaterializationBytes(entry, entry.size, usedBytes);
+        continue;
+      }
+      const matchingEntries = missingByObjectId.get(entry.objectId) ?? [];
+      matchingEntries.push(entry);
+      missingByObjectId.set(entry.objectId, matchingEntries);
+    }
+
+    while (missingByObjectId.size > 0) {
+      const objectIds = [...missingByObjectId.keys()].slice(0, BLOB_PREFETCH_BATCH_SIZE);
+      await this.networkGit([
+        "-C",
+        this.cachePath,
+        "fetch",
+        "--no-tags",
+        "--no-write-fetch-head",
+        ...localUploadPackArgs(this.repoUrl),
+        "origin",
+        ...objectIds,
+      ]);
+
+      const fetchedSizes = new Map<string, number>();
+      const fetchedObjectIds = new Set(objectIds);
+      for (const entry of await this.listManagedBlobs(remoteCommit)) {
+        if (entry.size !== null && fetchedObjectIds.has(entry.objectId)) {
+          fetchedSizes.set(entry.objectId, entry.size);
+        }
+      }
+      for (const objectId of objectIds) {
+        const size = fetchedSizes.get(objectId);
+        const matchingEntries = missingByObjectId.get(objectId);
+        if (size === undefined || matchingEntries === undefined) {
+          throw new BackupInvalidPayloadError(
+            new Error("Backup file sizes could not be validated before checkout")
+          );
+        }
+        for (const entry of matchingEntries) {
+          usedBytes = this.takeMaterializationBytes(entry, size, usedBytes);
+        }
+        missingByObjectId.delete(objectId);
+      }
+    }
+  }
+
   /**
    * Only the managed directory is materialized. Mux reads and writes nothing else, and a
    * checkout of the whole branch fails on any path elsewhere in the repository that this
@@ -914,8 +1116,8 @@ export class BackupRepoCache {
    * `extensions.worktreeConfig` and moves its state into `.git/config.worktree`, a second
    * config file git trusts as much as the one `sanitizeCacheConfig` just rebuilt. The pattern
    * file switches nothing on by itself (`core.sparseCheckout` comes from the rebuilt config),
-   * and the checkout that follows is what applies it, fetching the managed blobs through the
-   * credential ladder.
+   * and the checkout that follows is what applies it. Pre-checkout size validation fetches any
+   * missing managed blobs through the credential ladder.
    */
   private async applySparseCheckout(): Promise<void> {
     await writeOwnedGitInfoFile(
@@ -929,6 +1131,7 @@ export class BackupRepoCache {
     await this.applySparseCheckout();
     const remoteCommit = await this.remoteBranchCommit();
     if (remoteCommit) {
+      await this.validateManagedTreeBeforeCheckout(remoteCommit);
       // -f because a previous preview leaves modified tracked files in this cache. Without
       // it the checkout keeps them and the next preview reads the local export as if it
       // were the remote's backup.
@@ -970,7 +1173,6 @@ export class BackupRepoCache {
    * directory all pass a structural check and fail a later command. So the first attempt answers
    * an unrecognized failure, including a local one, by rebuilding once rather than enumerating
    * causes; that costs at most a fresh clone, because every prepare resets to the remote anyway.
-   * Ownership refusals and classified remote failures are rethrown instead of rebuilding.
    */
   async materialize(): Promise<string | null> {
     try {
@@ -980,6 +1182,7 @@ export class BackupRepoCache {
       if (
         error instanceof BackupCacheSafetyError ||
         error instanceof BackupOriginMismatchError ||
+        error instanceof BackupInvalidPayloadError ||
         error instanceof BackupRemoteUnreachableError ||
         error instanceof BackupAuthFailedError
       ) {

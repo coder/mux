@@ -159,7 +159,7 @@ export function BackupSection() {
     setSettingsFresh(false);
     setSaveError(null);
 
-    const refresh = async () => {
+    const refresh = async (options?: { markFresh?: boolean }) => {
       const version = (refreshGenerationRef.current += 1);
       setSettingsFresh(false);
 
@@ -175,7 +175,7 @@ export function BackupSection() {
         }
         savedDraftRef.current = nextDraft;
         setSavedDraft(nextDraft);
-        setSettingsFresh(true);
+        if (options?.markFresh !== false) setSettingsFresh(true);
         setSaveError(null);
 
         if (!draftsEqual(previousSavedDraft, nextDraft)) {
@@ -202,7 +202,11 @@ export function BackupSection() {
     };
 
     void (async () => {
-      const initialRefresh = refresh();
+      // Display settings without waiting on subscription setup, but do not mark them
+      // fresh: another window can change the repository before the subscription is
+      // armed, and enabling destructive actions on that snapshot would let a restore
+      // run against a stale tuple. Freshness comes from the post-arm refresh below.
+      const initialRefresh = refresh({ markFresh: false });
       let subscribed: AsyncIterator<unknown>;
       let nextEvent: Promise<IteratorResult<unknown>>;
       try {
@@ -214,8 +218,11 @@ export function BackupSection() {
         iterator = subscribed;
         nextEvent = subscribed.next();
       } catch {
-        // The initial refresh does not depend on live updates.
+        // No live updates will ever arrive, so a fresh read is the best this mount
+        // can do; without it every action would stay disabled.
         await initialRefresh;
+        if (signal.aborted) return;
+        await refresh();
         return;
       }
 

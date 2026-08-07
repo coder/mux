@@ -130,6 +130,12 @@ describe("BackupSection", () => {
 
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+
+    // Live updates are known to be unavailable, so the fallback read is the best
+    // freshness this mount gets and actions must not stay disabled forever.
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(false)
+    );
   });
 
   test("loads settings while the config change subscription is pending", async () => {
@@ -143,6 +149,20 @@ describe("BackupSection", () => {
 
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+
+    // The snapshot read before the subscription armed could be stale, so destructive
+    // actions must stay disabled until a post-arm refresh confirms freshness.
+    expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("enables actions once the armed subscription confirms freshness", async () => {
+    const { view } = renderBackupSection();
+    const canvas = within(view.container);
+
+    await canvas.findByLabelText("Repository URL");
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(false)
+    );
   });
 
   test("refreshes after subscription setup to catch changes made during setup", async () => {
