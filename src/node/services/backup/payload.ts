@@ -26,6 +26,7 @@ const BACKUP_MANIFEST_FILE = "manifest.json";
  */
 export const MAX_BACKUP_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_BACKUP_TOTAL_BYTES = 64 * 1024 * 1024;
+export const MAX_BACKUP_FILE_COUNT = 4096;
 export const REDACTED_BACKUP_VALUE = "__MUX_BACKUP_REDACTED__";
 
 const FORBIDDEN_BASENAMES = new Set(
@@ -289,6 +290,12 @@ export async function resolveContainedPath(root: string, relativePath: string): 
     }
   }
   return current;
+}
+
+function assertBackupFileCount(count: number): void {
+  if (count > MAX_BACKUP_FILE_COUNT) {
+    throw new Error(`Backup has more than ${MAX_BACKUP_FILE_COUNT} files`);
+  }
 }
 
 function megabytes(bytes: number): string {
@@ -658,6 +665,7 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
       if (entry.isDirectory()) {
         await collectDirectory(relativePath, filter);
       } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
+        assertBackupFileCount(files.length + 1);
         files.push(await readBackupFile(root, relativePath, budget, links));
       }
     }
@@ -1303,6 +1311,7 @@ export async function createBackupPayload(
     path: "preferences.json",
     content: serializeBackupPreferences(options.preferences),
   });
+  assertBackupFileCount(files.length);
   files.sort((a, b) => a.path.localeCompare(b.path));
 
   if (options.reportSecrets !== true) {
@@ -1395,6 +1404,8 @@ export async function writeBackupPayload(
   payload: BackupPayload,
   options: { portable?: boolean; ownerOnly?: boolean } = {}
 ): Promise<void> {
+  assertBackupFileCount(payload.files.length);
+  assertBackupFileCount(payload.manifest.files.length);
   const portable = options.portable !== false;
   const ownerOnly = options.ownerOnly === true;
   const claimed = new Set<string>();
@@ -1464,6 +1475,7 @@ function parseManifest(raw: string, portable: boolean): BackupManifest {
   ) {
     throw new Error("Invalid backup manifest");
   }
+  assertBackupFileCount(manifest.files.length);
   if (manifest.mcpRedactions !== undefined) {
     const paths = new Set<string>();
     for (const jsonPath of manifest.mcpRedactions) {
@@ -2272,6 +2284,7 @@ export async function planRestoreWrites(
   muxRoot: string,
   payload: BackupPayload
 ): Promise<RestorePlan> {
+  assertBackupFileCount(payload.files.length);
   const root = await resolveRoot(muxRoot);
   let backupPreferences: unknown;
   const writes: RestorePlan["writes"] = [];

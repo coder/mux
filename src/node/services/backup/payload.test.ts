@@ -7,9 +7,11 @@ import * as jsonc from "jsonc-parser";
 import { MuxProviderOptionsSchema } from "@/common/schemas/providerOptions";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import {
+  BACKUP_SCHEMA_VERSION,
   BackupCommandApprovalRequiredError,
   assertBackupCommandsApproved,
   MAX_BACKUP_FILE_BYTES,
+  MAX_BACKUP_FILE_COUNT,
   MAX_BACKUP_TOTAL_BYTES,
   REDACTED_BACKUP_VALUE,
   backupCommandApprovalToken,
@@ -408,6 +410,71 @@ describe("backup payload", () => {
     await fs.appendFile(reuseManifest, " ".repeat(MAX_BACKUP_FILE_BYTES));
     await writeBackupPayload(reuseDir, reusePayload);
     expect((await fs.stat(reuseManifest)).size).toBeLessThan(MAX_BACKUP_FILE_BYTES);
+  });
+
+  it("rejects a manifest with too many files before reading its entries", async () => {
+    const destination = path.join(tempDir, "too-many-manifest-files");
+    await fs.mkdir(destination);
+    const files = Array.from({ length: MAX_BACKUP_FILE_COUNT + 1 }, (_, index) => ({
+      path: `skills/count/file-${index}.md`,
+      sha256: sha256Hex(""),
+    }));
+    const manifest = {
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      exportedAt: "2026-08-07T00:00:00.000Z",
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      files,
+    };
+    const manifestPath = path.join(destination, "manifest.json");
+
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+    const rejected = await captureRejection(readBackupPayload(destination));
+    expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
+    expect((rejected as Error).message).toBe(`Backup has more than ${MAX_BACKUP_FILE_COUNT} files`);
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, files: files.slice(0, MAX_BACKUP_FILE_COUNT) }),
+      "utf-8"
+    );
+    const boundary = await captureRejection(readBackupPayload(destination));
+    expect((boundary as Error).message).toContain("Backup is missing");
+    expect((boundary as Error).message).not.toContain("more than");
+  });
+
+  it("refuses to publish more than the file count limit", async () => {
+    const file = { path: "skills/repeated.md", content: Buffer.alloc(0) };
+    const manifestFile = { path: file.path, sha256: sha256Hex("") };
+    const payload: Awaited<ReturnType<typeof createBackupPayload>> = {
+      manifest: {
+        schemaVersion: BACKUP_SCHEMA_VERSION,
+        exportedAt: "2026-08-07T00:00:00.000Z",
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        files: Array.from({ length: MAX_BACKUP_FILE_COUNT + 1 }, () => manifestFile),
+      },
+      files: Array.from({ length: MAX_BACKUP_FILE_COUNT + 1 }, () => file),
+      redactions: [],
+    };
+
+    const rejected = await captureRejection(
+      writeBackupPayload(path.join(tempDir, "too-many-published-files"), payload)
+    );
+    expect((rejected as Error).message).toBe(`Backup has more than ${MAX_BACKUP_FILE_COUNT} files`);
+
+    const boundary = await captureRejection(
+      writeBackupPayload(path.join(tempDir, "file-count-boundary"), {
+        ...payload,
+        manifest: {
+          ...payload.manifest,
+          files: payload.manifest.files.slice(0, MAX_BACKUP_FILE_COUNT),
+        },
+        files: payload.files.slice(0, MAX_BACKUP_FILE_COUNT),
+      })
+    );
+    expect((boundary as Error).message).toContain("Duplicate backup path");
+    expect((boundary as Error).message).not.toContain("more than");
   });
 
   it("counts the manifest against the publish budget the reader charges it to", async () => {
