@@ -60,6 +60,16 @@ export function killProcessTree(pid: number): void {
   }
 }
 
+function terminateCappedCommand(child: ChildProcess): void {
+  // Capped commands may delegate work to descendants such as Git transports or credential helpers,
+  // so killing only the direct child can leave work running.
+  if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
+  else child.kill("SIGKILL");
+  // The "close" event waits for stdio to close, and descendants may keep those pipes open.
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 /**
  * Disposable wrapper for child processes that ensures immediate cleanup.
  * Implements TypeScript's explicit resource management (using) for process lifecycle.
@@ -326,7 +336,8 @@ export function execFileAsync(
   };
   const killChild = () => {
     if (child.exitCode === null && child.signalCode === null) {
-      child.kill();
+      if (options?.maxOutputBytes !== undefined) terminateCappedCommand(child);
+      else child.kill();
     }
   };
   const onAbort = () => killChild();
@@ -357,15 +368,7 @@ export function execFileAsync(
       outputOverflow = true;
       stdout = "";
       stderr = "";
-      // The whole tree, because the command being cut off may have spawned the thing actually
-      // producing the flood (git's ssh transport, a credential helper), and killing only the
-      // direct child would leave it running.
-      if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
-      else child.kill("SIGKILL");
-      // The "close" event waits for stdio to close, and descendants may keep those pipes open.
-      // Destroy both streams so overflow rejects promptly.
-      child.stdout?.destroy();
-      child.stderr?.destroy();
+      terminateCappedCommand(child);
       return false;
     };
 

@@ -31,6 +31,10 @@ async function isExecutable(filePath: string): Promise<boolean> {
   return ((await fs.stat(filePath)).mode & 0o111) !== 0;
 }
 
+function differentNonRootUid(uid: number): number {
+  return uid === 1 ? 2 : 1;
+}
+
 /** Rewrites a published payload the way someone with repository write access could. */
 async function tamperPayloadFile(
   destination: string,
@@ -2462,6 +2466,66 @@ describe("backup payload", () => {
 
     const rejected = await captureRejection(planRestoreWrites(restoreRoot, payload));
     expect((rejected as Error).message).toContain("regular file");
+  });
+
+  it("refuses a permission-changing restore for a destination owned by another uid before writing", async () => {
+    if (process.getuid === undefined) return;
+    await writeFixtureFile(muxRoot, "AGENTS.md", "from backup\n");
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    await fs.chmod(path.join(muxRoot, "skills/demo/SKILL.md"), 0o755);
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "foreign-owner-mode-change");
+    await writeFixtureFile(restoreRoot, "AGENTS.md", "local instructions\n");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await writeFixtureFile(restoreRoot, "skills/demo/SKILL.md", "local skill\n");
+    await fs.chmod(destination, 0o644);
+    const existing = await fs.stat(destination);
+    const getuid = spyOn(process, "getuid").mockReturnValue(differentNonRootUid(existing.uid));
+
+    try {
+      const rejected = await captureRejection(
+        restoreBackupPayload({ muxRoot: restoreRoot, payload })
+      );
+      expect((rejected as Error).message).toBe(
+        "Cannot restore 'skills/demo/SKILL.md': the destination's permissions cannot be changed"
+      );
+      expect(await fs.readFile(path.join(restoreRoot, "AGENTS.md"), "utf-8")).toBe(
+        "local instructions\n"
+      );
+      expect(await fs.readFile(destination, "utf-8")).toBe("local skill\n");
+    } finally {
+      getuid.mockRestore();
+    }
+  });
+
+  it("restores another owner's destination when its mode already matches", async () => {
+    if (process.getuid === undefined) return;
+    await writeFixtureFile(muxRoot, "skills/demo/SKILL.md", "from backup\n");
+    const payload = await createBackupPayload({
+      muxRoot,
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+    });
+
+    const restoreRoot = path.join(tempDir, "foreign-owner-mode-match");
+    const destination = path.join(restoreRoot, "skills/demo/SKILL.md");
+    await writeFixtureFile(restoreRoot, "skills/demo/SKILL.md", "local skill\n");
+    await fs.chmod(destination, 0o644);
+    const existing = await fs.stat(destination);
+    const getuid = spyOn(process, "getuid").mockReturnValue(differentNonRootUid(existing.uid));
+
+    try {
+      await restoreBackupPayload({ muxRoot: restoreRoot, payload });
+    } finally {
+      getuid.mockRestore();
+    }
+
+    expect(await fs.readFile(destination, "utf-8")).toBe("from backup\n");
   });
 
   it("refuses an unwritable destination before overwriting earlier entries", async () => {

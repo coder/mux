@@ -9,7 +9,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import { describe, expect, test, beforeEach, afterEach } from "@jest/globals";
-import { execAsync, execFileAsync } from "./disposableExec";
+import { execAsync, execFileAsync, killProcessTree } from "./disposableExec";
 
 /**
  * Tests for DisposableExec - verifies no process leaks under any scenario
@@ -396,6 +396,58 @@ describe("disposableExec", () => {
       () => "0" // pgrep exits non-zero when nothing matches
     );
     expect(found).toBe("0");
+  });
+
+  test("timeout kills descendants of a capped command without waiting for inherited pipes", async () => {
+    if (process.platform === "win32") return;
+    const pidFile = path.join(os.tmpdir(), `mux-timeout-descendant-${process.pid}-${Date.now()}`);
+    using proc = execFileAsync("sh", ["-c", 'sleep 30 & echo $! > "$1"; wait', "sh", pidFile], {
+      maxOutputBytes: 1024,
+      timeoutMs: 100,
+    });
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
+    let passed = false;
+
+    try {
+      const rejected = await Promise.race([
+        proc.result.then(
+          () => {
+            throw new Error("Expected the timeout to reject");
+          },
+          (error: unknown) => error
+        ),
+        new Promise<never>((_, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("timeout result did not settle promptly")),
+            2_000
+          );
+          timeout.unref?.();
+        }),
+      ]);
+      expect((rejected as { signal?: string }).signal).toMatch(/SIGKILL/);
+
+      const descendantPid = Number((await fs.readFile(pidFile, "utf-8")).trim());
+      let descendantRunning = true;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch {
+          descendantRunning = false;
+          break;
+        }
+      }
+      expect(descendantRunning).toBe(false);
+      passed = true;
+    } finally {
+      if (!passed && child.pid !== undefined) killProcessTree(child.pid);
+      if (!passed) {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+      await fs.rm(pidFile, { force: true });
+    }
   });
 
   test("an uncapped command stays in this process's group", async () => {
