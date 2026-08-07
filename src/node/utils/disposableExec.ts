@@ -312,10 +312,12 @@ export function execFileAsync(
   const child = spawn(file, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ? { ...process.env, ...options.env } : undefined,
-    // Its own process group, so killing the tree has a group to signal and a descendant cannot
-    // outlive the command that spawned it. Not on Windows, where `detached` opens a console
-    // window and `killProcessTree` walks the tree with `taskkill /T` instead.
-    detached: process.platform !== "win32",
+    // Only for a capped command, which is the one that has to kill descendants and so needs a
+    // group to signal. A detached child also stops receiving the signals sent to this process's
+    // group, so a terminal interrupt would no longer reach it, which is why every other command
+    // stays in the group it would otherwise be interrupted with. Never on Windows, where
+    // `detached` opens a console window and `killProcessTree` walks the tree with `taskkill /T`.
+    detached: options?.maxStdoutBytes !== undefined && process.platform !== "win32",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {

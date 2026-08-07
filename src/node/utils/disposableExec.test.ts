@@ -378,6 +378,26 @@ describe("disposableExec", () => {
     expect(found).toBe("0");
   });
 
+  test("an uncapped command stays in this process's group", async () => {
+    if (process.platform === "win32") return;
+    const readGroupOf = async (pid: number) => {
+      using ps = execFileAsync("ps", ["-o", "pgid=", "-p", String(pid)]);
+      return (await ps.result).stdout.trim();
+    };
+
+    const proc = execFileAsync("sh", ["-c", "sleep 5"]);
+    const child: ChildProcess = (proc as any).child;
+    try {
+      // Detaching would give it its own group, where a signal sent to this process's group (a
+      // terminal interrupt) would never reach it. Only the capped path pays that to gain a
+      // group it can kill.
+      expect(await readGroupOf(child.pid!)).toBe(await readGroupOf(process.pid));
+    } finally {
+      proc[Symbol.dispose]();
+      await proc.result.catch(() => undefined);
+    }
+  });
+
   test("maxStdoutBytes leaves output under the cap untouched", async () => {
     using proc = execFileAsync("sh", ["-c", "printf 'small output'"], { maxStdoutBytes: 1024 });
     activeProcesses.add((proc as any).child);
