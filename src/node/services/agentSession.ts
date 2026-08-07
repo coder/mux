@@ -472,6 +472,7 @@ export class AgentSession {
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
   private lastUsageState?: AutoCompactionUsageState;
+  private usageSeedingSuppressed = false;
 
   /** Prevent duplicate mid-stream compaction interrupts while we are already transitioning. */
   private midStreamCompactionPending = false;
@@ -3391,6 +3392,8 @@ export class AgentSession {
       return;
     }
 
+    this.usageSeedingSuppressed = false;
+
     const totalTokens = params.usage.totalTokens ?? this.lastUsageState?.totalTokens;
     if (params.live) {
       this.lastUsageState = {
@@ -3423,11 +3426,15 @@ export class AgentSession {
   /**
    * Invalidate cached context usage after the active provider context is
    * rewritten (boundary append, truncation, history replacement): stale usage
-   * would make the next send auto-compact the already-rewritten context. The
-   * next send re-seeds from post-rewrite history.
+   * would make the next send auto-compact the already-rewritten context.
+   * History seeding is also suppressed until the provider reports fresh usage,
+   * because boundary-less rewrites (partial /clear) retain rows whose persisted
+   * contextUsage still counts removed tokens; re-seeding those would restore
+   * the same stale value.
    */
   clearUsageState(): void {
     this.lastUsageState = undefined;
+    this.usageSeedingSuppressed = true;
   }
 
   /**
@@ -3514,7 +3521,7 @@ export class AgentSession {
    * `lastUsageState` is still undefined.
    */
   private async seedUsageStateFromHistory(): Promise<void> {
-    if (this.lastUsageState !== undefined) {
+    if (this.lastUsageState !== undefined || this.usageSeedingSuppressed) {
       return;
     }
 

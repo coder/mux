@@ -744,6 +744,94 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  // Boundary-less history retaining a high-usage assistant row, as after a
+  // partial /clear that removed only an older prefix.
+  async function seedBoundarylessHighUsageHistory(workspaceId: string) {
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    const appendUser = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-retained", "user", "retained prompt", {
+        timestamp: Date.now() - 2_000,
+      })
+    );
+    expect(appendUser.success).toBe(true);
+
+    const appendAssistant = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-retained", "assistant", "retained reply", {
+        timestamp: Date.now() - 1_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+      })
+    );
+    expect(appendAssistant.success).toBe(true);
+
+    return { historyService, config };
+  }
+
+  function installUsageCapturingMonitor(session: AgentSession): unknown[] {
+    const seenUsages: unknown[] = [];
+    (session as unknown as { compactionMonitor: CompactionMonitor }).compactionMonitor = {
+      checkBeforeSend: mock((params: { usage?: unknown }) => {
+        seenUsages.push(params.usage);
+        return {
+          shouldShowWarning: false,
+          shouldForceCompact: false,
+          usagePercentage: 0,
+          thresholdPercentage: 85,
+        };
+      }),
+      checkMidStream: mock(() => false),
+      resetForNewStream: mock(() => undefined),
+      setThreshold: mock(() => undefined),
+      getThreshold: mock(() => 0.85),
+    } as unknown as CompactionMonitor;
+    return seenUsages;
+  }
+
+  test("history seeding restores persisted usage when no rewrite occurred", async () => {
+    const workspaceId = "ws-usage-seeding-baseline";
+    const { historyService, config } = await seedBoundarylessHighUsageHistory(workspaceId);
+
+    const harness = await createAgentSessionHarness({ workspaceId, historyService, config });
+    const seenUsages = installUsageCapturingMonitor(harness.session);
+
+    const result = await harness.session.sendMessage("restart send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
+
+    harness.session.dispose();
+  });
+
+  test("clearUsageState suppresses history seeding until fresh provider usage arrives", async () => {
+    const workspaceId = "ws-usage-seeding-suppressed";
+    const { historyService, config } = await seedBoundarylessHighUsageHistory(workspaceId);
+
+    const harness = await createAgentSessionHarness({ workspaceId, historyService, config });
+    const seenUsages = installUsageCapturingMonitor(harness.session);
+
+    // Same fixture as the baseline test, but a rewrite invalidated usage:
+    // the retained row's contextUsage still counts removed tokens and must not reseed.
+    harness.session.clearUsageState();
+
+    const result = await harness.session.sendMessage("send after partial clear", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    expect(seenUsages[0]).toBeUndefined();
+
+    harness.session.dispose();
+  });
+
   test("seeds on-send compaction usage from the active compaction epoch only", async () => {
     const workspaceId = "ws-auto-compaction-seed-active-epoch";
 
