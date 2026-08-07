@@ -47,6 +47,9 @@ function isRemoteMovedRejection(text: string): boolean {
 /** Remote transports and credential helpers are untrusted and can emit output without bound. */
 export const MAX_NETWORK_GIT_OUTPUT_BYTES = 16 * 1024 * 1024;
 
+// The subprocess timeout limits transfer duration; this rejects caches retaining excess object data.
+export const MAX_BACKUP_CACHE_OBJECT_KIB = 512 * 1024;
+
 /**
  * `ls-remote` is asked for every ref rather than only the configured branch, because emptiness
  * decides whether a repository can be initialized and any ref at all answers that. A backup
@@ -159,22 +162,43 @@ export interface BackupRepoCacheOptions extends Omit<GitCredentialOptions, "repo
     maxTotalBytes?: number;
     maxFileCount?: number;
   };
+  maxCacheObjectKib?: number;
 }
 
 type BackupMaterializationLimits = Required<
   NonNullable<BackupRepoCacheOptions["materializationLimits"]>
 >;
 
-function resolveMaterializationLimit(
-  value: number | undefined,
-  maximum: number,
-  name: string
-): number {
+function resolveBoundedLimit(value: number | undefined, maximum: number, name: string): number {
   if (value === undefined) return maximum;
   if (!Number.isSafeInteger(value) || value < 0 || value > maximum) {
     throw new Error(`${name} must be a safe integer between 0 and ${maximum}`);
   }
   return value;
+}
+
+function parseObjectStoreKib(stdout: string): number {
+  const sizes = new Map<string, number>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^(size|size-pack|size-garbage): ([0-9]+)$/.exec(line.trim());
+    if (!match) continue;
+    const value = Number(match[2]);
+    if (!Number.isSafeInteger(value)) {
+      throw new Error("Git returned an invalid object store size");
+    }
+    sizes.set(match[1], value);
+  }
+  const looseKib = sizes.get("size");
+  const packedKib = sizes.get("size-pack");
+  const garbageKib = sizes.get("size-garbage");
+  if (looseKib === undefined || packedKib === undefined || garbageKib === undefined) {
+    throw new Error("Git returned an invalid object store size");
+  }
+  const totalKib = looseKib + packedKib + garbageKib;
+  if (!Number.isSafeInteger(totalKib)) {
+    throw new Error("Git returned an invalid object store size");
+  }
+  return totalKib;
 }
 
 interface ManagedBlobEntry {
@@ -575,6 +599,7 @@ export class BackupRepoCache {
   readonly cachePath: string;
   private readonly repoUrl: string;
   private readonly materializationLimits: BackupMaterializationLimits;
+  private readonly maxCacheObjectKib: number;
   private baseRemoteCommit: string | null | undefined;
   private usedCredential: BackupCredential | undefined;
 
@@ -582,22 +607,27 @@ export class BackupRepoCache {
     this.cachePath = backupCachePath(options.cacheRoot, options.repoUrl, options.branch);
     this.repoUrl = repoUrlForGit(options.repoUrl, options.cacheRoot);
     this.materializationLimits = {
-      maxFileBytes: resolveMaterializationLimit(
+      maxFileBytes: resolveBoundedLimit(
         options.materializationLimits?.maxFileBytes,
         MAX_BACKUP_FILE_BYTES,
         "maxFileBytes"
       ),
-      maxTotalBytes: resolveMaterializationLimit(
+      maxTotalBytes: resolveBoundedLimit(
         options.materializationLimits?.maxTotalBytes,
         MAX_BACKUP_TOTAL_BYTES,
         "maxTotalBytes"
       ),
-      maxFileCount: resolveMaterializationLimit(
+      maxFileCount: resolveBoundedLimit(
         options.materializationLimits?.maxFileCount,
         MAX_BACKUP_FILE_COUNT,
         "maxFileCount"
       ),
     };
+    this.maxCacheObjectKib = resolveBoundedLimit(
+      options.maxCacheObjectKib,
+      MAX_BACKUP_CACHE_OBJECT_KIB,
+      "maxCacheObjectKib"
+    );
   }
 
   get credential(): BackupCredential | undefined {
@@ -638,6 +668,15 @@ export class BackupRepoCache {
       ...options,
       env: { ...this.options.env, ...options.env },
     });
+  }
+
+  private async assertObjectStoreWithinBudget(): Promise<void> {
+    const objectKib = parseObjectStoreKib((await this.localGit(["count-objects", "-v"])).stdout);
+    if (objectKib > this.maxCacheObjectKib) {
+      throw new BackupInvalidPayloadError(
+        new Error(`Backup cache object data exceeds the ${this.maxCacheObjectKib} KiB limit`)
+      );
+    }
   }
 
   async lsRemote(): Promise<RemoteRefs> {
@@ -698,6 +737,7 @@ export class BackupRepoCache {
       this.repoUrl,
       this.cachePath,
     ]);
+    await this.assertObjectStoreWithinBudget();
   }
 
   private async createCache(): Promise<void> {
@@ -937,6 +977,7 @@ export class BackupRepoCache {
       "origin",
       `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
     ]);
+    await this.assertObjectStoreWithinBudget();
     return await this.remoteBranchCommit();
   }
 
@@ -1014,7 +1055,12 @@ export class BackupRepoCache {
         throw new Error("Git returned an invalid managed tree entry");
       }
       const [mode, objectType, objectId, sizeText] = fields;
-      if (objectType === "commit") continue;
+      const entryPath = record.slice(separator + 1);
+      if (objectType === "commit") {
+        throw new BackupInvalidPayloadError(
+          new Error(`Backup tree contains unsupported gitlink '${entryPath}'`)
+        );
+      }
       if (objectType !== "blob") {
         throw new Error("Git returned an unsupported managed tree entry");
       }
@@ -1028,7 +1074,7 @@ export class BackupRepoCache {
       }
       entries.push({
         objectId,
-        path: record.slice(separator + 1),
+        path: entryPath,
         size: sizeText === "BAD" ? null : Number(sizeText),
       });
     }
@@ -1105,6 +1151,7 @@ export class BackupRepoCache {
         "origin",
         ...objectIds,
       ]);
+      await this.assertObjectStoreWithinBudget();
 
       const fetchedSizes = new Map<string, number>();
       const fetchedObjectIds = new Set(objectIds);

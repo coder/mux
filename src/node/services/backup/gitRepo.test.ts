@@ -12,7 +12,7 @@ import {
 } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
 import { BackupInvalidPayloadError, MAX_BACKUP_PATH_DEPTH } from "./payload";
-import { commitAll, runGit } from "./testHelpers";
+import { commitAll, runGit, writeFixtureFile } from "./testHelpers";
 
 async function pathExists(target: string): Promise<boolean> {
   try {
@@ -80,6 +80,16 @@ describe("BackupRepoCache", () => {
     });
   }
 
+  function createRepoWithObjectBudget(maxCacheObjectKib: number): BackupRepoCache {
+    return new BackupRepoCache({
+      repoUrl: originPath,
+      branch: "main",
+      cacheRoot,
+      managedPath: "mux",
+      maxCacheObjectKib,
+    });
+  }
+
   async function seedManagedFiles(files: Readonly<Record<string, string>>): Promise<string> {
     const seed = path.join(tempDir, "seed");
     await runGit(["clone", originPath, seed]);
@@ -91,6 +101,12 @@ describe("BackupRepoCache", () => {
     await commitAll(seed, "seed");
     await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
     return seed;
+  }
+
+  async function addOutsideTree(seed: string, directoryCount: number): Promise<void> {
+    for (let index = 0; index < directoryCount; index++) {
+      await writeFixtureFile(seed, `outside/directory-${index}/file.txt`, `${index}\n`);
+    }
   }
 
   async function createSha256Origin(name: string, seedContent?: string): Promise<string> {
@@ -166,6 +182,39 @@ describe("BackupRepoCache", () => {
     expect(objectTypes.filter((type) => type === "commit")).toHaveLength(1);
     expect(objectTypes.filter((type) => type === "tree")).toHaveLength(3);
     expect(await runGit(["-C", repo.cachePath, "rev-list", "--count", "origin/main"])).toBe("1");
+  });
+
+  it("refuses a clone whose object store exceeds the cache budget", async () => {
+    const seed = path.join(tempDir, "large-tree-seed");
+    await runGit(["clone", originPath, seed]);
+    await fs.mkdir(path.join(seed, "mux"), { recursive: true });
+    await fs.writeFile(path.join(seed, "mux", "AGENTS.md"), "managed\n", "utf-8");
+    await addOutsideTree(seed, 128);
+    await commitAll(seed, "large tip tree");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+    const repo = createRepoWithObjectBudget(1);
+
+    const caught = await repo.ensureCache().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("object data");
+  });
+
+  it("does not rebuild the cache when a fetch exceeds the object-store budget", async () => {
+    const seed = await seedManagedFiles({ "AGENTS.md": "managed\n" });
+    const repo = createRepoWithObjectBudget(1);
+    await repo.ensureCache();
+    const marker = path.join(repo.cachePath, ".git", "mux-clone-marker");
+    await fs.writeFile(marker, "original\n", "utf-8");
+    await addOutsideTree(seed, 128);
+    await commitAll(seed, "large tip tree");
+    await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
+
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("object data");
+    expect(await fs.readFile(marker, "utf-8")).toBe("original\n");
   });
 
   it("pushes after shallow materialization and a later depth-one fetch", async () => {
@@ -299,7 +348,7 @@ exec "$REAL_GIT" "$@"
     expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
   });
 
-  it("does not count gitlinks as materialized backup files", async () => {
+  it("refuses gitlinks under the managed path before checkout", async () => {
     const seed = await seedManagedFiles({ "one.txt": "one" });
     const linkedCommit = await runGit(["-C", seed, "rev-parse", "HEAD"]);
     await runGit([
@@ -322,11 +371,13 @@ exec "$REAL_GIT" "$@"
       "add gitlink",
     ]);
     await runGit(["-C", seed, "push", "origin", "HEAD:main"]);
-    const repo = createRepo("mux", { maxFileCount: 1 });
+    const repo = createRepo();
 
-    expect(await repo.materialize()).not.toBeNull();
-    expect(await fs.readFile(path.join(repo.cachePath, "mux", "one.txt"), "utf-8")).toBe("one");
-    expect((await fs.stat(path.join(repo.cachePath, "mux", "submodule"))).isDirectory()).toBe(true);
+    const caught = await repo.materialize().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
+    expect((caught as Error).message).toContain("gitlink 'mux/submodule'");
+    expect(await pathExists(path.join(repo.cachePath, "mux"))).toBe(false);
   });
 
   it("keeps the cache when remote materialization limits are exceeded", async () => {

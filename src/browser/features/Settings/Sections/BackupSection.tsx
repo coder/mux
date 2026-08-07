@@ -136,6 +136,7 @@ export function BackupSection() {
   const refreshGenerationRef = useRef(0);
   const draftRef = useRef(draft);
   const savedDraftRef = useRef(savedDraft);
+  const refreshRef = useRef<((options?: { markFresh?: boolean }) => Promise<void>) | null>(null);
   draftRef.current = draft;
   savedDraftRef.current = savedDraft;
 
@@ -201,6 +202,8 @@ export function BackupSection() {
       }
     };
 
+    refreshRef.current = refresh;
+
     void (async () => {
       // Display settings without waiting on subscription setup, but do not mark them
       // fresh: another window can change the repository before the subscription is
@@ -241,6 +244,7 @@ export function BackupSection() {
     })();
 
     return () => {
+      refreshRef.current = null;
       abortController.abort();
       void iterator?.return?.();
     };
@@ -277,13 +281,11 @@ export function BackupSection() {
         return;
       }
 
-      refreshGenerationRef.current += 1;
       const nextDraft = toDraft(result.data);
       draftRef.current = nextDraft;
       savedDraftRef.current = nextDraft;
       setDraft(nextDraft);
       setSavedDraft(nextDraft);
-      setSettingsFresh(true);
       setValidation(null);
       setPreview(null);
       // With the preview: they describe the repository that was previewed, and carrying
@@ -293,6 +295,10 @@ export function BackupSection() {
       setOverrideSecretScan(false);
       setSecretScanBlocked(false);
       setStatusMessage("Backup settings saved.");
+      // The save response is a snapshot from before this response was handled: another
+      // window can have saved a different repository meanwhile, and no config event may
+      // follow. Freshness must come from re-reading the configuration, not the snapshot.
+      await refreshRef.current?.();
     } catch (error) {
       setSaveError(getErrorMessage(error));
     } finally {

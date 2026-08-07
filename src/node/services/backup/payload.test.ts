@@ -18,6 +18,7 @@ import {
   REDACTED_BACKUP_VALUE,
   backupCommandApprovalToken,
   backupSecretApprovalDigest,
+  collectAllowlistedFiles,
   collectMcpCommandApprovals,
   createBackupPayload,
   localOnlyPayloadFiles,
@@ -560,6 +561,40 @@ describe("backup payload", () => {
     const boundary = await captureRejection(readBackupPayload(directoryDestination));
     expect((boundary as Error).message).toContain("Backup is missing");
     expect((boundary as Error).message).not.toContain("directories");
+  });
+
+  it("counts empty directories during local collection", async () => {
+    const skillsRoot = path.join(muxRoot, "skills");
+    await fs.mkdir(skillsRoot);
+    for (let index = 1; index < MAX_BACKUP_DIRECTORY_COUNT; index++) {
+      await fs.mkdir(path.join(skillsRoot, `directory-${index}`));
+    }
+
+    expect(await collectAllowlistedFiles(muxRoot)).toEqual([]);
+
+    await fs.mkdir(path.join(skillsRoot, "over-limit"));
+    const rejected = await captureRejection(collectAllowlistedFiles(muxRoot));
+
+    expect((rejected as Error).message).toBe(
+      `Backup has more than ${MAX_BACKUP_DIRECTORY_COUNT} directories`
+    );
+  });
+
+  it("applies the path-depth limit to empty directories during local collection", async () => {
+    const boundary = [
+      "skills",
+      ...Array.from({ length: MAX_BACKUP_PATH_DEPTH - 1 }, (_, index) => `level-${index}`),
+    ];
+    await fs.mkdir(path.join(muxRoot, ...boundary), { recursive: true });
+
+    expect(await collectAllowlistedFiles(muxRoot)).toEqual([]);
+
+    await fs.mkdir(path.join(muxRoot, ...boundary, "too-deep"));
+    const rejected = await captureRejection(collectAllowlistedFiles(muxRoot));
+
+    expect((rejected as Error).message).toContain(
+      `more than ${MAX_BACKUP_PATH_DEPTH} path components`
+    );
   });
 
   it("bounds distinct directories during local collection", async () => {

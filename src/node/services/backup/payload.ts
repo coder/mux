@@ -313,24 +313,33 @@ function assertBackupFileCount(count: number): void {
   }
 }
 
-function createBackupPathComplexityTracker(): (relativePath: string) => void {
+function createBackupPathComplexityTracker(): {
+  recordDirectory: (relativePath: string) => void;
+  recordFile: (relativePath: string) => void;
+} {
   const directories = new Set<string>();
-  return (relativePath: string): void => {
+
+  function record(relativePath: string, includeLastSegment: boolean): void {
     const segments = backupPathSegments(relativePath);
     let prefix = "";
-    for (const segment of segments.slice(0, -1)) {
+    for (const segment of includeLastSegment ? segments : segments.slice(0, -1)) {
       prefix = prefix ? `${prefix}/${segment}` : segment;
       directories.add(prefix);
       if (directories.size > MAX_BACKUP_DIRECTORY_COUNT) {
         throw new Error(`Backup has more than ${MAX_BACKUP_DIRECTORY_COUNT} directories`);
       }
     }
+  }
+
+  return {
+    recordDirectory: (relativePath) => record(relativePath, true),
+    recordFile: (relativePath) => record(relativePath, false),
   };
 }
 
 export function assertBackupPathComplexity(relativePaths: readonly string[]): void {
-  const takePath = createBackupPathComplexityTracker();
-  for (const relativePath of relativePaths) takePath(relativePath);
+  const tracker = createBackupPathComplexityTracker();
+  for (const relativePath of relativePaths) tracker.recordFile(relativePath);
 }
 
 function assertBackupPathLimits(
@@ -687,7 +696,7 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   const budget = createByteBudget();
   const links = createHardLinkTracker();
 
-  const takePathComplexity = createBackupPathComplexityTracker();
+  const pathComplexity = createBackupPathComplexityTracker();
 
   async function collectDirectory(
     relativeRoot: string,
@@ -696,7 +705,9 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
     const absoluteRoot = path.join(root.path, ...relativeRoot.split("/"));
     // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
     // refuses to write through symlinks anyway, so they are simply not backed up.
-    if ((await lstatOrNull(absoluteRoot))?.isSymbolicLink() === true) return;
+    const rootStat = await lstatOrNull(absoluteRoot);
+    if (rootStat?.isSymbolicLink() === true) return;
+    if (rootStat?.isDirectory() === true) pathComplexity.recordDirectory(relativeRoot);
 
     let entries: Dirent[];
     try {
@@ -711,11 +722,10 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
       const relativePath = toPosixPath(relativeRoot, entry.name);
       if (!filter(relativePath, entry)) continue;
       if (entry.isDirectory()) {
-        backupPathSegments(relativePath);
         await collectDirectory(relativePath, filter);
       } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
         assertBackupFileCount(files.length + 1);
-        takePathComplexity(relativePath);
+        pathComplexity.recordFile(relativePath);
         files.push(await readBackupFile(root, relativePath, budget, links));
       }
     }
@@ -724,7 +734,7 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     if (await isRegularFile(path.join(root.path, relativePath))) {
       assertBackupFileCount(files.length + 1);
-      takePathComplexity(relativePath);
+      pathComplexity.recordFile(relativePath);
       files.push(await readBackupFile(root, relativePath, budget, links));
     }
   }
