@@ -123,6 +123,8 @@ export interface ProjectFixture {
 /** Create project config from workspaces */
 export function createProjectConfig(workspaces: FrontendWorkspaceMetadata[]): ProjectConfig {
   return {
+    // Full-app stories generally exercise workspace/project behavior after trust is established.
+    trusted: true,
     workspaces: workspaces.map((ws) => ({
       path: ws.namedWorkspacePath,
       id: ws.id,

@@ -500,7 +500,7 @@ export interface WorkspaceContext extends WorkspaceMetadataContextValue {
   pendingNewWorkspaceSubProjectPath: string | null;
   /** Draft ID to open when creating a UI-only workspace draft (from URL) */
   pendingNewWorkspaceDraftId: string | null;
-  /** Legacy entry point: open the creation screen (no new draft is created) */
+  /** Create or reuse an explicit manual workspace draft for this project. */
   beginWorkspaceCreation: (projectPath: string) => void;
 
   // UI-only workspace creation drafts (placeholders)
@@ -1772,12 +1772,6 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     },
     []
   );
-  const beginWorkspaceCreation = useCallback(
-    (projectPath: string) => {
-      navigateToProject(projectPath);
-    },
-    [navigateToProject]
-  );
   // Persist sub-project selection + URL updates so draft sub-project switches stick across navigation.
   const updateWorkspaceDraftSubProject = useCallback(
     (projectPath: string, draftId: string, subProjectPath: string | null) => {
@@ -1886,6 +1880,13 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
       navigateToProject(projectPath, draftId, { replace: options?.replace });
     },
     [navigateToProject, setWorkspaceDraftsByProjectState]
+  );
+
+  const beginWorkspaceCreation = useCallback(
+    (projectPath: string) => {
+      createWorkspaceDraft(projectPath);
+    },
+    [createWorkspaceDraft]
   );
 
   useEffect(() => {

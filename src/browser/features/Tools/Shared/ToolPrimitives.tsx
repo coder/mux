@@ -14,6 +14,7 @@ import {
   CircleCheck,
   Database,
   FileText,
+  FolderKanban,
   GitCommit,
   Globe,
   GraduationCap,
@@ -277,6 +278,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_update: Sparkles,
   review_pane_get: ScanEye,
   analytics_query: Database,
+  project_workspace_list: FolderKanban,
   task_send_message: MessageSquareMore,
   task_apply_git_patch: GitCommit,
   // Layers (stacked planes) reads as "manage the stack of child workspaces" — matches the

@@ -447,6 +447,7 @@ export const TaskCreatedEventSchema = z.object({
   workspaceId: z.string(),
   toolCallId: z.string(),
   taskId: z.string(),
+  taskWorkspaceId: z.string().optional(),
   timestamp: z.number().meta({ description: "When the task was created (Date.now())" }),
 });
 

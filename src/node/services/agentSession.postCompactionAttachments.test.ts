@@ -101,7 +101,11 @@ function getAttachmentTypes(
   return attachments.map((attachment) => attachment.type);
 }
 
-function createSessionForHistory(historyService: HistoryService, sessionDir: string): AgentSession {
+function createSessionForHistory(
+  historyService: HistoryService,
+  sessionDir: string,
+  options: { workspaceId?: string; config?: Config } = {}
+): AgentSession {
   const aiEmitter = new EventEmitter();
   const aiService: AIService = {
     on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
@@ -132,13 +136,15 @@ function createSessionForHistory(historyService: HistoryService, sessionDir: str
     cleanup: mock(() => Promise.resolve()),
   } as unknown as BackgroundProcessManager;
 
-  const config: Config = {
-    srcDir: "/tmp",
-    getSessionDir: mock(() => sessionDir),
-  } as unknown as Config;
+  const config: Config =
+    options.config ??
+    ({
+      srcDir: "/tmp",
+      getSessionDir: mock(() => sessionDir),
+    } as unknown as Config);
 
   return new AgentSession({
-    workspaceId: "workspace-post-compaction-test",
+    workspaceId: options.workspaceId ?? "workspace-post-compaction-test",
     config,
     historyService,
     aiService,
@@ -152,6 +158,9 @@ interface PrivateSessionAccess {
   turnsSinceLastAttachment: number;
   postCompactionLoadedSkills: LoadedSkillSnapshot[];
   getPostCompactionAttachmentsIfNeeded: () => Promise<PostCompactionAttachment[] | null>;
+  filterPostCompactionAttachmentsForSession: (
+    attachments: PostCompactionAttachment[] | null
+  ) => PostCompactionAttachment[] | null;
 }
 
 async function getImmediatePostCompactionAttachments(
@@ -199,6 +208,67 @@ describe("AgentSession post-compaction attachments", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
   afterEach(async () => {
     await historyCleanup?.();
+  });
+
+  test("filters plan references only for configured Project Chat ownership", async () => {
+    const legacyWorkspaceId = "project-session_aaaaaaaaaa";
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    const projectPath = path.join(config.rootDir, "project");
+    const legacyWorkspacePath = path.join(projectPath, "legacy-workspace");
+    await fs.mkdir(legacyWorkspacePath, { recursive: true });
+    await config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, {
+        trusted: true,
+        workspaces: [
+          {
+            id: legacyWorkspaceId,
+            name: "legacy-workspace",
+            path: legacyWorkspacePath,
+            createdAt: "2026-08-06T00:00:00.000Z",
+            runtimeConfig: { type: "local" },
+          },
+        ],
+      });
+      return cfg;
+    });
+    const projectChat = await config.ensureProjectChat(projectPath);
+    const attachments: PostCompactionAttachment[] = [
+      {
+        type: "plan_file_reference",
+        planFilePath: "/tmp/plan.md",
+        planContent: "Implement the plan",
+      },
+      { type: "todo_list", todos: [{ content: "Continue", status: "in_progress" }] },
+    ];
+    const legacySession = createSessionForHistory(
+      historyService,
+      config.getSessionDir(legacyWorkspaceId),
+      { workspaceId: legacyWorkspaceId, config }
+    );
+    const projectChatSession = createSessionForHistory(
+      historyService,
+      config.getSessionDir(projectChat.sessionId),
+      { workspaceId: projectChat.sessionId, config }
+    );
+
+    try {
+      const legacyPrivate = legacySession as unknown as PrivateSessionAccess;
+      const projectChatPrivate = projectChatSession as unknown as PrivateSessionAccess;
+      expect(
+        getAttachmentTypes(
+          legacyPrivate.filterPostCompactionAttachmentsForSession(attachments) ?? []
+        )
+      ).toEqual(["plan_file_reference", "todo_list"]);
+      expect(
+        getAttachmentTypes(
+          projectChatPrivate.filterPostCompactionAttachmentsForSession(attachments) ?? []
+        )
+      ).toEqual(["todo_list"]);
+    } finally {
+      legacySession.dispose();
+      projectChatSession.dispose();
+    }
   });
 
   test("extracts edited file diffs from the latest durable compaction boundary slice", async () => {

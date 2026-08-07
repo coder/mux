@@ -22,6 +22,8 @@ import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
 import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataService";
 import { WorkspaceService } from "@/node/services/workspaceService";
+import { ExecutionRegistry } from "@/node/services/executionRegistry";
+import { ExecutionStore } from "@/node/services/executionStore";
 import { TaskService } from "@/node/services/taskService";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import type { PolicyService } from "@/node/services/policyService";
@@ -190,6 +192,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     }
   });
 
+  const executionStore = new ExecutionStore(config);
+  const executionRegistry = new ExecutionRegistry(config, { executionStore });
   const taskService = new TaskService(
     config,
     historyService,
@@ -198,7 +202,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     initStateManager,
     opts.opResolver,
     sessionUsageService,
-    workspaceGoalService
+    workspaceGoalService,
+    { executionStore, executionRegistry }
   );
   aiService.setTaskService(taskService);
   workspaceService.setTaskService(taskService);

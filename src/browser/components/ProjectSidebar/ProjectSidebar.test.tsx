@@ -263,9 +263,16 @@ function createProjectContextValue(
   };
 }
 
+let navigateToProjectMock = mock((_projectPath: string) => undefined);
+let createWorkspaceDraftMock = mock((_projectPath: string, _subProjectPath?: string) => undefined);
+let pendingProjectPath: string | null = null;
+
 let projectContextValue = createProjectContextValue();
 
 function installProjectSidebarTestDoubles() {
+  navigateToProjectMock = mock((_projectPath: string) => undefined);
+  createWorkspaceDraftMock = mock((_projectPath: string, _subProjectPath?: string) => undefined);
+  pendingProjectPath = null;
   renderRealAgentListItems = false;
   archivePopoverShowErrorMock = mock(
     (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
@@ -470,7 +477,7 @@ function installProjectSidebarTestDoubles() {
   spyOn(ProjectContextModule, "useProjectContext").mockImplementation(() => projectContextValue);
   spyOn(RouterContextModule, "useRouter").mockImplementation(() => ({
     navigateToWorkspace: () => undefined,
-    navigateToProject: () => undefined,
+    navigateToProject: navigateToProjectMock,
     navigateToHome: () => undefined,
     navigateToSettings: () => undefined,
     navigateFromSettings: () => undefined,
@@ -508,11 +515,11 @@ function installProjectSidebarTestDoubles() {
         removeWorkspace: () => Promise.resolve({ success: true }),
         updateWorkspaceTitle: () => Promise.resolve({ success: true }),
         refreshWorkspaceMetadata: () => Promise.resolve(),
-        pendingNewWorkspaceProject: null,
+        pendingNewWorkspaceProject: pendingProjectPath,
         pendingNewWorkspaceDraftId: null,
         workspaceDraftsByProject: {},
         workspaceDraftPromotionsByProject: {},
-        createWorkspaceDraft: () => undefined,
+        createWorkspaceDraft: createWorkspaceDraftMock,
         openWorkspaceDraft: () => undefined,
         deleteWorkspaceDraft: () => undefined,
       }) as unknown as ReturnType<typeof WorkspaceContextModule.useWorkspaceActions>
@@ -2114,10 +2121,25 @@ describe("ProjectSidebar project actions menu", () => {
     );
   }
 
-  test("renders always-visible new-chat and kebab buttons, and opens menu from kebab", () => {
+  test("opens Project Chat from the project row while keeping workspace creation on the plus action", () => {
+    pendingProjectPath = demoProjectPath;
     const view = renderSidebar();
 
-    expect(view.getByRole("button", { name: "New chat in demo-project" })).toBeTruthy();
+    const projectRow = view.getByRole("button", { name: "Open project demo-project" });
+    expect(projectRow.getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(projectRow);
+    expect(navigateToProjectMock).toHaveBeenCalledWith(demoProjectPath);
+    expect(createWorkspaceDraftMock).not.toHaveBeenCalled();
+
+    fireEvent.click(view.getByRole("button", { name: "New workspace in demo-project" }));
+    expect(createWorkspaceDraftMock).toHaveBeenCalledWith(demoProjectPath, undefined);
+  });
+
+  test("renders always-visible new-workspace and kebab buttons, and opens menu from kebab", () => {
+    const view = renderSidebar();
+
+    expect(view.getByRole("button", { name: "New workspace in demo-project" })).toBeTruthy();
     const projectOptionsButton = view.getByRole("button", {
       name: "Project options for demo-project",
     });

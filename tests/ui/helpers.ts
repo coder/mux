@@ -2,6 +2,7 @@
  * Shared UI test helpers for integration coverage (review panel, project creation, git status, etc.).
  */
 
+import * as path from "node:path";
 import { cleanup, fireEvent, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { FrontendWorkspaceMetadata, GitStatus } from "@/common/types/workspace";
@@ -128,9 +129,8 @@ export async function setupWorkspaceView(
 }
 
 /**
- * Navigate to a project's creation page (ProjectPage) by clicking the project row.
- *
- * Tests that need the creation UI must explicitly open the project page.
+ * Navigate to a project's manual workspace draft by clicking its dedicated plus action.
+ * The project row itself opens persistent Project Chat.
  */
 export async function openProjectCreationView(
   view: RenderedApp,
@@ -138,18 +138,18 @@ export async function openProjectCreationView(
 ): Promise<void> {
   await view.waitForReady();
 
-  const projectRow = await waitFor(
+  const newWorkspaceButton = await waitFor(
     () => {
       const el = view.container.querySelector(
-        `[data-project-path="${projectPath}"][aria-controls]`
+        `[aria-label="New workspace in ${path.basename(projectPath)}"]`
       ) as HTMLElement | null;
-      if (!el) throw new Error("Project not found in sidebar");
+      if (!el) throw new Error("New workspace action not found in sidebar");
       return el;
     },
     { timeout: 10_000 }
   );
 
-  fireEvent.click(projectRow);
+  fireEvent.click(newWorkspaceButton);
 
   await waitFor(
     () => {

@@ -155,6 +155,19 @@ describe("getToolAvailabilityOptions", () => {
     expect(options.enableAgentReport).toBe(false);
   });
 
+  test("enables agent_report without changing ordinary workspace capabilities for an active workspace turn", () => {
+    const options = getToolAvailabilityOptions({
+      workspaceId: "ws-turn",
+      workspaceTurnReportContext: {
+        handleId: "wst_turn",
+        ownerWorkspaceId: "project-chat",
+        turnId: "turn-1",
+      },
+    });
+    expect(options.enableAgentReport).toBe(true);
+    expect(options.enableReviewPane).toBe(true);
+  });
+
   test("withholds the Review pane (and enables agent_report) for sub-agents", () => {
     const options = getToolAvailabilityOptions({
       workspaceId: "ws-child",

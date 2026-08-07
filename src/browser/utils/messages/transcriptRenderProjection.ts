@@ -51,6 +51,7 @@ interface ComputeBundleInfosOptions {
 type OperationalBundleCategory =
   | "edit"
   | "fetch"
+  | "guidance"
   | "question"
   | "read"
   | "reasoning"
@@ -101,6 +102,11 @@ const OPERATIONAL_BUNDLE_CATEGORY_COPY: Record<
     singletonTitle: "Asked 1 question",
     detailLabel: "question",
     detailLabelPlural: "questions",
+  },
+  guidance: {
+    singletonTitle: "Sent 1 guidance message",
+    detailLabel: "guidance message",
+    detailLabelPlural: "guidance messages",
   },
   task: {
     singletonTitle: "Ran 1 agent task",
@@ -492,12 +498,25 @@ export function summarizeOperationalBundle(
     const pollCount = messages.length;
     const hasFailure =
       messages.some(hasTaskAwaitCallFailure) || messages.some(hasTaskAwaitResultFailure);
+    const progressReportInterrupted = messages.some(
+      (message) => getTaskAwaitResultInterruptionReason(message) === "progress_report_received"
+    );
+    const queuedMessageInterrupted = messages.some(
+      (message) => getTaskAwaitResultInterruptionReason(message) === "message_queued"
+    );
     const hasInterruption =
       messages.some(hasTaskAwaitCallInterruption) || messages.some(hasTaskAwaitResultInterruption);
     if (hasFailure || hasInterruption) {
+      const title = hasFailure
+        ? "Task wait needs attention"
+        : progressReportInterrupted
+          ? "Wait paused for subagent update"
+          : queuedMessageInterrupted
+            ? "Wait paused for queued message"
+            : "Task wait interrupted";
       return {
-        title: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
-        activeTitle: hasFailure ? "Task wait needs attention" : "Task wait interrupted",
+        title,
+        activeTitle: title,
         details: pollCount === 1 ? "" : `${pollCount} checks`,
         tone: hasFailure ? "danger" : "interrupted",
       };
@@ -507,6 +526,30 @@ export function summarizeOperationalBundle(
       activeTitle:
         pollCount === 1 ? "Waiting for tasks" : `Waiting for tasks · ${pollCount} checks`,
       details: "",
+    };
+  }
+
+  if (
+    messages.length === 1 &&
+    messages[0].type === "tool" &&
+    messages[0].toolName === "task_send_message"
+  ) {
+    const message = messages[0];
+    const result = unwrapJsonResult(message.result);
+    const delivered =
+      isPlainObject(result) && (result.status === "accepted" || result.status === "queued");
+    const failed =
+      message.status === "failed" ||
+      (isPlainObject(result) && typeof result.status === "string" && !delivered);
+    return {
+      title: delivered
+        ? "Sent 1 guidance message"
+        : failed
+          ? "Could not send guidance"
+          : "Sending guidance",
+      ...(failed ? {} : { activeTitle: "Sending guidance" }),
+      details: "1 guidance message",
+      ...(failed ? { tone: "danger" as const } : {}),
     };
   }
 
@@ -555,8 +598,20 @@ function isInterruptedTaskAwaitEntry(entry: object): boolean {
   );
 }
 
+function getTaskAwaitResultInterruptionReason(
+  message: OperationalBundleMemberMessage
+): string | undefined {
+  if (message.type !== "tool" || message.toolName !== "task_await") return undefined;
+  const result = unwrapJsonResult(message.result);
+  if (!isPlainObject(result) || !isPlainObject(result.interruption)) return undefined;
+  return typeof result.interruption.reason === "string" ? result.interruption.reason : undefined;
+}
+
 function hasTaskAwaitResultInterruption(message: OperationalBundleMemberMessage): boolean {
-  return getTaskAwaitResultEntries(message).some(isInterruptedTaskAwaitEntry);
+  return (
+    getTaskAwaitResultInterruptionReason(message) != null ||
+    getTaskAwaitResultEntries(message).some(isInterruptedTaskAwaitEntry)
+  );
 }
 
 function hasTaskAwaitResultFailure(message: OperationalBundleMemberMessage): boolean {
@@ -688,6 +743,9 @@ function getOperationalBundleCategory(
   }
   if (message.toolName === "ask_user_question") {
     return "question";
+  }
+  if (message.toolName === "task_send_message") {
+    return "guidance";
   }
   if (message.toolName === "task" || message.toolName === "task_await") {
     return "task";

@@ -38,7 +38,7 @@ import type { TerminalService } from "@/node/services/terminalService";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
-import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import type { SendMessageOptions, WorkspaceChatMessage } from "@/common/orpc/types";
 import { createMuxMessage } from "@/common/types/message";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
@@ -280,6 +280,318 @@ describe("WorkspaceService.stageAttachment", () => {
       expect(result.success).toBe(true);
       if (!result.success) throw new Error(result.error);
       await fsPromises.access(path.join(workspacePath, result.data.stagedPath));
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
+describe("WorkspaceService Project Chat", () => {
+  test("uses the project root for attachments without waiting for workspace init", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectPath = path.join(config.rootDir, "project-chat-attachments");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    try {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { trusted: true, workspaces: [] });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const waitForInit = mock(() => Promise.resolve());
+      const aiService = createMockAIService({
+        getWorkspaceMetadata: mock(() => Promise.resolve(Ok(projectChat.metadata))),
+      });
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService,
+        initStateManager: {
+          ...mockInitStateManager,
+          waitForInit,
+        } as unknown as InitStateManager,
+      });
+
+      const staged = await workspaceService.stageAttachment({
+        workspaceId: projectChat.sessionId,
+        filename: "notes.md",
+        mediaType: "text/markdown",
+        sizeBytes: 8,
+        dataBase64: Buffer.from("markdown").toString("base64"),
+      });
+
+      expect(staged.success).toBe(true);
+      expect(waitForInit).not.toHaveBeenCalled();
+      if (!staged.success) throw new Error(staged.error);
+      await fsPromises.access(path.join(projectPath, staged.data.stagedPath));
+      const downloaded = await workspaceService.downloadStagedAttachment({
+        workspaceId: projectChat.sessionId,
+        stagedPath: staged.data.stagedPath,
+      });
+      expect(downloaded.success).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("accepts send and resume with fixed Orchestrator settings", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectPath = path.join(config.rootDir, "project-chat-send");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    try {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { trusted: true, workspaces: [] });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const sessionSend = mock((..._args: Parameters<AgentSession["sendMessage"]>) =>
+        Promise.resolve(Ok(undefined))
+      );
+      const sessionResume = mock((..._args: Parameters<AgentSession["resumeStream"]>) =>
+        Promise.resolve(Ok({ started: true }))
+      );
+      const fakeSession = {
+        isBusy: () => false,
+        sendMessage: sessionSend,
+        resumeStream: sessionResume,
+      } as unknown as AgentSession;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService(),
+      });
+      (
+        workspaceService as unknown as {
+          getOrCreateSession: (workspaceId: string) => AgentSession;
+        }
+      ).getOrCreateSession = () => fakeSession;
+      const options: SendMessageOptions = {
+        model: "openai:gpt-5.2",
+        thinkingLevel: "high",
+        agentId: "exec",
+      };
+
+      expect(
+        (await workspaceService.sendMessage(projectChat.sessionId, "coordinate", options)).success
+      ).toBe(true);
+      expect((await workspaceService.resumeStream(projectChat.sessionId, options)).success).toBe(
+        true
+      );
+
+      expect(sessionSend.mock.calls[0]?.[1]?.agentId).toBe("orchestrator");
+      expect(sessionResume.mock.calls[0]?.[0]?.agentId).toBe("orchestrator");
+      expect(
+        config.findProjectChatBySessionId(projectChat.sessionId)?.aiSettingsByAgent?.orchestrator
+      ).toMatchObject({
+        model: "openai:gpt-5.2",
+        thinkingLevel: "high",
+      });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("waits for Project Chat stream cleanup before disposing and deleting sidecars", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectPath = path.join(config.rootDir, "project-chat-cleanup");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    try {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { trusted: true, workspaces: [] });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const sessionDir = config.getSessionDir(projectChat.sessionId);
+      await fsPromises.writeFile(path.join(sessionDir, "sidecar.json"), "{}", "utf-8");
+
+      const operations: string[] = [];
+      let releaseSessionIdle: (() => void) | undefined;
+      let signalSessionIdleWaitStarted: (() => void) | undefined;
+      const sessionIdleWaitStarted = new Promise<void>((resolve) => {
+        signalSessionIdleWaitStarted = resolve;
+      });
+      const interruptStream = mock(() => Promise.resolve(Ok(undefined)));
+      const waitForIdle = mock(
+        () =>
+          new Promise<void>((resolve) => {
+            releaseSessionIdle = () => {
+              operations.push("owner-idle");
+              resolve();
+            };
+            signalSessionIdleWaitStarted?.();
+          })
+      );
+      const dispose = mock(() => {
+        operations.push("dispose");
+      });
+      const interruptOwnedTurns = mock(() => {
+        operations.push("owned-turns");
+        return Promise.resolve(Ok(undefined));
+      });
+      const timingWaitForIdle = mock(() => {
+        operations.push("timing-idle");
+        return Promise.resolve();
+      });
+      const fakeSession = { interruptStream, waitForIdle, dispose } as unknown as AgentSession;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        sessionTimingService: {
+          waitForIdle: timingWaitForIdle,
+        } as unknown as WorkspaceServiceArgs[10],
+      });
+      workspaceService.setTaskService({
+        interruptAllWorkspaceTurnsForOwner: interruptOwnedTurns,
+      } as unknown as TaskService);
+      const sessions = (
+        workspaceService as unknown as {
+          sessions: Map<string, AgentSession>;
+        }
+      ).sessions;
+      sessions.set(projectChat.sessionId, fakeSession);
+
+      const cleanupPromise = workspaceService.cleanupProjectChatSession(projectChat.sessionId);
+      await sessionIdleWaitStarted;
+
+      expect(interruptStream).toHaveBeenCalledWith({ abandonPartial: true });
+      expect(dispose).not.toHaveBeenCalled();
+      expect(interruptOwnedTurns).not.toHaveBeenCalled();
+      expect(timingWaitForIdle).not.toHaveBeenCalled();
+      await fsPromises.access(sessionDir);
+
+      releaseSessionIdle?.();
+      await cleanupPromise;
+
+      expect(interruptOwnedTurns).toHaveBeenCalledWith(projectChat.sessionId);
+      expect(timingWaitForIdle).toHaveBeenCalledWith(projectChat.sessionId);
+      expect(operations).toEqual(["owner-idle", "owned-turns", "timing-idle", "dispose"]);
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(sessions.has(projectChat.sessionId)).toBe(false);
+      expect(fsPromises.access(sessionDir)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("disposes but preserves Project Chat state when both stream-stop attempts fail", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectPath = path.join(config.rootDir, "project-chat-cleanup-failure");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    try {
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { trusted: true, workspaces: [] });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const sessionDir = config.getSessionDir(projectChat.sessionId);
+      await fsPromises.writeFile(path.join(sessionDir, "sidecar.json"), "{}", "utf-8");
+
+      const interruptStream = mock(() => Promise.resolve(Err("session stop failed")));
+      const waitForIdle = mock(() => Promise.resolve());
+      const dispose = mock(() => undefined);
+      const fakeSession = { interruptStream, waitForIdle, dispose } as unknown as AgentSession;
+      const fallbackStop = mock(() => Promise.resolve(Err("AI stream stop failed")));
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        aiService: createMockAIService({ stopStream: fallbackStop }),
+      });
+      const sessions = (
+        workspaceService as unknown as {
+          sessions: Map<string, AgentSession>;
+        }
+      ).sessions;
+      sessions.set(projectChat.sessionId, fakeSession);
+
+      let cleanupError: unknown;
+      try {
+        await workspaceService.cleanupProjectChatSession(projectChat.sessionId);
+      } catch (error) {
+        cleanupError = error;
+      }
+      expect(cleanupError).toMatchObject({
+        message: "Failed to stop Project Chat stream: AI stream stop failed",
+      });
+
+      expect(fallbackStop).toHaveBeenCalledWith(projectChat.sessionId, {
+        abandonPartial: true,
+        abortReason: "user",
+      });
+      expect(waitForIdle).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalledTimes(1);
+      expect(sessions.has(projectChat.sessionId)).toBe(false);
+      await fsPromises.access(sessionDir);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("workspace-turn interruption delegates to AgentSession so pending retries are canceled", async () => {
+    const interruptStream = mock(() => Promise.resolve(Ok(undefined)));
+    const fakeSession = { interruptStream } as unknown as AgentSession;
+    const workspaceService = createWorkspaceServiceForTest({ config: {} });
+    const sessions = (
+      workspaceService as unknown as {
+        sessions: Map<string, AgentSession>;
+      }
+    ).sessions;
+    sessions.set("workspace-turn", fakeSession);
+
+    expect(await workspaceService.interruptWorkspaceTurnStream("workspace-turn")).toEqual(
+      Ok(undefined)
+    );
+    expect(interruptStream).toHaveBeenCalledWith({ abandonPartial: false });
+  });
+
+  test("keeps Project Chat out of workspace info and activity snapshots", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const projectPath = path.join(config.rootDir, "project-chat-hidden");
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    try {
+      const legacyWorkspaceId = "project-session_aaaaaaaaaa";
+      const legacyWorkspacePath = path.join(projectPath, "legacy-workspace");
+      await fsPromises.mkdir(legacyWorkspacePath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          trusted: true,
+          workspaces: [
+            {
+              id: legacyWorkspaceId,
+              name: "legacy-workspace",
+              path: legacyWorkspacePath,
+              createdAt: "2026-08-06T00:00:00.000Z",
+              runtimeConfig: { type: "local" },
+            },
+          ],
+        });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const hiddenSnapshot: WorkspaceActivitySnapshot = {
+        recency: Date.now(),
+        streaming: true,
+        lastModel: "openai:gpt-5.2",
+        lastThinkingLevel: "high",
+      };
+      const extensionMetadata = {
+        getAllSnapshots: mock(() =>
+          Promise.resolve(
+            new Map([
+              [projectChat.sessionId, hiddenSnapshot],
+              [legacyWorkspaceId, { ...hiddenSnapshot, streaming: false }],
+            ])
+          )
+        ),
+      } as unknown as ExtensionMetadataService;
+      const workspaceService = createWorkspaceServiceForTest({
+        config,
+        historyService,
+        extensionMetadata,
+      });
+
+      expect(await workspaceService.getInfo(projectChat.sessionId)).toBeNull();
+      const activity = await workspaceService.getActivityList();
+      expect(activity).not.toHaveProperty(projectChat.sessionId);
+      expect(activity[legacyWorkspaceId]).toMatchObject({ streaming: false });
     } finally {
       await cleanup();
     }
@@ -4890,6 +5202,44 @@ describe("WorkspaceService initialize", () => {
     expect(startStartupRecoverySpy).toHaveBeenCalledWith("live-ws");
   });
 
+  test("schedules Project Chat recovery when a trusted parent owns the sub-project", async () => {
+    const { config: realConfig, historyService, cleanup } = await createTestHistoryService();
+    const parentProjectPath = path.join(realConfig.rootDir, "repo");
+    const subProjectPath = path.join(parentProjectPath, "packages", "web");
+    await fsPromises.mkdir(subProjectPath, { recursive: true });
+    await realConfig.editConfig((cfg) => {
+      cfg.projects.set(parentProjectPath, { trusted: true, workspaces: [] });
+      cfg.projects.set(subProjectPath, {
+        parentProjectPath,
+        workspaces: [],
+      });
+      return cfg;
+    });
+    const projectChat = await realConfig.ensureProjectChat(subProjectPath);
+    const service = createWorkspaceServiceForTest({
+      config: realConfig,
+      historyService,
+      aiService: {
+        on: mock(() => undefined),
+        off: mock(() => undefined),
+      } as unknown as AIService,
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
+    const startupAccess = service as unknown as {
+      startStartupRecovery: (workspaceId: string) => void;
+    };
+    const startStartupRecoverySpy = spyOn(startupAccess, "startStartupRecovery").mockImplementation(
+      () => undefined
+    );
+
+    try {
+      await service.initialize();
+      expect(startStartupRecoverySpy).toHaveBeenCalledWith(projectChat.sessionId);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("swallows startup metadata lookup failures", async () => {
     config.getAllWorkspaceMetadata = mock(() =>
       Promise.reject(new Error("config unavailable"))
@@ -5237,6 +5587,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
     hasQueuedMessages: ReturnType<typeof mock>;
     dropQueuedMessageWithOnlyDedupeKey: ReturnType<typeof mock>;
     queueMessage: ReturnType<typeof mock>;
+    getQueuedForegroundWaitInterruption: ReturnType<typeof mock>;
+    consumeQueuedForegroundWaitInterruption: ReturnType<typeof mock>;
     sendMessage: ReturnType<typeof mock>;
     resumeStream: ReturnType<typeof mock>;
   };
@@ -5309,6 +5661,8 @@ describe("WorkspaceService sendMessage status clearing", () => {
       hasQueuedMessages: mock(() => false),
       dropQueuedMessageWithOnlyDedupeKey: mock(() => false),
       queueMessage: mock(() => "tool-end" as const),
+      getQueuedForegroundWaitInterruption: mock(() => ({ reason: "message_queued" as const })),
+      consumeQueuedForegroundWaitInterruption: mock(() => true),
       sendMessage: mock(() => Promise.resolve(Ok(undefined))),
       resumeStream: mock(() => Promise.resolve(Ok({ started: true }))),
     };
@@ -5746,8 +6100,52 @@ describe("WorkspaceService sendMessage status clearing", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(backgroundForegroundWaitsForWorkspace).toHaveBeenCalledWith("test-workspace");
+    expect(backgroundForegroundWaitsForWorkspace).toHaveBeenCalledWith("test-workspace", {
+      reason: "message_queued",
+    });
     expect(fakeSession.queueMessage).toHaveBeenCalled();
+  });
+
+  test("preserves a child report as the reason for pausing foreground waits", async () => {
+    fakeSession.isBusy.mockReturnValue(true);
+    const interruption = {
+      reason: "progress_report_received",
+      sourceTaskId: "child-task",
+      report: {
+        agentType: "explore",
+        title: "Progress",
+        reportMarkdown: "Found the relevant path.",
+      },
+    } as const;
+    fakeSession.getQueuedForegroundWaitInterruption.mockReturnValue(interruption);
+
+    const backgroundForegroundWaitsForWorkspace = mock(() => 1);
+    workspaceService.setTaskService({
+      getAgentTaskStatus: mock(() => "running" as const),
+      backgroundForegroundWaitsForWorkspace,
+    } as unknown as TaskService);
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "child update",
+      { model: "openai:gpt-4o-mini", agentId: "exec" },
+      { foregroundWaitInterruption: interruption }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalledWith(
+      "child update",
+      expect.any(Object),
+      expect.objectContaining({ foregroundWaitInterruption: interruption })
+    );
+    expect(backgroundForegroundWaitsForWorkspace).toHaveBeenCalledWith(
+      "test-workspace",
+      interruption
+    );
+    expect(fakeSession.consumeQueuedForegroundWaitInterruption).toHaveBeenCalledWith(
+      interruption,
+      "Sub-agent update delivered through the interrupted foreground wait."
+    );
   });
 
   test("does not background foreground task waits when queuing a turn-end message", async () => {
@@ -5808,7 +6206,9 @@ describe("WorkspaceService sendMessage status clearing", () => {
     });
 
     expect(result.success).toBe(true);
-    expect(backgroundForegroundWaitsForWorkspace).toHaveBeenCalledWith("test-workspace");
+    expect(backgroundForegroundWaitsForWorkspace).toHaveBeenCalledWith("test-workspace", {
+      reason: "message_queued",
+    });
     expect(fakeSession.queueMessage).toHaveBeenCalled();
   });
 
@@ -11003,6 +11403,231 @@ describe("WorkspaceService unarchive snapshot restore", () => {
   });
 });
 
+describe("WorkspaceService retireToTranscript", () => {
+  async function addWorkspace(options: {
+    config: Config;
+    workspaceId: string;
+    runtimeConfig: WorkspaceMetadata["runtimeConfig"];
+    transcriptOnly?: boolean;
+  }): Promise<{ projectPath: string; workspacePath: string }> {
+    const projectPath = path.join(options.config.rootDir, "retire-project");
+    const workspacePath = path.join(options.config.srcDir, "retire-project", options.workspaceId);
+    await fsPromises.mkdir(projectPath, { recursive: true });
+    await fsPromises.mkdir(workspacePath, { recursive: true });
+    await options.config.addWorkspace(projectPath, {
+      id: options.workspaceId,
+      name: options.workspaceId,
+      projectName: "retire-project",
+      projectPath,
+      runtimeConfig: options.runtimeConfig,
+      transcriptOnly: options.transcriptOnly,
+      namedWorkspacePath: workspacePath,
+    });
+    return { projectPath, workspacePath };
+  }
+
+  function createRetirementService(options: {
+    config: Config;
+    historyService: HistoryService;
+    aiService?: AIService;
+  }): WorkspaceService {
+    return createWorkspaceServiceForTest({
+      config: options.config,
+      historyService: options.historyService,
+      aiService: options.aiService ?? createMockAIService(),
+      initStateManager: mockInitStateManager as InitStateManager,
+    });
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("retires a worktree idempotently while preserving config, session, and history", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "retire-worktree";
+    try {
+      const { projectPath, workspacePath } = await addWorkspace({
+        config,
+        workspaceId,
+        runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+      });
+      const historyMessage = createMuxMessage("retire-history", "user", "preserve me", {
+        timestamp: 1,
+      });
+      expect((await historyService.appendToHistory(workspaceId, historyMessage)).success).toBe(
+        true
+      );
+      const sessionDir = config.getSessionDir(workspaceId);
+      const removeWorktree = spyOn(
+        removeManagedGitWorktreeModule,
+        "removeManagedGitWorktree"
+      ).mockImplementation(async () => {
+        await fsPromises.rm(workspacePath, { recursive: true, force: true });
+      });
+      const workspaceService = createRetirementService({ config, historyService });
+      const metadataEvents: FrontendWorkspaceMetadata[] = [];
+      workspaceService.on("metadata", (event: unknown) => {
+        const metadata = (event as { metadata?: FrontendWorkspaceMetadata }).metadata;
+        if (metadata) metadataEvents.push(metadata);
+      });
+
+      const first = await workspaceService.retireToTranscript(workspaceId);
+      const second = await workspaceService.retireToTranscript(workspaceId);
+
+      expect(first).toEqual(Ok({ kind: "transcript-only", cleanup: "worktree-deleted" }));
+      expect(second).toEqual(Ok({ kind: "transcript-only", cleanup: "already-transcript-only" }));
+      expect(removeWorktree).toHaveBeenCalledTimes(1);
+      const persisted = config.loadConfigOrDefault().projects.get(projectPath)?.workspaces[0];
+      expect(persisted?.transcriptOnly).toBe(true);
+      expect(persisted?.archivedAt).toBeDefined();
+      expect(config.findWorkspace(workspaceId)).not.toBeNull();
+      expect(await fsPromises.access(sessionDir).then(() => true)).toBe(true);
+      const history = await historyService.getLastMessages(workspaceId, 10);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data.map((message) => message.id)).toContain(historyMessage.id);
+      }
+      expect(metadataEvents.at(-1)?.transcriptOnly).toBe(true);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("rejects retirement while a stream is active", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "retire-active";
+    try {
+      const { projectPath } = await addWorkspace({
+        config,
+        workspaceId,
+        runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+      });
+      const removeWorktree = spyOn(
+        removeManagedGitWorktreeModule,
+        "removeManagedGitWorktree"
+      ).mockResolvedValue(undefined);
+      const workspaceService = createRetirementService({
+        config,
+        historyService,
+        aiService: createMockAIService({ isStreaming: mock(() => true) }),
+      });
+
+      const result = await workspaceService.retireToTranscript(workspaceId);
+
+      expect(result).toEqual(Err("Cannot retire workspace while a turn is active"));
+      expect(removeWorktree).not.toHaveBeenCalled();
+      const persisted = config.loadConfigOrDefault().projects.get(projectPath)?.workspaces[0];
+      expect(persisted?.archivedAt).toBeUndefined();
+      expect(persisted?.transcriptOnly).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("returns archive confirmation instead of bypassing untracked-file safeguards", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "retire-untracked";
+    try {
+      await addWorkspace({
+        config,
+        workspaceId,
+        runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+      });
+      await config.editConfig((current) => {
+        current.worktreeArchiveBehavior = "snapshot";
+        return current;
+      });
+      const getMetadata = async () => {
+        const metadata = (await config.getAllWorkspaceMetadata()).find(
+          (candidate) => candidate.id === workspaceId
+        );
+        return metadata ? Ok(metadata) : Err("Workspace not found");
+      };
+      const workspaceService = createRetirementService({
+        config,
+        historyService,
+        aiService: createMockAIService({ getWorkspaceMetadata: mock(getMetadata) }),
+      });
+      workspaceService.setWorktreeArchiveSnapshotService({
+        preflightSnapshotForArchive: mock(() => Promise.resolve(Ok(undefined))),
+        captureSnapshotForArchive: mock(() => Promise.resolve(Err("should not capture"))),
+        restoreSnapshotAfterUnarchive: mock(() => Promise.resolve(Ok("skipped" as const))),
+        getUnsupportedUntrackedPaths: mock(() => Promise.resolve(Ok(["scratch.txt"]))),
+      });
+      const removeWorktree = spyOn(
+        removeManagedGitWorktreeModule,
+        "removeManagedGitWorktree"
+      ).mockResolvedValue(undefined);
+
+      const result = await workspaceService.retireToTranscript(workspaceId);
+
+      expect(result).toEqual(Ok({ kind: "confirm-lossy-untracked-files", paths: ["scratch.txt"] }));
+      expect(removeWorktree).not.toHaveBeenCalled();
+      const persisted = config
+        .loadConfigOrDefault()
+        .projects.get(path.join(config.rootDir, "retire-project"))?.workspaces[0];
+      expect(persisted?.archivedAt).toBeUndefined();
+      expect(persisted?.transcriptOnly).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("archives unsupported non-worktree runtimes without marking them transcript-only", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "retire-local";
+    try {
+      const { projectPath } = await addWorkspace({
+        config,
+        workspaceId,
+        runtimeConfig: { type: "local" },
+      });
+      const workspaceService = createRetirementService({ config, historyService });
+
+      const result = await workspaceService.retireToTranscript(workspaceId);
+
+      expect(result).toEqual(
+        Ok({ kind: "archived-only", cleanup: "unsupported", runtimeType: "local" })
+      );
+      const persisted = config.loadConfigOrDefault().projects.get(projectPath)?.workspaces[0];
+      expect(persisted?.archivedAt).toBeDefined();
+      expect(persisted?.transcriptOnly).toBeUndefined();
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("rejects sendMessage for persisted transcript-only workspaces", async () => {
+    const { config, historyService, cleanup } = await createTestHistoryService();
+    const workspaceId = "retire-send-guard";
+    try {
+      await addWorkspace({
+        config,
+        workspaceId,
+        runtimeConfig: { type: "local" },
+        transcriptOnly: true,
+      });
+      const workspaceService = createRetirementService({ config, historyService });
+
+      const result = await workspaceService.sendMessage(workspaceId, "hello", {
+        model: "test-model",
+        agentId: "exec",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toEqual({
+          type: "unknown",
+          raw: "This workspace is transcript-only and cannot accept new messages.",
+        });
+      }
+    } finally {
+      await cleanup();
+    }
+  });
+});
+
 describe("WorkspaceService deleteWorktree", () => {
   const workspaceId = "ws-delete-worktree";
   const projectName = "proj";
@@ -11897,7 +12522,9 @@ describe("WorkspaceService init cancellation", () => {
       clearInMemoryState: clearInMemoryStateMock,
     };
 
-    const configState: ProjectsConfig = { projects: new Map() };
+    const configState: ProjectsConfig = {
+      projects: new Map([[projectPath, { workspaces: [], trusted: true }]]),
+    };
 
     const mockMetadata: FrontendWorkspaceMetadata = {
       id: workspaceId,
@@ -12045,7 +12672,20 @@ describe("WorkspaceService init cancellation", () => {
       }),
     };
 
-    const configState: ProjectsConfig = { projects: new Map() };
+    const configState: ProjectsConfig = {
+      projects: new Map([
+        [
+          projectPath,
+          {
+            workspaces: [
+              { id: "x", name: "workspace-1", path: "/tmp/proj-auto/workspace-1" },
+              { id: "y", name: "workspace-2", path: "/tmp/proj-auto/workspace-2" },
+            ],
+            trusted: true,
+          },
+        ],
+      ]),
+    };
 
     const mockMetadata: FrontendWorkspaceMetadata = {
       id: workspaceId,
@@ -12151,6 +12791,151 @@ describe("WorkspaceService init cancellation", () => {
     } finally {
       createRuntimeSpy.mockRestore();
     }
+  });
+
+  async function createAfterProjectScopeRemoval(
+    deleteWorkspaceImpl: () => Promise<
+      { success: true; deletedPath: string } | { success: false; error: string }
+    >,
+    removedScope: "parent" | "sub-project" = "sub-project"
+  ) {
+    const workspaceId = "ws-sub-project-race";
+    const projectPath = "/tmp/project-parent";
+    const subProjectPath = "/tmp/project-parent/packages/web";
+    const workspacePath = "/tmp/project-parent/workspace";
+    const configState: ProjectsConfig = {
+      projects: new Map([
+        [projectPath, { trusted: true, workspaces: [] }],
+        [subProjectPath, { parentProjectPath: projectPath, workspaces: [] }],
+      ]),
+    };
+    const mockConfig: Partial<Config> = {
+      rootDir: "/tmp/mux-root",
+      srcDir: "/tmp/src",
+      generateStableId: mock(() => workspaceId),
+      loadConfigOrDefault: mock(() => configState),
+      editConfig: mock((editFn: (config: ProjectsConfig) => ProjectsConfig) => {
+        editFn(configState);
+        return Promise.resolve();
+      }),
+      getEffectiveSecrets: mock(() => []),
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      findWorkspace: mock(() => null),
+    };
+    const createWorkspaceMock = mock(() => {
+      configState.projects.delete(removedScope === "parent" ? projectPath : subProjectPath);
+      return Promise.resolve({ success: true as const, workspacePath });
+    });
+    const deleteWorkspaceMock = mock(deleteWorkspaceImpl);
+    const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
+      createWorkspace: createWorkspaceMock,
+      deleteWorkspace: deleteWorkspaceMock,
+    } as unknown as ReturnType<typeof runtimeFactory.createRuntime>);
+
+    try {
+      const workspaceService = createWorkspaceServiceForTest({
+        config: mockConfig,
+        historyService,
+        initStateManager: {
+          on: mock(() => undefined as unknown as InitStateManager),
+          startInit: mock(() => undefined),
+          getInitState: mock(() => undefined),
+        } as unknown as InitStateManager,
+      });
+      const result = await workspaceService.create(
+        projectPath,
+        "child-change",
+        undefined,
+        "Child change",
+        { type: "local" },
+        subProjectPath
+      );
+
+      return {
+        result,
+        configState,
+        deleteWorkspaceMock,
+        projectPath,
+        subProjectPath,
+        workspacePath,
+      };
+    } finally {
+      createRuntimeSpy.mockRestore();
+    }
+  }
+
+  test("create() revalidates sub-project registration and rolls back the physical workspace", async () => {
+    const { result, configState, deleteWorkspaceMock, projectPath, subProjectPath } =
+      await createAfterProjectScopeRemoval(() =>
+        Promise.resolve({ success: true as const, deletedPath: "/tmp/project-parent/workspace" })
+      );
+
+    expect(result).toEqual(
+      Err(
+        `Failed to create workspace: Sub-project was removed during workspace creation: ${subProjectPath}`
+      )
+    );
+    expect(configState.projects.get(projectPath)?.workspaces).toEqual([]);
+    expect(deleteWorkspaceMock).toHaveBeenCalledWith(
+      projectPath,
+      "child-change",
+      false,
+      expect.any(AbortSignal),
+      true
+    );
+  });
+
+  test("create() reports a Result failure while rolling back a removed sub-project", async () => {
+    const { result, configState, projectPath, subProjectPath, workspacePath } =
+      await createAfterProjectScopeRemoval(() =>
+        Promise.resolve({ success: false as const, error: "cleanup blocked" })
+      );
+
+    expect(result).toEqual(
+      Err(
+        `Failed to create workspace: Sub-project was removed during workspace creation: ${subProjectPath}. ` +
+          `Rollback failed for workspace "child-change" at "${workspacePath}": cleanup blocked. ` +
+          "Remove it manually before retrying."
+      )
+    );
+    expect(configState.projects.get(projectPath)?.workspaces).toEqual([]);
+  });
+
+  test("create() reports an exception while rolling back a removed sub-project", async () => {
+    const { result, configState, projectPath, subProjectPath, workspacePath } =
+      await createAfterProjectScopeRemoval(() => Promise.reject(new Error("runtime unavailable")));
+
+    expect(result).toEqual(
+      Err(
+        `Failed to create workspace: Sub-project was removed during workspace creation: ${subProjectPath}. ` +
+          `Rollback failed for workspace "child-change" at "${workspacePath}": runtime unavailable. ` +
+          "Remove it manually before retrying."
+      )
+    );
+    expect(configState.projects.get(projectPath)?.workspaces).toEqual([]);
+  });
+
+  test("create() does not recreate metadata for an owning project removed during creation", async () => {
+    const { result, configState, deleteWorkspaceMock, projectPath } =
+      await createAfterProjectScopeRemoval(
+        () =>
+          Promise.resolve({ success: true as const, deletedPath: "/tmp/project-parent/workspace" }),
+        "parent"
+      );
+
+    expect(result).toEqual(
+      Err(
+        `Failed to create workspace: Project was removed during workspace creation: ${projectPath}`
+      )
+    );
+    expect(configState.projects.has(projectPath)).toBe(false);
+    expect(deleteWorkspaceMock).toHaveBeenCalledWith(
+      projectPath,
+      "child-change",
+      false,
+      expect.any(AbortSignal),
+      true
+    );
   });
 
   test("remove() aborts init and clears state before teardown", async () => {

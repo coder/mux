@@ -6,6 +6,8 @@ import { within, userEvent, waitFor, expect } from "@storybook/test";
 
 import { expandProjects } from "@/browser/stories/helpers/uiState";
 import { PIXEL_DUAL_THEME, appMeta, AppWithMocks, type AppStory } from "@/browser/stories/meta.js";
+import { createStaticChatHandler } from "@/browser/stories/mocks/chatHandlers";
+import { createAssistantMessage, createUserMessage } from "@/browser/stories/mocks/messages";
 import { createMockORPCClient, type MockSessionUsage } from "@/browser/stories/mocks/orpc";
 import { createArchivedWorkspace, NOW } from "@/browser/stories/mocks/workspaces";
 import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
@@ -62,18 +64,39 @@ async function openFirstProjectCreationView(storyRoot: HTMLElement): Promise<voi
     { timeout: 10_000 }
   );
 
-  await userEvent.click(projectRow);
+  const newWorkspaceButton = projectRow.querySelector<HTMLElement>(
+    'button[aria-label^="New workspace in "]'
+  );
+  if (!newWorkspaceButton) {
+    throw new Error("New workspace action not found");
+  }
+  newWorkspaceButton.click();
 }
 
 /** Helper to create a project config for a path with no workspaces */
 function projectWithNoWorkspaces(path: string): [string, ProjectConfig] {
-  return [path, { workspaces: [] }];
+  // Most ProjectPage stories exercise creation/project navigation rather than the trust gate.
+  return [path, { workspaces: [], trusted: true }];
 }
 
-/**
- * Creation view - shown when a project exists but no workspace is selected
- */
-export const CreateWorkspace: AppStory = {
+const PROJECT_CHAT_MESSAGES = [
+  createUserMessage(
+    "project-chat-user",
+    "Coordinate a careful refactor across the app and tests.",
+    {
+      historySequence: 1,
+      timestamp: NOW - 60_000,
+    }
+  ),
+  createAssistantMessage(
+    "project-chat-assistant",
+    "I’ll keep this project conversation available while dedicated workspaces handle the implementation and validation.",
+    { historySequence: 2, timestamp: NOW - 50_000 }
+  ),
+];
+
+/** Persistent project-level orchestration chat — the primary project landing surface. */
+export const ProjectChat: AppStory = {
   parameters: {
     pixel: { matrix: PIXEL_DUAL_THEME },
   },
@@ -81,16 +104,32 @@ export const CreateWorkspace: AppStory = {
     <AppWithMocks
       setup={() => {
         expandProjects(["/Users/dev/my-project"]);
+        const projectChatHandler = createStaticChatHandler(PROJECT_CHAT_MESSAGES);
         return createMockORPCClient({
           projects: new Map([projectWithNoWorkspaces("/Users/dev/my-project")]),
           workspaces: [],
+          onChat: (_workspaceId, emit) => projectChatHandler(emit),
         });
       }}
     />
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
-    await openFirstProjectCreationView(storyRoot);
+    const projectRow = await waitFor(() => {
+      const row = storyRoot.querySelector<HTMLElement>(
+        '[data-project-path="/Users/dev/my-project"][aria-controls]'
+      );
+      if (!row) throw new Error("Project row not found");
+      return row;
+    });
+    await userEvent.click(projectRow);
+    await waitFor(() => {
+      if (!storyRoot.querySelector('[data-testid="project-chat-header"]')) {
+        throw new Error("Project Chat did not open");
+      }
+    });
+    await expect(projectRow.getAttribute("aria-current")).toBe("page");
+    await expect(storyRoot.querySelector('[data-testid="right-sidebar"]')).toBeNull();
   },
 };
 
@@ -120,6 +159,10 @@ export const CreateWorkspaceMultipleProjects: AppStory = {
       }}
     />
   ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await openFirstProjectCreationView(storyRoot);
+  },
 };
 
 /**

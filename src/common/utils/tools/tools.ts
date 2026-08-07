@@ -32,6 +32,7 @@ import { createToolSearchTool } from "@/node/services/tools/toolSearch";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
 import type { MuxToolScope } from "@/common/types/toolScope";
+import { createProjectWorkspaceListTool } from "@/node/services/tools/project_workspace_list";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
@@ -66,6 +67,7 @@ import {
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import type { ToolSearchRuntime } from "@/common/utils/tools/toolCatalog";
 
+import type { WorkspaceTurnReportContext } from "@/common/utils/tools/toolAvailability";
 import type { Result } from "@/common/types/result";
 import type { Runtime } from "@/node/runtime/Runtime";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -198,6 +200,8 @@ export interface ToolConfiguration {
   onConfigChanged?: () => void;
   /** Best-effort callback for recording tool-initiated model usage in session totals. */
   reportModelUsage?: (event: ToolModelUsageEvent) => void;
+  /** Backend-derived Project Chat context; never sourced from model input. */
+  projectChat?: boolean;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Durable workflow lifecycle service for dynamic workflow tools. */
@@ -270,8 +274,12 @@ export interface ToolConfiguration {
   workflowAgentOutputSchema?: unknown;
   /** Allow pre-upgrade workflow child tasks with schemas now rejected by strict validation. */
   allowLegacyInvalidWorkflowAgentOutputSchema?: boolean;
-  /** Enable agent_report tool (only valid for child task workspaces) */
+  /** Enable agent_report for child tasks or a correlated active workspace turn. */
   enableAgentReport?: boolean;
+  /** Keep ordinary workspace capabilities independent from agent_report availability. */
+  enableReviewPane?: boolean;
+  /** Backend-derived correlation used to authorize reports from an ordinary workspace turn. */
+  workspaceTurnReportContext?: WorkspaceTurnReportContext;
   /** Experiments inherited from parent (for subagent spawning) */
   experiments?: {
     programmaticToolCalling?: boolean;
@@ -770,10 +778,11 @@ export async function getToolsForModel(
 
   // HeartbeatService intentionally skips child task workspaces, and the
   // workspace-heartbeats experiment gates every user-facing way to create schedules.
+  // A correlated workspace turn remains an ordinary workspace even though it can report progress.
   const shouldExposeHeartbeatTool =
     config.workspaceHeartbeatService != null &&
     config.experiments?.workspaceHeartbeats === true &&
-    !config.enableAgentReport;
+    (config.enableReviewPane ?? !config.enableAgentReport);
 
   // Non-runtime tools execute immediately (no init wait needed)
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -791,6 +800,9 @@ export async function getToolsForModel(
     ...(config.toolSearchRuntime ? { tool_catalog_search: createToolSearchTool(config) } : {}),
     ...(config.timelineService && config.experiments?.timeline
       ? { timeline_event: createTimelineEventTool(config) }
+      : {}),
+    ...(config.projectChat && config.taskService
+      ? { project_workspace_list: createProjectWorkspaceListTool(config) }
       : {}),
     ask_user_question: createAskUserQuestionTool(config),
     propose_plan: createProposePlanTool(config),
@@ -944,6 +956,7 @@ export async function getToolsForModel(
   // Include MCP tools even if they're not in getAvailableTools().
   const allowlistedToolNames = new Set(
     getAvailableTools(capabilityModelString, {
+      enableProjectWorkspaceList: config.projectChat === true,
       enableAgentReport: config.enableAgentReport,
       enableAnalyticsQuery: Boolean(config.analyticsService),
       enableDynamicWorkflows: Boolean(
@@ -953,11 +966,9 @@ export async function getToolsForModel(
       enableMemory: Boolean(config.memoryService && config.experiments?.memory),
       enableTimelineEvent: Boolean(config.timelineService && config.experiments?.timeline),
       enableToolSearch: Boolean(config.toolSearchRuntime),
-      // The Review pane belongs to the user-facing parent workspace. config
-      // .enableAgentReport is the canonical "is sub-agent" signal (set true iff
-      // the workspace has a parentWorkspaceId), so withhold the review_pane_*
-      // tools from sub-agents to keep the toolset in sync with the system prompt.
-      enableReviewPane: !config.enableAgentReport,
+      // A correlated workspace turn can report without becoming a sub-agent, so
+      // keep Review pane availability independent from agent_report availability.
+      enableReviewPane: config.enableReviewPane ?? !config.enableAgentReport,
       // Mux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,

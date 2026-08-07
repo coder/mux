@@ -245,6 +245,18 @@ describe("WorkspaceShell loading placeholders", () => {
     expect(secondChatPane.textContent).toContain("workspace-2");
   });
 
+  it("keeps Project Chat focused on the transcript without workspace sidebars", () => {
+    workspaceState = {
+      loading: false,
+      isHydratingTranscript: false,
+    };
+
+    const view = render(<WorkspaceShell {...defaultProps} surface="project" />);
+
+    expect(view.getByTestId("chat-pane")).toBeTruthy();
+    expect(view.queryByTestId("right-sidebar")).toBeNull();
+  });
+
   it("renders loading animation during non-hydrating workspace loading", () => {
     workspaceState = {
       loading: true,

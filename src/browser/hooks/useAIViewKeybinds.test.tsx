@@ -523,4 +523,42 @@ describe("useAIViewKeybinds", () => {
 
     expect(resumeInterruptedStream.mock.calls.length).toBe(0);
   });
+
+  test("capability-gated chats do not consume editor or terminal shortcuts", () => {
+    const chatInputAPI: RefObject<ChatInputAPI | null> = { current: null };
+
+    renderUseAIViewKeybinds({
+      workspaceId: "project-session",
+      canInterrupt: false,
+      showRetryBarrier: false,
+      chatInputAPI,
+      jumpToBottom: () => undefined,
+      loadOlderHistory: null,
+      handleOpenTerminal: null,
+      handleOpenInEditor: null,
+      aggregator: undefined,
+      setEditingMessage: () => undefined,
+      vimEnabled: false,
+    });
+
+    const terminalEvent = new window.KeyboardEvent("keydown", {
+      key: "t",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(terminalEvent);
+
+    const editorEvent = new window.KeyboardEvent("keydown", {
+      key: "e",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.body.dispatchEvent(editorEvent);
+
+    expect(terminalEvent.defaultPrevented).toBe(false);
+    expect(editorEvent.defaultPrevented).toBe(false);
+  });
 });

@@ -1,11 +1,13 @@
 import { z } from "zod";
-import { RUNTIME_MODE } from "@/common/types/runtime";
+import { RUNTIME_MODE, type RuntimeConfig } from "@/common/types/runtime";
 import {
   buildTaskToolAgentArgsSchema,
   buildTaskToolDescription,
+  ProjectChatTaskToolArgsSchema,
   getAvailableTools,
   supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
+  TaskToolResultSchema,
   TaskWorkspaceLifecycleToolArgsSchema,
   TOOL_DEFINITIONS,
   WorkflowRunToolArgsSchema,
@@ -115,6 +117,242 @@ describe("TOOL_DEFINITIONS", () => {
         variants: ["frontend", " frontend "],
       }).success
     ).toBe(false);
+  });
+
+  it("restricts Project Chat task calls to workspace-only fields and defaults background", () => {
+    const schema = ProjectChatTaskToolArgsSchema;
+    const parsed = schema.safeParse({
+      prompt: "Implement the change",
+      title: "Implementation",
+    });
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.kind).toBe("workspace");
+      expect(parsed.data.run_in_background).toBe(true);
+    }
+
+    const strictProviderNull = schema.safeParse({
+      kind: null,
+      prompt: "Implement the change",
+      title: "Implementation",
+      run_in_background: null,
+    });
+    expect(strictProviderNull.success).toBe(true);
+
+    if (strictProviderNull.success) {
+      expect(strictProviderNull.data.kind).toBe("workspace");
+    }
+
+    for (const forbidden of [
+      { agentId: "exec" },
+      { subagent_type: "explore" },
+      { n: 2 },
+      { variants: ["a", "b"] },
+      { sticky: true },
+      { isolation: "none" },
+    ]) {
+      expect(
+        schema.safeParse({
+          prompt: "Implement the change",
+          title: "Implementation",
+          ...forbidden,
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("accepts Project Chat project paths only for new workspaces", () => {
+    expect(
+      ProjectChatTaskToolArgsSchema.safeParse({
+        prompt: "Implement the child change",
+        title: "Child implementation",
+        workspace: { mode: "new", projectPath: "/repo/packages/web" },
+      }).success
+    ).toBe(true);
+
+    for (const mode of ["existing", "fork"] as const) {
+      expect(
+        ProjectChatTaskToolArgsSchema.safeParse({
+          prompt: "Invalid target",
+          title: "Invalid target",
+          workspace: {
+            mode,
+            projectPath: "/repo/packages/web",
+            ...(mode === "existing" ? { workspaceId: "workspace" } : {}),
+          },
+        }).success
+      ).toBe(false);
+    }
+  });
+
+  it("accepts every shared runtime config variant for new Project Chat workspaces", () => {
+    const runtimeConfigs: RuntimeConfig[] = [
+      { type: "local" },
+      { type: "local", srcBaseDir: "/tmp/legacy-worktrees" },
+      { type: "worktree", srcBaseDir: "/tmp/worktrees" },
+      { type: "ssh", host: "devbox", srcBaseDir: "~/mux" },
+      {
+        type: "ssh",
+        host: "coder://",
+        srcBaseDir: "~/mux",
+        coder: { template: "ubuntu", existingWorkspace: false },
+      },
+      { type: "docker", image: "node:20", shareCredentials: true },
+      {
+        type: "devcontainer",
+        configPath: ".devcontainer/devcontainer.json",
+        shareCredentials: true,
+      },
+    ];
+
+    for (const runtimeConfig of runtimeConfigs) {
+      const parsed = ProjectChatTaskToolArgsSchema.safeParse({
+        prompt: "Implement the change",
+        title: "Task handle",
+        workspace: { mode: "new", title: "Workspace display", runtimeConfig },
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.workspace?.runtimeConfig).toEqual(runtimeConfig);
+        expect(parsed.data.workspace?.title).toBe("Workspace display");
+      }
+    }
+  });
+
+  it("normalizes strict-provider nulls from nested Project Chat runtime fields", () => {
+    const cases = [
+      {
+        input: { type: "local", srcBaseDir: null, bgOutputDir: null },
+        expected: { type: "local" },
+      },
+      {
+        input: { type: "worktree", srcBaseDir: "/tmp/worktrees", bgOutputDir: null },
+        expected: { type: "worktree", srcBaseDir: "/tmp/worktrees" },
+      },
+      {
+        input: {
+          type: "ssh",
+          host: "devbox",
+          srcBaseDir: "~/mux",
+          bgOutputDir: null,
+          identityFile: null,
+          port: null,
+          coder: null,
+        },
+        expected: { type: "ssh", host: "devbox", srcBaseDir: "~/mux" },
+      },
+      {
+        input: {
+          type: "ssh",
+          host: "coder://",
+          srcBaseDir: "~/mux",
+          bgOutputDir: null,
+          identityFile: null,
+          port: null,
+          coder: {
+            workspaceName: null,
+            template: "ubuntu",
+            templateOrg: null,
+            preset: null,
+            existingWorkspace: false,
+          },
+        },
+        expected: {
+          type: "ssh",
+          host: "coder://",
+          srcBaseDir: "~/mux",
+          coder: { template: "ubuntu", existingWorkspace: false },
+        },
+      },
+      {
+        input: {
+          type: "docker",
+          image: "node:20",
+          containerName: null,
+          shareCredentials: null,
+        },
+        expected: { type: "docker", image: "node:20" },
+      },
+      {
+        input: {
+          type: "devcontainer",
+          configPath: ".devcontainer/devcontainer.json",
+          shareCredentials: null,
+        },
+        expected: { type: "devcontainer", configPath: ".devcontainer/devcontainer.json" },
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const parsed = ProjectChatTaskToolArgsSchema.safeParse({
+        prompt: "Implement the change",
+        title: "Task handle",
+        workspace: { mode: "new", runtimeConfig: testCase.input },
+      });
+      expect(parsed.success).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.workspace?.runtimeConfig).toEqual(testCase.expected);
+      }
+    }
+  });
+
+  it("rejects runtime configuration on existing Project Chat workspace turns", () => {
+    const parsed = ProjectChatTaskToolArgsSchema.safeParse({
+      prompt: "Continue the work",
+      title: "Task handle",
+      workspace: {
+        mode: "existing",
+        workspaceId: "child-workspace",
+        runtimeConfig: { type: "local" },
+      },
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+
+  it("accepts Project Chat AI overrides, strict-provider nulls, and rejects duplicates", () => {
+    const schema = ProjectChatTaskToolArgsSchema;
+    expect(
+      schema.safeParse({
+        prompt: "Implement the change",
+        title: "Implementation",
+        ai: {
+          model: "openai:gpt-5.6-sol",
+          thinking: "high",
+          reasoningMode: "pro",
+        },
+      }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        prompt: "Implement the change",
+        title: "Implementation",
+        ai: { model: null, thinking: null, reasoningMode: null },
+        model: null,
+        thinking: null,
+        reasoningMode: null,
+      }).success
+    ).toBe(true);
+    expect(
+      schema.safeParse({
+        prompt: "Implement the change",
+        title: "Implementation",
+        model: "openai:gpt-5.6-sol",
+        ai: { model: "openai:gpt-5.6-sol" },
+      }).success
+    ).toBe(false);
+  });
+
+  it("accepts strict-provider null for the ordinary task background default", () => {
+    const parsed = TaskToolArgsSchema.safeParse({
+      subagent_type: "explore",
+      prompt: "Inspect the repository",
+      title: "Repository inspection",
+      run_in_background: null,
+    });
+
+    expect(parsed.success).toBe(true);
   });
 
   it("accepts workspace task args without an agent id", () => {
@@ -510,6 +748,39 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("documents handle-only task creation and task_await result retrieval", () => {
+    const description = buildTaskToolDescription(RUNTIME_MODE.WORKTREE);
+
+    expect(description).toContain("always returns promptly with created execution handle(s)");
+    expect(description).toContain("Retrieve terminal output with task_await");
+    expect(description).not.toContain("returns the completed report");
+  });
+
+  it("continues parsing historical completed task results", () => {
+    expect(
+      TaskToolResultSchema.safeParse({
+        status: "completed",
+        taskId: "legacy-task",
+        workspaceId: "legacy-workspace",
+        reportMarkdown: "Historical terminal report",
+        title: "Legacy result",
+        agentId: "explore",
+        agentType: "explore",
+      }).success
+    ).toBe(true);
+
+    expect(
+      TaskToolResultSchema.safeParse({
+        status: "completed",
+        taskIds: ["legacy-task-1", "legacy-task-2"],
+        reports: [
+          { taskId: "legacy-task-1", reportMarkdown: "First historical report" },
+          { taskId: "legacy-task-2", reportMarkdown: "Second historical report" },
+        ],
+      }).success
+    ).toBe(true);
+  });
+
   it("accepts workspace turn queue dispatch mode", () => {
     const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
       kind: "workspace",
@@ -769,6 +1040,15 @@ describe("TOOL_DEFINITIONS", () => {
     expect(schemaHasAnyOfEntry(properties?.script_source, { type: "null" })).toBe(true);
     expect(workflowSchema.required).not.toContain("script_path");
     expect(workflowSchema.required).not.toContain("script_source");
+  });
+
+  it("only includes project_workspace_list for Project Chat toolsets", () => {
+    expect(getAvailableTools("openai:gpt-5", { enableProjectWorkspaceList: false })).not.toContain(
+      "project_workspace_list"
+    );
+    expect(getAvailableTools("openai:gpt-5", { enableProjectWorkspaceList: true })).toContain(
+      "project_workspace_list"
+    );
   });
 
   it("only includes workflow tools when dynamic workflows are enabled", () => {

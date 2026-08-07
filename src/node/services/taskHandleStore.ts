@@ -6,7 +6,15 @@ import { z } from "zod";
 
 import type { Config } from "@/node/config";
 import type { CompletedMessagePart, StreamEndEvent } from "@/common/types/stream";
-import type { ParsedThinkingInput, ThinkingLevel } from "@/common/types/thinking";
+import {
+  TaskAttachFileArtifactsSchema,
+  type TaskAttachFileArtifact,
+} from "@/common/types/taskArtifacts";
+import type {
+  OpenAIReasoningMode,
+  ParsedThinkingInput,
+  ThinkingLevel,
+} from "@/common/types/thinking";
 import {
   BackgroundWorkAttentionPolicySchema,
   type BackgroundWorkAttentionPolicy,
@@ -15,6 +23,7 @@ import {
   WorkspaceTurnFinalMessageRefSchema,
   type WorkspaceTurnFinalMessageRef,
 } from "@/common/types/workspaceTurn";
+import { isExecutionId } from "@/common/types/execution";
 import { log } from "@/node/services/log";
 import { isErrnoWithCode } from "@/node/utils/fs";
 
@@ -33,6 +42,8 @@ export type WorkspaceTurnTaskStatus =
 
 export interface WorkspaceTurnTaskHandleRecord {
   kind: "workspace_turn";
+  /** Canonical execution identity for new records; legacy records use handleId only. */
+  executionId?: `exe_${string}`;
   handleId: string;
   ownerWorkspaceId: string;
   workspaceId: string;
@@ -46,6 +57,7 @@ export interface WorkspaceTurnTaskHandleRecord {
   prompt?: string;
   modelString?: string;
   thinkingLevel?: ParsedThinkingInput | ThinkingLevel;
+  reasoningMode?: OpenAIReasoningMode;
   messageId?: string;
   reportMarkdown?: string;
   finalMessageRef?: WorkspaceTurnFinalMessageRef;
@@ -53,6 +65,9 @@ export interface WorkspaceTurnTaskHandleRecord {
     messageId: string;
     parts?: CompletedMessagePart[];
     metadata: StreamEndEvent["metadata"];
+  };
+  artifacts?: {
+    attachFiles: TaskAttachFileArtifact[];
   };
   deferredMessageIds?: string[];
   error?: string;
@@ -72,6 +87,7 @@ export interface WorkspaceTurnTaskHandleRecord {
 const WorkspaceTurnTaskHandleRecordSchema = z
   .object({
     kind: z.literal("workspace_turn"),
+    executionId: z.string().refine(isExecutionId, "Invalid execution ID").optional(),
     handleId: z.string().min(1),
     ownerWorkspaceId: z.string().min(1),
     workspaceId: z.string().min(1),
@@ -85,6 +101,7 @@ const WorkspaceTurnTaskHandleRecordSchema = z
     prompt: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: z.unknown().optional(),
+    reasoningMode: z.enum(["standard", "pro"]).optional(),
     messageId: z.string().optional(),
     reportMarkdown: z.string().optional(),
     finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
@@ -95,6 +112,12 @@ const WorkspaceTurnTaskHandleRecordSchema = z
         metadata: z.unknown(),
       })
       .passthrough()
+      .optional(),
+    artifacts: z
+      .object({
+        attachFiles: TaskAttachFileArtifactsSchema,
+      })
+      .strict()
       .optional(),
     deferredMessageIds: z.array(z.string().min(1)).optional(),
     error: z.string().optional(),
@@ -193,18 +216,30 @@ export class TaskHandleStore {
   async listAllWorkspaceTurns(
     options: { statuses?: readonly WorkspaceTurnTaskStatus[] } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord[]> {
-    let entries: Array<{ isDirectory: () => boolean; name: string }>;
-    try {
-      entries = await fsPromises.readdir(this.config.sessionsDir, { withFileTypes: true });
-    } catch (error) {
-      if (isErrnoWithCode(error, "ENOENT")) return [];
-      throw error;
-    }
+    // Project Chat owners persist under project-sessions, while ordinary workspace owners remain
+    // under sessions. Restart recovery must inspect both roots or durable Project Chat handles would
+    // become invisible until another in-process event touched them.
+    const sessionRoots = [this.config.sessionsDir, this.config.projectSessionsDir];
+    const entriesByRoot = await Promise.all(
+      sessionRoots.map(async (sessionRoot) => {
+        try {
+          return await fsPromises.readdir(sessionRoot, { withFileTypes: true });
+        } catch (error) {
+          if (isErrnoWithCode(error, "ENOENT")) return [];
+          throw error;
+        }
+      })
+    );
 
+    const ownerWorkspaceIds = new Set(
+      entriesByRoot.flatMap((entries) =>
+        entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
+      )
+    );
     const recordsByOwner = await Promise.all(
-      entries
-        .filter((entry) => entry.isDirectory())
-        .map((entry) => this.listWorkspaceTurns(entry.name, options))
+      [...ownerWorkspaceIds].map((ownerWorkspaceId) =>
+        this.listWorkspaceTurns(ownerWorkspaceId, options)
+      )
     );
     return recordsByOwner.flat().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }

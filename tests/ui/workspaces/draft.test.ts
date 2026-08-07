@@ -18,7 +18,13 @@ import {
   getSharedRepoPath,
 } from "../../ipc/sendMessageTestHelpers";
 
-import { addProjectViaUI, cleanupView, getWorkspaceDraftIds, setupTestDom } from "../helpers";
+import {
+  addProjectViaUI,
+  cleanupView,
+  getWorkspaceDraftIds,
+  openProjectCreationView,
+  setupTestDom,
+} from "../helpers";
 import { renderApp } from "../renderReviewPanel";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 
@@ -64,27 +70,7 @@ describeIntegration("Draft workspace behavior", () => {
       const normalizedProjectPath = await addProjectViaUI(view, projectPath);
       const projectName = path.basename(normalizedProjectPath);
 
-      // Click project row to open creation view (creates first draft)
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
-          );
-          if (!el) throw new Error("Project row not found");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      // Wait for creation textarea to appear
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Creation textarea not found");
-        },
-        { timeout: 5_000 }
-      );
+      await openProjectCreationView(view, normalizedProjectPath);
 
       // Verify first draft was created
       const [firstDraftId] = await waitForDraftCount(normalizedProjectPath, 1);
@@ -93,8 +79,10 @@ describeIntegration("Draft workspace behavior", () => {
       // Click "New Workspace" button - should reuse empty draft, not create new one
       const newChatButton = await waitFor(
         () => {
-          const btn = view.container.querySelector(`[aria-label="New chat in ${projectName}"]`);
-          if (!btn) throw new Error(`New chat button not found for ${projectName}`);
+          const btn = view.container.querySelector(
+            `[aria-label="New workspace in ${projectName}"]`
+          );
+          if (!btn) throw new Error(`New workspace button not found for ${projectName}`);
           return btn as HTMLElement;
         },
         { timeout: 5_000 }
@@ -128,25 +116,7 @@ describeIntegration("Draft workspace behavior", () => {
       await view.waitForReady();
       const normalizedProjectPath = await addProjectViaUI(view, projectPath);
 
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
-          );
-          if (!el) throw new Error("Project row not found");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Creation textarea not found");
-        },
-        { timeout: 5_000 }
-      );
+      await openProjectCreationView(view, normalizedProjectPath);
 
       // A draft exists in storage for reuse, but no row appears in the sidebar.
       const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
@@ -171,25 +141,7 @@ describeIntegration("Draft workspace behavior", () => {
       const normalizedProjectPath = await addProjectViaUI(view, projectPath);
       const projectName = path.basename(normalizedProjectPath);
 
-      const projectRow = await waitFor(
-        () => {
-          const el = view.container.querySelector(
-            `[data-project-path="${normalizedProjectPath}"][aria-controls]`
-          );
-          if (!el) throw new Error("Project row not found");
-          return el as HTMLElement;
-        },
-        { timeout: 5_000 }
-      );
-      fireEvent.click(projectRow);
-
-      await waitFor(
-        () => {
-          const textarea = view.container.querySelector("textarea");
-          if (!textarea) throw new Error("Creation textarea not found");
-        },
-        { timeout: 5_000 }
-      );
+      await openProjectCreationView(view, normalizedProjectPath);
 
       const [draftId] = await waitForDraftCount(normalizedProjectPath, 1);
       expect(draftId).toBeTruthy();
@@ -197,8 +149,10 @@ describeIntegration("Draft workspace behavior", () => {
 
       const newChatButton = await waitFor(
         () => {
-          const btn = view.container.querySelector(`[aria-label="New chat in ${projectName}"]`);
-          if (!btn) throw new Error(`New chat button not found for ${projectName}`);
+          const btn = view.container.querySelector(
+            `[aria-label="New workspace in ${projectName}"]`
+          );
+          if (!btn) throw new Error(`New workspace button not found for ${projectName}`);
           return btn as HTMLElement;
         },
         { timeout: 5_000 }

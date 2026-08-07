@@ -32,8 +32,13 @@ import {
   type AdvisorStepCaptureRef,
   type ToolConfiguration,
 } from "@/common/utils/tools/tools";
-import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
+import {
+  getGoalToolAvailability,
+  getToolAvailabilityOptions,
+  type WorkspaceTurnReportContext,
+} from "@/common/utils/tools/toolAvailability";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import {
   createRuntimeContextForWorkspace,
@@ -175,6 +180,7 @@ import {
   WorkflowTaskServiceAdapter,
 } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
+import { resolveProjectChatSessionContext } from "@/node/services/projectChatSessionContext";
 import { isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 
 const STREAM_STARTUP_DIAGNOSTIC_THRESHOLD_MS = 1_000;
@@ -216,6 +222,19 @@ function replaceOrAppendMessageById(messages: MuxMessage[], replacement: MuxMess
   const next = [...messages];
   next[index] = replacement;
   return next;
+}
+
+function getWorkspaceTurnReportContext(
+  muxMetadata: MuxMessageMetadata | undefined
+): WorkspaceTurnReportContext | undefined {
+  if (muxMetadata?.type !== "workspace-turn-task") {
+    return undefined;
+  }
+  return {
+    handleId: muxMetadata.taskHandleId,
+    ownerWorkspaceId: muxMetadata.ownerWorkspaceId,
+    turnId: muxMetadata.turnId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -875,8 +894,9 @@ export class AIService extends EventEmitter {
     try {
       // Read from config.json (single source of truth)
       // getAllWorkspaceMetadata() handles migration from legacy metadata.json files
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      const metadata = allMetadata.find((m) => m.id === workspaceId);
+      const projectChatMetadata = this.config.resolveProjectSessionMetadata(workspaceId);
+      const allMetadata = projectChatMetadata ? [] : await this.config.getAllWorkspaceMetadata();
+      const metadata = projectChatMetadata ?? allMetadata.find((m) => m.id === workspaceId);
 
       if (!metadata) {
         return Err(
@@ -1069,6 +1089,7 @@ export class AIService extends EventEmitter {
       minThinkingLevel: providedMinThinkingLevel,
       activeTurnThinkingOverride,
     } = opts;
+    const workspaceTurnReportContext = getWorkspaceTurnReportContext(muxMetadata);
     // Support interrupts during startup (before StreamManager emits stream-start).
     // We register an AbortController up-front and let stopStream() abort it.
     const pendingAbortController = new AbortController();
@@ -1095,8 +1116,18 @@ export class AIService extends EventEmitter {
     let logSlowStreamStartup: ((details: Record<string, unknown>) => void) | undefined;
 
     try {
+      const projectChatContext = resolveProjectChatSessionContext(this.config, workspaceId);
+      if (projectChatContext != null && !projectChatContext.trusted) {
+        return Err({
+          type: "policy_denied",
+          message: "Trust this project before running Project Chat.",
+        });
+      }
+
       if (this.mockModeEnabled && this.mockAiStreamPlayer) {
-        await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+        if (projectChatContext == null) {
+          await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+        }
         if (combinedAbortSignal.aborted) {
           return Ok(undefined);
         }
@@ -1285,77 +1316,83 @@ export class AIService extends EventEmitter {
         });
       };
 
-      const workspace = this.config.findWorkspace(workspaceId);
-      if (!workspace) {
-        return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
-      }
+      let runtime: Runtime;
+      let workspacePath: string;
+      if (projectChatContext != null) {
+        runtime = projectChatContext.runtime;
+        workspacePath = projectChatContext.workspacePath;
+      } else {
+        const workspace = this.config.findWorkspace(workspaceId);
+        if (!workspace) {
+          return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
+        }
 
-      const metadataWithPath = {
-        ...metadata,
-        // Existing SSH workspaces may still live at a persisted root that differs from the canonical
-        // hashed project layout, so stream startup seeds the runtime from config for the current
-        // workspace instead of always reconstructing the path from project metadata.
-        namedWorkspacePath: workspace.workspacePath,
-      };
+        const metadataWithPath = {
+          ...metadata,
+          // Existing SSH workspaces may still live at a persisted root that differs from the canonical
+          // hashed project layout, so stream startup seeds the runtime from config for the current
+          // workspace instead of always reconstructing the path from project metadata.
+          namedWorkspacePath: workspace.workspacePath,
+        };
 
-      const multiProjectExecutionGate = this.ensureMultiProjectRuntimeExecutionEnabled(
-        workspaceId,
-        metadata
-      );
-      if (!multiProjectExecutionGate.success) {
-        return multiProjectExecutionGate;
-      }
+        const multiProjectExecutionGate = this.ensureMultiProjectRuntimeExecutionEnabled(
+          workspaceId,
+          metadata
+        );
+        if (!multiProjectExecutionGate.success) {
+          return multiProjectExecutionGate;
+        }
 
-      const singleProjectContext = isMultiProject(metadata)
-        ? undefined
-        : createRuntimeContextForWorkspace(metadataWithPath);
-      const runtime = singleProjectContext
-        ? singleProjectContext.runtime
-        : new MultiProjectRuntime(
-            new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
-            getProjects(metadata).map((project) => ({
-              projectPath: project.projectPath,
-              projectName: project.projectName,
-              runtime: createRuntime(metadata.runtimeConfig, {
+        const singleProjectContext = isMultiProject(metadata)
+          ? undefined
+          : createRuntimeContextForWorkspace(metadataWithPath);
+        runtime = singleProjectContext
+          ? singleProjectContext.runtime
+          : new MultiProjectRuntime(
+              new ContainerManager(getSrcBaseDir(metadata.runtimeConfig) ?? this.config.srcDir),
+              getProjects(metadata).map((project) => ({
                 projectPath: project.projectPath,
-                workspaceName: metadata.name,
-                workspacePath: isSSHRuntime(metadata.runtimeConfig)
-                  ? getWorkspacePathHintForProject(
-                      {
-                        workspaceId,
-                        workspaceName: metadata.name,
-                        workspacePath: workspace.workspacePath,
-                        runtimeConfig: metadata.runtimeConfig,
-                        projectPath: metadata.projectPath,
-                        projectName: metadata.projectName,
-                        projects: metadata.projects,
-                      },
-                      project.projectPath
-                    )
-                  : undefined,
-              }),
-            })),
-            metadata.name
-          );
+                projectName: project.projectName,
+                runtime: createRuntime(metadata.runtimeConfig, {
+                  projectPath: project.projectPath,
+                  workspaceName: metadata.name,
+                  workspacePath: isSSHRuntime(metadata.runtimeConfig)
+                    ? getWorkspacePathHintForProject(
+                        {
+                          workspaceId,
+                          workspaceName: metadata.name,
+                          workspacePath: workspace.workspacePath,
+                          runtimeConfig: metadata.runtimeConfig,
+                          projectPath: metadata.projectPath,
+                          projectName: metadata.projectName,
+                          projects: metadata.projects,
+                        },
+                        project.projectPath
+                      )
+                    : undefined,
+                }),
+              })),
+              metadata.name
+            );
 
-      const workspacePath =
-        singleProjectContext?.workspacePath ??
-        (isSSHRuntime(metadata.runtimeConfig)
-          ? resolveWorkspaceExecutionPath(metadataWithPath, runtime)
-          : // Non-SSH multi-project runtimes intentionally start from their shared container root so
-            // sibling repos stay addressable during agent/tool setup. SSH workspaces are the exception:
-            // upgraded legacy layouts must reuse the persisted root from config until remote layout
-            // detection seeds the new hashed paths.
-            runtime.getWorkspacePath(metadata.projectPath, metadata.name));
+        workspacePath =
+          singleProjectContext?.workspacePath ??
+          (isSSHRuntime(metadata.runtimeConfig)
+            ? resolveWorkspaceExecutionPath(metadataWithPath, runtime)
+            : // Non-SSH multi-project runtimes intentionally start from their shared container root so
+              // sibling repos stay addressable during agent/tool setup. SSH workspaces are the exception:
+              // upgraded legacy layouts must reuse the persisted root from config until remote layout
+              // detection seeds the new hashed paths.
+              runtime.getWorkspacePath(metadata.projectPath, metadata.name));
 
-      // Wait for init to complete before any runtime I/O operations
-      // (SSH/devcontainer may not be ready until init finishes pulling the container)
-      emitStartupBreadcrumb("waiting_for_init");
-      const waitForInitStartedAt = Date.now();
-      await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
-      recordStartupPhaseTiming("waitForInitMs", waitForInitStartedAt);
-      if (combinedAbortSignal.aborted) {
-        return Ok(undefined);
+        // Project Chat has no workspace provisioning or init hooks; ordinary workspaces keep waiting.
+        emitStartupBreadcrumb("waiting_for_init");
+        const waitForInitStartedAt = Date.now();
+        await this.initStateManager.waitForInit(workspaceId, combinedAbortSignal);
+        recordStartupPhaseTiming("waitForInitMs", waitForInitStartedAt);
+        if (combinedAbortSignal.aborted) {
+          return Ok(undefined);
+        }
       }
 
       // Verify runtime is actually reachable after init completes.
@@ -1471,6 +1508,9 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         requestedAgentId: agentId,
+        ...(projectChatContext != null
+          ? { fixedBuiltInAgentId: projectChatContext.fixedBuiltInAgentId }
+          : {}),
         disableWorkspaceAgents: disableWorkspaceAgents ?? false,
         callerToolPolicy: toolPolicy,
         cfg,
@@ -1496,8 +1536,10 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
       } = agentResult.data;
       const legacyModeForMetadata = getLegacyModeForAgentMetadata(effectiveAgentId, effectiveMode);
-      const projectTrusted = isWorkspaceProjectTrusted(this.config, metadata);
-      const sharedExecutionTrusted = isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
+      const projectTrusted =
+        projectChatContext?.trusted ?? isWorkspaceProjectTrusted(this.config, metadata);
+      const sharedExecutionTrusted =
+        projectChatContext?.trusted ?? isWorkspaceTrustedForSharedExecution(metadata, cfg.projects);
       const agentAdvisorEnabled = resolveAdvisorEnabledForAgent(
         effectiveAgentId,
         cfg.agentAiDefaults?.[effectiveAgentId]?.advisorEnabled
@@ -1583,22 +1625,28 @@ export class AIService extends EventEmitter {
       // the model so plan hints/handoffs cannot be suppressed by pre-boundary history.
       const buildPlanInstructionsStartedAt = Date.now();
       const { effectiveAdditionalInstructions, planFilePath, planContentForTransition } =
-        await buildPlanInstructions({
-          runtime,
-          metadata,
-          workspaceId,
-          workspacePath,
-          effectiveMode,
-          effectiveAgentId,
-          agentIsPlanLike,
-          agentDiscoveryRuntime,
-          agentDiscoveryPath,
-          additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
-          shouldDisableTaskToolsForDepth,
-          taskDepth,
-          taskSettings,
-          requestPayloadMessages: providerRequestMessages,
-        });
+        projectChatContext != null
+          ? {
+              effectiveAdditionalInstructions: scratchpadAdditionalSystemInstructions,
+              planFilePath: undefined,
+              planContentForTransition: undefined,
+            }
+          : await buildPlanInstructions({
+              runtime,
+              metadata,
+              workspaceId,
+              workspacePath,
+              effectiveMode,
+              effectiveAgentId,
+              agentIsPlanLike,
+              agentDiscoveryRuntime,
+              agentDiscoveryPath,
+              additionalSystemInstructions: scratchpadAdditionalSystemInstructions,
+              shouldDisableTaskToolsForDepth,
+              taskDepth,
+              taskSettings,
+              requestPayloadMessages: providerRequestMessages,
+            });
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
       const muxScope = resolveMuxToolScope(this.config, metadata, workspacePath);
@@ -1722,7 +1770,8 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         capabilityModelString,
-        agentSystemPromptSections
+        agentSystemPromptSections,
+        workspaceTurnReportContext
       );
       recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
 
@@ -2011,6 +2060,11 @@ export class AIService extends EventEmitter {
       const assistantMessageId = createAssistantMessageId();
       const allowLegacyInvalidWorkflowAgentOutputSchema =
         await this.shouldAllowLegacyInvalidWorkflowAgentOutputSchema(metadata);
+      const toolAvailability = getToolAvailabilityOptions({
+        workspaceId,
+        parentWorkspaceId: metadata.parentWorkspaceId,
+        workspaceTurnReportContext,
+      });
       // Hoisted so the refusal-fallback prepare() can rebuild the toolset for a
       // different model with identical context (only the model string varies).
       const toolsForModelConfig: ToolConfiguration = {
@@ -2111,8 +2165,8 @@ export class AIService extends EventEmitter {
         goalService: workspaceGoalService,
         goalDefaults: effectiveGoalDefaults,
         enableGoalTools: goalToolAvailability,
-        // Only child workspaces (tasks) can report to a parent.
-        enableAgentReport: Boolean(metadata.parentWorkspaceId),
+        ...toolAvailability,
+        ...(workspaceTurnReportContext != null ? { workspaceTurnReportContext } : {}),
         workflowAgentOutputSchema: metadata.workflowTask?.outputSchema,
         allowLegacyInvalidWorkflowAgentOutputSchema,
         // External edit detection callback
@@ -2186,6 +2240,7 @@ export class AIService extends EventEmitter {
           }
         },
         onConfigChanged: () => this.providerService.notifyConfigChanged(),
+        projectChat: projectChatContext != null,
         taskService: this.taskService,
         analyticsService: this.analyticsService,
         desktopSessionManager: this.desktopSessionManager,

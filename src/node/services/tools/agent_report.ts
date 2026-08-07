@@ -165,7 +165,16 @@ export const createAgentReportTool: ToolFactory = (config: ToolConfiguration) =>
         return parsed.failure;
       }
 
-      await taskService.reportAgentProgress(workspaceId, options.toolCallId, parsed.report);
+      if (config.workspaceTurnReportContext != null) {
+        await taskService.reportAgentProgress(
+          workspaceId,
+          options.toolCallId,
+          parsed.report,
+          config.workspaceTurnReportContext
+        );
+      } else {
+        await taskService.reportAgentProgress(workspaceId, options.toolCallId, parsed.report);
+      }
       return {
         success: true,
         message: "Update sent to the parent workspace.",

@@ -14,6 +14,7 @@ import {
 function createWorkspace(
   id: string,
   opts?: {
+    executionId?: string;
     parentWorkspaceId?: string;
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
     title?: string;
@@ -31,6 +32,7 @@ function createWorkspace(
     namedWorkspacePath: `/projects/demo/${id}`,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     createdAt: opts?.createdAt,
+    executionId: opts?.executionId,
     parentWorkspaceId: opts?.parentWorkspaceId,
     taskStatus: opts?.taskStatus,
     bestOf: opts?.bestOf,
@@ -88,6 +90,29 @@ describe("computeSidebarTaskGroups", () => {
     expect(beta?.title).toBe(shortenWorkflowRunId("wfr_beta"));
     expect(result.memberGroupStorageKeyByWorkspaceId.get("a2")).toBe("workflow:parent:wfr_alpha");
     expect(result.memberGroupStorageKeyByWorkspaceId.get("b1")).toBe("workflow:parent:wfr_beta");
+  });
+
+  test("does not synthesize task groups for canonical execution workspaces", () => {
+    const canonical = createWorkspace("canonical", {
+      executionId: "exe_canonical",
+      parentWorkspaceId: "parent",
+      taskStatus: "running",
+      bestOf: { groupId: "bg", index: 0, total: 2 },
+      workflowTask: { runId: "wfr_alpha", stepId: "s1" },
+    });
+    const sibling = createWorkspace("canonical-sibling", {
+      executionId: "exe_sibling",
+      parentWorkspaceId: "parent",
+      taskStatus: "running",
+      bestOf: { groupId: "bg", index: 1, total: 2 },
+      workflowTask: { runId: "wfr_alpha", stepId: "s2" },
+    });
+    const rows = [parent, canonical, sibling];
+
+    const result = computeSidebarTaskGroups({ rows, allRows: rows });
+
+    expect(result.groupsByStorageKey.size).toBe(0);
+    expect(result.memberGroupStorageKeyByWorkspaceId.size).toBe(0);
   });
 
   test("bestOf grouping wins over workflow metadata and keeps the contiguity rule", () => {

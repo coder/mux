@@ -1,7 +1,12 @@
+import * as crypto from "node:crypto";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "./config";
+import { TaskHandleStore } from "./services/taskHandleStore";
+import { HistoryService } from "./services/historyService";
+import { createMuxMessage } from "@/common/types/message";
+import { PROJECT_CHAT_SESSION_ID_PREFIX, isProjectSessionId } from "@/common/constants/projectChat";
 import {
   CODER_ARCHIVE_BEHAVIORS,
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -37,6 +42,438 @@ describe("Config", () => {
   async function flushConfigEdits(): Promise<void> {
     await config.editConfig((cfg) => cfg);
   }
+
+  describe("Project Chat", () => {
+    it("atomically creates one stable project session and keeps history outside workspace sessions", async () => {
+      const projectPath = path.join(tempDir, "repo");
+      fs.mkdirSync(projectPath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { workspaces: [], trusted: false });
+        return cfg;
+      });
+
+      const [first, second] = await Promise.all([
+        config.ensureProjectChat(projectPath),
+        config.ensureProjectChat(`${projectPath}${path.sep}`),
+      ]);
+
+      expect(first.sessionId).toBe(second.sessionId);
+      expect(first.sessionId.startsWith(PROJECT_CHAT_SESSION_ID_PREFIX)).toBe(true);
+      expect(first.agentId).toBe("orchestrator");
+      expect(first.metadata).toMatchObject({
+        id: first.sessionId,
+        projectPath,
+        namedWorkspacePath: projectPath,
+        agentId: "orchestrator",
+      });
+      expect(first.metadata.runtimeConfig).toEqual({ type: "local" });
+      expect(config.getSessionDir(first.sessionId)).toBe(
+        path.join(tempDir, "project-sessions", first.sessionId)
+      );
+      expect(config.getSessionDir("ordinary-workspace")).toBe(
+        path.join(tempDir, "sessions", "ordinary-workspace")
+      );
+      // Legacy IDs came from project/workspace basenames, so both prefix-shaped and fully
+      // Project-Chat-shaped values must remain ordinary unless project metadata claims them.
+      for (const legacyWorkspaceId of ["project-session_feature", "project-session_aaaaaaaaaa"]) {
+        expect(config.getSessionDir(legacyWorkspaceId)).toBe(
+          path.join(tempDir, "sessions", legacyWorkspaceId)
+        );
+      }
+
+      const historyService = new HistoryService(config);
+      const append = await historyService.appendToHistory(
+        first.sessionId,
+        createMuxMessage("project-chat-message", "user", "persist me", { timestamp: 1 })
+      );
+      expect(append.success).toBe(true);
+
+      const restartedConfig = new Config(tempDir);
+      const reloaded = await restartedConfig.ensureProjectChat(projectPath);
+      expect(reloaded.sessionId).toBe(first.sessionId);
+      expect(restartedConfig.findProjectChatBySessionId(first.sessionId)?.projectPath).toBe(
+        projectPath
+      );
+      expect(
+        (await restartedConfig.getAllWorkspaceMetadata()).map((metadata) => metadata.id)
+      ).not.toContain(first.sessionId);
+
+      const restartedHistory = new HistoryService(restartedConfig);
+      const history = await restartedHistory.getHistoryFromLatestBoundary(first.sessionId);
+      expect(history.success).toBe(true);
+      if (history.success) {
+        expect(history.data.map((message) => message.id)).toEqual(["project-chat-message"]);
+      }
+    });
+
+    it("regenerates duplicate imported Project Chat session IDs", async () => {
+      const firstProjectPath = path.join(tempDir, "first");
+      const secondProjectPath = path.join(tempDir, "second");
+      const duplicateSessionId = "project-session_aaaaaaaaaa";
+      fs.mkdirSync(firstProjectPath, { recursive: true });
+      fs.mkdirSync(secondProjectPath, { recursive: true });
+      const duplicateSessionDir = path.join(config.projectSessionsDir, duplicateSessionId);
+      fs.mkdirSync(duplicateSessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(duplicateSessionDir, "chat.jsonl"),
+        `${JSON.stringify({
+          ...createMuxMessage("duplicate-state", "user", "first owner", { timestamp: 1 }),
+          workspaceId: duplicateSessionId,
+        })}\n`,
+        "utf-8"
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [
+            [
+              firstProjectPath,
+              {
+                workspaces: [],
+                projectChat: {
+                  version: 1,
+                  sessionId: duplicateSessionId,
+                  createdAt: "2026-08-06T00:00:00.000Z",
+                  agentId: "orchestrator",
+                },
+              },
+            ],
+            [
+              secondProjectPath,
+              {
+                workspaces: [],
+                projectChat: {
+                  version: 1,
+                  sessionId: duplicateSessionId,
+                  createdAt: "2026-08-06T00:01:00.000Z",
+                  agentId: "orchestrator",
+                },
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      const firstSessionId = loaded.projects.get(firstProjectPath)?.projectChat?.sessionId;
+      const secondSessionId = loaded.projects.get(secondProjectPath)?.projectChat?.sessionId;
+      expect(firstSessionId).toBe(duplicateSessionId);
+      expect(secondSessionId).not.toBe(duplicateSessionId);
+      expect(secondSessionId != null && isProjectSessionId(secondSessionId)).toBe(true);
+      expect(config.findProjectChatBySessionId(duplicateSessionId)?.projectPath).toBe(
+        firstProjectPath
+      );
+      const history = new HistoryService(config);
+      const firstHistory = await history.getHistoryFromLatestBoundary(firstSessionId ?? "");
+      expect(firstHistory.success).toBe(true);
+      if (firstHistory.success) {
+        expect(firstHistory.data.map((message) => message.id)).toContain("duplicate-state");
+      }
+      const secondHistory = await history.getHistoryFromLatestBoundary(secondSessionId ?? "");
+      expect(secondHistory.success).toBe(true);
+      if (secondHistory.success) {
+        expect(secondHistory.data).toHaveLength(0);
+      }
+      expect(fs.existsSync(duplicateSessionDir)).toBe(true);
+
+      expect(config.findProjectChatBySessionId(secondSessionId ?? "")?.projectPath).toBe(
+        secondProjectPath
+      );
+
+      await flushConfigEdits();
+      const restarted = new Config(tempDir).loadConfigOrDefault();
+      expect(restarted.projects.get(firstProjectPath)?.projectChat?.sessionId).toBe(firstSessionId);
+      expect(restarted.projects.get(secondProjectPath)?.projectChat?.sessionId).toBe(
+        secondSessionId
+      );
+    });
+
+    it("regenerates Project Chat IDs that collide with parent-owned sub-project workspaces", async () => {
+      const parentProjectPath = path.join(tempDir, "project");
+      const subProjectPath = path.join(parentProjectPath, "packages", "web");
+      const collidingSessionId = "project-session_aaaaaaaaaa";
+      const legacyCollidingSessionId = "project-session_bbbbbbbbbb";
+      const firstReplacementId = `${PROJECT_CHAT_SESSION_ID_PREFIX}${crypto
+        .createHash("sha256")
+        .update([collidingSessionId, subProjectPath, "0"].join("\0"))
+        .digest("hex")
+        .slice(0, 10)}`;
+      const collidingProjectSessionDir = path.join(config.projectSessionsDir, collidingSessionId);
+      fs.mkdirSync(path.join(collidingProjectSessionDir, "task-handles"), { recursive: true });
+      fs.writeFileSync(
+        path.join(collidingProjectSessionDir, "chat.jsonl"),
+        `${JSON.stringify({
+          ...createMuxMessage("migrated-message", "user", "preserve state", { timestamp: 1 }),
+          workspaceId: collidingSessionId,
+        })}\n`,
+        "utf-8"
+      );
+      fs.writeFileSync(
+        path.join(collidingProjectSessionDir, "task-handles", "wst_migrated.json"),
+        JSON.stringify({
+          kind: "workspace_turn",
+          handleId: "wst_migrated",
+          ownerWorkspaceId: collidingSessionId,
+          workspaceId: collidingSessionId,
+          turnId: "turn",
+          status: "running",
+          createdAt: "2026-08-06T00:00:00.000Z",
+          updatedAt: "2026-08-06T00:00:00.000Z",
+          createdWorkspace: true,
+          disposableWorkspace: false,
+        })
+      );
+      fs.mkdirSync(subProjectPath, { recursive: true });
+      const basenameSessionDir = path.join(config.sessionsDir, legacyCollidingSessionId);
+      fs.mkdirSync(basenameSessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(basenameSessionDir, "metadata.json"),
+        JSON.stringify({ id: legacyCollidingSessionId })
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [
+            [
+              parentProjectPath,
+              {
+                workspaces: [
+                  {
+                    path: path.join(parentProjectPath, legacyCollidingSessionId),
+                  },
+                ],
+                projectChat: {
+                  version: 1,
+                  sessionId: legacyCollidingSessionId,
+                  createdAt: "2026-08-06T00:00:00.000Z",
+                  agentId: "orchestrator",
+                },
+              },
+            ],
+            [
+              subProjectPath,
+              {
+                parentProjectPath,
+                workspaces: [
+                  {
+                    id: collidingSessionId,
+                    path: path.join(parentProjectPath, "workspace-one"),
+                  },
+                  {
+                    id: firstReplacementId,
+                    path: path.join(parentProjectPath, "workspace-two"),
+                  },
+                ],
+                projectChat: {
+                  version: 1,
+                  sessionId: collidingSessionId,
+                  createdAt: "2026-08-06T00:00:00.000Z",
+                  agentId: "orchestrator",
+                },
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      const parentProject = loaded.projects.get(parentProjectPath);
+      const explicitWorkspaceIds = new Set(
+        parentProject?.workspaces
+          .map((workspace) => workspace.id)
+          .filter((workspaceId): workspaceId is string => workspaceId != null)
+      );
+      const parentSessionId = parentProject?.projectChat?.sessionId;
+      const subProjectSessionId = loaded.projects.get(subProjectPath)?.projectChat?.sessionId;
+      const reservedWorkspaceIds = new Set([
+        legacyCollidingSessionId,
+        collidingSessionId,
+        firstReplacementId,
+      ]);
+      expect(explicitWorkspaceIds).toEqual(new Set([collidingSessionId, firstReplacementId]));
+      for (const repairedSessionId of [parentSessionId, subProjectSessionId]) {
+        expect(repairedSessionId != null && isProjectSessionId(repairedSessionId)).toBe(true);
+        expect(reservedWorkspaceIds.has(repairedSessionId ?? "")).toBe(false);
+        expect(config.getSessionDir(repairedSessionId ?? "")).toBe(
+          path.join(config.projectSessionsDir, repairedSessionId ?? "")
+        );
+      }
+      const migratedSessionId = subProjectSessionId;
+      expect(migratedSessionId).toBeDefined();
+      const migratedHistory = await new HistoryService(config).getHistoryFromLatestBoundary(
+        migratedSessionId ?? ""
+      );
+      expect(migratedHistory.success).toBe(true);
+      if (migratedHistory.success) {
+        expect(migratedHistory.data.map((message) => message.id)).toContain("migrated-message");
+      }
+      expect(
+        await new TaskHandleStore(config).getWorkspaceTurn(migratedSessionId ?? "", "wst_migrated")
+      ).toMatchObject({
+        ownerWorkspaceId: migratedSessionId,
+        workspaceId: collidingSessionId,
+      });
+      expect(fs.existsSync(collidingProjectSessionDir)).toBe(true);
+      expect(fs.existsSync(path.join(config.projectSessionsDir, migratedSessionId ?? ""))).toBe(
+        true
+      );
+      expect(
+        config.loadConfigOrDefault().projects.get(subProjectPath)?.projectChat?.sessionId
+      ).toBe(migratedSessionId);
+      expect(config.findWorkspace(legacyCollidingSessionId)?.workspacePath).toBe(
+        path.join(parentProjectPath, legacyCollidingSessionId)
+      );
+      for (const workspaceId of reservedWorkspaceIds) {
+        expect(config.getSessionDir(workspaceId)).toBe(path.join(config.sessionsDir, workspaceId));
+      }
+
+      await flushConfigEdits();
+      expect(fs.existsSync(collidingProjectSessionDir)).toBe(false);
+      const restarted = new Config(tempDir).loadConfigOrDefault();
+      expect(restarted.projects.get(parentProjectPath)?.projectChat?.sessionId).toBe(
+        parentSessionId
+      );
+      expect(restarted.projects.get(subProjectPath)?.projectChat?.sessionId).toBe(
+        subProjectSessionId
+      );
+    });
+
+    it("keeps the old Project Chat identity and retries when migration preparation fails", async () => {
+      const projectPath = path.join(tempDir, "migration-retry");
+      const collidingSessionId = "project-session_aaaaaaaaaa";
+      const replacementSessionId = `${PROJECT_CHAT_SESSION_ID_PREFIX}${crypto
+        .createHash("sha256")
+        .update([collidingSessionId, projectPath, "0"].join("\0"))
+        .digest("hex")
+        .slice(0, 10)}`;
+      const sourceSessionDir = path.join(config.projectSessionsDir, collidingSessionId);
+      const replacementSessionDir = path.join(config.projectSessionsDir, replacementSessionId);
+      fs.mkdirSync(sourceSessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sourceSessionDir, "chat.jsonl"),
+        `${JSON.stringify({
+          ...createMuxMessage("retry-state", "user", "preserve me", { timestamp: 1 }),
+          workspaceId: collidingSessionId,
+        })}\n`,
+        "utf-8"
+      );
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          migrations: { defaultModelFallbacksSeeded: true },
+          projects: [
+            [
+              projectPath,
+              {
+                workspaces: [{ id: collidingSessionId, path: path.join(projectPath, "workspace") }],
+                projectChat: {
+                  version: 1,
+                  sessionId: collidingSessionId,
+                  createdAt: "2026-08-06T00:00:00.000Z",
+                  agentId: "orchestrator",
+                },
+              },
+            ],
+          ],
+        })
+      );
+
+      interface MigrationPreparer {
+        prepareProjectSessionStateMigration: (migration: {
+          oldSessionId: string;
+          newSessionId: string;
+        }) => void;
+      }
+      const migrationPreparer = config as unknown as MigrationPreparer;
+      const originalPrepareMigration = migrationPreparer.prepareProjectSessionStateMigration;
+      let attemptedMigration: { oldSessionId: string; newSessionId: string } | null = null;
+      migrationPreparer.prepareProjectSessionStateMigration = (migration) => {
+        attemptedMigration = migration;
+        throw new Error("injected preparation failure");
+      };
+
+      const failedLoad = config.loadConfigOrDefault();
+      expect(attemptedMigration).toEqual({
+        oldSessionId: collidingSessionId,
+        newSessionId: replacementSessionId,
+      });
+      expect(failedLoad.projects.get(projectPath)?.projectChat?.sessionId).toBe(collidingSessionId);
+      expect(config.findProjectChatBySessionId(collidingSessionId)?.projectPath).toBe(projectPath);
+      expect(fs.existsSync(sourceSessionDir)).toBe(true);
+      expect(fs.existsSync(replacementSessionDir)).toBe(false);
+      const persistedAfterFailure = JSON.parse(
+        fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")
+      ) as { projects: Array<[string, { projectChat?: { sessionId?: string } }]> };
+      expect(persistedAfterFailure.projects[0]?.[1].projectChat?.sessionId).toBe(
+        collidingSessionId
+      );
+
+      migrationPreparer.prepareProjectSessionStateMigration = originalPrepareMigration;
+      const retriedLoad = config.loadConfigOrDefault();
+      expect(retriedLoad.projects.get(projectPath)?.projectChat?.sessionId).toBe(
+        replacementSessionId
+      );
+      expect(fs.existsSync(sourceSessionDir)).toBe(true);
+      expect(fs.existsSync(replacementSessionDir)).toBe(true);
+      const retriedHistory = await new HistoryService(config).getHistoryFromLatestBoundary(
+        replacementSessionId
+      );
+      expect(retriedHistory.success).toBe(true);
+      if (retriedHistory.success) {
+        expect(retriedHistory.data.map((message) => message.id)).toContain("retry-state");
+      }
+
+      await flushConfigEdits();
+      expect(fs.existsSync(sourceSessionDir)).toBe(false);
+      expect(
+        new Config(tempDir).loadConfigOrDefault().projects.get(projectPath)?.projectChat?.sessionId
+      ).toBe(replacementSessionId);
+    });
+
+    it("preserves verified Project Chat routing across config read failures", async () => {
+      const projectPath = path.join(tempDir, "routing-cache");
+      fs.mkdirSync(projectPath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, { workspaces: [], trusted: true });
+        return cfg;
+      });
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const expectedSessionDir = path.join(config.projectSessionsDir, projectChat.sessionId);
+      expect(config.getSessionDir(projectChat.sessionId)).toBe(expectedSessionDir);
+
+      fs.writeFileSync(path.join(tempDir, "config.json"), "{ malformed", "utf-8");
+
+      // An active process keeps the last verified owner route rather than splitting writes.
+      expect(config.getSessionDir(projectChat.sessionId)).toBe(expectedSessionDir);
+      // A new process with no verified route fails closed instead of guessing ~/.mux/sessions.
+      expect(() => new Config(tempDir).getSessionDir(projectChat.sessionId)).toThrow();
+    });
+
+    it("rejects malformed project-session IDs before resolving filesystem paths", async () => {
+      const projectPath = path.join(tempDir, "repo");
+      const maliciousSessionId = "project-session_aaaaaaaaaa/../../../outside";
+      fs.mkdirSync(projectPath, { recursive: true });
+
+      expect(isProjectSessionId("project-session_0123456789")).toBe(true);
+      expect(isProjectSessionId(maliciousSessionId)).toBe(false);
+      expect(() => config.getSessionDir(maliciousSessionId)).toThrow("Invalid session ID");
+
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [],
+          projectChat: {
+            version: 1,
+            sessionId: maliciousSessionId,
+            createdAt: "2026-08-06T00:00:00.000Z",
+            agentId: "orchestrator",
+          },
+        });
+        return cfg;
+      });
+
+      expect(new Config(tempDir).findProjectChatBySessionId(maliciousSessionId)).toBeNull();
+    });
+  });
 
   describe("loadConfigOrDefault with trailing slash migration", () => {
     it("should strip trailing slashes from project paths on load", () => {
@@ -2095,6 +2532,28 @@ describe("Config", () => {
       const [metadata] = await config.getAllWorkspaceMetadata();
 
       expect(metadata.transcriptOnly).toBeUndefined();
+    });
+
+    it("maps persisted transcriptOnly=true even when a non-worktree resource still exists", async () => {
+      const projectPath = "/fake/project";
+      const workspacePath = path.join(tempDir, "persisted-transcript-only");
+      fs.mkdirSync(workspacePath, { recursive: true });
+
+      await config.addWorkspace(projectPath, {
+        id: "workspace-persisted-transcript-only",
+        name: "persisted-transcript-only",
+        projectName: "project",
+        projectPath,
+        runtimeConfig: { type: "local" },
+        transcriptOnly: true,
+        namedWorkspacePath: workspacePath,
+      });
+
+      const [metadata] = await config.getAllWorkspaceMetadata();
+      const persisted = config.loadConfigOrDefault().projects.get(projectPath)?.workspaces[0];
+
+      expect(metadata.transcriptOnly).toBe(true);
+      expect(persisted?.transcriptOnly).toBe(true);
     });
 
     it("never returns transcriptOnly for non-worktree runtimes", async () => {

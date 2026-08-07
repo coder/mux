@@ -31,10 +31,12 @@ import { z } from "zod";
 import {
   AgentIdSchema,
   AgentSkillPackageSchema,
+  RuntimeConfigSchema,
   SkillNameSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
   WorkflowStepStatusSchema,
+  WorkspaceAISettingsSchema,
   WorkspaceHeartbeatSettingsSchema,
 } from "@/common/orpc/schemas";
 import {
@@ -54,12 +56,30 @@ import {
   ConfigOperationsSchema,
 } from "@/common/config/schemas/configOperations";
 import { TOOL_EDIT_WARNING } from "@/common/types/tools";
-import { THINKING_LEVELS } from "@/common/types/thinking";
+import { OpenAIReasoningModeSchema, THINKING_LEVELS } from "@/common/types/thinking";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
 import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 import { WorkspaceTurnFinalMessageRefSchema } from "@/common/types/workspaceTurn";
+import {
+  SubagentGitPatchArtifactSchema,
+  SubagentGitPatchArtifactStatusSchema,
+  SubagentGitProjectPatchArtifactSchema,
+  TaskAttachFileArtifactsSchema,
+  TaskResultArtifactsSchema,
+  type SubagentGitPatchArtifact,
+  type SubagentGitProjectPatchArtifact,
+} from "@/common/types/taskArtifacts";
+
+export {
+  SubagentGitPatchArtifactSchema,
+  SubagentGitPatchArtifactStatusSchema,
+  SubagentGitProjectPatchArtifactSchema,
+  type SubagentGitPatchArtifact,
+  type SubagentGitProjectPatchArtifact,
+};
+import { ForegroundWaitInterruptionSchema } from "@/common/types/foregroundWaitInterruption";
 
 import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
@@ -328,23 +348,114 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
-    "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size (or use a foreground grouped spawn, below). " +
+    "An in-progress child report is an interaction, not a terminal result: normally acknowledge or steer it with task_send_message before waiting again, unless it is a routine periodic report you explicitly requested. " +
+    "task_await returns as soon as the first awaited task completes by default (min_completed), so you can start dependent work on each terminal result as it lands instead of blocking on the whole batch; for best-of-N synthesis that must compare every candidate, pass min_completed equal to the batch size. " +
     "\n\nWhen delegating, include a compact task brief (Task / Background / Scope / Starting points / Acceptance / Deliverables / Constraints). " +
     "For now, persisted sub-agent goals are not supported; pass sub-agent objectives, success criteria, and deliverables directly in the prompt. " +
     "Sub-agents observe the same system instructions as the parent (project/global AGENTS.md and custom instructions), so do not restate that shared context in the prompt; spend the prompt on task-specific information the sub-agent cannot infer from those instructions. " +
     "Caveat: instruction files are read from the child's checkout, so uncommitted AGENTS.md edits in the parent follow the same runtime visibility rules above — commit them first or pass the relevant guidance in the prompt. " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
-    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
-    "If the foreground wait times out, returns queued/starting/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
-    "If run_in_background is true, returns immediately with queued/starting/running task metadata and the task runs non-blocking: you may end your turn without awaiting it, and Mux wakes this workspace when the task reaches a terminal state so you can integrate its result. Use task_await only when the current request depends on the output before you can answer, or to inspect progress. " +
-    "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
-    "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
+    "\n\nThe task tool always returns promptly with created execution handle(s) and workspace IDs; it never returns terminal task output for a new execution. " +
+    "run_in_background controls only the owner's attention policy: false uses blocking attention, while true allows the owner to continue and requests a terminal wake-up. " +
+    "Retrieve terminal output with task_await when the current request depends on it. Best-of and variant launches likewise return all created handles, which can be passed to task_await. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
-    "If later user guidance corrects or refines an active sub-agent's work, use task_send_message to update the existing child instead of terminating and recreating it. " +
+    "Use task_send_message to respond to an in-progress child report or when later user guidance corrects or refines active work, instead of terminating and recreating the child. " +
     isolationGuidance +
     "Use the bash tool to run shell commands."
   );
 }
+
+const ProjectChatRuntimeCoderConfigSchema = z
+  .object({
+    workspaceName: z.string().nullish(),
+    template: z.string().nullish(),
+    templateOrg: z.string().nullish(),
+    preset: z.string().nullish(),
+    existingWorkspace: z.boolean().nullish(),
+  })
+  .strict()
+  .transform((value) => ({
+    ...(value.workspaceName != null ? { workspaceName: value.workspaceName } : {}),
+    ...(value.template != null ? { template: value.template } : {}),
+    ...(value.templateOrg != null ? { templateOrg: value.templateOrg } : {}),
+    ...(value.preset != null ? { preset: value.preset } : {}),
+    ...(value.existingWorkspace != null ? { existingWorkspace: value.existingWorkspace } : {}),
+  }));
+
+// Tool inputs need nullish nested fields because strict-schema providers represent omitted object
+// properties as null. Normalize those nulls away before passing the shared RuntimeConfig to services.
+const ProjectChatRuntimeConfigSchema = z.union([
+  z
+    .object({
+      type: z.literal("local"),
+      srcBaseDir: z.string().nullish(),
+      bgOutputDir: z.string().nullish(),
+    })
+    .strict()
+    .transform((value) => ({
+      type: "local" as const,
+      ...(value.srcBaseDir != null ? { srcBaseDir: value.srcBaseDir } : {}),
+      ...(value.bgOutputDir != null ? { bgOutputDir: value.bgOutputDir } : {}),
+    })),
+  z
+    .object({
+      type: z.literal("worktree"),
+      srcBaseDir: z.string(),
+      bgOutputDir: z.string().nullish(),
+    })
+    .strict()
+    .transform((value) => ({
+      type: "worktree" as const,
+      srcBaseDir: value.srcBaseDir,
+      ...(value.bgOutputDir != null ? { bgOutputDir: value.bgOutputDir } : {}),
+    })),
+  z
+    .object({
+      type: z.literal("ssh"),
+      host: z.string(),
+      srcBaseDir: z.string(),
+      bgOutputDir: z.string().nullish(),
+      identityFile: z.string().nullish(),
+      port: z.number().nullish(),
+      coder: ProjectChatRuntimeCoderConfigSchema.nullish(),
+    })
+    .strict()
+    .transform((value) => ({
+      type: "ssh" as const,
+      host: value.host,
+      srcBaseDir: value.srcBaseDir,
+      ...(value.bgOutputDir != null ? { bgOutputDir: value.bgOutputDir } : {}),
+      ...(value.identityFile != null ? { identityFile: value.identityFile } : {}),
+      ...(value.port != null ? { port: value.port } : {}),
+      ...(value.coder != null ? { coder: value.coder } : {}),
+    })),
+  z
+    .object({
+      type: z.literal("docker"),
+      image: z.string(),
+      containerName: z.string().nullish(),
+      shareCredentials: z.boolean().nullish(),
+    })
+    .strict()
+    .transform((value) => ({
+      type: "docker" as const,
+      image: value.image,
+      ...(value.containerName != null ? { containerName: value.containerName } : {}),
+      ...(value.shareCredentials != null ? { shareCredentials: value.shareCredentials } : {}),
+    })),
+  z
+    .object({
+      type: z.literal("devcontainer"),
+      configPath: z.string(),
+      shareCredentials: z.boolean().nullish(),
+    })
+    .strict()
+    .transform((value) => ({
+      type: "devcontainer" as const,
+      configPath: value.configPath,
+      ...(value.shareCredentials != null ? { shareCredentials: value.shareCredentials } : {}),
+    })),
+]);
 
 const WorkspaceTaskKindSchema = z.enum(["subagent", "workspace"]);
 const WorkspaceTaskModeSchema = z.enum(["new", "fork", "existing"]);
@@ -354,6 +465,17 @@ const WorkspaceTaskTargetSchema = z
     workspaceId: z.string().trim().min(1).nullish(),
     branchName: z.string().trim().min(1).nullish(),
     trunkBranch: z.string().trim().min(1).nullish(),
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .nullish()
+      .describe(
+        "Workspace display title. For mode=new, sets the created workspace title; for mode=existing, updates the target workspace title. This is separate from the task handle title."
+      ),
+    runtimeConfig: ProjectChatRuntimeConfigSchema.nullish().describe(
+      "Creation runtime configuration for mode=new. Omit to use the effective project/global default. Existing workspace follow-ups cannot change runtime configuration."
+    ),
     queueDispatchMode: z
       .enum(["tool-end", "turn-end"])
       .nullish()
@@ -363,6 +485,17 @@ const WorkspaceTaskTargetSchema = z
     disposable: z.boolean().nullish(),
   })
   .strict();
+
+const ProjectChatWorkspaceTaskTargetSchema = WorkspaceTaskTargetSchema.extend({
+  projectPath: z
+    .string()
+    .trim()
+    .min(1)
+    .nullish()
+    .describe(
+      "Creation-only logical project target. Omit for the current Project Chat scope; otherwise use an exact projectPath returned by project_workspace_list."
+    ),
+});
 
 /** Shared validation across both task-arg schema variants (with/without `isolation`). */
 function refineTaskToolAgentArgs(
@@ -374,7 +507,11 @@ function refineTaskToolAgentArgs(
     n?: number | null;
     variants?: string[] | null;
     sticky?: boolean | null;
-    workspace?: { mode?: "new" | "fork" | "existing" | null; workspaceId?: string | null } | null;
+    workspace?: {
+      mode?: "new" | "fork" | "existing" | null;
+      workspaceId?: string | null;
+      runtimeConfig?: unknown;
+    } | null;
   },
   ctx: z.RefinementCtx
 ): void {
@@ -416,6 +553,13 @@ function refineTaskToolAgentArgs(
         code: z.ZodIssueCode.custom,
         message: "workspace.workspaceId is required when workspace.mode is existing",
         path: ["workspace", "workspaceId"],
+      });
+    }
+    if ((args.workspace?.mode ?? "new") === "existing" && args.workspace?.runtimeConfig != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "workspace.runtimeConfig is only accepted when workspace.mode is new",
+        path: ["workspace", "runtimeConfig"],
       });
     }
     return;
@@ -480,7 +624,13 @@ const taskToolBaseShape = {
   subagent_type: SubagentTypeSchema.nullish(),
   prompt: z.string().min(1),
   title: z.string().min(1),
-  run_in_background: z.boolean().default(false),
+  run_in_background: z
+    .boolean()
+    .nullish()
+    .default(false)
+    .describe(
+      "Controls owner attention only. False uses blocking attention; true lets the owner continue and requests a terminal wake-up. The task call itself always returns created handles promptly; use task_await for terminal output."
+    ),
   sticky: z
     .boolean()
     .nullish()
@@ -532,6 +682,142 @@ export function buildTaskToolAgentArgsSchema(options: {
   return options.includeIsolation ? TaskToolArgsSchema : TaskToolArgsSchemaWithoutIsolation;
 }
 
+const ProjectChatTaskAiSchema = z
+  .object({
+    model: TaskToolModelSchema.nullish(),
+    thinking: TaskToolThinkingSchema.nullish(),
+    reasoningMode: OpenAIReasoningModeSchema.nullish(),
+  })
+  .strict();
+
+export const ProjectChatTaskToolArgsSchema = z
+  .object({
+    kind: z
+      .literal("workspace")
+      .nullish()
+      .transform((value) => value ?? "workspace")
+      .default("workspace"),
+    prompt: z.string().min(1),
+    title: z.string().min(1),
+    run_in_background: z
+      .boolean()
+      .nullish()
+      .default(true)
+      .describe(
+        "Controls Project Chat attention only. True (the default) keeps this chat available and requests a terminal wake-up; false uses blocking attention. The task call always returns the created handle promptly; use task_await for terminal output."
+      ),
+    workspace: ProjectChatWorkspaceTaskTargetSchema.nullish().describe(
+      'Workspace target. Omit for a fresh ordinary workspace in the current Project Chat scope. For mode="new", projectPath may select an exact backend-returned parent/sub-project path. Reuse only when project_workspace_list provides positive relevance evidence, and then pass mode="existing" with its canonical workspaceId.'
+    ),
+    ai: ProjectChatTaskAiSchema.nullish().describe(
+      "Optional grouped AI overrides for this workspace turn. Do not duplicate model, thinking, or reasoningMode at the top level."
+    ),
+    model: TaskToolModelSchema.nullish().describe(
+      "Backward-compatible model override for this workspace turn. Omit to use the target/default Exec settings."
+    ),
+    thinking: TaskToolThinkingSchema.nullish().describe(
+      "Backward-compatible thinking-level override for this workspace turn. Omit to use the target/default Exec settings."
+    ),
+    reasoningMode: OpenAIReasoningModeSchema.nullish().describe(
+      'Optional typed OpenAI reasoning-mode override ("standard" or "pro"). Omit to use the target workspace default.'
+    ),
+  })
+  .strict()
+  .superRefine((args, ctx) => {
+    refineTaskToolAgentArgs(args, ctx);
+    if (args.workspace?.projectPath != null && (args.workspace.mode ?? "new") !== "new") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'projectPath is only accepted when workspace.mode="new"',
+        path: ["workspace", "projectPath"],
+      });
+    }
+    for (const field of ["model", "thinking", "reasoningMode"] as const) {
+      if (args[field] != null && args.ai?.[field] != null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `${field} must not be specified both at the top level and in ai`,
+          path: ["ai", field],
+        });
+      }
+    }
+  });
+
+export function buildProjectChatTaskToolDescription(): string {
+  return (
+    'Start or continue an ordinary workspace turn in an authorized Project Chat scope. Project Chat may only use kind="workspace"; sub-agent fields are not accepted. ' +
+    "A top-level parent Project Chat may coordinate its parent root and currently registered direct non-system child sub-projects; a child Project Chat is restricted to its exact child scope. " +
+    "The task call always returns the created execution handle promptly; use task_await to retrieve terminal output. Prefer the default background attention policy so this chat remains available while the child workspace runs. " +
+    "Create a fresh workspace by default. For mode=new, omit workspace.projectPath for the current scope or pass an exact projectPath returned by project_workspace_list; never synthesize filesystem descendants. " +
+    "Reuse only when project_workspace_list provides positive relevance evidence for a specific canonical workspace ID, and pass that ID explicitly. " +
+    "New and interrupted workspaces persist unless workspace.disposable is explicitly true; archive is the safe default cleanup action."
+  );
+}
+
+export const ProjectWorkspaceListToolArgsSchema = z
+  .object({
+    include_archived: z
+      .boolean()
+      .nullish()
+      .default(true)
+      .describe("Include archived authorized workspaces. Defaults to true."),
+    project_path: z
+      .string()
+      .trim()
+      .min(1)
+      .nullish()
+      .describe(
+        "Optional exact logical projectPath filter. Use only a path returned by availableProjects; invalid or unauthorized paths return invalid_scope."
+      ),
+  })
+  .strict();
+
+const ProjectWorkspaceTurnSummarySchema = z
+  .object({
+    taskId: z.string().min(1),
+    status: z.enum(["queued", "starting", "running", "completed", "interrupted", "error"]),
+    title: z.string().optional(),
+    prompt: z.string().optional(),
+    createdAt: z.string().optional(),
+    updatedAt: z.string().min(1),
+  })
+  .strict();
+
+export const ProjectWorkspaceSummarySchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    name: z.string().min(1),
+    projectPath: z.string().min(1),
+    projectDisplayName: z.string().min(1),
+    subProjectPath: z.string().nullable(),
+    title: z.string().optional(),
+    archived: z.boolean(),
+    transcriptOnly: z.boolean().optional(),
+    createdAt: z.string().optional(),
+    lastActivityAt: z.string().optional(),
+    updatedAt: z.string().optional(),
+    runtimeConfig: RuntimeConfigSchema.optional(),
+    execAiSettings: WorkspaceAISettingsSchema.optional(),
+    workspaceTurn: ProjectWorkspaceTurnSummarySchema.optional(),
+  })
+  .strict();
+
+const ProjectWorkspaceAvailableProjectSchema = z
+  .object({
+    projectPath: z.string().min(1),
+    displayName: z.string().min(1),
+    kind: z.enum(["parent", "sub_project"]),
+  })
+  .strict();
+
+export const ProjectWorkspaceListToolResultSchema = z
+  .object({
+    projectPath: z.string().min(1),
+    availableProjects: z.array(ProjectWorkspaceAvailableProjectSchema),
+    workspaces: z.array(ProjectWorkspaceSummarySchema),
+  })
+  .strict();
+
 const TaskHandleKindSchema = z.enum(["agent_task", "workspace_turn"]);
 const TaskThinkingLevelSchema = z.enum(THINKING_LEVELS);
 const TaskToolSpawnedTaskSchema = z
@@ -578,10 +864,9 @@ export const TaskToolQueuedResultSchema = z
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
-    note: z
-      .string()
-      .min(1)
-      .describe("Additional guidance for the caller (e.g., use task_await to monitor progress)."),
+    reasoningMode: OpenAIReasoningModeSchema.optional(),
+    interruption: ForegroundWaitInterruptionSchema.optional(),
+    note: z.string().min(1).describe("Additional guidance for the caller."),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -597,6 +882,21 @@ export const TaskToolQueuedResultSchema = z
       });
     }
   });
+
+export const TaskAttachFileArtifactsContainerSchema = z
+  .object({
+    attachFiles: TaskAttachFileArtifactsSchema,
+  })
+  .strict();
+
+export const ATTACH_FILE_ARTIFACT_GUIDANCE =
+  "Attached files are available in artifacts.attachFiles. Re-display an exact artifact without recreating child work by calling attach_file({ path, mediaType, filename }) with its descriptor values (omit filename when absent).";
+
+export function buildCompletedTaskResultNote(hasAttachFiles: boolean): string {
+  return hasAttachFiles
+    ? `${COMPLETED_REPORT_REFETCH_NOTE} ${ATTACH_FILE_ARTIFACT_GUIDANCE}`
+    : COMPLETED_REPORT_REFETCH_NOTE;
+}
 
 export const TaskToolCompletedResultSchema = z
   .object({
@@ -616,6 +916,9 @@ export const TaskToolCompletedResultSchema = z
     reports: z.array(TaskToolCompletedReportSchema).min(1).optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
+    reasoningMode: OpenAIReasoningModeSchema.optional(),
+    note: z.string().optional(),
+    artifacts: TaskAttachFileArtifactsContainerSchema.optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
@@ -726,52 +1029,6 @@ export const TaskAwaitToolArgsSchema = z
     }
   });
 
-export const SubagentGitPatchArtifactStatusSchema = z.enum([
-  "pending",
-  "ready",
-  "failed",
-  "skipped",
-]);
-
-export const SubagentGitProjectPatchArtifactSchema = z
-  .object({
-    projectPath: z.string(),
-    projectName: z.string(),
-    storageKey: z.string(),
-    status: SubagentGitPatchArtifactStatusSchema,
-    baseCommitSha: z.string().optional(),
-    headCommitSha: z.string().optional(),
-    commitCount: z.number().int().nonnegative().optional(),
-    mboxPath: z.string().optional(),
-    error: z.string().optional(),
-    appliedAtMs: z.number().int().nonnegative().optional(),
-  })
-  .strict();
-
-export const SubagentGitPatchArtifactSchema = z
-  .object({
-    childTaskId: z.string(),
-    parentWorkspaceId: z.string(),
-    createdAtMs: z.number().int().nonnegative(),
-    updatedAtMs: z.number().int().nonnegative().optional(),
-    status: SubagentGitPatchArtifactStatusSchema,
-    projectArtifacts: z.array(SubagentGitProjectPatchArtifactSchema),
-    readyProjectCount: z.number().int().nonnegative(),
-    failedProjectCount: z.number().int().nonnegative(),
-    skippedProjectCount: z.number().int().nonnegative(),
-    totalCommitCount: z.number().int().nonnegative(),
-  })
-  .strict();
-
-export type SubagentGitProjectPatchArtifact = z.infer<typeof SubagentGitProjectPatchArtifactSchema>;
-export type SubagentGitPatchArtifact = z.infer<typeof SubagentGitPatchArtifactSchema>;
-
-const TaskAwaitToolArtifactsSchema = z
-  .object({
-    gitFormatPatch: SubagentGitPatchArtifactSchema.optional(),
-  })
-  .strict();
-
 /**
  * Appended to completed task/workflow results so the model knows the report is durable
  * and can be re-fetched by ID after context compaction instead of re-running the work.
@@ -796,7 +1053,7 @@ export const TaskAwaitToolCompletedResultSchema = z
     elapsed_ms: z.number().optional(),
     exitCode: z.number().optional(),
     note: z.string().optional(),
-    artifacts: TaskAwaitToolArtifactsSchema.optional(),
+    artifacts: TaskResultArtifactsSchema.optional(),
   })
   .strict();
 
@@ -884,6 +1141,8 @@ export const TaskAwaitToolErrorResultSchema = z
   .object({
     status: z.literal("error"),
     taskId: z.string(),
+    handleKind: TaskHandleKindSchema.optional(),
+    workspaceId: z.string().optional(),
     error: z.string(),
     elapsed_ms: z.number().optional(),
     workflow: TaskAwaitWorkflowFailureStateSchema.optional(),
@@ -901,6 +1160,7 @@ export const TaskAwaitToolResultSchema = z
         TaskAwaitToolErrorResultSchema,
       ])
     ),
+    interruption: ForegroundWaitInterruptionSchema.optional(),
   })
   .strict();
 
@@ -1290,6 +1550,7 @@ export const TaskListToolTaskSchema = z
     thinkingLevel: TaskThinkingLevelSchema.optional(),
     sticky: z.boolean().optional(),
     workflowProgress: WorkflowProgressSummarySchema.optional(),
+    artifacts: TaskAttachFileArtifactsContainerSchema.optional(),
     depth: z.number().int().min(0),
   })
   .strict();
@@ -2146,6 +2407,14 @@ export const TOOL_DEFINITIONS = {
       "After calling this tool, do not paste the plan contents or mention the plan file path; the UI already shows the full plan.",
     schema: z.object({}),
   },
+  project_workspace_list: {
+    description:
+      "List canonical ordinary workspaces across the Project Chat's authorized project scopes in one bulk call. " +
+      "A parent Project Chat can see its root plus registered direct non-system child sub-projects; a child Project Chat is restricted to its exact scope. " +
+      "Returns availableProjects (including empty scopes), logical project identity, runtime, fixed Exec workspace-turn AI settings, canonical activity recency, and latest durable task context when available. " +
+      "Use only backend-returned project paths and workspace IDs; never synthesize filesystem descendants or IDs.",
+    schema: ProjectWorkspaceListToolArgsSchema,
+  },
   task: {
     description: buildTaskToolDescription(undefined),
     schema: TaskToolArgsSchema,
@@ -2162,6 +2431,7 @@ export const TOOL_DEFINITIONS = {
       "\n\nWHEN TO USE: only call task_await when the current user request depends on a task's output, or when synthesis/integration of a previously-spawned task is the next logical step. " +
       "Do not call task_await solely because active tasks exist; for unrelated user messages, respond directly and let tasks continue in the background. " +
       "If a synthetic/system follow-up explicitly says active background tasks or workflow runs block your turn, treat that as a dependency and await the listed IDs. " +
+      "When an in-progress sub-agent report is already in context, do not reflexively wait again: normally acknowledge or steer that child with task_send_message first. Silence is appropriate only for a routine periodic report you explicitly requested that needs no decision or course correction. " +
       "When a terminal wake-up says a sub-agent report or failure is already injected into context, integrate it directly — do NOT call task_await for it. When a wake-up asks you to retrieve a workspace turn's terminal output, call task_await with the listed IDs and timeout_secs: 0 (a one-shot retrieval, not a wait). " +
       "\n\nIMPORTANT: Do not call task_await in the same parallel tool-call batch as task, bash, or workflow_run — " +
       "the taskId/runId is not available until the spawning tool returns. " +
@@ -2173,7 +2443,7 @@ export const TOOL_DEFINITIONS = {
       "For bash tasks, you may optionally pass filter/filter_exclude to include/exclude output lines by regex. " +
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
-      "\n\nBy default (min_completed=1) this returns as soon as the FIRST awaited task completes, so you can begin dependent work on that result while the rest keep running — then call task_await again for the remainder. " +
+      "\n\nBy default (min_completed=1) this returns as soon as the FIRST awaited task completes, so you can begin dependent work on that terminal result while the rest keep running — then call task_await again for the remainder when its output is needed. " +
       "This is ideal for independent lanes (variants) or any case where per-result work exists. " +
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
@@ -2185,9 +2455,9 @@ export const TOOL_DEFINITIONS = {
   },
   task_send_message: {
     description:
-      "Send updated guidance to a running descendant sub-agent without terminating or recreating it. " +
-      "If the child is busy, the message is queued for the requested boundary; tool-end is the default so corrections can take effect after the child's next tool call. Queued tasks have the guidance appended to their durable launch prompt. " +
-      "Use this when a new user message corrects or refines work that an active sub-agent is already performing. " +
+      "Send guidance to a running descendant sub-agent without terminating or recreating it. " +
+      "Use this after an in-progress child report to acknowledge it and say whether to continue, narrow, redirect, correct, or answer a question. Unless the report is a routine periodic update you explicitly requested, prefer sending useful guidance before waiting again. " +
+      "Also use it when a new user message corrects or refines active work. If the child is busy, the message is queued for the requested boundary; tool-end is the default so guidance can take effect after the child's next tool call. Queued tasks have the guidance appended to their durable launch prompt. " +
       "This tool only accepts sub-agent task IDs in the current workspace's descendant tree; it does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
@@ -2247,7 +2517,7 @@ export const TOOL_DEFINITIONS = {
   agent_report: {
     description:
       "Send an incremental update from a sub-agent to its parent workspace and wake the parent. " +
-      "Call this whenever the parent should see important progress or a finding before the task is complete; it may be called multiple times. " +
+      "Use it for a question, blocker, unexpected finding, or other progress the parent should act on before completion; avoid routine narration unless the parent explicitly requested periodic reports. It may be called multiple times. " +
       "Do not use it for the final result—the final assistant message completes the sub-agent task.",
     schema: AgentReportToolArgsSchema,
   },
@@ -3059,6 +3329,7 @@ export type BridgeableToolName =
   // (webFetch_20250910) that has no execute(). ToolBridge's hasExecute filter will drop it
   // from the PTC sandbox for those sessions. That silent absence is intentional and accepted.
   | "web_fetch"
+  | "project_workspace_list"
   | "task"
   | "task_await"
   | "task_apply_git_patch"
@@ -3087,6 +3358,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   file_edit_insert: FileEditInsertToolResultSchema,
   file_edit_replace_string: FileEditReplaceStringToolResultSchema,
   web_fetch: WebFetchToolResultSchema,
+  project_workspace_list: ProjectWorkspaceListToolResultSchema,
   task: TaskToolResultSchema,
   task_await: TaskAwaitToolResultSchema,
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
@@ -3154,6 +3426,8 @@ export function getAvailableTools(
      * so sub-agents (child task workspaces) pass false to keep them from
      * pinning code to a pane the user never sees. Defaults to true.
      */
+    /** Whether Project Chat's canonical same-project workspace listing tool is available. */
+    enableProjectWorkspaceList?: boolean;
     enableReviewPane?: boolean;
     /** @deprecated Mux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
@@ -3168,6 +3442,7 @@ export function getAvailableTools(
   const enableTimelineEvent = options?.enableTimelineEvent ?? false;
   const enableToolSearch = options?.enableToolSearch ?? false;
   const enableReviewPane = options?.enableReviewPane ?? true;
+  const enableProjectWorkspaceList = options?.enableProjectWorkspaceList ?? false;
 
   // Base tools available for all models
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
@@ -3203,6 +3478,7 @@ export function getAvailableTools(
     "ask_user_question",
     "propose_plan",
     "bash",
+    ...(enableProjectWorkspaceList ? ["project_workspace_list"] : []),
     "task",
     "task_await",
     "task_apply_git_patch",

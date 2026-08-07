@@ -12,7 +12,12 @@ import type {
 } from "@/common/config/schemas/appConfigOnDisk";
 import type { UserPreferences } from "@/common/config/schemas/userPreferences";
 import type { z } from "zod";
-import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
+import type {
+  ProjectChatConfigSchema,
+  ProjectChatInfoSchema,
+  ProjectConfigSchema,
+  WorkspaceConfigSchema,
+} from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 import type { RuntimeEnablementId } from "./runtime";
 import type { TaskSettings, SubagentAiDefaults } from "./tasks";
@@ -21,6 +26,8 @@ import type { ThinkingLevel } from "./thinking";
 import type { GoalDefaults } from "@/constants/goals";
 
 export type Workspace = z.infer<typeof WorkspaceConfigSchema>;
+export type ProjectChatConfig = z.infer<typeof ProjectChatConfigSchema>;
+export type ProjectChatInfo = z.infer<typeof ProjectChatInfoSchema>;
 
 export type ProjectConfig = z.infer<typeof ProjectConfigSchema>;
 

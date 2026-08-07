@@ -32,6 +32,7 @@ import {
 } from "@/common/constants/storage";
 import { Button } from "@/browser/components/Button/Button";
 import { Skeleton } from "@/browser/components/Skeleton/Skeleton";
+import { ProjectChatPage } from "../ProjectChatPage/ProjectChatPage";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
 
 interface ProjectPageProps {
@@ -59,11 +60,26 @@ function archivedListsEqual(
   return next.every((w) => prevIds.has(w.id));
 }
 
-/**
- * Project page shown when a project is selected but no workspace is active.
- * Combines workspace creation with archived workspaces view.
- */
-export const ProjectPage: React.FC<ProjectPageProps> = ({
+export const ProjectPage: React.FC<ProjectPageProps> = (props) => {
+  // The base project route is the persistent orchestration surface. Explicit draft routes keep the
+  // existing manual workspace-creation UI available as a secondary escape hatch.
+  if (props.pendingDraftId == null) {
+    return (
+      <ProjectChatPage
+        key={props.projectPath}
+        projectPath={props.projectPath}
+        projectName={props.projectName}
+        leftSidebarCollapsed={props.leftSidebarCollapsed}
+        onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
+      />
+    );
+  }
+
+  return <WorkspaceDraftPage {...props} />;
+};
+
+/** Manual workspace creation remains available from the project row's plus action. */
+const WorkspaceDraftPage: React.FC<ProjectPageProps> = ({
   projectPath,
   projectName,
   leftSidebarCollapsed,

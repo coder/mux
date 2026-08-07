@@ -1,8 +1,11 @@
+import * as nodePath from "node:path";
+
 import { tool } from "ai";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { createDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnlyFileParts";
 import type { AttachFileToolResult } from "@/common/types/tools";
+import { WORKSPACE_TURN_TASK_ARTIFACTS_DIR } from "@/common/constants/taskArtifacts";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { readAttachFileFromPath } from "@/node/utils/attachments/readAttachmentFromPath";
@@ -29,6 +32,14 @@ export const createAttachFileTool: ToolFactory = (config: ToolConfiguration) => 
           cwd: config.cwd,
           runtime: config.runtime,
           abortSignal,
+          ...(config.workspaceSessionDir != null
+            ? {
+                localArtifactRoot: nodePath.join(
+                  config.workspaceSessionDir,
+                  WORKSPACE_TURN_TASK_ARTIFACTS_DIR
+                ),
+              }
+            : {}),
         });
 
         if (result.type === "display") {

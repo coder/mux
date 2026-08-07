@@ -31,6 +31,8 @@ describe("subagentReportEnvelope", () => {
       reportMarkdown: "Working on it",
       model: "anthropic:claude-opus-4-6",
       thinkingLevel: "high" as const,
+      workspaceId: "ordinary-workspace",
+      turnId: "turn-1",
     };
 
     expect(parseSubagentReportEnvelope(formatSubagentReportEnvelope(report))).toEqual(report);

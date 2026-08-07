@@ -10,6 +10,24 @@ describe("MessageQueue", () => {
     queue = new MessageQueue();
   });
 
+  it("consumes a queued child update after its report is delivered through the wait result", () => {
+    const interruption = {
+      reason: "progress_report_received",
+      sourceTaskId: "child-task",
+      report: {
+        agentType: "explore",
+        title: "Progress",
+        reportMarkdown: "Found the queue path.",
+      },
+    } as const;
+
+    queue.add("Child update", undefined, { foregroundWaitInterruption: interruption });
+
+    expect(queue.getNextForegroundWaitInterruption()).toEqual(interruption);
+    expect(queue.consumeNextForegroundWaitInterruption(interruption)).toEqual({});
+    expect(queue.getMessages()).toEqual([]);
+  });
+
   describe("getDisplayText", () => {
     it("should return joined messages for normal messages", () => {
       queue.add("First message");

@@ -4,14 +4,22 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { isProjectSessionId } from "@/common/constants/projectChat";
 import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
 
 function makeConfig(rootDir: string): {
   sessionsDir: string;
+  projectSessionsDir: string;
   getSessionDir: (id: string) => string;
 } {
   const sessionsDir = path.join(rootDir, "sessions");
-  return { sessionsDir, getSessionDir: (id: string) => path.join(sessionsDir, id) };
+  const projectSessionsDir = path.join(rootDir, "project-sessions");
+  return {
+    sessionsDir,
+    projectSessionsDir,
+    getSessionDir: (id: string) =>
+      path.join(isProjectSessionId(id) ? projectSessionsDir : sessionsDir, id),
+  };
 }
 
 describe("TerminalAttentionStore", () => {
@@ -106,12 +114,19 @@ describe("TerminalAttentionStore", () => {
     expect(pending.map((n) => n.sourceId)).toEqual(["task-a", "wst-b"]);
   });
 
-  test("listPendingOwnerWorkspaceIds finds pending notifications across session dirs", async () => {
+  test("listPendingOwnerWorkspaceIds scans ordinary and Project Chat session roots", async () => {
     const store = new TerminalAttentionStore(makeConfig(rootDir));
     await store.enqueueIfAbsent({
       ownerWorkspaceId: "owner-b",
       sourceKind: "workspace_turn",
       sourceId: "wst-b",
+      outputDelivery: "requires_task_await",
+      terminalOutcome: "completed",
+    });
+    await store.enqueueIfAbsent({
+      ownerWorkspaceId: "project-session_aaaaaaaaaa",
+      sourceKind: "workspace_turn",
+      sourceId: "wst-project",
       outputDelivery: "requires_task_await",
       terminalOutcome: "completed",
     });
@@ -126,6 +141,9 @@ describe("TerminalAttentionStore", () => {
     await store.markDelivered("owner-a", delivered!.id);
     await fsPromises.mkdir(path.join(rootDir, "sessions", "owner-empty"), { recursive: true });
 
-    expect(await store.listPendingOwnerWorkspaceIds()).toEqual(["owner-b"]);
+    expect(await store.listPendingOwnerWorkspaceIds()).toEqual([
+      "owner-b",
+      "project-session_aaaaaaaaaa",
+    ]);
   });
 });

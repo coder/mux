@@ -9,6 +9,7 @@ import { DesktopActionToolCall } from "../DesktopActionToolCall";
 import { DesktopScreenshotToolCall } from "../DesktopScreenshotToolCall";
 import { GenericToolCall } from "../GenericToolCall";
 import { GoogleSearchToolCall } from "../GoogleSearchToolCall";
+import { ProjectWorkspaceListToolCall } from "../ProjectWorkspaceListToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
@@ -87,6 +88,12 @@ describe("getToolComponent", () => {
   test("returns DesktopActionToolCall for desktop_click", () => {
     const component = getToolComponent("desktop_click", { x: 12, y: 34 });
     expect(component).toBe(DesktopActionToolCall);
+  });
+
+  test("returns ProjectWorkspaceListToolCall for project_workspace_list", () => {
+    expect(getToolComponent("project_workspace_list", { include_archived: true })).toBe(
+      ProjectWorkspaceListToolCall
+    );
   });
 
   test("returns SetGoalToolCall for set_goal", () => {

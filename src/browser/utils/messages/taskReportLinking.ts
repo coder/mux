@@ -3,6 +3,7 @@ import { THINKING_LEVELS, type ThinkingLevel } from "@/common/types/thinking";
 
 export interface LinkedTaskReport {
   taskId: string;
+  workspaceId?: string;
   reportMarkdown: string;
   title?: string;
   // Report-time AI settings: fresher than the spawn result when a plan child
@@ -17,32 +18,24 @@ export interface BashTaskSpawnInfo {
 }
 
 export interface TaskReportLinking {
-  /**
-   * Completed task reports indexed by taskId.
-   *
-   * If the same taskId appears multiple times (multiple task_await calls), the last one
-   * in the message history wins.
-   */
+  /** Canonical report linkage for current task results. */
+  reportByWorkspaceId: Map<string, LinkedTaskReport>;
+  /** Legacy report linkage for historical results that have no workspaceId. */
   reportByTaskId: Map<string, LinkedTaskReport>;
 
-  /**
-   * Task IDs whose completed report should be rendered under the original `task` tool call,
-   * instead of being duplicated under the corresponding `task_await` result.
-   */
+  /** Canonical workspace IDs whose report is already shown on the spawning execution card. */
+  suppressReportInAwaitWorkspaceIds: Set<string>;
+  /** Legacy task IDs whose report is already shown on the spawning execution card. */
   suppressReportInAwaitTaskIds: Set<string>;
 
-  /**
-   * Titles from the original `task` tool call input (`args.title`), indexed by taskId.
-   *
-   * This is a best-effort fallback for task_await rows when the completed result omitted a title
-   * (e.g. older agent_report payloads).
-   */
+  /** Spawn titles indexed by canonical workspaceId for current task results. */
+  spawnTitleByWorkspaceId: Map<string, string>;
+  /** Legacy spawn titles indexed by taskId. */
   spawnTitleByTaskId: Map<string, string>;
 
-  /**
-   * Agent types from the original `task` tool call input (`args.agentId` / `args.subagent_type`),
-   * indexed by taskId.
-   */
+  /** Spawn agent types indexed by canonical workspaceId for current task results. */
+  spawnAgentTypeByWorkspaceId: Map<string, string>;
+  /** Legacy spawn agent types indexed by taskId. */
   spawnAgentTypeByTaskId: Map<string, string>;
 
   /**
@@ -52,37 +45,49 @@ export interface TaskReportLinking {
   bashSpawnByTaskId: Map<string, BashTaskSpawnInfo>;
 }
 
-function getTaskIdsFromToolResult(result: unknown): string[] {
+interface TaskExecutionRef {
+  taskId: string;
+  workspaceId?: string;
+}
+
+function getTaskExecutionRefs(result: unknown): TaskExecutionRef[] {
   if (typeof result !== "object" || result === null) return [];
 
-  const taskIds = new Set<string>();
+  const refs = new Map<string, TaskExecutionRef>();
+  const remember = (taskIdValue: unknown, workspaceIdValue?: unknown): void => {
+    if (typeof taskIdValue !== "string" || taskIdValue.trim().length === 0) return;
+    const taskId = taskIdValue.trim();
+    const workspaceId =
+      typeof workspaceIdValue === "string" && workspaceIdValue.trim().length > 0
+        ? workspaceIdValue.trim()
+        : undefined;
+    const existing = refs.get(taskId);
+    refs.set(taskId, workspaceId ? { taskId, workspaceId } : (existing ?? { taskId }));
+  };
 
-  const taskId = (result as { taskId?: unknown }).taskId;
-  if (typeof taskId === "string" && taskId.trim().length > 0) {
-    taskIds.add(taskId.trim());
-  }
+  remember(
+    (result as { taskId?: unknown }).taskId,
+    (result as { workspaceId?: unknown }).workspaceId
+  );
 
   const pluralTaskIds = (result as { taskIds?: unknown }).taskIds;
   if (Array.isArray(pluralTaskIds)) {
-    for (const candidate of pluralTaskIds) {
-      if (typeof candidate === "string" && candidate.trim().length > 0) {
-        taskIds.add(candidate.trim());
-      }
+    for (const taskId of pluralTaskIds) remember(taskId);
+  }
+
+  for (const key of ["tasks", "reports"] as const) {
+    const entries = (result as Record<typeof key, unknown>)[key];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (typeof entry !== "object" || entry === null) continue;
+      remember(
+        (entry as { taskId?: unknown }).taskId,
+        (entry as { workspaceId?: unknown }).workspaceId
+      );
     }
   }
 
-  const tasks = (result as { tasks?: unknown }).tasks;
-  if (Array.isArray(tasks)) {
-    for (const task of tasks) {
-      if (typeof task !== "object" || task === null) continue;
-      const candidate = (task as { taskId?: unknown }).taskId;
-      if (typeof candidate === "string" && candidate.trim().length > 0) {
-        taskIds.add(candidate.trim());
-      }
-    }
-  }
-
-  return Array.from(taskIds);
+  return Array.from(refs.values());
 }
 
 function getTitleFromTaskToolArgs(args: unknown): string | null {
@@ -143,72 +148,76 @@ function getBashSpawnInfoFromArgs(args: unknown): BashTaskSpawnInfo | null {
  * helps the renderer place the final report in a more intuitive location.
  */
 export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskReportLinking {
-  // First pass: record which taskIds have a visible `task` tool call (and capture spawn titles).
-  const taskToolCallTaskIds = new Set<string>();
+  const taskToolCallWorkspaceIds = new Set<string>();
+  const legacyTaskToolCallTaskIds = new Set<string>();
+  const spawnTitleByWorkspaceId = new Map<string, string>();
   const spawnTitleByTaskId = new Map<string, string>();
+  const spawnAgentTypeByWorkspaceId = new Map<string, string>();
   const spawnAgentTypeByTaskId = new Map<string, string>();
   const bashSpawnByTaskId = new Map<string, BashTaskSpawnInfo>();
+
   for (const msg of messages) {
     if (msg.type !== "tool") continue;
 
     if (msg.toolName === "bash") {
       const taskId = getBashSpawnTaskId(msg.result);
       const spawnInfo = taskId ? getBashSpawnInfoFromArgs(msg.args) : null;
-      if (taskId && spawnInfo) {
-        bashSpawnByTaskId.set(taskId, spawnInfo);
-      }
+      if (taskId && spawnInfo) bashSpawnByTaskId.set(taskId, spawnInfo);
       continue;
     }
 
     if (msg.toolName !== "task") continue;
 
-    const taskIds = getTaskIdsFromToolResult(msg.result);
-    if (taskIds.length === 0) continue;
-
+    const executionRefs = getTaskExecutionRefs(msg.result);
     const title = getTitleFromTaskToolArgs(msg.args);
     const agentType = getAgentTypeFromTaskToolArgs(msg.args);
-    for (const taskId of taskIds) {
-      taskToolCallTaskIds.add(taskId);
-      if (title) {
-        spawnTitleByTaskId.set(taskId, title);
+    for (const executionRef of executionRefs) {
+      if (executionRef.workspaceId) {
+        taskToolCallWorkspaceIds.add(executionRef.workspaceId);
+        if (title) spawnTitleByWorkspaceId.set(executionRef.workspaceId, title);
+        if (agentType) spawnAgentTypeByWorkspaceId.set(executionRef.workspaceId, agentType);
+        continue;
       }
-      if (agentType) {
-        spawnAgentTypeByTaskId.set(taskId, agentType);
-      }
+
+      // Historical results did not expose canonical workspaceId, so keep taskId linking only
+      // for those persisted transcripts.
+      legacyTaskToolCallTaskIds.add(executionRef.taskId);
+      if (title) spawnTitleByTaskId.set(executionRef.taskId, title);
+      if (agentType) spawnAgentTypeByTaskId.set(executionRef.taskId, agentType);
     }
   }
 
-  // Second pass: collect completed reports from `task_await` results.
+  const reportByWorkspaceId = new Map<string, LinkedTaskReport>();
   const reportByTaskId = new Map<string, LinkedTaskReport>();
   for (const msg of messages) {
     if (msg.type !== "tool" || msg.toolName !== "task_await") continue;
 
     const rawResult = msg.result;
-    if (typeof rawResult !== "object" || rawResult === null) continue;
-    if (!("results" in rawResult)) continue;
-
+    if (typeof rawResult !== "object" || rawResult === null || !("results" in rawResult)) continue;
     const results = (rawResult as { results?: unknown }).results;
     if (!Array.isArray(results)) continue;
 
-    for (const r of results) {
-      if (typeof r !== "object" || r === null) continue;
+    for (const result of results) {
+      if (typeof result !== "object" || result === null) continue;
+      if ((result as { status?: unknown }).status !== "completed") continue;
 
-      const status = (r as { status?: unknown }).status;
-      if (status !== "completed") continue;
-
-      const taskId = (r as { taskId?: unknown }).taskId;
-      if (typeof taskId !== "string" || taskId.trim().length === 0) continue;
-
-      const reportMarkdown = (r as { reportMarkdown?: unknown }).reportMarkdown;
+      const taskIdValue = (result as { taskId?: unknown }).taskId;
+      const reportMarkdown = (result as { reportMarkdown?: unknown }).reportMarkdown;
+      if (typeof taskIdValue !== "string" || taskIdValue.trim().length === 0) continue;
       if (typeof reportMarkdown !== "string") continue;
 
-      const title = (r as { title?: unknown }).title;
-      const modelString = (r as { modelString?: unknown }).modelString;
-      const thinkingLevel = (r as { thinkingLevel?: unknown }).thinkingLevel;
-
-      // Last-wins (history order)
-      reportByTaskId.set(taskId, {
+      const taskId = taskIdValue.trim();
+      const workspaceIdValue = (result as { workspaceId?: unknown }).workspaceId;
+      const workspaceId =
+        typeof workspaceIdValue === "string" && workspaceIdValue.trim().length > 0
+          ? workspaceIdValue.trim()
+          : undefined;
+      const title = (result as { title?: unknown }).title;
+      const modelString = (result as { modelString?: unknown }).modelString;
+      const thinkingLevel = (result as { thinkingLevel?: unknown }).thinkingLevel;
+      const linkedReport: LinkedTaskReport = {
         taskId,
+        workspaceId,
         reportMarkdown,
         title: typeof title === "string" ? title : undefined,
         modelString:
@@ -220,24 +229,36 @@ export function computeTaskReportLinking(messages: DisplayedMessage[]): TaskRepo
           (THINKING_LEVELS as readonly string[]).includes(thinkingLevel)
             ? (thinkingLevel as ThinkingLevel)
             : undefined,
-      });
+      };
+
+      // Canonical results never depend on the opaque execution ID for UI linkage.
+      if (workspaceId) reportByWorkspaceId.set(workspaceId, linkedReport);
+      else reportByTaskId.set(taskId, linkedReport);
     }
   }
 
-  // If a task has both a visible spawn card and a non-empty report, suppress the report
-  // duplication under `task_await`.
+  const suppressReportInAwaitWorkspaceIds = new Set<string>();
+  for (const [workspaceId, completed] of reportByWorkspaceId) {
+    if (taskToolCallWorkspaceIds.has(workspaceId) && completed.reportMarkdown.trim().length > 0) {
+      suppressReportInAwaitWorkspaceIds.add(workspaceId);
+    }
+  }
+
   const suppressReportInAwaitTaskIds = new Set<string>();
   for (const [taskId, completed] of reportByTaskId) {
-    if (!taskToolCallTaskIds.has(taskId)) continue;
-    if (completed.reportMarkdown.trim().length === 0) continue;
-
-    suppressReportInAwaitTaskIds.add(taskId);
+    if (legacyTaskToolCallTaskIds.has(taskId) && completed.reportMarkdown.trim().length > 0) {
+      suppressReportInAwaitTaskIds.add(taskId);
+    }
   }
 
   return {
+    reportByWorkspaceId,
     reportByTaskId,
+    suppressReportInAwaitWorkspaceIds,
     suppressReportInAwaitTaskIds,
+    spawnTitleByWorkspaceId,
     spawnTitleByTaskId,
+    spawnAgentTypeByWorkspaceId,
     spawnAgentTypeByTaskId,
     bashSpawnByTaskId,
   };

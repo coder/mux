@@ -1,4 +1,3 @@
-import type { Dirent } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
@@ -78,7 +77,9 @@ const TerminalAttentionNotificationSchema = z
  * by skipping malformed files at read time.
  */
 export class TerminalAttentionStore {
-  constructor(private readonly config: Pick<Config, "getSessionDir" | "sessionsDir">) {}
+  constructor(
+    private readonly config: Pick<Config, "getSessionDir" | "sessionsDir" | "projectSessionsDir">
+  ) {}
 
   private dir(ownerWorkspaceId: string): string {
     assert(ownerWorkspaceId.trim().length > 0, "TerminalAttentionStore requires ownerWorkspaceId");
@@ -163,23 +164,27 @@ export class TerminalAttentionStore {
   }
 
   async listPendingOwnerWorkspaceIds(): Promise<string[]> {
-    let entries: Dirent[];
-    try {
-      entries = await fsPromises.readdir(this.config.sessionsDir, { withFileTypes: true });
-    } catch (error) {
-      if (isErrnoWithCode(error, "ENOENT")) return [];
-      throw error;
-    }
+    // Terminal wake-ups are owner-session scoped. Project Chat owners live in a separate root, so
+    // startup recovery must scan both roots while still resolving each owner through getSessionDir.
+    const entriesByRoot = await Promise.all(
+      [this.config.sessionsDir, this.config.projectSessionsDir].map(async (sessionRoot) => {
+        try {
+          return await fsPromises.readdir(sessionRoot, { withFileTypes: true });
+        } catch (error) {
+          if (isErrnoWithCode(error, "ENOENT")) return [];
+          throw error;
+        }
+      })
+    );
 
-    const ownerWorkspaceIds: string[] = [];
-    for (const entry of entries) {
+    const ownerWorkspaceIds = new Set<string>();
+    for (const entry of entriesByRoot.flat()) {
       if (!entry.isDirectory()) continue;
       if ((await this.listPending(entry.name)).length > 0) {
-        ownerWorkspaceIds.push(entry.name);
+        ownerWorkspaceIds.add(entry.name);
       }
     }
-    ownerWorkspaceIds.sort();
-    return ownerWorkspaceIds;
+    return [...ownerWorkspaceIds].sort();
   }
 
   async delete(ownerWorkspaceId: string, id: string): Promise<void> {

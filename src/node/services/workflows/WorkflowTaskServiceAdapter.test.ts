@@ -12,12 +12,17 @@ import {
   WorkflowTaskServiceAdapter,
 } from "./WorkflowTaskServiceAdapter";
 
+function taskResult(
+  taskId: string,
+  status: TaskCreateResult["status"] = "running"
+): TaskCreateResult {
+  return { taskId, workspaceId: taskId, kind: "agent", status };
+}
+
 describe("WorkflowTaskServiceAdapter", () => {
   test("spawns a workflow child task with workflow metadata and returns its report", async () => {
     const outputSchema = { type: "object", properties: { claims: { type: "array" } } };
-    const create = mock(async (_args: unknown) =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async (_args: unknown) => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({
       reportMarkdown: "child report",
       planFilePath: "/tmp/mux/plans/repo/task_1.md",
@@ -64,9 +69,7 @@ describe("WorkflowTaskServiceAdapter", () => {
   test("propagates terminal task failures (model refusal) instead of hanging", async () => {
     const refusalMessage =
       "The model refused to continue (finishReason: content-filter): anthropic:claude-fable-5.";
-    const create = mock(async (_args: unknown) =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async (_args: unknown) => Ok(taskResult("task_1", "running")));
     // TaskService rejects the report wait when the child settles terminally
     // (e.g. model_refusal). The adapter must surface that rejection so the
     // workflow step fails fast with the refusal text.
@@ -89,7 +92,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
-      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+      return Ok(taskResult("task_1", "running"));
     });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -118,12 +121,12 @@ describe("WorkflowTaskServiceAdapter", () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
-      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+      return Ok(taskResult("task_1", "running"));
     });
     let createManyArgs: unknown;
     const createMany = mock(async (args: unknown) => {
       createManyArgs = args;
-      return Ok([{ taskId: "task_2", kind: "agent" as const, status: "starting" as const }]);
+      return Ok([taskResult("task_2", "starting")]);
     });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -159,7 +162,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
-      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+      return Ok(taskResult("task_1", "running"));
     });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -184,7 +187,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
-      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+      return Ok(taskResult("task_1", "running"));
     });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -215,7 +218,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     let createArgs: unknown;
     const create = mock(async (args: unknown) => {
       createArgs = args;
-      return Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const });
+      return Ok(taskResult("task_1", "running"));
     });
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -242,19 +245,14 @@ describe("WorkflowTaskServiceAdapter", () => {
           onTaskReserved?: (index: number, result: TaskCreateResult) => Promise<void> | void;
         }
       ) => {
-        const results = [
-          { taskId: "task_1", kind: "agent" as const, status: "starting" as const },
-          { taskId: "task_2", kind: "agent" as const, status: "queued" as const },
-        ];
+        const results = [taskResult("task_1", "starting"), taskResult("task_2", "queued")];
         for (const [index, result] of results.entries()) {
           await options?.onTaskReserved?.(index, result);
         }
         return Ok(results);
       }
     );
-    const create = mock(async () =>
-      Ok({ taskId: "unused", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("unused", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const adapter = new WorkflowTaskServiceAdapter({
       taskService: { create, createMany, waitForAgentReport },
@@ -313,17 +311,9 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("stamps the workflow name onto spawned tasks when known", async () => {
-    const create = mock(async (_args: unknown) =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async (_args: unknown) => Ok(taskResult("task_1", "running")));
     const createMany = mock(async (args: unknown[]) =>
-      Ok(
-        args.map((_, index) => ({
-          taskId: `task_${index}`,
-          kind: "agent" as const,
-          status: "queued" as const,
-        }))
-      )
+      Ok(args.map((_, index) => taskResult(`task_${index}`, "queued")))
     );
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
@@ -349,9 +339,7 @@ describe("WorkflowTaskServiceAdapter", () => {
     const markWorkflowRunEnded = mock(async (_runId: string) => undefined);
     const adapter = new WorkflowTaskServiceAdapter({
       taskService: {
-        create: mock(async () =>
-          Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-        ),
+        create: mock(async () => Ok(taskResult("task_1", "running"))),
         waitForAgentReport: mock(async () => ({ reportMarkdown: "unused" })),
         markWorkflowRunEnded,
       },
@@ -367,9 +355,7 @@ describe("WorkflowTaskServiceAdapter", () => {
 
   test("passes workflow wait options into report waits", async () => {
     const abortController = new AbortController();
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "child report" }));
     const adapter = new WorkflowTaskServiceAdapter({
       taskService: { create, waitForAgentReport },
@@ -393,9 +379,7 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("dry-runs before applying workflow patch artifacts", async () => {
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const calls: unknown[] = [];
     const adapter = new WorkflowTaskServiceAdapter({
@@ -498,9 +482,7 @@ describe("WorkflowTaskServiceAdapter", () => {
         },
       })
     );
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const applyPatchCalls: unknown[] = [];
     const applyPatchArtifact = mock(async (args: unknown) => {
@@ -545,9 +527,7 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("returns dry-run conflicts without applying workflow patches", async () => {
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const calls: unknown[] = [];
     const adapter = new WorkflowTaskServiceAdapter({
@@ -581,9 +561,7 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("requires live Project Trust before applying workflow patches", async () => {
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const applyPatchArtifact = mock(async () => ({
       success: true as const,
@@ -612,9 +590,7 @@ describe("WorkflowTaskServiceAdapter", () => {
   });
 
   test("interrupts preserved descendant task workspaces for the parent workspace", async () => {
-    const create = mock(async () =>
-      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
-    );
+    const create = mock(async () => Ok(taskResult("task_1", "running")));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
     const terminateAllDescendantAgentTasks = mock(async () => ["task_1"]);
     const adapter = new WorkflowTaskServiceAdapter({

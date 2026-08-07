@@ -169,6 +169,16 @@ describe("task_terminate tool", () => {
         Promise.resolve(Ok({ workspaceId: "child-workspace" }))
     );
     const taskService = {
+      getScopedExecutionSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "ok" as const,
+          source: "canonical" as const,
+          workspaceId: "child-workspace",
+          handle: {
+            launchPolicy: { kind: "workspace_turn" as const },
+          },
+        })
+      ),
       interruptWorkspaceTurn,
       terminateDescendantAgentTask: mock(() => {
         throw new Error("workspace turn IDs must not reach agent task termination");
@@ -178,12 +188,18 @@ describe("task_terminate tool", () => {
     const tool = createTaskTerminateTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
-      tool.execute!({ task_ids: ["wst_turn"] }, mockToolCallOptions)
+      tool.execute!({ task_ids: ["exe_turn", "wst_turn"] }, mockToolCallOptions)
     );
 
+    expect(interruptWorkspaceTurn).toHaveBeenCalledWith("root-workspace", "exe_turn");
     expect(interruptWorkspaceTurn).toHaveBeenCalledWith("root-workspace", "wst_turn");
     expect(result).toEqual({
       results: [
+        {
+          status: "interrupted",
+          taskId: "exe_turn",
+          note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+        },
         {
           status: "interrupted",
           taskId: "wst_turn",

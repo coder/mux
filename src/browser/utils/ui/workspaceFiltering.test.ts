@@ -21,6 +21,7 @@ interface WorkspaceFixtureOptions {
   projectPath?: string;
   projectName?: string;
   isInitializing?: boolean;
+  executionId?: string;
   parentWorkspaceId?: string;
   taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
   reportedAt?: string;
@@ -51,6 +52,7 @@ const createWorkspace = (
     namedWorkspacePath: `${projectPath}/workspace-${id}`,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     isInitializing: options.isInitializing,
+    executionId: options.executionId,
     parentWorkspaceId: options.parentWorkspaceId,
     taskStatus: options.taskStatus,
     reportedAt: options.reportedAt,
@@ -768,6 +770,61 @@ describe("partitionWorkspacesByAge pinning", () => {
 
     expect(recent.map((w) => w.id)).toEqual(["pinned-root", "child"]);
     expect(getAllOld(buckets).map((w) => w.id)).toEqual(["old-free"]);
+  });
+});
+
+describe("execution workspace sidebar classification", () => {
+  it("keeps canonical executions in the ordinary workspace row flow", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("canonical-active", {
+        executionId: "exe_active",
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+      }),
+      createWorkspace("canonical-completed", {
+        executionId: "exe_completed",
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+      }),
+    ];
+
+    const depths = computeWorkspaceDepthMap(workspaces);
+    const rowMeta = computeAgentRowRenderMeta(workspaces, depths);
+
+    expect(depths["canonical-active"]).toBe(0);
+    expect(rowMeta.get("canonical-active")?.rowKind).toBe("primary");
+    expect(computeDelegatedActivityByWorkspaceId(workspaces).has("parent")).toBe(false);
+    expect(filterVisibleAgentRows(workspaces).map((workspace) => workspace.id)).toEqual([
+      "parent",
+      "canonical-active",
+      "canonical-completed",
+    ]);
+  });
+
+  it("preserves legacy agent nesting, activity, and completed-child hiding", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("legacy-active", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+      }),
+      createWorkspace("legacy-completed", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+      }),
+    ];
+
+    const depths = computeWorkspaceDepthMap(workspaces);
+    const rowMeta = computeAgentRowRenderMeta(workspaces, depths);
+
+    expect(depths["legacy-active"]).toBe(1);
+    expect(rowMeta.get("legacy-active")?.rowKind).toBe("subagent");
+    expect(computeDelegatedActivityByWorkspaceId(workspaces).get("parent")?.activeCount).toBe(1);
+    expect(filterVisibleAgentRows(workspaces).map((workspace) => workspace.id)).toEqual([
+      "parent",
+      "legacy-active",
+    ]);
   });
 });
 

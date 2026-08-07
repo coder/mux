@@ -7,6 +7,7 @@ import {
   createSubagentReportMessage,
   createUserMessage,
 } from "../mocks/messages";
+import { createTaskSendMessageTool, createTaskTool } from "../mocks/tools";
 import { STABLE_TIMESTAMP } from "../mocks/workspaces";
 
 const REPORT_MESSAGES = [
@@ -22,20 +23,44 @@ const REPORT_MESSAGES = [
       timestamp: STABLE_TIMESTAMP - 170_000,
     }
   ),
-  createSubagentReportMessage("report-progress", {
+  createAssistantMessage("report-wait-paused", "", {
     historySequence: 3,
-    timestamp: STABLE_TIMESTAMP - 120_000,
-    taskId: "18c2511cea",
-    agentType: "explore",
-    status: "in_progress",
-    model: "anthropic:claude-opus-5",
-    thinkingLevel: "high",
-    title: "Current report presentation traced across the parent transcript",
-    reportMarkdown:
-      "Parent-side reports currently expose the model-facing envelope. A dedicated renderer can preserve **markdown**, paths like `src/browser/features/Messages/UserMessage.tsx`, and status without the raw protocol.",
+    timestamp: STABLE_TIMESTAMP - 140_000,
+    toolCalls: [
+      createTaskTool("wait-for-report", {
+        subagent_type: "explore",
+        prompt: "Review the message rendering path and report important findings.",
+        title: "Trace report presentation",
+        run_in_background: false,
+        taskId: "18c2511cea",
+        status: "running",
+        interruption: {
+          reason: "progress_report_received",
+          sourceTaskId: "18c2511cea",
+          report: {
+            agentType: "explore",
+            model: "anthropic:claude-opus-5",
+            thinkingLevel: "high",
+            title: "Current report presentation traced across the parent transcript",
+            reportMarkdown:
+              "Parent-side reports currently expose the model-facing envelope. A dedicated renderer can preserve **markdown**, paths like `src/browser/features/Messages/UserMessage.tsx`, and status without the raw protocol.",
+          },
+        },
+      }),
+    ],
+  }),
+  createAssistantMessage("report-guidance", "", {
+    historySequence: 4,
+    timestamp: STABLE_TIMESTAMP - 90_000,
+    toolCalls: [
+      createTaskSendMessageTool("guide-reporting-child", {
+        task_id: "18c2511cea",
+        message: "Good finding. Keep the scope on report presentation and verify the phone layout.",
+      }),
+    ],
   }),
   createSubagentReportMessage("report-complete", {
-    historySequence: 4,
+    historySequence: 5,
     timestamp: STABLE_TIMESTAMP - 60_000,
     taskId: "18c2511cea",
     agentType: "explore",
@@ -61,7 +86,7 @@ const REPORT_MESSAGES = [
     "report-integrated",
     "I’ll incorporate both findings into the final implementation and keep the structured details available for inspection.",
     {
-      historySequence: 5,
+      historySequence: 6,
       timestamp: STABLE_TIMESTAMP - 50_000,
     }
   ),

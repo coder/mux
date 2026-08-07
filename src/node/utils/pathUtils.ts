@@ -1,6 +1,6 @@
 import * as fs from "fs/promises";
 import * as path from "path";
-import { execFileAsync } from "./disposableExec";
+import { execFileAsync, type ExecFileAsyncOptions } from "./disposableExec";
 import { PlatformPaths } from "./paths.main";
 
 /**
@@ -117,11 +117,38 @@ export async function isGitRepository(projectPath: string): Promise<boolean> {
  *
  * @param projectPath - Path to check (should be already validated/normalized)
  */
-export async function isInsideGitRepository(projectPath: string): Promise<boolean> {
+export async function inspectInsideGitRepository(
+  projectPath: string,
+  options?: ExecFileAsyncOptions
+): Promise<boolean> {
   try {
-    using proc = execFileAsync("git", ["-C", projectPath, "rev-parse", "--is-inside-work-tree"]);
+    using proc = execFileAsync(
+      "git",
+      ["-C", projectPath, "rev-parse", "--is-inside-work-tree"],
+      options
+    );
     const { stdout } = await proc.result;
     return stdout.trim() === "true";
+  } catch (error) {
+    const errorRecord =
+      error && typeof error === "object"
+        ? (error as { stderr?: unknown; stdout?: unknown })
+        : undefined;
+    const detail = [
+      typeof errorRecord?.stderr === "string" ? errorRecord.stderr : "",
+      typeof errorRecord?.stdout === "string" ? errorRecord.stdout : "",
+      error instanceof Error ? error.message : typeof error === "string" ? error : "",
+    ].join("\n");
+    if (/not a git repository|not a git work tree/i.test(detail)) {
+      return false;
+    }
+    throw error;
+  }
+}
+
+export async function isInsideGitRepository(projectPath: string): Promise<boolean> {
+  try {
+    return await inspectInsideGitRepository(projectPath);
   } catch {
     return false;
   }

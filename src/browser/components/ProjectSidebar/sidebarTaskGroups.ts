@@ -6,6 +6,7 @@ import {
 } from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
+import { isLegacyAgentWorkspace } from "@/common/utils/workspaceClassification";
 import {
   formatTaskGroupHeader,
   formatTaskGroupItemsLabel,
@@ -103,7 +104,7 @@ function getGroupDescriptor(
   hasChildren: (workspaceId: string) => boolean
 ): GroupDescriptor | null {
   const parentWorkspaceId = workspace.parentWorkspaceId;
-  if (!parentWorkspaceId) {
+  if (!isLegacyAgentWorkspace(workspace) || !parentWorkspaceId) {
     return null;
   }
   // Leaf-only rule (D4): a member that spawned its own sub-agents falls out of
@@ -148,7 +149,12 @@ export function getWorkflowGroupStorageKey(workspace: FrontendWorkspaceMetadata)
   const parentWorkspaceId = workspace.parentWorkspaceId;
   const runId = workspace.workflowTask?.runId;
   // bestOf grouping wins when both are present (D3).
-  if (!parentWorkspaceId || !runId || workspace.bestOf?.groupId) {
+  if (
+    !isLegacyAgentWorkspace(workspace) ||
+    !parentWorkspaceId ||
+    !runId ||
+    workspace.bestOf?.groupId
+  ) {
     return null;
   }
   return workflowGroupStorageKey(parentWorkspaceId, runId);
@@ -201,7 +207,7 @@ export function ensureWorkflowGroupMembersVisible(params: {
   const visibleIds = new Set(params.visibleRows.map((workspace) => workspace.id));
   const parentIdsWithChildren = new Set<string>();
   for (const workspace of params.allRows) {
-    if (workspace.parentWorkspaceId) {
+    if (isLegacyAgentWorkspace(workspace) && workspace.parentWorkspaceId) {
       parentIdsWithChildren.add(workspace.parentWorkspaceId);
     }
   }
@@ -219,6 +225,7 @@ export function ensureWorkflowGroupMembersVisible(params: {
       params.sessionActiveGroupKeys.has(key) &&
       // Leaf-only rule (D4): members with their own subtree are not grouped.
       !parentIdsWithChildren.has(workspace.id) &&
+      isLegacyAgentWorkspace(workspace) &&
       workspace.parentWorkspaceId != null &&
       // Never resurrect rows whose parent chain is itself hidden.
       visibleIds.has(workspace.parentWorkspaceId)
@@ -266,7 +273,7 @@ export function computeSidebarTaskGroups(params: {
   const childrenByParentId = new Map<string, FrontendWorkspaceMetadata[]>();
   for (const workspace of params.allRows) {
     const parentId = workspace.parentWorkspaceId;
-    if (!parentId) {
+    if (!isLegacyAgentWorkspace(workspace) || !parentId) {
       continue;
     }
     const children = childrenByParentId.get(parentId) ?? [];

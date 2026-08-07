@@ -87,6 +87,7 @@ export class InstructionsService {
     const trimmedOverride = modelOverride?.trim();
     const model =
       (trimmedOverride && trimmedOverride.length > 0 ? trimmedOverride : null) ??
+      metadata.aiSettingsByAgent?.[metadata.agentId ?? ""]?.model ??
       metadata.aiSettings?.model ??
       null;
     const flatRaw = flattenInstructionFiles(sources);

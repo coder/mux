@@ -287,16 +287,15 @@ describeIntegration("Workspace Archive (UI)", () => {
         const homeScreen = view.container.querySelector('[data-testid="home-screen"]');
         expect(homeScreen).toBeNull();
 
-        // Should be on the project page (has creation textarea for new workspace)
-        // When there are no other workspaces, archiving falls back to the project page.
+        // When there are no other workspaces, archiving falls back to persistent Project Chat.
         await waitFor(
           () => {
-            const creationTextarea = view.container.querySelector("textarea");
-            const projectSelected = view.container.querySelector(
-              `[data-project-path="${projectPath}"]`
+            const projectChat = view.container.querySelector('[data-testid="project-chat-header"]');
+            const selectedProject = view.container.querySelector(
+              `[data-project-path="${projectPath}"][aria-current="page"]`
             );
-            if (!creationTextarea && !projectSelected) {
-              throw new Error("Not on project page after archiving");
+            if (!projectChat || !selectedProject) {
+              throw new Error("Project Chat not selected after archiving");
             }
           },
           { timeout: 5_000 }
@@ -397,9 +396,18 @@ describeIntegration("Workspace Archive List Reactivity (UI)", () => {
       );
       fireEvent.click(archiveButton);
 
-      // Wait for navigation to project page (archive redirects there).
-      // We need to wait for the archived workspaces section to appear, not just a textarea,
-      // since workspace views also have textareas and we might still be there briefly.
+      // Archive redirects to persistent Project Chat. Open the explicit manual workspace page
+      // before inspecting its legacy archived-workspace management section.
+      await waitFor(
+        () => {
+          if (!view.container.querySelector('[data-testid="project-chat-header"]')) {
+            throw new Error("Project Chat not rendered after archive");
+          }
+        },
+        { timeout: 10_000 }
+      );
+      await openProjectCreationView(view, projectPath);
+
       const expandArchivedButton = await waitFor(
         () => {
           const expand = view.container.querySelector(

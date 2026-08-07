@@ -1397,6 +1397,10 @@ export class WorkspaceStore {
     }
   }
 
+  getActiveWorkspaceId(): string | null {
+    return this.activeWorkspaceId;
+  }
+
   isOnChatSubscriptionActive(workspaceId: string): boolean {
     assert(
       typeof workspaceId === "string" && workspaceId.length > 0,
@@ -3066,6 +3070,9 @@ export class WorkspaceStore {
     });
   }
 
+  /** Project Chat sessions reuse the transcript engine without becoming sidebar workspaces. */
+  private readonly auxiliaryChatIds = new Set<string>();
+
   private isWorkspaceRegistered(workspaceId: string): boolean {
     return this.workspaceMetadata.has(workspaceId);
   }
@@ -4071,6 +4078,25 @@ export class WorkspaceStore {
     }
   }
 
+  /**
+   * Register a route-owned chat session without making it part of workspace metadata sync.
+   * Project Chat uses this so normal workspace refreshes cannot tear down its active transcript.
+   */
+  addAuxiliaryChat(metadata: FrontendWorkspaceMetadata): void {
+    this.auxiliaryChatIds.add(metadata.id);
+    if (this.workspaceMetadata.has(metadata.id)) {
+      this.workspaceMetadata.set(metadata.id, metadata);
+      this.derived.bump("workspaces");
+      return;
+    }
+    this.addWorkspace(metadata);
+  }
+
+  removeAuxiliaryChat(workspaceId: string): void {
+    this.auxiliaryChatIds.delete(workspaceId);
+    this.removeWorkspace(workspaceId);
+  }
+
   markPendingInitialSend(workspaceId: string, pendingStreamModel: string | null): void {
     const aggregator = this.aggregators.get(workspaceId);
     if (!aggregator) {
@@ -4167,7 +4193,10 @@ export class WorkspaceStore {
    * Sync workspaces with metadata - add new, remove deleted.
    */
   syncWorkspaces(workspaceMetadata: Map<string, FrontendWorkspaceMetadata>): void {
-    const metadataIds = new Set(Array.from(workspaceMetadata.values()).map((m) => m.id));
+    const metadataIds = new Set([
+      ...Array.from(workspaceMetadata.values()).map((metadata) => metadata.id),
+      ...this.auxiliaryChatIds,
+    ]);
     const currentIds = new Set(this.workspaceMetadata.keys());
 
     // Add new workspaces; refresh the metadata snapshot for existing ones so
@@ -4241,6 +4270,7 @@ export class WorkspaceStore {
     this.consumersStore.clear();
     this.aggregators.clear();
     this.chatTransientState.clear();
+    this.auxiliaryChatIds.clear();
     this.workspaceMetadata.clear();
     this.workspaceActivity.clear();
     this.activeGoalCount = 0;
@@ -4817,6 +4847,9 @@ export const workspaceStore = {
    * before setting it as active.
    */
   addWorkspace: (metadata: FrontendWorkspaceMetadata) => getStoreInstance().addWorkspace(metadata),
+  addAuxiliaryChat: (metadata: FrontendWorkspaceMetadata) =>
+    getStoreInstance().addAuxiliaryChat(metadata),
+  removeAuxiliaryChat: (workspaceId: string) => getStoreInstance().removeAuxiliaryChat(workspaceId),
   /**
    * Mark a newly-created workspace as having its first send in flight.
    * Used by creation mode so the transcript can show the starting barrier immediately.
@@ -4825,6 +4858,7 @@ export const workspaceStore = {
     getStoreInstance().markPendingInitialSend(workspaceId, pendingStreamModel),
   clearPendingInitialSendState: (workspaceId: string) =>
     getStoreInstance().clearPendingInitialSendState(workspaceId),
+  getActiveWorkspaceId: () => getStoreInstance().getActiveWorkspaceId(),
   /**
    * Set the active workspace for onChat subscription management.
    * Exposed for test helpers that bypass React routing effects.

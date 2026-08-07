@@ -56,6 +56,8 @@ type AgentProviderProps =
   | {
       workspaceId?: string;
       projectPath?: string;
+      /** Fixed agents back route-owned chats whose mode is a product invariant, not a user choice. */
+      fixedAgentId?: string;
       children: ReactNode;
     };
 
@@ -78,6 +80,7 @@ export function AgentProvider(props: AgentProviderProps) {
 function AgentProviderWithState(props: {
   workspaceId?: string;
   projectPath?: string;
+  fixedAgentId?: string;
   children: ReactNode;
 }) {
   const { api } = useAPI();
@@ -122,6 +125,9 @@ function AgentProviderWithState(props: {
 
   const setAgentId: Dispatch<SetStateAction<string>> = useCallback(
     (value) => {
+      if (props.fixedAgentId) {
+        return;
+      }
       setAgentIdRaw((prev) => {
         const explicitPrevAgentId =
           typeof prev === "string" && prev.trim().length > 0 ? prev : globalDefaultAgentId;
@@ -130,7 +136,7 @@ function AgentProviderWithState(props: {
         return coerceAgentId(next);
       });
     },
-    [globalDefaultAgentId, isProjectScope, setAgentIdRaw]
+    [globalDefaultAgentId, isProjectScope, props.fixedAgentId, setAgentIdRaw]
   );
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
@@ -232,14 +238,16 @@ function AgentProviderWithState(props: {
 
   // Project-scoped providers should inherit the global default agent until a
   // project-scoped preference is explicitly set. Child/subagent workspaces keep
-  // the backend-assigned agent so local persisted overrides cannot drift.
-  const isCurrentAgentLocked = currentMeta?.parentWorkspaceId != null;
+  // the backend-assigned agent so local persisted overrides cannot drift. Route-owned
+  // chats may also fix their agent because their narrow tool policy is a product invariant.
+  const isCurrentAgentLocked = props.fixedAgentId != null || currentMeta?.parentWorkspaceId != null;
 
   // For locked workspaces, use the backend-assigned agent — persisted localStorage
   // may contain a stale selection from before locking, and the picker is disabled
   // so there's no in-UI recovery path.
-  const normalizedAgentId =
-    isCurrentAgentLocked && currentMeta?.agentId
+  const normalizedAgentId = props.fixedAgentId
+    ? coerceAgentId(props.fixedAgentId)
+    : isCurrentAgentLocked && currentMeta?.agentId
       ? currentMeta.agentId
       : coerceAgentId(
           isProjectScope ? (explicitScopedAgentId ?? globalDefaultAgentId) : scopedAgentId

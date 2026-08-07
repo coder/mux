@@ -10,6 +10,9 @@ export interface SubagentReportEnvelope {
   reportMarkdown: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Reporting identity for ordinary workspace-turn progress updates. */
+  workspaceId?: string;
+  turnId?: string;
   structuredOutput?: unknown;
 }
 
@@ -76,6 +79,8 @@ function parseJsonEnvelope(inner: string): SubagentReportEnvelope | null {
     // producer can never invalidate an otherwise well-formed report.
     ...(isNonEmptyString(record.model) ? { model: record.model } : {}),
     ...(isThinkingLevel(record.thinkingLevel) ? { thinkingLevel: record.thinkingLevel } : {}),
+    ...(isNonEmptyString(record.workspaceId) ? { workspaceId: record.workspaceId } : {}),
+    ...(isNonEmptyString(record.turnId) ? { turnId: record.turnId } : {}),
     ...(Object.hasOwn(record, "structuredOutput")
       ? { structuredOutput: record.structuredOutput }
       : {}),

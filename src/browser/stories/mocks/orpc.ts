@@ -20,7 +20,7 @@ import type {
   FrontendWorkspaceMetadata,
   WorkspaceActivitySnapshot,
 } from "@/common/types/workspace";
-import type { ProjectConfig } from "@/node/config";
+import type { ProjectChatInfo, ProjectConfig } from "@/common/types/project";
 import {
   DEFAULT_LAYOUT_PRESETS_CONFIG,
   normalizeLayoutPresetsConfig,
@@ -420,6 +420,8 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   } = options;
 
   const projects = new Map(providedProjects);
+  const projectChats = new Map<string, ProjectChatInfo>();
+  let projectChatCounter = 0;
   const workspaceMap = new Map(workspaces.map((w) => [w.id, w]));
 
   // Terminal sessions are used by RightSidebar and TerminalView.
@@ -479,6 +481,15 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         description: "Implement changes in the repository",
         uiSelectable: true,
         subagentRunnable: true,
+        uiColor: "var(--color-exec-mode)",
+      },
+      {
+        id: "orchestrator",
+        scope: "built-in",
+        name: "Orchestrator",
+        description: "Coordinate work across project workspaces",
+        uiSelectable: false,
+        subagentRunnable: false,
         uiColor: "var(--color-exec-mode)",
       },
       {
@@ -1273,6 +1284,40 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       },
     },
     projects: {
+      chat: {
+        getOrCreate: (input: { projectPath: string }) => {
+          const existing = projectChats.get(input.projectPath);
+          if (existing) {
+            return Promise.resolve({ success: true as const, data: existing });
+          }
+
+          projectChatCounter += 1;
+          const projectName = input.projectPath.split(/[\\/]/).filter(Boolean).at(-1) ?? "Project";
+          const sessionId = `project-session_${projectChatCounter.toString(16).padStart(10, "0")}`;
+          const createdAt = "2026-08-06T00:00:00.000Z";
+          const metadata: FrontendWorkspaceMetadata = {
+            id: sessionId,
+            name: "project-chat",
+            title: "Project Chat",
+            projectName,
+            projectPath: input.projectPath,
+            createdAt,
+            runtimeConfig: { type: "local" },
+            namedWorkspacePath: input.projectPath,
+            agentId: "orchestrator",
+          };
+          const info: ProjectChatInfo = {
+            version: 1,
+            sessionId,
+            createdAt,
+            agentId: "orchestrator",
+            projectPath: input.projectPath,
+            metadata,
+          };
+          projectChats.set(input.projectPath, info);
+          return Promise.resolve({ success: true as const, data: info });
+        },
+      },
       list: () => Promise.resolve(Array.from(projects.entries())),
       create: () =>
         Promise.resolve({

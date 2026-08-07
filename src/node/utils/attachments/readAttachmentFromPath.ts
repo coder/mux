@@ -1,3 +1,4 @@
+import * as fsPromises from "node:fs/promises";
 import * as path from "path";
 import assert from "@/common/utils/assert";
 import { MAX_SVG_TEXT_CHARS, SVG_MEDIA_TYPE } from "@/common/constants/imageAttachments";
@@ -9,6 +10,7 @@ import {
 } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import type { FileStat, Runtime } from "@/node/runtime/Runtime";
 import { resolvePathWithinCwd } from "@/node/services/tools/fileCommon";
+import { isPathInsideDir } from "@/node/utils/pathUtils";
 import {
   isRasterAttachmentMediaType,
   resizeRasterImageAttachmentBufferIfNeeded,
@@ -25,6 +27,8 @@ export interface ReadAttachmentFromPathArgs {
   cwd: string;
   runtime: Runtime;
   abortSignal?: AbortSignal;
+  /** Host-local owner-session artifact root, readable even when the workspace runtime is remote. */
+  localArtifactRoot?: string;
 }
 
 export interface LoadedFileFromPath {
@@ -135,6 +139,43 @@ async function readRegularFileBytes(
   return bytes;
 }
 
+async function readLocalArtifactIfAllowed(
+  args: ReadAttachmentFromPathArgs
+): Promise<{ resolvedPath: string; bytes: Buffer } | null> {
+  if (args.localArtifactRoot == null || !path.isAbsolute(args.path)) {
+    return null;
+  }
+
+  const artifactRoot = path.resolve(args.localArtifactRoot);
+  const resolvedPath = path.resolve(args.path);
+  if (!isPathInsideDir(artifactRoot, resolvedPath)) {
+    return null;
+  }
+  if (args.abortSignal?.aborted) {
+    throw new Error("Interrupted");
+  }
+
+  let stat: Awaited<ReturnType<typeof fsPromises.lstat>>;
+  try {
+    stat = await fsPromises.lstat(resolvedPath);
+  } catch (error) {
+    throw buildMissingFileError(resolvedPath, error);
+  }
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`Path is not a regular artifact file: ${resolvedPath}`);
+  }
+  if (stat.size > MAX_ATTACH_FILE_SIZE_BYTES) {
+    throw new Error(buildTooLargeMessage(stat.size));
+  }
+
+  const bytes = await fsPromises.readFile(resolvedPath);
+  assert(
+    bytes.length === stat.size,
+    `Expected to read ${stat.size} bytes from '${resolvedPath}', got ${bytes.length}`
+  );
+  return { resolvedPath, bytes };
+}
+
 function createUnsupportedAttachmentError(
   args: ReadAttachmentFromPathArgs,
   resolvedPath: string
@@ -220,8 +261,18 @@ export async function readAttachFileFromPath(
     "attach_file requires a path"
   );
 
-  const { resolvedPath } = resolvePathWithinCwd(args.path, args.cwd, args.runtime);
-  const fileStat = await statRegularFile(args, resolvedPath);
+  const localArtifact = await readLocalArtifactIfAllowed(args);
+  const { resolvedPath, fileSize, localBytes } = localArtifact
+    ? {
+        resolvedPath: localArtifact.resolvedPath,
+        fileSize: localArtifact.bytes.length,
+        localBytes: localArtifact.bytes,
+      }
+    : await (async () => {
+        const resolved = resolvePathWithinCwd(args.path, args.cwd, args.runtime).resolvedPath;
+        const fileStat = await statRegularFile(args, resolved);
+        return { resolvedPath: resolved, fileSize: fileStat.size, localBytes: undefined };
+      })();
   const filename = getFallbackFilename(resolvedPath, args.filename);
   const mediaType = getSupportedAttachmentMediaType({
     mediaType: args.mediaType,
@@ -233,11 +284,11 @@ export async function readAttachFileFromPath(
   if (mediaType == null) {
     // Not an image/SVG/PDF, so it can't be a real model attachment. Show it to the
     // user for preview/download instead of rejecting it; the size cap still applies.
-    if (fileStat.size > MAX_ATTACH_FILE_SIZE_BYTES) {
-      throw new Error(buildTooLargeMessage(fileStat.size));
+    if (fileSize > MAX_ATTACH_FILE_SIZE_BYTES) {
+      throw new Error(buildTooLargeMessage(fileSize));
     }
 
-    const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
+    const bytes = localBytes ?? (await readRegularFileBytes(args, resolvedPath, fileSize));
     return {
       type: "display",
       file: createLoadedFile({
@@ -249,7 +300,7 @@ export async function readAttachFileFromPath(
     };
   }
 
-  const bytes = await readRegularFileBytes(args, resolvedPath, fileStat.size);
+  const bytes = localBytes ?? (await readRegularFileBytes(args, resolvedPath, fileSize));
 
   if (mediaType === SVG_MEDIA_TYPE) {
     const svgText = bytes.toString("utf8");

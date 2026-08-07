@@ -1,4 +1,6 @@
 import type { Config, ProjectConfig } from "@/node/config";
+import { isProjectSessionId } from "@/common/constants/projectChat";
+import type { ProjectChatInfo } from "@/common/types/project";
 import { formatSshEndpoint } from "@/common/utils/ssh/formatSshEndpoint";
 import { spawn } from "child_process";
 import { createHash, randomBytes } from "crypto";
@@ -130,6 +132,7 @@ type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
 interface WorkspaceRemover {
   remove(workspaceId: string, force?: boolean): Promise<Result<void>>;
+  cleanupProjectChatSession?(sessionId: string): Promise<void>;
 }
 
 function isTildePrefixedPath(value: string): boolean {
@@ -441,6 +444,20 @@ export class ProjectService {
   async pickDirectory(initialPath?: string | null): Promise<string | null> {
     if (!this.directoryPicker) return null;
     return this.directoryPicker(initialPath ?? null);
+  }
+
+  async getOrCreateChat(projectPath: string): Promise<Result<ProjectChatInfo>> {
+    try {
+      if (!projectPath || projectPath.trim().length === 0) {
+        return Err("Project path cannot be empty");
+      }
+
+      // Resolving/displaying Project Chat is safe before trust. The trust gate belongs at model
+      // execution so the user can open the persistent transcript and then choose to trust the repo.
+      return Ok(await this.config.ensureProjectChat(path.resolve(projectPath)));
+    } catch (error) {
+      return Err(getErrorMessage(error));
+    }
   }
 
   async create(
@@ -1061,6 +1078,71 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
+  private isProjectChatSessionConfigured(sessionId: string): boolean {
+    const persisted = this.config.loadConfigOrDefault({ throwOnError: true });
+    return Array.from(persisted.projects.values()).some(
+      (project) => project.projectChat?.sessionId === sessionId
+    );
+  }
+
+  private verifyProjectRemovalPersisted(
+    projectPaths: readonly string[],
+    projectChatSessionIds: readonly string[]
+  ): Result<void, ProjectRemoveError> {
+    const persisted = this.config.loadConfigOrDefault({ throwOnError: true });
+    const remainingProjectPath = projectPaths.find((projectPath) =>
+      persisted.projects.has(projectPath)
+    );
+    const sessionIds = new Set(projectChatSessionIds.filter(isProjectSessionId));
+    const remainingSessionId = Array.from(persisted.projects.values())
+      .map((project) => project.projectChat?.sessionId)
+      .find((sessionId): sessionId is string => sessionId != null && sessionIds.has(sessionId));
+    if (remainingProjectPath == null && remainingSessionId == null) {
+      return Ok(undefined);
+    }
+
+    const remainingOwner = remainingProjectPath ?? `session ${remainingSessionId ?? "unknown"}`;
+    return Err({
+      type: "unknown" as const,
+      message: `Failed to remove project: config deletion was not persisted (${remainingOwner})`,
+    });
+  }
+
+  private async cleanupProjectChatSessions(sessionIds: readonly string[]): Promise<void> {
+    // Never pass corrupt persisted IDs to recursive deletion: session IDs are directory names.
+    for (const sessionId of new Set(sessionIds.filter(isProjectSessionId))) {
+      // Never delete a session that a fresh disk-backed config still owns. Config writes are
+      // deliberately startup-safe/log-and-swallow, so callers must verify destructive follow-up.
+      if (this.isProjectChatSessionConfigured(sessionId)) {
+        throw new Error(`Project Chat session is still configured: ${sessionId}`);
+      }
+      // The config entry is removed before cleanup, but in-flight AgentSession/history writes must
+      // keep resolving this captured ID to project-sessions until cleanup finishes.
+      const projectSessionRoute = this.config.retainProjectSessionRouting(sessionId);
+      let preserveProjectSessionRoute = false;
+      try {
+        if (this.workspaceService?.cleanupProjectChatSession) {
+          await this.workspaceService.cleanupProjectChatSession(sessionId);
+        } else {
+          await fsPromises.rm(this.config.getSessionDir(sessionId), {
+            recursive: true,
+            force: true,
+          });
+        }
+      } catch (error) {
+        // Project config removal is authoritative, but failed shutdown is not permission to delete
+        // live state. Preserve both the directory and its routing for the rest of this process so a
+        // late stream/history write cannot recreate the removed owner under ordinary sessions.
+        preserveProjectSessionRoute = this.workspaceService?.cleanupProjectChatSession != null;
+        log.error(`Failed to clean up Project Chat session ${sessionId}:`, error);
+      } finally {
+        if (!preserveProjectSessionRoute) {
+          projectSessionRoute[Symbol.dispose]();
+        }
+      }
+    }
+  }
+
   async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
     try {
       const normalizedPath = stripTrailingSlashes(projectPath);
@@ -1072,16 +1154,13 @@ export class ProjectService {
       }
 
       if (projectConfig.parentProjectPath) {
-        try {
-          await this.config.updateProjectSecrets(normalizedPath, []);
-        } catch (error) {
-          log.error(`Failed to clean up secrets for sub-project ${normalizedPath}:`, error);
-        }
+        let projectChatSessionId: string | undefined;
         // Mutate inside the serialized editConfig transform, re-resolving the sub-project
         // and its parent from FRESH config: persisting the pre-read snapshot would clobber
         // concurrent config edits (e.g. resurrect concurrently removed workspaces).
         await this.config.editConfig((freshConfig) => {
           const freshSubProject = freshConfig.projects.get(normalizedPath);
+          projectChatSessionId = freshSubProject?.projectChat?.sessionId;
           const parentPath = freshSubProject?.parentProjectPath;
           const parentProject = parentPath ? freshConfig.projects.get(parentPath) : undefined;
           if (parentProject) {
@@ -1094,6 +1173,23 @@ export class ProjectService {
           freshConfig.projects.delete(normalizedPath);
           return freshConfig;
         });
+        const persistedRemoval = this.verifyProjectRemovalPersisted(
+          [normalizedPath],
+          projectChatSessionId != null ? [projectChatSessionId] : []
+        );
+        if (!persistedRemoval.success) {
+          return persistedRemoval;
+        }
+        if (projectChatSessionId) {
+          await this.cleanupProjectChatSessions([projectChatSessionId]);
+        }
+        try {
+          // Delete secrets only after the project removal is durably verified. A failed config write
+          // must leave every part of the still-configured project intact for a safe retry.
+          await this.config.updateProjectSecrets(normalizedPath, []);
+        } catch (error) {
+          log.error(`Failed to clean up secrets for sub-project ${normalizedPath}:`, error);
+        }
         return Ok(undefined);
       }
 
@@ -1243,10 +1339,20 @@ export class ProjectService {
       // FRESH config: persisting the pre-read snapshot would clobber concurrent config
       // edits (e.g. resurrect concurrently removed workspaces in other projects).
       const removedSubProjectPaths: string[] = [];
+      const removedProjectChatSessionIds: string[] = [];
       await this.config.editConfig((freshConfig) => {
         removedSubProjectPaths.length = 0;
+        removedProjectChatSessionIds.length = 0;
+        const freshProjectChatSessionId =
+          freshConfig.projects.get(normalizedPath)?.projectChat?.sessionId;
+        if (freshProjectChatSessionId) {
+          removedProjectChatSessionIds.push(freshProjectChatSessionId);
+        }
         for (const [candidatePath, candidateConfig] of Array.from(freshConfig.projects.entries())) {
           if (candidateConfig.parentProjectPath === normalizedPath) {
+            if (candidateConfig.projectChat?.sessionId) {
+              removedProjectChatSessionIds.push(candidateConfig.projectChat.sessionId);
+            }
             removedSubProjectPaths.push(candidatePath);
             freshConfig.projects.delete(candidatePath);
           }
@@ -1254,6 +1360,16 @@ export class ProjectService {
         freshConfig.projects.delete(normalizedPath);
         return freshConfig;
       });
+
+      const persistedRemoval = this.verifyProjectRemovalPersisted(
+        [normalizedPath, ...removedSubProjectPaths],
+        removedProjectChatSessionIds
+      );
+      if (!persistedRemoval.success) {
+        return persistedRemoval;
+      }
+
+      await this.cleanupProjectChatSessions(removedProjectChatSessionIds);
 
       for (const subProjectPath of removedSubProjectPaths) {
         try {

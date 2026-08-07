@@ -14,6 +14,8 @@ describe("built-in agent definitions", () => {
     // FALLBACK_AGENTS must cover every built-in (hidden ones too) so saved
     // overrides are not mislabeled as unknown when discovery is unavailable.
     const builtInIds = getBuiltInAgentDefinitions()
+      // Orchestrator is a backend-owned Project Chat contract, not a configurable Settings agent.
+      .filter((pkg) => pkg.id !== "orchestrator")
       .map((pkg) => pkg.id)
       .sort();
     const fallbackIds = FALLBACK_AGENTS.map((agent) => agent.id).sort();
@@ -28,6 +30,32 @@ describe("built-in agent definitions", () => {
     expect(ids).not.toContain("auto");
     expect(ids).toContain("exec");
     expect(ids).toContain("plan");
+  });
+
+  test("includes a hidden non-runnable coordination-only Orchestrator", () => {
+    const orchestrator = getBuiltInAgentDefinitions().find(
+      (definition) => definition.id === "orchestrator"
+    );
+
+    expect(orchestrator).toBeTruthy();
+    expect(orchestrator?.frontmatter.ui?.hidden).toBe(true);
+    expect(orchestrator?.frontmatter.subagent?.runnable).toBe(false);
+    expect(orchestrator?.frontmatter.tools?.add).toEqual([
+      "task",
+      "task_await",
+      "task_list",
+      "task_terminate",
+      "task_workspace_lifecycle",
+      "project_workspace_list",
+      "todo_read",
+      "todo_write",
+      "agent_skill_list",
+      "agent_skill_read",
+      "agent_skill_read_file",
+      "notify",
+    ]);
+    expect(orchestrator?.frontmatter.tools?.add).not.toContain("bash");
+    expect(orchestrator?.frontmatter.tools?.add).not.toContain("file_edit_replace_string");
   });
 
   test("includes desktop built-in with desktop automation safeguards", () => {

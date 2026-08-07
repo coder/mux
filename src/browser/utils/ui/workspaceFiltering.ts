@@ -3,9 +3,14 @@ import type { ProjectConfig } from "@/common/types/project";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { assert } from "@/common/utils/assert";
 import { comparePinnedOrder, isWorkspacePinned } from "@/common/utils/pin";
+import { isLegacyAgentWorkspace } from "@/common/utils/workspaceClassification";
 
 interface WorkspaceGroupConfig {
   id: string;
+}
+
+function getLegacyAgentParentId(workspace: FrontendWorkspaceMetadata): string | undefined {
+  return isLegacyAgentWorkspace(workspace) ? workspace.parentWorkspaceId : undefined;
 }
 
 function flattenWorkspaceTree(
@@ -24,7 +29,7 @@ function flattenWorkspaceTree(
   // Preserve input order for both roots and siblings by iterating in-order.
   // Active sub-workspaces only render when their full parent chain is active.
   for (const workspace of workspaces) {
-    const parentId = workspace.parentWorkspaceId;
+    const parentId = getLegacyAgentParentId(workspace);
     if (parentId == null) {
       roots.push(workspace);
       continue;
@@ -69,7 +74,7 @@ function flattenWorkspaceTree(
     }
 
     assert(
-      workspace.parentWorkspaceId != null,
+      getLegacyAgentParentId(workspace) != null,
       "flattenWorkspaceTree: unvisited root workspaces should have been traversed"
     );
     // Intentionally drop orphaned/cyclic descendants instead of promoting them to roots.
@@ -100,7 +105,7 @@ export function computeWorkspaceDepthMap(
 
     visiting.add(workspaceId);
     const workspace = byId.get(workspaceId);
-    const parentId = workspace?.parentWorkspaceId;
+    const parentId = workspace ? getLegacyAgentParentId(workspace) : undefined;
     const depth = parentId && byId.has(parentId) ? Math.min(computeDepth(parentId) + 1, 32) : 0;
     visiting.delete(workspaceId);
 
@@ -181,6 +186,9 @@ export function isWorkspaceDelegatedActivityActive(
   workspace: FrontendWorkspaceMetadata,
   options: DelegatedActivityOptions = {}
 ): boolean {
+  if (!isLegacyAgentWorkspace(workspace)) {
+    return false;
+  }
   if (isActiveOrStartingTaskStatus(workspace.taskStatus)) {
     return true;
   }
@@ -214,7 +222,7 @@ export function computeDelegatedActivityByWorkspaceId(
   const childrenByParentId = new Map<string, FrontendWorkspaceMetadata[]>();
   const roots: FrontendWorkspaceMetadata[] = [];
   for (const workspace of workspaceById.values()) {
-    const parentId = workspace.parentWorkspaceId;
+    const parentId = getLegacyAgentParentId(workspace);
     if (!parentId || !workspaceById.has(parentId)) {
       roots.push(workspace);
       continue;
@@ -337,7 +345,7 @@ export function filterVisibleAgentRows(
 
     visiting.add(workspace.id);
 
-    const parentId = workspace.parentWorkspaceId;
+    const parentId = getLegacyAgentParentId(workspace);
     if (!parentId) {
       visiting.delete(workspace.id);
       visibilityById.set(workspace.id, true);
@@ -382,7 +390,7 @@ export function computeAgentRowRenderMeta(
   for (const workspace of visibleRows) {
     visibleWorkspaceById.set(workspace.id, workspace);
 
-    const parentId = workspace.parentWorkspaceId;
+    const parentId = getLegacyAgentParentId(workspace);
     if (!parentId) {
       continue;
     }
@@ -393,19 +401,21 @@ export function computeAgentRowRenderMeta(
   }
 
   for (const workspace of flattenedWorkspaces) {
-    if (!workspace.parentWorkspaceId || !hasCompletedAgentReport(workspace)) {
+    const parentId = getLegacyAgentParentId(workspace);
+    if (!parentId || !hasCompletedAgentReport(workspace)) {
       continue;
     }
 
-    const completedChildren = completedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    const completedChildren = completedChildrenByParent.get(parentId) ?? [];
     completedChildren.push(workspace);
-    completedChildrenByParent.set(workspace.parentWorkspaceId, completedChildren);
+    completedChildrenByParent.set(parentId, completedChildren);
   }
 
   const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
 
   for (const workspace of visibleRows) {
-    const rowKind = workspace.parentWorkspaceId ? "subagent" : "primary";
+    const parentId = getLegacyAgentParentId(workspace);
+    const rowKind = parentId ? "subagent" : "primary";
 
     let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
     let connectorStartsAtParent = false;
@@ -413,8 +423,8 @@ export function computeAgentRowRenderMeta(
     let sharedTrunkActiveBelowRow = false;
     let ancestorTrunks: AgentRowRenderMeta["ancestorTrunks"] = [];
 
-    if (workspace.parentWorkspaceId) {
-      const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    if (parentId) {
+      const siblings = visibleChildrenByParent.get(parentId) ?? [];
       const siblingIndex = siblings.findIndex((sibling) => sibling.id === workspace.id);
       if (siblings.length > 1) {
         connectorPosition = siblings[siblings.length - 1]?.id === workspace.id ? "last" : "middle";
@@ -441,7 +451,7 @@ export function computeAgentRowRenderMeta(
 
       const continuingAncestorTrunks: Array<{ depth: number; active: boolean }> = [];
       const visitedAncestorIds = new Set<string>();
-      let ancestorId: string | undefined = workspace.parentWorkspaceId;
+      let ancestorId: string | undefined = parentId;
       while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
         visitedAncestorIds.add(ancestorId);
 
@@ -458,7 +468,7 @@ export function computeAgentRowRenderMeta(
         if (!ancestorWorkspace) {
           break;
         }
-        ancestorId = ancestorWorkspace.parentWorkspaceId;
+        ancestorId = getLegacyAgentParentId(ancestorWorkspace);
       }
 
       continuingAncestorTrunks.sort((left, right) => left.depth - right.depth);
@@ -846,7 +856,7 @@ export function partitionWorkspacesByAge(
 
     visiting.add(workspace.id);
 
-    const parentId = workspace.parentWorkspaceId;
+    const parentId = getLegacyAgentParentId(workspace);
     const parent = parentId ? byId.get(parentId) : undefined;
     const tierIndex = parent ? resolveTierIndex(parent) : classifyByOwnRecency(workspace);
 
@@ -944,8 +954,9 @@ export function resolveEffectiveSectionId(
   if (workspace.subProjectPath && sectionIds.has(workspace.subProjectPath)) {
     return workspace.subProjectPath;
   }
-  if (workspace.parentWorkspaceId) {
-    const parent = byId.get(workspace.parentWorkspaceId);
+  const parentId = getLegacyAgentParentId(workspace);
+  if (parentId) {
+    const parent = byId.get(parentId);
     if (parent) {
       return resolveEffectiveSectionId(parent, byId, sectionIds);
     }

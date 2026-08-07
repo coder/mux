@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -1858,6 +1858,316 @@ exit 1
       expect(after.projects.has(projectPath)).toBe(false);
     });
 
+    it("cleans the separate Project Chat session after successful removal", async () => {
+      const projectPath = path.join(tempDir, "project-chat-cleanup");
+      await fs.mkdir(projectPath, { recursive: true });
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [], trusted: true });
+      await config.editConfig(() => cfg);
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const sessionDir = config.getSessionDir(projectChat.sessionId);
+      await fs.writeFile(path.join(sessionDir, "chat.jsonl"), "{}\n", "utf-8");
+      const cleaned: string[] = [];
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession: async (sessionId) => {
+          cleaned.push(sessionId);
+          await fs.rm(config.getSessionDir(sessionId), { recursive: true, force: true });
+        },
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      expect(cleaned).toEqual([projectChat.sessionId]);
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+      expect(fs.access(sessionDir)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("preserves Project Chat state when config deletion does not persist", async () => {
+      const parentPath = path.join(tempDir, "parent-config-write-failure");
+      const subProjectPath = path.join(parentPath, "packages", "web");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(parentPath, { trusted: true, workspaces: [] });
+        cfg.projects.set(subProjectPath, {
+          parentProjectPath: parentPath,
+          workspaces: [],
+        });
+        return cfg;
+      });
+      await config.updateProjectSecrets(subProjectPath, [{ key: "TOKEN", value: "preserve" }]);
+      const projectChat = await config.ensureProjectChat(subProjectPath);
+      const sessionDir = config.getSessionDir(projectChat.sessionId);
+      const transcriptPath = path.join(sessionDir, "chat.jsonl");
+      await fs.writeFile(transcriptPath, "preserve me\n", "utf-8");
+      const cleanupProjectChatSession = mock(() => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+      // Config.saveConfig intentionally logs and swallows startup-safe write failures. Simulate that
+      // seam directly: editConfig resolves, but a fresh disk-backed read still owns the chat.
+      (
+        config as unknown as {
+          saveConfig: (configSnapshot: unknown) => Promise<void>;
+        }
+      ).saveConfig = mock(() => Promise.resolve());
+
+      const result = await service.remove(subProjectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected persistence verification failure");
+      expect(result.error.type).toBe("unknown");
+      if (result.error.type !== "unknown") {
+        throw new Error("Expected unknown removal error");
+      }
+      expect(result.error.message).toContain("config deletion was not persisted");
+      expect(cleanupProjectChatSession).not.toHaveBeenCalled();
+      expect(config.findProjectChatBySessionId(projectChat.sessionId)?.projectPath).toBe(
+        subProjectPath
+      );
+      expect(config.getProjectSecrets(subProjectPath)).toEqual([
+        { key: "TOKEN", value: "preserve" },
+      ]);
+      expect(await fs.readFile(transcriptPath, "utf-8")).toBe("preserve me\n");
+    });
+
+    it("fails closed when persisted-removal verification cannot read config", async () => {
+      const parentPath = path.join(tempDir, "parent-config-read-failure");
+      const subProjectPath = path.join(parentPath, "packages", "web");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(parentPath, { trusted: true, workspaces: [] });
+        cfg.projects.set(subProjectPath, {
+          parentProjectPath: parentPath,
+          workspaces: [],
+        });
+        return cfg;
+      });
+      await config.updateProjectSecrets(subProjectPath, [{ key: "TOKEN", value: "preserve" }]);
+      const projectChat = await config.ensureProjectChat(subProjectPath);
+      const transcriptPath = path.join(config.getSessionDir(projectChat.sessionId), "chat.jsonl");
+      await fs.writeFile(transcriptPath, "preserve me\n", "utf-8");
+      const cleanupProjectChatSession = mock(() => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+      (
+        config as unknown as {
+          saveConfig: (configSnapshot: unknown) => Promise<void>;
+        }
+      ).saveConfig = mock(() => Promise.resolve());
+      const originalLoadConfig = config.loadConfigOrDefault.bind(config);
+      (
+        config as unknown as {
+          loadConfigOrDefault: (options?: {
+            throwOnError?: boolean;
+          }) => ReturnType<Config["loadConfigOrDefault"]>;
+        }
+      ).loadConfigOrDefault = (options) => {
+        if (options?.throwOnError === true) {
+          throw new Error("verification config read failed");
+        }
+        return originalLoadConfig(options);
+      };
+
+      const result = await service.remove(subProjectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected verification read failure");
+      expect(result.error.type).toBe("unknown");
+      if (result.error.type !== "unknown") throw new Error("Expected unknown removal error");
+      expect(result.error.message).toContain("verification config read failed");
+      expect(cleanupProjectChatSession).not.toHaveBeenCalled();
+      expect(config.getProjectSecrets(subProjectPath)).toEqual([
+        { key: "TOKEN", value: "preserve" },
+      ]);
+      expect(await fs.readFile(transcriptPath, "utf-8")).toBe("preserve me\n");
+    });
+
+    it("retains a sub-project workspace while cleaning its Project Chat owner", async () => {
+      const parentPath = path.join(tempDir, "parent-project");
+      const subProjectPath = path.join(parentPath, "packages", "web");
+      const workspacePath = path.join(parentPath, "workspace");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      await fs.mkdir(workspacePath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(parentPath, {
+          trusted: true,
+          workspaces: [
+            {
+              id: "sub-project-workspace",
+              path: workspacePath,
+              subProjectPath,
+            },
+          ],
+        });
+        cfg.projects.set(subProjectPath, {
+          parentProjectPath: parentPath,
+          workspaces: [],
+        });
+        return cfg;
+      });
+      await config.updateProjectSecrets(subProjectPath, [{ key: "TOKEN", value: "remove" }]);
+      const projectChat = await config.ensureProjectChat(subProjectPath);
+      const cleanupProjectChatSession = mock(() => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+
+      expect((await service.remove(subProjectPath)).success).toBe(true);
+
+      const reloaded = config.loadConfigOrDefault();
+      expect(reloaded.projects.has(subProjectPath)).toBe(false);
+      const retainedWorkspace = reloaded.projects.get(parentPath)?.workspaces[0];
+      expect(retainedWorkspace).toMatchObject({
+        id: "sub-project-workspace",
+        path: workspacePath,
+      });
+      expect(retainedWorkspace?.subProjectPath).toBeUndefined();
+      expect(config.getProjectSecrets(subProjectPath)).toEqual([]);
+      expect(cleanupProjectChatSession).toHaveBeenCalledWith(projectChat.sessionId);
+    });
+
+    it("cleans a sub-project chat created while serialized removal is queued", async () => {
+      const parentPath = path.join(tempDir, "parent-racing-chat");
+      const subProjectPath = path.join(parentPath, "packages", "web");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      await config.editConfig((cfg) => {
+        cfg.projects.set(parentPath, { trusted: true, workspaces: [] });
+        cfg.projects.set(subProjectPath, {
+          parentProjectPath: parentPath,
+          workspaces: [],
+        });
+        return cfg;
+      });
+
+      const createdSessionId = "project-session_aaaaaaaaaa";
+      // Queue the first-chat write without awaiting it. remove() takes its synchronous snapshot before
+      // this edit runs, then its serialized delete must capture the newly-created ID from fresh config.
+      const createProjectChat = config.editConfig((freshConfig) => {
+        const subProject = freshConfig.projects.get(subProjectPath);
+        if (subProject) {
+          subProject.projectChat = {
+            version: 1,
+            sessionId: createdSessionId,
+            createdAt: "2026-08-06T00:00:00.000Z",
+            agentId: "orchestrator",
+          };
+        }
+        return freshConfig;
+      });
+      const cleanupProjectChatSession = mock(() => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+
+      const removeResult = service.remove(subProjectPath);
+      await createProjectChat;
+      expect((await removeResult).success).toBe(true);
+
+      expect(cleanupProjectChatSession).toHaveBeenCalledWith(createdSessionId);
+      expect(config.loadConfigOrDefault().projects.has(subProjectPath)).toBe(false);
+    });
+
+    it("never recursively deletes paths from a malformed persisted Project Chat ID", async () => {
+      const projectPath = path.join(tempDir, "project-chat-malformed-id");
+      const outsidePath = path.join(tempDir, "outside");
+      const sentinelPath = path.join(outsidePath, "keep.txt");
+      const maliciousSessionId = "project-session_aaaaaaaaaa/../../outside";
+      await fs.mkdir(projectPath, { recursive: true });
+      await fs.mkdir(outsidePath, { recursive: true });
+      await fs.writeFile(sentinelPath, "keep", "utf-8");
+      await config.editConfig((cfg) => {
+        cfg.projects.set(projectPath, {
+          workspaces: [],
+          trusted: true,
+          projectChat: {
+            version: 1,
+            sessionId: maliciousSessionId,
+            createdAt: "2026-08-06T00:00:00.000Z",
+            agentId: "orchestrator",
+          },
+        });
+        return cfg;
+      });
+      const cleanupProjectChatSession = mock((_sessionId: string) => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      expect(cleanupProjectChatSession).not.toHaveBeenCalled();
+      expect(await fs.readFile(sentinelPath, "utf-8")).toBe("keep");
+    });
+
+    it("preserves Project Chat routing and state when shutdown cleanup fails", async () => {
+      const projectPath = path.join(tempDir, "project-chat-cleanup-failure");
+      await fs.mkdir(projectPath, { recursive: true });
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [], trusted: true });
+      await config.editConfig(() => cfg);
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const sessionDir = config.getSessionDir(projectChat.sessionId);
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession: (sessionId) => {
+          expect(config.findProjectChatBySessionId(sessionId)).toBeNull();
+          expect(config.getSessionDir(sessionId)).toBe(sessionDir);
+          return Promise.reject(new Error("interrupt failed"));
+        },
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+      expect(config.getSessionDir(projectChat.sessionId)).toBe(sessionDir);
+      await fs.writeFile(
+        path.join(config.getSessionDir(projectChat.sessionId), "late-write.json"),
+        "{}",
+        "utf-8"
+      );
+      expect(await fs.readFile(path.join(sessionDir, "late-write.json"), "utf-8")).toBe("{}");
+      expect(fs.access(path.join(config.sessionsDir, projectChat.sessionId))).rejects.toMatchObject(
+        { code: "ENOENT" }
+      );
+    });
+
+    it("does not clean Project Chat while ordinary workspaces block removal", async () => {
+      const projectPath = path.join(tempDir, "project-chat-blocked");
+      const workspacePath = path.join(projectPath, "workspace");
+      await fs.mkdir(workspacePath, { recursive: true });
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, {
+        workspaces: [{ id: "blocking-workspace", path: workspacePath }],
+        trusted: true,
+      });
+      await config.editConfig(() => cfg);
+      const projectChat = await config.ensureProjectChat(projectPath);
+      const cleanupProjectChatSession = mock(() => Promise.resolve());
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession,
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected workspace blocker");
+      expect(result.error.type).toBe("workspace_blockers");
+      expect(cleanupProjectChatSession).not.toHaveBeenCalled();
+      expect(config.findProjectChatBySessionId(projectChat.sessionId)).not.toBeNull();
+      await fs.access(config.getSessionDir(projectChat.sessionId));
+    });
+
     it("returns project_not_found for unknown project", async () => {
       const result = await service.remove("/no/such/project");
 
@@ -2134,6 +2444,37 @@ exit 1
 
       const after = config.loadConfigOrDefault();
       expect(after.projects.has(projectPath)).toBe(true);
+    });
+
+    it("removes Project Chat sessions for a parent and its direct sub-projects", async () => {
+      const projectPath = path.join(tempDir, "parent-with-project-chats");
+      const subProjectPath = path.join(projectPath, "packages", "sub");
+      await fs.mkdir(subProjectPath, { recursive: true });
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(projectPath, { workspaces: [], trusted: true });
+      cfg.projects.set(subProjectPath, {
+        workspaces: [],
+        trusted: true,
+        parentProjectPath: projectPath,
+      });
+      await config.editConfig(() => cfg);
+      const parentChat = await config.ensureProjectChat(projectPath);
+      const subChat = await config.ensureProjectChat(subProjectPath);
+      const cleaned: string[] = [];
+      service.setWorkspaceService({
+        remove: () => Promise.resolve(Ok(undefined)),
+        cleanupProjectChatSession: async (sessionId) => {
+          cleaned.push(sessionId);
+          await fs.rm(config.getSessionDir(sessionId), { recursive: true, force: true });
+        },
+      });
+
+      const result = await service.remove(projectPath);
+
+      expect(result.success).toBe(true);
+      expect(cleaned.sort()).toEqual([parentChat.sessionId, subChat.sessionId].sort());
+      expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(false);
+      expect(config.loadConfigOrDefault().projects.has(subProjectPath)).toBe(false);
     });
 
     it("auto-prunes stale workspace entries and removes project", async () => {

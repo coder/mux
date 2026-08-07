@@ -74,6 +74,8 @@ interface WorkspaceShellProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** Project chats share transcript/session behavior but have no checkout-specific sidebars or terminals. */
+  surface?: "workspace" | "project";
   /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
   isInitializing?: boolean;
 }
@@ -104,6 +106,7 @@ const WorkspacePlaceholder: React.FC<{
 );
 
 export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
+  const isProjectSurface = props.surface === "project";
   const shellRef = useRef<HTMLDivElement>(null);
   const shellSize = useResizeObserver(shellRef);
 
@@ -192,6 +195,7 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
   // so swapping the whole shell here causes the vertical tear reproduced in both browser and
   // Electron repros when an unseen workspace is opened.
   if (
+    !isProjectSurface &&
     workspaceShellStatus.loading &&
     !workspaceShellStatus.isStreamStarting &&
     !shouldKeepChatPaneMountedDuringHydration
@@ -236,23 +240,26 @@ export const WorkspaceShell: React.FC<WorkspaceShellProps> = (props) => {
         leftSidebarCollapsed={props.leftSidebarCollapsed}
         onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
         runtimeConfig={props.runtimeConfig}
-        onOpenTerminal={handleOpenTerminal}
+        onOpenTerminal={isProjectSurface ? null : handleOpenTerminal}
         immersiveHidden={isReviewImmersive}
+        surface={props.surface}
       />
 
-      <RightSidebar
-        key={props.workspaceId}
-        workspaceId={props.workspaceId}
-        workspacePath={props.namedWorkspacePath}
-        projectPath={props.projectPath}
-        width={sidebarWidth}
-        onStartResize={startResize}
-        isResizing={isResizing}
-        onReviewNote={handleReviewNote}
-        isCreating={props.isInitializing === true}
-        immersiveHidden={isReviewImmersive}
-        addTerminalRef={addTerminalRef}
-      />
+      {!isProjectSurface && (
+        <RightSidebar
+          key={props.workspaceId}
+          workspaceId={props.workspaceId}
+          workspacePath={props.namedWorkspacePath}
+          projectPath={props.projectPath}
+          width={sidebarWidth}
+          onStartResize={startResize}
+          isResizing={isResizing}
+          onReviewNote={handleReviewNote}
+          isCreating={props.isInitializing === true}
+          immersiveHidden={isReviewImmersive}
+          addTerminalRef={addTerminalRef}
+        />
+      )}
 
       {/* Portal target for immersive review mode overlay */}
       <div

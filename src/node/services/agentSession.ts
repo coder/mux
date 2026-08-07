@@ -11,6 +11,7 @@ import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
 
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
+import type { ForegroundWaitInterruption } from "@/common/types/foregroundWaitInterruption";
 import type { RuntimeConfig } from "@/common/types/runtime";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
@@ -3934,10 +3935,15 @@ export class AgentSession {
     }
 
     // Check if post-compaction attachments should be injected.
-    const postCompactionAttachments =
+    const resolvedPostCompactionAttachments =
       disablePostCompactionAttachments === true
         ? null
         : await this.getPostCompactionAttachmentsIfNeeded();
+    // Project Chat has no workspace plan file. Preserve useful TODO/report/diff context while
+    // preventing basename-colliding plan references from leaking into the virtual session.
+    const postCompactionAttachments = this.filterPostCompactionAttachmentsForSession(
+      resolvedPostCompactionAttachments
+    );
     if (isStartupAbortRequested()) {
       return Ok(undefined);
     }
@@ -5485,6 +5491,7 @@ export class AgentSession {
       dedupeKey?: string;
       /** Isolate this keyed message so it can be selectively superseded later. */
       removableDedupeKey?: boolean;
+      foregroundWaitInterruption?: ForegroundWaitInterruption;
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
@@ -5629,6 +5636,30 @@ export class AgentSession {
     }
     const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
     return dispatching?.type === "bash-monitor-wake";
+  }
+
+  getQueuedForegroundWaitInterruption(
+    dispatchMode?: "tool-end" | "turn-end"
+  ): ForegroundWaitInterruption | undefined {
+    return this.hasQueuedMessages(dispatchMode)
+      ? this.messageQueue.getNextForegroundWaitInterruption()
+      : undefined;
+  }
+
+  consumeQueuedForegroundWaitInterruption(
+    interruption: ForegroundWaitInterruption,
+    cancelReason: string
+  ): boolean {
+    const callbacks = this.messageQueue.consumeNextForegroundWaitInterruption(interruption);
+    if (callbacks == null) return false;
+
+    this.emitQueuedMessageChanged();
+    this.backgroundProcessManager.setMessageQueued(
+      this.workspaceId,
+      !this.messageQueue.isEmpty() && this.messageQueue.getNextQueueDispatchMode() === "tool-end"
+    );
+    this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    return true;
   }
 
   /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */
@@ -6162,6 +6193,17 @@ export class AgentSession {
       includesHotMemories: includeHotMemories,
     });
     return context ?? undefined;
+  }
+
+  private filterPostCompactionAttachmentsForSession(
+    attachments: PostCompactionAttachment[] | null
+  ): PostCompactionAttachment[] | null {
+    // Project Chat has no workspace plan file. Ownership comes from configured metadata rather than
+    // ID syntax because historical ordinary workspaces may legitimately use project-session_* IDs.
+    if (this.config.findProjectChatBySessionId?.(this.workspaceId) == null) {
+      return attachments;
+    }
+    return attachments?.filter((attachment) => attachment.type !== "plan_file_reference") ?? null;
   }
 
   /**

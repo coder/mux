@@ -36,6 +36,7 @@ function registerProjectPageMocks() {
 
   // Mock useProvidersConfig to return a configured provider so ChatInput renders
   void mock.module("@/browser/hooks/useProvidersConfig", () => ({
+    hasConfiguredProvider: () => true,
     useProvidersConfig: () => ({
       config: { anthropic: { apiKeySet: true, isEnabled: true, isConfigured: true } },
       loading: false,
@@ -87,6 +88,11 @@ function registerProjectPageMocks() {
         Promise.resolve({ ok: false, error: "not implemented in test" }),
       hasAnyProject: false,
     }),
+  }));
+
+  // This focused test exercises only the explicit draft route; avoid loading the full Project Chat shell.
+  void mock.module("@/browser/components/ProjectChatPage/ProjectChatPage", () => ({
+    ProjectChatPage: () => <div data-testid="ProjectChatPageMock" />,
   }));
 
   // Mock ChatInput to simulate the old (buggy) behavior where onReady can fire again
@@ -154,6 +160,7 @@ describe("ProjectPage", () => {
       leftSidebarCollapsed: true,
       onToggleLeftSidebarCollapsed: () => undefined,
       onWorkspaceCreated: () => undefined,
+      pendingDraftId: "draft-1",
     };
 
     const { rerender } = render(

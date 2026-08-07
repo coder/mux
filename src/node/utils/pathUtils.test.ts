@@ -1,7 +1,13 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { expandTilde, validateProjectPath, isGitRepository } from "./pathUtils";
+import { execFileSync } from "node:child_process";
+import {
+  expandTilde,
+  inspectInsideGitRepository,
+  validateProjectPath,
+  isGitRepository,
+} from "./pathUtils";
 
 describe("pathUtils", () => {
   describe("expandTilde", () => {
@@ -146,6 +152,40 @@ describe("pathUtils", () => {
       expect(resultMultiple.valid).toBe(true);
       expect(resultMultiple.expandedPath).toBe(tempDir);
       expect(resultMultiple.expandedPath).not.toMatch(/[/\\]$/);
+    });
+  });
+
+  describe("inspectInsideGitRepository", () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-git-inspect-test-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("detects a nested directory inside an enclosing worktree", async () => {
+      execFileSync("git", ["init", "-b", "main", tempDir], { stdio: "ignore" });
+      const nested = path.join(tempDir, "packages", "web");
+      // eslint-disable-next-line local/no-sync-fs-methods -- Test setup only
+      fs.mkdirSync(nested, { recursive: true });
+
+      expect(await inspectInsideGitRepository(nested)).toBe(true);
+    });
+
+    it("returns false only for a genuine non-Git directory", async () => {
+      expect(await inspectInsideGitRepository(tempDir)).toBe(false);
+    });
+
+    it("propagates operational inspection failures", async () => {
+      const abortController = new AbortController();
+      abortController.abort();
+
+      await expect(
+        inspectInsideGitRepository(tempDir, { signal: abortController.signal })
+      ).rejects.toThrow("Command aborted before execution");
     });
   });
 

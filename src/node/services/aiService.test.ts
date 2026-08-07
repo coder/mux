@@ -562,6 +562,56 @@ describe("resolveMuxProjectRootForHostFs", () => {
   });
 });
 
+describe("AIService Project Chat execution gate", () => {
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("loads virtual metadata but rejects untrusted execution before model creation", async () => {
+    using muxHome = new DisposableTempDir("ai-service-project-chat-trust");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const { config, service } = createBasicAIService(muxHome.path);
+    await config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, { trusted: false, workspaces: [] });
+      return cfg;
+    });
+    const projectChat = await config.ensureProjectChat(projectPath);
+
+    const metadata = await service.getWorkspaceMetadata(projectChat.sessionId);
+    expect(metadata.success).toBe(true);
+    if (metadata.success) {
+      expect(metadata.data).toMatchObject({
+        id: projectChat.sessionId,
+        projectPath,
+        runtimeConfig: { type: "local" },
+        agentId: "orchestrator",
+      });
+    }
+
+    const providerModelFactory = Reflect.get(
+      service,
+      "providerModelFactory"
+    ) as ProviderModelFactory;
+    const createModelSpy = spyOn(providerModelFactory, "resolveAndCreateModel");
+    const result = await service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "coordinate work")],
+      workspaceId: projectChat.sessionId,
+      modelString: "openai:gpt-5.2",
+      agentId: "exec",
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: {
+        type: "policy_denied",
+        message: "Trust this project before running Project Chat.",
+      },
+    });
+    expect(createModelSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("AIService.setupStreamEventForwarding", () => {
   interface ForwardingInternals {
     streamManager: StreamManager;
@@ -2325,6 +2375,42 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       taskHandleId: "wst_handle",
       ownerWorkspaceId: "owner-workspace",
       turnId: "turn-id",
+    });
+  });
+
+  it("enables correlated agent_report configuration for ordinary workspace-turn streams", async () => {
+    using muxHome = new DisposableTempDir("ai-service-workspace-turn-agent-report");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "ordinary-workspace-turn";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "continue")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "medium",
+      muxMetadata: {
+        type: "workspace-turn-task",
+        taskHandleId: "wst_handle",
+        ownerWorkspaceId: "project-chat",
+        turnId: "turn-id",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    const calls = harness.getToolsForModelSpy.mock.calls as unknown[][];
+    expect(calls[0]?.[1]).toMatchObject({
+      workspaceId,
+      enableAgentReport: true,
+      enableReviewPane: true,
+      workspaceTurnReportContext: {
+        handleId: "wst_handle",
+        ownerWorkspaceId: "project-chat",
+        turnId: "turn-id",
+      },
     });
   });
 

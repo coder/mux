@@ -1,9 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 import * as fs from "fs/promises";
 import * as path from "path";
 import sharp from "sharp";
 import { MAX_IMAGE_DIMENSION, MAX_SVG_TEXT_CHARS } from "@/common/constants/imageAttachments";
+import { WORKSPACE_TURN_TASK_ARTIFACTS_DIR } from "@/common/constants/taskArtifacts";
 import type { AttachFileToolResult } from "@/common/types/tools";
 import { MAX_ATTACH_FILE_SIZE_BYTES } from "@/node/utils/attachments/readAttachmentFromPath";
 import { createAttachFileTool } from "./attach_file";
@@ -73,6 +74,51 @@ describe("attach_file tool", () => {
       mediaType: "image/png",
       filename: "screenshot.png",
     });
+  });
+
+  it("reads owner-session task artifacts locally when the workspace runtime is remote", async () => {
+    using workspaceDir = new TestTempDir("attach-file-remote-workspace");
+    using sessionDir = new TestTempDir("attach-file-owner-session");
+    const baseConfig = createTestToolConfig(workspaceDir.path);
+    const runtimeStat = mock(() => Promise.reject(new Error("remote stat should not run")));
+    const runtimeReadFile = mock(() => {
+      throw new Error("remote read should not run");
+    });
+    const runtime = {
+      ...baseConfig.runtime,
+      stat: runtimeStat,
+      readFile: runtimeReadFile,
+    };
+    const tool = createAttachFileTool({
+      ...baseConfig,
+      runtime,
+      workspaceSessionDir: sessionDir.path,
+    });
+    const artifactPath = path.join(
+      sessionDir.path,
+      WORKSPACE_TURN_TASK_ARTIFACTS_DIR,
+      "wst_remote",
+      "artifact.pdf"
+    );
+    const pdfBytes = Buffer.from("%PDF-owner-local");
+    await fs.mkdir(path.dirname(artifactPath), { recursive: true });
+    await fs.writeFile(artifactPath, pdfBytes);
+
+    const result = expectSuccessfulAttachFileResult(
+      (await tool.execute!(
+        { path: artifactPath, mediaType: "application/pdf", filename: "artifact.pdf" },
+        mockToolCallOptions
+      )) as AttachFileToolResult
+    );
+
+    expect(result.value[1]).toEqual({
+      type: "media",
+      data: pdfBytes.toString("base64"),
+      mediaType: "application/pdf",
+      filename: "artifact.pdf",
+    });
+    expect(runtimeStat).not.toHaveBeenCalled();
+    expect(runtimeReadFile).not.toHaveBeenCalled();
   });
 
   it("resizes oversized raster images before attaching them", async () => {

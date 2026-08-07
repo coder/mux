@@ -12,11 +12,16 @@ import {
   isWorkspacePinned,
   reassignPinnedTimestamps,
 } from "@/common/utils/pin";
+import { PROJECT_CHAT_AGENT_ID, isProjectSessionId } from "@/common/constants/projectChat";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
+import {
+  GENERIC_FOREGROUND_WAIT_INTERRUPTION,
+  type ForegroundWaitInterruption,
+} from "@/common/types/foregroundWaitInterruption";
 import type { Config } from "@/node/config";
-import type { ProjectsConfig, Workspace } from "@/common/types/project";
+import type { ProjectChatInfo, ProjectsConfig, Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
 import { normalizeTaskSettings } from "@/common/types/tasks";
@@ -46,6 +51,7 @@ import {
   runFullInit,
 } from "@/node/runtime/runtimeFactory";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
+import type { WorkspaceRuntimeContext } from "@/node/runtime/runtimeHelpers";
 import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
@@ -63,6 +69,7 @@ import {
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
 import { generateGitStatusScript, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
+import { isProjectTrusted } from "@/node/utils/projectTrust";
 import { isWorkspaceTrustedForSharedExecution } from "@/node/services/utils/workspaceTrust";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import { getPlanFilePath, getLegacyPlanFilePath } from "@/common/utils/planStorage";
@@ -253,6 +260,7 @@ import {
 } from "@/node/services/bashMonitorWakeStore";
 import type { WorkspaceLifecycleHooks } from "@/node/services/workspaceLifecycleHooks";
 import type { TaskService } from "@/node/services/taskService";
+import { resolveProjectChatSessionContext } from "@/node/services/projectChatSessionContext";
 import { findWorkspaceEntry } from "@/node/services/taskUtils";
 import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArchiveSnapshotService";
 
@@ -547,6 +555,22 @@ interface WorkspaceAgentStatus {
   url?: string;
 }
 type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
+export type RetireToTranscriptResult =
+  | ArchiveLossyUntrackedFilesConfirmation
+  | {
+      kind: "transcript-only";
+      cleanup:
+        | "already-transcript-only"
+        | "resource-already-absent"
+        | "worktree-deleted"
+        | "devcontainer-stopped";
+    }
+  | {
+      kind: "archived-only";
+      cleanup: "unsupported";
+      runtimeType: "local" | "ssh" | "coder" | "docker";
+    };
+
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 const STICKY_DESCENDANT_ARCHIVE_ERROR =
@@ -1909,6 +1933,12 @@ export class WorkspaceService extends EventEmitter {
   // from waking a dedicated workspace during archive().
   private readonly archivingWorkspaces = new Set<string>();
 
+  // Coalesce concurrent retirement requests so cleanup and persistence remain idempotent.
+  private readonly transcriptRetirements = new Map<
+    string,
+    Promise<Result<RetireToTranscriptResult>>
+  >();
+
   // Tracks stream generations that are compaction turns so background stop snapshots
   // can carry authoritative notification policy instead of forcing the frontend to
   // infer compaction from best-effort chat replay state.
@@ -2805,6 +2835,21 @@ export class WorkspaceService extends EventEmitter {
     return Ok(null);
   }
 
+  private findProjectChatSession(workspaceId: string): ProjectChatInfo | null {
+    const findProjectChat = (
+      this.config as Config & {
+        findProjectChatBySessionId?: (sessionId: string) => ProjectChatInfo | null;
+      }
+    ).findProjectChatBySessionId;
+    return typeof findProjectChat === "function"
+      ? findProjectChat.call(this.config, workspaceId)
+      : null;
+  }
+
+  private isProjectChatSession(workspaceId: string): boolean {
+    return this.findProjectChatSession(workspaceId) != null;
+  }
+
   /**
    * Best-effort startup recovery for non-task chats so restart auto-retry can resume
    * interrupted turns before the user explicitly opens each workspace.
@@ -2839,6 +2884,18 @@ export class WorkspaceService extends EventEmitter {
         }
 
         this.startStartupRecovery(metadata.id);
+        scheduledCount += 1;
+      }
+
+      // Project Chat is not workspace metadata, but its auto-retry/compaction sidecars use the
+      // same AgentSession recovery path. Only schedule trusted configured chats; transcript display
+      // remains available before trust without triggering model/tool execution at startup.
+      const configSnapshot = this.config.loadConfigOrDefault();
+      for (const [projectPath] of configSnapshot.projects) {
+        if (!isProjectTrusted(this.config, projectPath)) continue;
+        const projectChat = this.config.findProjectChatByProjectPath(projectPath);
+        if (projectChat == null) continue;
+        this.startStartupRecovery(projectChat.sessionId);
         scheduledCount += 1;
       }
 
@@ -3200,6 +3257,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   private async updateRecencyTimestamp(workspaceId: string, timestamp?: number): Promise<void> {
+    if (this.isProjectChatSession(workspaceId)) return;
     await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace recency", () =>
       this.extensionMetadata.updateRecency(workspaceId, timestamp ?? Date.now())
     );
@@ -3209,12 +3267,14 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     agentStatus: WorkspaceAgentStatus | null
   ): Promise<void> {
+    if (this.isProjectChatSession(workspaceId)) return;
     await this.emitWorkspaceActivityUpdate(workspaceId, "update workspace agent status", () =>
       this.extensionMetadata.setAgentStatus(workspaceId, agentStatus)
     );
   }
 
   private async updateTodoStatusFromStorage(workspaceId: string): Promise<void> {
+    if (this.isProjectChatSession(workspaceId)) return;
     const previousUpdate = this.todoStatusUpdateQueue.get(workspaceId) ?? Promise.resolve();
     const nextUpdate = previousUpdate
       .catch(() => undefined)
@@ -3243,6 +3303,14 @@ export class WorkspaceService extends EventEmitter {
     streaming: boolean,
     update: ExtensionMetadataStreamingUpdate = {}
   ): Promise<void> {
+    if (this.isProjectChatSession(workspaceId)) {
+      if (!streaming) {
+        this.streamingGenerations.delete(workspaceId);
+        this.compactionStreamGenerations.delete(workspaceId);
+        this.idleCompactingWorkspaces.delete(workspaceId);
+      }
+      return;
+    }
     const streamGeneration = update.generation ?? this.streamingGenerations.get(workspaceId) ?? 0;
     try {
       let { hasTodos, todoStatus } = update;
@@ -3529,6 +3597,9 @@ export class WorkspaceService extends EventEmitter {
     });
 
     const metadataUnsubscribe = session.onMetadataEvent((event) => {
+      // Project Chat metadata is registered explicitly as an auxiliary chat and must never leak
+      // through workspace metadata subscriptions.
+      if (this.isProjectChatSession(event.workspaceId)) return;
       this.emit("metadata", {
         workspaceId: event.workspaceId,
         metadata: event.metadata!,
@@ -3619,6 +3690,61 @@ export class WorkspaceService extends EventEmitter {
     const trimmed = workspaceId.trim();
     assert(trimmed.length > 0, "emitChatEvent requires workspaceId");
     this.sessions.get(trimmed)?.emitChatEvent(message);
+  }
+
+  async cleanupProjectChatSession(sessionId: string): Promise<void> {
+    assert(isProjectSessionId(sessionId), "cleanupProjectChatSession requires a Project Chat ID");
+    const normalizedSessionId = sessionId.trim();
+    const session =
+      this.sessions.get(normalizedSessionId) ??
+      this.transientStartupRecoverySessions.get(normalizedSessionId);
+
+    try {
+      if (session != null) {
+        const interrupted = await session.interruptStream({ abandonPartial: true });
+        if (!interrupted.success) {
+          log.debug("Project Chat cleanup could not interrupt session cleanly", {
+            sessionId: normalizedSessionId,
+            error: interrupted.error,
+          });
+          const fallbackStop = await this.aiService.stopStream(normalizedSessionId, {
+            abandonPartial: true,
+            abortReason: "user",
+          });
+          if (!fallbackStop.success) {
+            throw new Error(`Failed to stop Project Chat stream: ${fallbackStop.error}`);
+          }
+        }
+
+        // interruptStream() only requests the abort. Wait until AgentSession has processed the
+        // forwarded stream-abort/stream-end event and finished its awaited history cleanup.
+        await session.waitForIdle();
+      }
+
+      // Project Chat owns durable full-workspace turns. Make every live handle terminal before its
+      // owner session disappears so retained ordinary workspaces never become unsupervised.
+      const ownedTurnsInterrupted =
+        await this.taskService?.interruptAllWorkspaceTurnsForOwner(normalizedSessionId);
+      if (ownedTurnsInterrupted != null && !ownedTurnsInterrupted.success) {
+        throw new Error(ownedTurnsInterrupted.error);
+      }
+
+      // Timing listeners run independently from AgentSession's async event handler and can otherwise
+      // recreate the directory after deletion even though the session itself is idle.
+      await this.sessionTimingService?.waitForIdle(normalizedSessionId);
+
+      // Dispose before removing disk state so no retained session can recreate sidecars afterward.
+      this.disposeSession(normalizedSessionId);
+      await fsPromises.rm(this.config.getSessionDir(normalizedSessionId), {
+        recursive: true,
+        force: true,
+      });
+    } catch (error) {
+      // Even an unsuccessful shutdown must unregister the owner session before ProjectService
+      // decides whether to preserve its directory; otherwise later writes can recreate ghost state.
+      this.disposeSession(normalizedSessionId);
+      throw error;
+    }
   }
 
   public disposeSession(workspaceId: string): void {
@@ -4270,30 +4396,77 @@ export class WorkspaceService extends EventEmitter {
         createdAt: new Date().toISOString(),
       };
 
-      await this.config.editConfig((config) => {
-        let projectConfig = config.projects.get(owningProjectPath);
-        if (!projectConfig) {
-          projectConfig = { workspaces: [] };
-          config.projects.set(owningProjectPath, projectConfig);
-        }
-        projectConfig.workspaces.push({
-          path: createResult!.workspacePath!,
-          id: workspaceId,
-          name: finalBranchName,
-          title,
-          createdAt: metadata.createdAt,
-          runtimeConfig: finalRuntimeConfig,
-          subProjectPath: effectiveSubProjectPath,
-          // Persist tags atomically with creation so orchestration loops that
-          // look workspaces up by tag (e.g. workspace.ensure) never observe a
-          // created-but-untagged window after a crash.
-          ...(tags != null && Object.keys(tags).length > 0 ? { tags } : {}),
-          // Mirror /fork: when /new is invoked with a start message, defer title
-          // selection until the first message can drive LLM-based generation.
-          ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
+      try {
+        await this.config.editConfig((config) => {
+          const freshProjectConfig = config.projects.get(owningProjectPath);
+          if (freshProjectConfig == null) {
+            throw new Error(`Project was removed during workspace creation: ${owningProjectPath}`);
+          }
+          if (
+            effectiveSubProjectPath != null &&
+            config.projects.get(effectiveSubProjectPath)?.parentProjectPath !== owningProjectPath
+          ) {
+            // Authorization must be revalidated inside the serialized config write. Otherwise a
+            // child removed while runtime creation is in flight could leave a stale subProjectPath.
+            throw new Error(
+              `Sub-project was removed during workspace creation: ${effectiveSubProjectPath}`
+            );
+          }
+          freshProjectConfig.workspaces.push({
+            path: createResult!.workspacePath!,
+            id: workspaceId,
+            name: finalBranchName,
+            title,
+            createdAt: metadata.createdAt,
+            runtimeConfig: finalRuntimeConfig,
+            subProjectPath: effectiveSubProjectPath,
+            // Persist tags atomically with creation so orchestration loops that
+            // look workspaces up by tag (e.g. workspace.ensure) never observe a
+            // created-but-untagged window after a crash.
+            ...(tags != null && Object.keys(tags).length > 0 ? { tags } : {}),
+            // Mirror /fork: when /new is invoked with a start message, defer title
+            // selection until the first message can drive LLM-based generation.
+            ...(pendingAutoTitle === true ? { pendingAutoTitle: true } : {}),
+          });
+          return config;
         });
-        return config;
-      });
+      } catch (error: unknown) {
+        let rollbackErrorMessage: string | undefined;
+        try {
+          // Roll back only the just-created checkout; never force-delete a pre-existing branch.
+          const rollbackResult = await runtime.deleteWorkspace(
+            owningProjectPath,
+            finalBranchName,
+            false,
+            initAbortController.signal,
+            projectConfig.trusted ?? false
+          );
+          if (!rollbackResult.success) {
+            rollbackErrorMessage = rollbackResult.error;
+          }
+        } catch (rollbackError: unknown) {
+          rollbackErrorMessage = getErrorMessage(rollbackError);
+        }
+
+        if (rollbackErrorMessage != null) {
+          log.error("Failed to roll back workspace after creation scope changed", {
+            workspaceId,
+            projectPath: owningProjectPath,
+            workspacePath: createResult!.workspacePath,
+            error: rollbackErrorMessage,
+          });
+        }
+
+        initLogger.logComplete(-1);
+        const creationError = `Failed to create workspace: ${getErrorMessage(error)}`;
+        if (rollbackErrorMessage == null) {
+          return Err(creationError);
+        }
+        return Err(
+          `${creationError}. Rollback failed for workspace "${finalBranchName}" at "${createResult!.workspacePath}": ${rollbackErrorMessage}. ` +
+            "Remove it manually before retrying."
+        );
+      }
 
       const allMetadata = await this.config.getAllWorkspaceMetadata();
       const completeMetadata = allMetadata.find((m) => m.id === workspaceId);
@@ -7004,6 +7177,140 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async retireToTranscript(workspaceId: string): Promise<Result<RetireToTranscriptResult>> {
+    const inFlight = this.transcriptRetirements.get(workspaceId);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const retirement = this.performTranscriptRetirement(workspaceId);
+    this.transcriptRetirements.set(workspaceId, retirement);
+    try {
+      return await retirement;
+    } finally {
+      if (this.transcriptRetirements.get(workspaceId) === retirement) {
+        this.transcriptRetirements.delete(workspaceId);
+      }
+    }
+  }
+
+  private async performTranscriptRetirement(
+    workspaceId: string
+  ): Promise<Result<RetireToTranscriptResult>> {
+    try {
+      const persistedEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), workspaceId);
+      if (!persistedEntry) {
+        return Err("Workspace not found");
+      }
+      if (persistedEntry.workspace.transcriptOnly === true) {
+        return Ok({ kind: "transcript-only", cleanup: "already-transcript-only" });
+      }
+
+      const metadata = (await this.config.getAllWorkspaceMetadata()).find(
+        (candidate) => candidate.id === workspaceId
+      );
+      if (!metadata) {
+        return Err("Workspace not found");
+      }
+
+      const session = this.sessions.get(workspaceId);
+      if (this.aiService.isStreaming(workspaceId) || session?.isBusy() === true) {
+        return Err("Cannot retire workspace while a turn is active");
+      }
+      if (this.hasPendingQueuedOrPreparingTurn(workspaceId)) {
+        return Err(
+          "Cannot retire workspace while queued, preparing, or retrying messages are pending"
+        );
+      }
+      if (this.initStateManager.getInitState(workspaceId)?.status === "running") {
+        return Err("Cannot retire workspace while initialization is running");
+      }
+      if ((this.terminalService?.getWorkspaceActivity(workspaceId)?.totalSessions ?? 0) > 0) {
+        return Err("Cannot retire workspace while terminal sessions are active");
+      }
+
+      const wasArchived = isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt);
+      if (wasArchived && isWorktreeRuntime(metadata.runtimeConfig)) {
+        const resourceExists = await fsPromises
+          .access(metadata.namedWorkspacePath)
+          .then(() => true)
+          .catch(() => false);
+        if (!resourceExists) {
+          const persistResult = await this.persistTranscriptOnly(workspaceId);
+          if (!persistResult.success) {
+            return persistResult;
+          }
+          return Ok({ kind: "transcript-only", cleanup: "resource-already-absent" });
+        }
+      }
+
+      if (!wasArchived) {
+        const archiveResult = await this.archive(workspaceId);
+        if (!archiveResult.success) {
+          return Err(archiveResult.error);
+        }
+        if (archiveResult.data.kind === "confirm-lossy-untracked-files") {
+          return Ok(archiveResult.data);
+        }
+      }
+
+      if (isWorktreeRuntime(metadata.runtimeConfig)) {
+        await removeManagedGitWorktree(metadata.projectPath, metadata.namedWorkspacePath);
+        const persistResult = await this.persistTranscriptOnly(workspaceId);
+        if (!persistResult.success) {
+          return persistResult;
+        }
+        return Ok({ kind: "transcript-only", cleanup: "worktree-deleted" });
+      }
+
+      if (metadata.runtimeConfig.type === "devcontainer") {
+        const stopResult = await stopDevcontainer(
+          await this.getDevcontainerHostWorkspacePath(workspaceId)
+        );
+        if (stopResult.kind === "error") {
+          return Err(`Failed to stop devcontainer runtime: ${stopResult.message}`);
+        }
+
+        const persistResult = await this.persistTranscriptOnly(workspaceId);
+        if (!persistResult.success) {
+          return persistResult;
+        }
+        return Ok({
+          kind: "transcript-only",
+          cleanup:
+            stopResult.kind === "absent" ? "resource-already-absent" : "devcontainer-stopped",
+        });
+      }
+
+      const runtimeType =
+        metadata.runtimeConfig.type === "ssh" && metadata.runtimeConfig.coder != null
+          ? "coder"
+          : metadata.runtimeConfig.type;
+      return Ok({ kind: "archived-only", cleanup: "unsupported", runtimeType });
+    } catch (error) {
+      return Err(`Failed to retire workspace to transcript: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async persistTranscriptOnly(workspaceId: string): Promise<Result<void>> {
+    let found = false;
+    await this.config.editConfig((config) => {
+      const entry = findWorkspaceEntry(config, workspaceId);
+      if (entry) {
+        entry.workspace.transcriptOnly = true;
+        found = true;
+      }
+      return config;
+    });
+
+    if (!found) {
+      return Err("Workspace not found while persisting transcript-only state");
+    }
+
+    await this.emitCurrentWorkspaceMetadata(workspaceId);
+    return Ok(undefined);
+  }
+
   /**
    * Unarchive a workspace. Restores it to the main sidebar view.
    */
@@ -7539,10 +7846,17 @@ export class WorkspaceService extends EventEmitter {
     });
   }
 
-  private normalizeSendMessageAgentId(options: SendMessageOptions): SendMessageOptions {
-    // agentId is required by the schema, so this just normalizes the value.
+  private normalizeSendMessageAgentId(
+    options: SendMessageOptions,
+    workspaceId?: string
+  ): SendMessageOptions {
+    // Project Chat's backend-owned identity is fixed even when a stale or hostile client requests
+    // another agent. Ordinary workspaces retain normal agent ID normalization.
     const rawAgentId = options.agentId;
-    const normalizedAgentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
+    const normalizedAgentId =
+      workspaceId != null && this.isProjectChatSession(workspaceId)
+        ? PROJECT_CHAT_AGENT_ID
+        : normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
 
     if (normalizedAgentId === options.agentId) {
       return options;
@@ -7655,6 +7969,35 @@ export class WorkspaceService extends EventEmitter {
       persistSelectedAgentId?: boolean;
     }
   ): Promise<Result<boolean, string>> {
+    const projectChat = this.findProjectChatSession(workspaceId);
+    if (projectChat != null) {
+      if (aiSettings == null) return Ok(false);
+      const previous = projectChat.aiSettingsByAgent?.[PROJECT_CHAT_AGENT_ID];
+      const mergedReasoningMode = aiSettings.reasoningMode ?? previous?.reasoningMode;
+      const nextSettings: WorkspaceAISettings = {
+        ...aiSettings,
+        ...(mergedReasoningMode != null ? { reasoningMode: mergedReasoningMode } : {}),
+      };
+      const changed =
+        previous?.model !== nextSettings.model ||
+        previous?.thinkingLevel !== nextSettings.thinkingLevel ||
+        previous?.reasoningMode !== nextSettings.reasoningMode;
+      if (!changed) return Ok(false);
+
+      let updated = false;
+      await this.config.editConfig((freshConfig) => {
+        const freshProject = freshConfig.projects.get(projectChat.projectPath);
+        if (freshProject?.projectChat?.sessionId !== workspaceId) return freshConfig;
+        freshProject.projectChat.aiSettingsByAgent = {
+          ...(freshProject.projectChat.aiSettingsByAgent ?? {}),
+          [PROJECT_CHAT_AGENT_ID]: nextSettings,
+        };
+        updated = true;
+        return freshConfig;
+      });
+      return updated ? Ok(true) : Err("Project Chat not found");
+    }
+
     const found = this.config.findWorkspace(workspaceId);
     if (!found) {
       return Err("Workspace not found");
@@ -8424,17 +8767,21 @@ export class WorkspaceService extends EventEmitter {
     sizeBytes: number;
     dataBase64: string;
   }): Promise<Result<StagedWorkspaceAttachment, string>> {
-    const metadata = await this.getInfo(input.workspaceId);
-    if (metadata == null) {
-      return Err("Workspace not found");
+    const projectChatContext = resolveProjectChatSessionContext(this.config, input.workspaceId);
+    let runtimeContext: WorkspaceRuntimeContext | null = projectChatContext;
+
+    // Preserve the ordinary workspace path through getInfo(): it carries enriched persisted paths
+    // and the existing init barrier. Project Chat has no provisioned checkout or init hook.
+    if (runtimeContext == null) {
+      const metadata = await this.getInfo(input.workspaceId);
+      if (metadata == null) {
+        return Err("Workspace not found");
+      }
+      await this.initStateManager.waitForInit(input.workspaceId);
+      runtimeContext = createRuntimeContextForWorkspace(metadata);
     }
 
-    // Deferred runtimes (Coder/SSH/devcontainer) return from create before
-    // provisioning finishes; wait like executeBash so staging right after
-    // creation does not write into a not-yet-ready workspace.
-    await this.initStateManager.waitForInit(input.workspaceId);
-
-    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+    const { runtime, workspacePath } = runtimeContext;
     return stageWorkspaceAttachment({
       runtime,
       workspacePath,
@@ -8449,12 +8796,14 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string;
     stagedPath: string;
   }): Promise<Result<DownloadedStagedWorkspaceAttachment, string>> {
-    const metadata = await this.getInfo(input.workspaceId);
-    if (metadata == null) {
+    const projectChatContext = resolveProjectChatSessionContext(this.config, input.workspaceId);
+    const metadataResult = await this.aiService.getWorkspaceMetadata(input.workspaceId);
+    if (!metadataResult.success) {
       return Err("Workspace not found");
     }
 
-    const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+    const { runtime, workspacePath } =
+      projectChatContext ?? createRuntimeContextForWorkspace(metadataResult.data);
     return readStagedWorkspaceAttachment({
       runtime,
       workspacePath,
@@ -8493,6 +8842,8 @@ export class WorkspaceService extends EventEmitter {
       queueDedupeKey?: string;
       /** Keep this dedupe-keyed queue entry isolated so it can be selectively superseded. */
       removableQueueDedupeKey?: boolean;
+      /** Why this queued message should pause a foreground task wait. */
+      foregroundWaitInterruption?: ForegroundWaitInterruption;
       /**
        * For queued sends: quietly drop the message (success) when other messages are already
        * queued at enqueue time. Scheduled heartbeats use this so a user send racing the awaits
@@ -8539,36 +8890,44 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      const workspaceConfig = this.config.findWorkspace(workspaceId);
-      if (!workspaceConfig) {
+      // Project Chat is a backend-owned session, not a WorkspaceConfig entry. Accept only a
+      // configured virtual session or an ordinary persisted workspace; arbitrary IDs stay rejected.
+      const projectChat = this.findProjectChatSession(workspaceId);
+      const workspaceConfig = projectChat == null ? this.config.findWorkspace(workspaceId) : null;
+      if (projectChat == null && workspaceConfig == null) {
         return Err({
           type: "unknown",
           raw: "Workspace not found. It may have been deleted.",
         });
       }
 
+      const persistedWorkspace =
+        projectChat == null
+          ? findWorkspaceEntry(this.config.loadConfigOrDefault(), workspaceId)?.workspace
+          : undefined;
+      if (persistedWorkspace?.transcriptOnly === true) {
+        return Err({
+          type: "unknown",
+          raw: "This workspace is transcript-only and cannot accept new messages.",
+        });
+      }
+
       // Guard: queued agent tasks must not start streaming via generic sendMessage calls.
-      // They should only be started by TaskService once a parallel slot is available.
-      if (!internal?.allowQueuedAgentTask) {
-        const config = this.config.loadConfigOrDefault();
-        for (const [_projectPath, project] of config.projects) {
-          const ws = project.workspaces.find((w) => w.id === workspaceId);
-          if (!ws) continue;
-          if (
-            ws.parentWorkspaceId &&
-            (ws.taskStatus === "queued" || ws.taskStatus === "starting")
-          ) {
-            taskQueueDebug("WorkspaceService.sendMessage blocked (queued/starting task)", {
-              workspaceId,
-              stack: new Error("sendMessage blocked").stack,
-            });
-            return Err({
-              type: "unknown",
-              raw: "This agent task is queued or starting and cannot accept generic messages yet.",
-            });
-          }
-          break;
+      // Project Chat is never an agent-task workspace.
+      if (projectChat == null && !internal?.allowQueuedAgentTask) {
+        if (
+          persistedWorkspace?.parentWorkspaceId &&
+          (persistedWorkspace.taskStatus === "queued" ||
+            persistedWorkspace.taskStatus === "starting")
+        ) {
+          taskQueueDebug("WorkspaceService.sendMessage blocked (queued/starting task)", {
+            workspaceId,
+            stack: new Error("sendMessage blocked").stack,
+          });
+          return Err({
+            type: "unknown",
+            raw: "This agent task is queued or starting and cannot accept generic messages yet.",
+          });
         }
       } else {
         taskQueueDebug("WorkspaceService.sendMessage allowed (internal dequeue)", {
@@ -8590,7 +8949,7 @@ export class WorkspaceService extends EventEmitter {
         void this.updateRecencyTimestamp(workspaceId, messageTimestamp);
       }
 
-      const normalizedOptions = this.normalizeSendMessageAgentId(options);
+      const normalizedOptions = this.normalizeSendMessageAgentId(options, workspaceId);
 
       // Reject before any settings persistence so an unpriced model can never
       // be saved for a budgeted resumable goal — including via direct callers
@@ -8705,6 +9064,8 @@ export class WorkspaceService extends EventEmitter {
           agentInitiated: internal?.agentInitiated,
           dedupeKey: internal?.queueDedupeKey,
           removableDedupeKey: internal?.removableQueueDedupeKey,
+          foregroundWaitInterruption:
+            internal?.foregroundWaitInterruption ?? GENERIC_FOREGROUND_WAIT_INTERRUPTION,
           monitorHistoryLockState: internal?.monitorHistoryLockState,
           cancelState: internal?.cancelState,
           cancelSignal: internal?.cancelSignal,
@@ -8727,7 +9088,18 @@ export class WorkspaceService extends EventEmitter {
         }
 
         if (effectiveQueueDispatchMode === "tool-end") {
-          this.taskService?.backgroundForegroundWaitsForWorkspace?.(workspaceId);
+          const interruption =
+            session.getQueuedForegroundWaitInterruption?.("tool-end") ??
+            GENERIC_FOREGROUND_WAIT_INTERRUPTION;
+          const backgroundedCount =
+            this.taskService?.backgroundForegroundWaitsForWorkspace?.(workspaceId, interruption) ??
+            0;
+          if (backgroundedCount > 0 && interruption.reason === "progress_report_received") {
+            session.consumeQueuedForegroundWaitInterruption?.(
+              interruption,
+              "Sub-agent update delivered through the interrupted foreground wait."
+            );
+          }
         }
 
         return Ok(undefined);
@@ -8742,7 +9114,9 @@ export class WorkspaceService extends EventEmitter {
       // stream-end handling does not early-return on interrupted status.
       try {
         resumedInterruptedTask =
-          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+          projectChat == null
+            ? ((await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false)
+            : false;
       } catch (error: unknown) {
         log.error("Failed to restore interrupted task status before sendMessage", {
           workspaceId,
@@ -8771,7 +9145,7 @@ export class WorkspaceService extends EventEmitter {
       const shouldRunPendingAutoTitle =
         internal?.synthetic !== true &&
         normalizedOptions.editMessageId == null &&
-        workspaceConfig.pendingAutoTitle === true &&
+        workspaceConfig?.pendingAutoTitle === true &&
         !this.autoTitlingWorkspaces.has(workspaceId);
       if (shouldRunPendingAutoTitle) {
         this.autoTitlingWorkspaces.add(workspaceId);
@@ -8893,8 +9267,9 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      // Guard: avoid creating sessions for workspaces that don't exist anymore.
-      if (!this.config.findWorkspace(workspaceId)) {
+      // Project Chat is a backend-owned session, not a WorkspaceConfig entry.
+      const projectChat = this.findProjectChatSession(workspaceId);
+      if (projectChat == null && !this.config.findWorkspace(workspaceId)) {
         return Err({
           type: "unknown",
           raw: "Workspace not found. It may have been deleted.",
@@ -8902,8 +9277,8 @@ export class WorkspaceService extends EventEmitter {
       }
 
       // Guard: queued agent tasks must not be resumed by generic UI/API calls.
-      // TaskService is responsible for dequeuing and starting them.
-      if (!internal?.allowQueuedAgentTask) {
+      // Project Chat is never an agent-task workspace.
+      if (projectChat == null && !internal?.allowQueuedAgentTask) {
         const config = this.config.loadConfigOrDefault();
         for (const [_projectPath, project] of config.projects) {
           const ws = project.workspaces.find((w) => w.id === workspaceId);
@@ -8940,7 +9315,7 @@ export class WorkspaceService extends EventEmitter {
         });
       }
 
-      const normalizedOptions = this.normalizeSendMessageAgentId(options);
+      const normalizedOptions = this.normalizeSendMessageAgentId(options, workspaceId);
 
       // Reject before persistence/dispatch when the chosen model would silently
       // bypass budget enforcement on a budgeted resumable goal.
@@ -8960,7 +9335,9 @@ export class WorkspaceService extends EventEmitter {
       // handling does not early-return on interrupted status.
       try {
         resumedInterruptedTask =
-          (await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false;
+          projectChat == null
+            ? ((await this.taskService?.markInterruptedTaskRunning?.(workspaceId)) ?? false)
+            : false;
       } catch (error: unknown) {
         log.error("Failed to restore interrupted task status before resumeStream", {
           workspaceId,
@@ -9078,13 +9455,42 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  /**
+   * Stop one delegated workspace turn without invoking TaskService's descendant-cascade path.
+   * TaskService may call this while holding its launch mutex; delegating to AgentSession still
+   * cancels pending auto-retry before stopping the provider stream.
+   */
+  async interruptWorkspaceTurnStream(workspaceId: string): Promise<Result<void>> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    assert(normalizedWorkspaceId.length > 0, "interruptWorkspaceTurnStream requires workspaceId");
+    try {
+      const session =
+        this.sessions.get(normalizedWorkspaceId) ??
+        this.transientStartupRecoverySessions.get(normalizedWorkspaceId);
+      if (session != null) {
+        return await session.interruptStream({ abandonPartial: false });
+      }
+      // No session means there is no RetryManager to cancel in this process, but a provider stream
+      // may still need a best-effort stop (for example a partially registered startup).
+      return await this.aiService.stopStream(normalizedWorkspaceId, {
+        abandonPartial: false,
+        abortReason: "user",
+      });
+    } catch (error) {
+      return Err(`Failed to interrupt workspace turn stream: ${getErrorMessage(error)}`);
+    }
+  }
+
   async interruptStream(
     workspaceId: string,
     options?: { soft?: boolean; abandonPartial?: boolean; sendQueuedImmediately?: boolean }
   ): Promise<Result<void>> {
+    const projectChat = this.isProjectChatSession(workspaceId);
     try {
-      this.taskService?.resetAutoResumeCount(workspaceId);
-      if (!options?.soft) {
+      if (!projectChat) {
+        this.taskService?.resetAutoResumeCount(workspaceId);
+      }
+      if (!options?.soft && !projectChat) {
         // Mark before attempting the session interrupt to close races where a child
         // could report between stop initiation and descendant cascade termination.
         this.taskService?.markParentWorkspaceInterrupted(workspaceId);
@@ -9094,7 +9500,7 @@ export class WorkspaceService extends EventEmitter {
       const stopResult = await session.interruptStream(options);
       if (!stopResult.success) {
         // Interrupt failed, so clear hard-interrupt suppression we set above.
-        if (!options?.soft) {
+        if (!options?.soft && !projectChat) {
           this.taskService?.resetAutoResumeCount(workspaceId);
         }
         log.error("Failed to stop stream:", stopResult.error);
@@ -9110,7 +9516,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Rationale: user-initiated hard interrupts should stop the entire task tree so
       // descendant sub-agents cannot finish later and auto-resume this workspace.
-      if (!options?.soft) {
+      if (!options?.soft && !projectChat) {
         try {
           const interruptedTaskIds =
             await this.taskService?.terminateAllDescendantAgentTasks?.(workspaceId);
@@ -9132,7 +9538,9 @@ export class WorkspaceService extends EventEmitter {
       if (options?.sendQueuedImmediately) {
         // `sendQueuedMessages()` routes through AgentSession directly, so explicitly
         // clear hard-interrupt suppression first (it won't flow through sendMessage()).
-        this.taskService?.resetAutoResumeCount(workspaceId);
+        if (!projectChat) {
+          this.taskService?.resetAutoResumeCount(workspaceId);
+        }
         // The card represents only user-authored queue content. Prioritize that
         // entry over hidden synthetic/background work before dispatching.
         session.sendNextUserQueuedMessage();
@@ -9143,7 +9551,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
-      if (!options?.soft) {
+      if (!options?.soft && !projectChat) {
         // Keep suppression state consistent if interrupt setup/stop throws.
         this.taskService?.resetAutoResumeCount(workspaceId);
       }
@@ -9428,6 +9836,25 @@ export class WorkspaceService extends EventEmitter {
 
   hasQueuedMessages(workspaceId: string, dispatchMode?: "tool-end" | "turn-end"): boolean {
     return this.sessions.get(workspaceId.trim())?.hasQueuedMessages(dispatchMode) ?? false;
+  }
+
+  getQueuedForegroundWaitInterruption(
+    workspaceId: string,
+    dispatchMode?: "tool-end" | "turn-end"
+  ): ForegroundWaitInterruption | undefined {
+    return this.sessions.get(workspaceId.trim())?.getQueuedForegroundWaitInterruption(dispatchMode);
+  }
+
+  consumeQueuedForegroundWaitInterruption(
+    workspaceId: string,
+    interruption: ForegroundWaitInterruption,
+    cancelReason: string
+  ): boolean {
+    return (
+      this.sessions
+        .get(workspaceId.trim())
+        ?.consumeQueuedForegroundWaitInterruption(interruption, cancelReason) ?? false
+    );
   }
 
   async waitForPendingStreamErrorRecoveryDecision(workspaceId: string): Promise<void> {
@@ -9943,6 +10370,7 @@ export class WorkspaceService extends EventEmitter {
         Array.from(
           workspaceIds,
           async (workspaceId): Promise<readonly [string, WorkspaceActivitySnapshot] | null> => {
+            if (this.config.findProjectChatBySessionId?.(workspaceId) != null) return null;
             const snapshot = snapshots.get(workspaceId) ?? null;
             const hadWorkflowActivityCache = this.activeWorkflowRunIdsByWorkspace.has(workspaceId);
             // Bash-monitor counterpart of the workflow tombstone: a monitor that stopped

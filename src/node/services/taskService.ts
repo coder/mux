@@ -11,7 +11,12 @@ import {
 import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
-import type { Config, ProjectsConfig, Workspace as WorkspaceConfigEntry } from "@/node/config";
+import type {
+  Config,
+  ProjectConfig,
+  ProjectsConfig,
+  Workspace as WorkspaceConfigEntry,
+} from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { HistoryService } from "@/node/services/historyService";
@@ -33,11 +38,13 @@ import {
 } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { isAgentEffectivelyDisabled } from "@/node/services/agentDefinitions/agentEnablement";
+import { detectDefaultTrunkBranch, listLocalBranches } from "@/node/git";
 import { orchestrateFork } from "@/node/services/utils/forkOrchestrator";
 import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
 } from "@/node/runtime/runtimeHelpers";
+import { scanDevcontainerConfigs } from "@/node/runtime/devcontainerConfigs";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { runBackgroundInit } from "@/node/runtime/runtimeFactory";
 import type { InitLogger, Runtime } from "@/node/runtime/Runtime";
@@ -55,19 +62,40 @@ import {
   normalizeTaskGroupLabel,
   type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
-import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import {
+  getProjectDisplayName,
+  getSubProjectsForParent,
+  resolveWorkspaceCreationScope,
+} from "@/common/utils/subProjects";
+import { inspectInsideGitRepository, stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
+import {
+  EXECUTION_HANDLE_VERSION,
+  isExecutionId,
+  type ExecutionHandle,
+  type ExecutionResult,
+  type ExecutionStatus,
+} from "@/common/types/execution";
 import {
   DEFAULT_TASK_SETTINGS,
   normalizeTaskSettings,
   type TaskSettings,
 } from "@/common/types/tasks";
 import {
+  GENERIC_FOREGROUND_WAIT_INTERRUPTION,
+  type ForegroundWaitInterruption,
+} from "@/common/types/foregroundWaitInterruption";
+import {
   resolveBackgroundWorkAttentionPolicy,
   type BackgroundWorkAttentionPolicy,
 } from "@/common/types/backgroundWorkAttention";
 
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import {
+  createMuxMessage,
+  type BackgroundWorkWakeDisplayRecord,
+  type MuxMessage,
+  type MuxMessageMetadata,
+} from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -95,6 +123,7 @@ import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/t
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import {
   coerceOpenAIReasoningMode,
+  coerceThinkingLevel,
   type OpenAIReasoningMode,
   type ParsedThinkingInput,
   type ThinkingLevel,
@@ -116,6 +145,9 @@ import {
 import {
   AgentReportInlineToolArgsSchema,
   AgentReportSubmittedReportSchema,
+  TaskAwaitToolResultSchema,
+  TaskSendMessageToolArgsSchema,
+  TaskSendMessageToolResultSchema,
   TaskToolResultSchema,
   TaskToolArgsSchema,
   type TaskWorkspaceLifecycleToolTargetResultSchema,
@@ -143,6 +175,8 @@ import type { StreamErrorType } from "@/common/types/errors";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
+import { ExecutionRegistry, type ExecutionWaitResult } from "@/node/services/executionRegistry";
+import { ExecutionStore } from "@/node/services/executionStore";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import {
   TaskHandleStore,
@@ -158,7 +192,9 @@ import {
   type TerminalAttentionOutcome,
 } from "@/node/services/terminalAttentionStore";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
+import { materializeWorkspaceTurnAttachFileArtifacts } from "@/node/services/workspaceTurnAttachFileArtifacts";
 import { isWorkflowRunTaskId } from "@/node/services/tools/taskId";
+import type { WorkspaceTurnReportContext } from "@/common/utils/tools/toolAvailability";
 import { normalizeWorkflowAgentReportPayloadForHostSchema } from "@/common/utils/tools/workflowReportPayload";
 import {
   formatJsonSchemaValidationErrors,
@@ -218,7 +254,46 @@ interface ResolvedWorkspaceLifecycleTarget {
   taskId?: string;
   taskTitle?: string;
   workspaceId: string;
+  ownerKind: "project_chat" | "workspace";
   metadata: WorkspaceMetadata | null;
+}
+
+export interface ProjectWorkspaceTurnSummary {
+  taskId: string;
+  status: WorkspaceTurnTaskStatus;
+  title?: string;
+  prompt?: string;
+  createdAt?: string;
+  updatedAt: string;
+}
+
+export interface ProjectWorkspaceSummary {
+  workspaceId: string;
+  name: string;
+  projectPath: string;
+  projectDisplayName: string;
+  subProjectPath: string | null;
+  title?: string;
+  archived: boolean;
+  transcriptOnly?: boolean;
+  createdAt?: string;
+  lastActivityAt?: string;
+  updatedAt?: string;
+  runtimeConfig?: RuntimeConfig;
+  execAiSettings?: ResolvedWorkspaceAiSettings;
+  workspaceTurn?: ProjectWorkspaceTurnSummary;
+}
+
+export interface ProjectWorkspaceAvailableProject {
+  projectPath: string;
+  displayName: string;
+  kind: "parent" | "sub_project";
+}
+
+export interface ProjectWorkspaceListResult {
+  projectPath: string;
+  availableProjects: ProjectWorkspaceAvailableProject[];
+  workspaces: ProjectWorkspaceSummary[];
 }
 
 export interface TaskCreateArgs {
@@ -289,30 +364,100 @@ export interface TaskCreateArgs {
 }
 
 function formatSubagentReportUserMessage(params: {
-  childWorkspaceId: string;
+  taskId: string;
   agentType: string;
   title: string;
   reportMarkdown: string;
   status: "in_progress" | "completed";
   model?: string;
   thinkingLevel?: ThinkingLevel;
+  workspaceId?: string;
+  turnId?: string;
   structuredOutput?: unknown;
 }): string {
-  assert(params.childWorkspaceId.length > 0, "subagent report message requires child id");
+  assert(params.taskId.length > 0, "subagent report message requires task id");
   assert(params.agentType.length > 0, "subagent report message requires agent type");
   assert(params.title.length > 0, "subagent report message requires title");
   assert(params.reportMarkdown.length > 0, "subagent report message requires markdown");
 
   return formatSubagentReportEnvelope({
-    taskId: params.childWorkspaceId,
+    taskId: params.taskId,
     agentType: params.agentType,
     status: params.status,
     title: params.title,
     reportMarkdown: params.reportMarkdown,
     ...(params.model != null ? { model: params.model } : {}),
     ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
+    ...(params.workspaceId != null ? { workspaceId: params.workspaceId } : {}),
+    ...(params.turnId != null ? { turnId: params.turnId } : {}),
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
   });
+}
+
+function getProgressReportInterruption(part: unknown): ForegroundWaitInterruption | undefined {
+  if (!isDynamicToolPart(part) || part.state !== "output-available") return undefined;
+  if (part.toolName === "task") {
+    const output = TaskToolResultSchema.safeParse(part.output);
+    return output.success && output.data.status !== "completed"
+      ? output.data.interruption
+      : undefined;
+  }
+  if (part.toolName === "task_await") {
+    const output = TaskAwaitToolResultSchema.safeParse(part.output);
+    return output.success ? output.data.interruption : undefined;
+  }
+  return undefined;
+}
+
+function applyAssistantProgressResponse(
+  message: MuxMessage,
+  awaitingResponse: Set<string>,
+  textResponseBlockedTaskIds: Set<string>,
+  responded: Set<string>
+): void {
+  // Guidance in this turn must not make later prose look unambiguous for another sibling.
+  // Intervening user turns also make later prose ambiguous until a fresh child update arrives.
+  const textAttributionCandidates = new Set(
+    [...awaitingResponse].filter((taskId) => !textResponseBlockedTaskIds.has(taskId))
+  );
+  for (const part of message.parts) {
+    if (part.type === "text" && part.text.trim().length > 0) {
+      if (textAttributionCandidates.size === 1) {
+        const taskId = textAttributionCandidates.values().next().value;
+        if (taskId != null) {
+          if (awaitingResponse.delete(taskId)) {
+            responded.add(taskId);
+          }
+          textResponseBlockedTaskIds.delete(taskId);
+          textAttributionCandidates.delete(taskId);
+        }
+      }
+      continue;
+    }
+    const progressInterruption = getProgressReportInterruption(part);
+    if (progressInterruption?.reason === "progress_report_received") {
+      awaitingResponse.add(progressInterruption.sourceTaskId);
+      textResponseBlockedTaskIds.delete(progressInterruption.sourceTaskId);
+      textAttributionCandidates.add(progressInterruption.sourceTaskId);
+      responded.delete(progressInterruption.sourceTaskId);
+      continue;
+    }
+    if (!isDynamicToolPart(part) || part.state !== "output-available") continue;
+    if (part.toolName !== "task_send_message") continue;
+
+    const input = TaskSendMessageToolArgsSchema.safeParse(part.input);
+    const output = TaskSendMessageToolResultSchema.safeParse(part.output);
+    if (
+      input.success &&
+      output.success &&
+      (output.data.status === "accepted" || output.data.status === "queued") &&
+      output.data.taskId === input.data.task_id &&
+      awaitingResponse.delete(input.data.task_id)
+    ) {
+      textResponseBlockedTaskIds.delete(input.data.task_id);
+      responded.add(input.data.task_id);
+    }
+  }
 }
 
 // Failure twin of formatSubagentReportUserMessage: terminal child failures are
@@ -364,13 +509,16 @@ const FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT =
  * it lives in the task handle store. So the wake-up must tell the agent to retrieve it with a
  * one-shot task_await (terminal already, timeout_secs: 0), not to keep waiting.
  */
-function buildCompletedWorkspaceTurnPrompt(handleIds: string[]): string {
-  assert(handleIds.length > 0, "buildCompletedWorkspaceTurnPrompt requires at least one handle id");
+function buildCompletedAwaitableExecutionPrompt(executionIds: string[]): string {
+  assert(
+    executionIds.length > 0,
+    "buildCompletedAwaitableExecutionPrompt requires at least one execution id"
+  );
   return (
     `${BACKGROUND_WORK_WAKE_OPENINGS.workspaceTurnsTerminal} ` +
-    `${handleIds.join(", ")}. ` +
-    `Call task_await now with task_ids: ${JSON.stringify(handleIds)} and timeout_secs: 0 to ` +
-    "retrieve their terminal output, then integrate it into your work. These handles are already " +
+    `${executionIds.join(", ")}. ` +
+    `Call task_await now with task_ids: ${JSON.stringify(executionIds)} and timeout_secs: 0 to ` +
+    "retrieve their terminal output, then integrate it into your work. These executions are already " +
     "terminal — do not repeatedly wait if task_await returns a terminal status."
   );
 }
@@ -513,12 +661,18 @@ export interface WorkspaceTurnCreateArgs {
   title: string;
   modelString?: string;
   thinkingLevel?: ParsedThinkingInput;
+  reasoningMode?: OpenAIReasoningMode;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
   workspace?: {
     mode?: "new" | "fork" | "existing";
+    projectPath?: string;
     workspaceId?: string;
     branchName?: string;
     trunkBranch?: string;
+    /** Workspace display title, separate from the workspace-turn task handle title. */
+    title?: string;
+    /** Creation-only runtime override. Existing workspace turns cannot mutate runtime settings. */
+    runtimeConfig?: RuntimeConfig;
     queueDispatchMode?: WorkspaceTurnQueueDispatchMode;
     disposable?: boolean;
   };
@@ -536,6 +690,9 @@ export interface WorkspaceTurnCreateResult {
   kind: "workspace_turn";
   status: "queued" | "starting" | "running";
   workspaceId: string;
+  modelString: string;
+  thinkingLevel: ThinkingLevel;
+  reasoningMode: OpenAIReasoningMode;
 }
 
 export interface WorkspaceTurnWaitResult {
@@ -545,6 +702,7 @@ export interface WorkspaceTurnWaitResult {
   title?: string;
   messageId?: string;
   finalMessageRef?: WorkspaceTurnFinalMessageRef;
+  artifacts?: WorkspaceTurnTaskHandleRecord["artifacts"];
 }
 
 type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
@@ -563,7 +721,10 @@ interface WorkspaceTurnWaiter extends BackgroundableForegroundWaiter {
 }
 
 export interface TaskCreateResult {
+  /** Opaque execution ID returned to tool callers. */
   taskId: string;
+  /** Concrete child workspace ID used for navigation and workspace operations. */
+  workspaceId: string;
   kind: TaskKind;
   status: "queued" | "starting" | "running";
   /** Resolved (post-precedence) AI settings the child was created with. */
@@ -574,7 +735,9 @@ export interface TaskCreateResult {
 type TaskLaunchStart = { kind: "sendMessage"; prompt: string } | { kind: "resumeStream" };
 
 interface TaskLaunchPlan {
+  /** Legacy internal task key: the concrete child workspace ID. */
   taskId: string;
+  executionId: `exe_${string}`;
   parentWorkspaceId: string;
   parentMeta: WorkspaceMetadata;
   agentId: string;
@@ -634,6 +797,7 @@ export interface TerminateAgentTaskResult {
 
 export interface DescendantAgentTaskInfo {
   taskId: string;
+  workspaceId: string;
   status: AgentTaskStatus;
   parentWorkspaceId: string;
   agentType?: string;
@@ -1184,7 +1348,9 @@ async function readTaskBaseCommitShaByProjectPath(params: {
 }
 
 export class ForegroundWaitBackgroundedError extends Error {
-  constructor() {
+  constructor(
+    readonly interruption: ForegroundWaitInterruption = GENERIC_FOREGROUND_WAIT_INTERRUPTION
+  ) {
     super("Foreground wait sent to background due to queued message");
     this.name = "ForegroundWaitBackgroundedError";
   }
@@ -1209,6 +1375,26 @@ function buildWorkflowTimeoutFinalizationPrompt(
     return base;
   }
   return `${base}\n\nAdditional workflow-specific finalization instructions:\n${finalInstructions}`;
+}
+
+type ScopedExecutionResolution =
+  | { kind: "ok"; handle: ExecutionHandle; workspaceId: string }
+  | { kind: "not_found" }
+  | { kind: "invalid_scope" };
+
+export type ScopedExecutionSnapshot =
+  | { kind: "ok"; handle: ExecutionHandle; workspaceId: string; source: "canonical" | "legacy" }
+  | { kind: "not_found" }
+  | { kind: "invalid_scope" };
+
+export type ScopedExecutionWaitResult =
+  | ExecutionWaitResult
+  | { kind: "legacy"; handle: ExecutionHandle; workspaceId: string }
+  | { kind: "invalid_scope" };
+
+interface TaskServiceExecutionDependencies {
+  executionStore?: ExecutionStore;
+  executionRegistry?: ExecutionRegistry;
 }
 
 export class TaskService {
@@ -1249,10 +1435,15 @@ export class TaskService {
     Set<BackgroundableForegroundWaiter>
   >();
   private readonly pendingWorkspaceTurnWaitersByHandleId = new Map<string, WorkspaceTurnWaiter[]>();
+  // Tool-call ids are unique within a live stream. Track accepted progress reports until terminal
+  // settlement so provider retries cannot wake the owner twice without changing durable records.
+  private readonly workspaceTurnProgressToolCallIdsByHandleId = new Map<string, Set<string>>();
   private readonly activeWorkspaceTurnHandleByWorkspaceId = new Map<
     string,
     { handleId: string; ownerWorkspaceId: string }
   >();
+  private readonly executionStore: ExecutionStore;
+  private readonly executionRegistry: ExecutionRegistry;
   private readonly taskHandleStore: TaskHandleStore;
   private readonly terminalAttentionStore: TerminalAttentionStore;
   private readonly userBackgroundedTaskIds = new Set<string>();
@@ -1679,8 +1870,13 @@ export class TaskService {
     private readonly initStateManager: InitStateManager,
     private readonly opResolver?: ExternalSecretResolver,
     private readonly sessionUsageService?: SessionUsageService,
-    private readonly workspaceGoalService?: WorkspaceGoalService
+    private readonly workspaceGoalService?: WorkspaceGoalService,
+    executionDependencies: TaskServiceExecutionDependencies = {}
   ) {
+    this.executionStore = executionDependencies.executionStore ?? new ExecutionStore(config);
+    this.executionRegistry =
+      executionDependencies.executionRegistry ??
+      new ExecutionRegistry(config, { executionStore: this.executionStore });
     this.taskHandleStore = new TaskHandleStore(config);
     this.terminalAttentionStore = new TerminalAttentionStore(config);
     this.gitPatchArtifactService = new GitPatchArtifactService(config);
@@ -1720,6 +1916,651 @@ export class TaskService {
           log.error("TaskService.handleTaskStreamError failed", { error });
         });
     });
+  }
+
+  isProjectChatOwner(sessionId: string): boolean {
+    return this.config.findProjectChatBySessionId(sessionId) != null;
+  }
+
+  private generateExecutionId(): `exe_${string}` {
+    return `exe_${randomUUID().replaceAll("-", "")}`;
+  }
+
+  private resolveExecutionOwnerSessionId(
+    requesterWorkspaceId: string,
+    cfg: ProjectsConfig
+  ): string {
+    let currentWorkspaceId = requesterWorkspaceId;
+    const visited = new Set<string>();
+    for (let depth = 0; depth < 32; depth += 1) {
+      if (visited.has(currentWorkspaceId)) {
+        throw new Error(
+          `resolveExecutionOwnerSessionId: possible parentWorkspaceId cycle at ${currentWorkspaceId}`
+        );
+      }
+      visited.add(currentWorkspaceId);
+      const entry = findWorkspaceEntry(cfg, currentWorkspaceId)?.workspace;
+      if (entry?.executionId == null || entry.parentWorkspaceId == null) {
+        return currentWorkspaceId;
+      }
+      currentWorkspaceId = entry.parentWorkspaceId;
+    }
+    throw new Error("resolveExecutionOwnerSessionId: parentWorkspaceId depth exceeded");
+  }
+
+  private buildAgentExecutionHandle(params: {
+    executionId: `exe_${string}`;
+    workspaceId: string;
+    requesterWorkspaceId: string;
+    cfg: ProjectsConfig;
+    agentId: string;
+    title?: string;
+    prompt: string;
+    status: "queued" | "starting" | "running";
+    sticky?: boolean;
+    attentionPolicy?: BackgroundWorkAttentionPolicy;
+    createdAt: string;
+  }): ExecutionHandle {
+    const parentExecutionId = findWorkspaceEntry(params.cfg, params.requesterWorkspaceId)?.workspace
+      .executionId;
+    return {
+      version: EXECUTION_HANDLE_VERSION,
+      executionId: params.executionId,
+      aliases: [params.workspaceId],
+      ...(parentExecutionId != null ? { parentExecutionId } : {}),
+      ownerSessionId: this.resolveExecutionOwnerSessionId(params.requesterWorkspaceId, params.cfg),
+      requesterWorkspaceId: params.requesterWorkspaceId,
+      target: { kind: "workspace", workspaceId: params.workspaceId, origin: "created" },
+      launchPolicy: {
+        kind: "agent_task",
+        agentId: params.agentId,
+        ...(params.title != null ? { title: params.title } : {}),
+        prompt: params.prompt,
+      },
+      completionPolicy: { kind: "final_assistant_message" },
+      retentionPolicy: {
+        kind: params.sticky === true ? "retain_workspace" : "delete_workspace_on_completion",
+      },
+      attentionPolicy: resolveBackgroundWorkAttentionPolicy(params.attentionPolicy),
+      status: params.status,
+      createdAt: params.createdAt,
+      updatedAt: params.createdAt,
+      ...(params.status === "running" ? { startedAt: params.createdAt } : {}),
+    };
+  }
+
+  /**
+   * Project the durable workspace-turn compatibility record into its canonical execution handle.
+   * Existing canonical routing/policy fields win so reconciliation never rewrites identity metadata.
+   */
+  private buildWorkspaceTurnExecutionHandle(
+    record: WorkspaceTurnTaskHandleRecord,
+    current: ExecutionHandle | null
+  ): ExecutionHandle {
+    assert(record.executionId != null, "canonical workspace turns require executionId");
+    const aliases = current?.aliases?.includes(record.handleId)
+      ? current.aliases
+      : [...(current?.aliases ?? []), record.handleId];
+    const base: ExecutionHandle = {
+      version: EXECUTION_HANDLE_VERSION,
+      executionId: record.executionId,
+      aliases,
+      ownerSessionId: current?.ownerSessionId ?? record.ownerWorkspaceId,
+      requesterWorkspaceId: current?.requesterWorkspaceId ?? record.ownerWorkspaceId,
+      target:
+        current?.target ??
+        ({
+          kind: "workspace",
+          workspaceId: record.workspaceId,
+          origin: record.createdWorkspace ? "created" : "existing",
+        } as const),
+      launchPolicy:
+        current?.launchPolicy ??
+        ({
+          kind: "workspace_turn",
+          turnId: record.turnId,
+          ...(record.title != null ? { title: record.title } : {}),
+          ...(record.prompt != null ? { prompt: record.prompt } : {}),
+        } as const),
+      completionPolicy: current?.completionPolicy ?? { kind: "final_assistant_message" },
+      retentionPolicy: current?.retentionPolicy ?? {
+        kind: record.disposableWorkspace ? "delete_workspace_on_completion" : "retain_workspace",
+      },
+      attentionPolicy:
+        record.attentionPolicy != null
+          ? resolveBackgroundWorkAttentionPolicy(record.attentionPolicy)
+          : (current?.attentionPolicy ?? resolveBackgroundWorkAttentionPolicy(undefined)),
+      status: record.status,
+      createdAt: current?.createdAt ?? record.createdAt,
+      updatedAt: record.updatedAt,
+    };
+
+    if (record.status === "queued") {
+      return base;
+    }
+    if (record.status === "starting" || record.status === "running") {
+      return {
+        ...base,
+        startedAt: current?.startedAt ?? record.updatedAt,
+      };
+    }
+
+    const result: ExecutionResult =
+      record.status === "completed"
+        ? {
+            kind: "completed",
+            reportMarkdown: record.reportMarkdown ?? "",
+            ...(record.finalMessageRef != null ? { finalMessageRef: record.finalMessageRef } : {}),
+            ...(record.artifacts != null ? { artifacts: record.artifacts } : {}),
+          }
+        : record.status === "error"
+          ? { kind: "error", error: record.error ?? "Workspace turn failed" }
+          : {
+              kind: "interrupted",
+              ...(record.error != null ? { message: record.error } : {}),
+            };
+    return {
+      ...base,
+      ...(current?.startedAt != null ? { startedAt: current.startedAt } : {}),
+      result,
+      terminalAt: record.updatedAt,
+      ...(record.terminalAttentionNotifiedAt != null
+        ? { terminalAttentionNotifiedAt: record.terminalAttentionNotifiedAt }
+        : {}),
+    };
+  }
+
+  private workspaceTurnPublicTaskId(record: WorkspaceTurnTaskHandleRecord): string {
+    return record.executionId ?? record.handleId;
+  }
+
+  private workspaceTurnShadowHandleId(handle: ExecutionHandle): string | null {
+    return handle.aliases?.find(isWorkspaceTurnTaskId) ?? null;
+  }
+
+  private projectWorkspaceTurnRecordFromExecution(
+    record: WorkspaceTurnTaskHandleRecord,
+    handle: ExecutionHandle
+  ): WorkspaceTurnTaskHandleRecord {
+    if (handle.launchPolicy.kind !== "workspace_turn") return record;
+    const projected: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status: handle.status,
+      updatedAt: handle.updatedAt,
+    };
+    delete projected.error;
+    if (handle.result?.kind === "completed") {
+      projected.reportMarkdown = handle.result.reportMarkdown;
+      projected.finalMessageRef = handle.result.finalMessageRef;
+      projected.artifacts =
+        handle.result.artifacts?.attachFiles != null
+          ? { attachFiles: handle.result.artifacts.attachFiles }
+          : undefined;
+    } else if (handle.result?.kind === "error") {
+      projected.error = handle.result.error;
+    } else if (handle.result?.kind === "interrupted" && handle.result.message != null) {
+      projected.error = handle.result.message;
+    }
+    return projected;
+  }
+
+  private async resolveScopedWorkspaceTurnRecord(
+    ownerWorkspaceId: string,
+    executionIdOrAlias: string
+  ): Promise<
+    | { kind: "ok"; record: WorkspaceTurnTaskHandleRecord; handle: ExecutionHandle }
+    | { kind: "not_found" }
+    | { kind: "invalid_scope" }
+  > {
+    const resolved = await this.getScopedExecutionSnapshot(ownerWorkspaceId, executionIdOrAlias);
+    if (resolved.kind !== "ok") return resolved;
+    if (resolved.handle.launchPolicy.kind !== "workspace_turn") {
+      return { kind: "invalid_scope" };
+    }
+    const handleId = this.workspaceTurnShadowHandleId(resolved.handle);
+    if (handleId == null) return { kind: "not_found" };
+    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    return record == null ? { kind: "not_found" } : { kind: "ok", record, handle: resolved.handle };
+  }
+
+  /**
+   * Persist the legacy workspace-turn shadow first, then mirror it to canonical execution state.
+   * Active mirror failures are restart-repairable and must not lose the accepted turn; terminal
+   * failures propagate so no waiter or attention consumer observes a non-durable canonical result.
+   */
+  private async persistWorkspaceTurnRecord(record: WorkspaceTurnTaskHandleRecord): Promise<void> {
+    await this.taskHandleStore.upsertWorkspaceTurn(record);
+    if (record.executionId == null) return;
+
+    try {
+      const current = await this.executionStore.get(record.ownerWorkspaceId, record.executionId);
+      await this.executionRegistry.overwriteForReconciliation(
+        this.buildWorkspaceTurnExecutionHandle(record, current)
+      );
+    } catch (error: unknown) {
+      if (this.isTerminalWorkspaceTurnStatus(record.status)) {
+        throw error;
+      }
+      log.error("Failed to mirror active workspace turn to canonical execution", {
+        handleId: record.handleId,
+        executionId: record.executionId,
+        status: record.status,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /** Repair missing or stale canonical projections from authoritative shadows during startup. */
+  private async reconcileCanonicalWorkspaceTurnRecords(): Promise<number> {
+    let reconciledCount = 0;
+    let records: WorkspaceTurnTaskHandleRecord[];
+    try {
+      records = await this.taskHandleStore.listAllWorkspaceTurns();
+    } catch (error: unknown) {
+      log.error("Failed to scan workspace turns for canonical reconciliation", {
+        error: getErrorMessage(error),
+      });
+      return 0;
+    }
+    for (const record of records) {
+      if (record.executionId == null) continue;
+      try {
+        const current = await this.executionStore.get(record.ownerWorkspaceId, record.executionId);
+        const next = this.buildWorkspaceTurnExecutionHandle(record, current);
+        if (JSON.stringify(current) === JSON.stringify(next)) continue;
+        await this.executionRegistry.overwriteForReconciliation(next);
+        reconciledCount += 1;
+      } catch (error: unknown) {
+        // Startup initialization must remain self-healing: retry this shadow on the next launch.
+        log.error("Failed to reconcile canonical workspace turn execution", {
+          handleId: record.handleId,
+          executionId: record.executionId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+    return reconciledCount;
+  }
+
+  private async updateExecutionHandleStatus(
+    handle: ExecutionHandle,
+    status: ExecutionStatus,
+    error?: string,
+    phase?: "awaiting_report"
+  ): Promise<void> {
+    if (status === "error" || status === "interrupted") {
+      await this.executionRegistry.settle(
+        handle.ownerSessionId,
+        handle.executionId,
+        status === "error"
+          ? { kind: "error", error: error ?? "Agent task failed" }
+          : {
+              kind: "interrupted",
+              ...(error != null ? { message: error } : {}),
+            }
+      );
+      return;
+    }
+
+    const updatedAt = getIsoNow();
+    await this.executionStore.upsert({
+      ...handle,
+      status,
+      phase: status === "running" ? phase : undefined,
+      updatedAt,
+      ...(status === "running" && handle.startedAt == null ? { startedAt: updatedAt } : {}),
+    });
+  }
+
+  private async updateExecutionStatusForWorkspace(
+    workspaceId: string,
+    status: ExecutionStatus,
+    error?: string
+  ): Promise<void> {
+    const cfg = this.config.loadConfigOrDefault();
+    const workspace = findWorkspaceEntry(cfg, workspaceId)?.workspace;
+    if (workspace?.executionId == null) return;
+    const ownerSessionId = this.resolveExecutionOwnerSessionId(workspaceId, cfg);
+    const handle = await this.executionStore.get(ownerSessionId, workspace.executionId);
+    if (handle != null) {
+      await this.updateExecutionHandleStatus(
+        handle,
+        status,
+        error,
+        workspace.taskStatus === "awaiting_report" ? "awaiting_report" : undefined
+      );
+    }
+  }
+
+  private async getCanonicalAgentExecutionForWorkspace(
+    workspaceId: string,
+    entry: { workspace: WorkspaceConfigEntry } | null | undefined,
+    cfg: ProjectsConfig = this.config.loadConfigOrDefault()
+  ): Promise<ExecutionHandle | null> {
+    const executionId = entry?.workspace.executionId;
+    if (!isExecutionId(executionId)) return null;
+
+    const ownerSessionId = this.resolveExecutionOwnerSessionId(workspaceId, cfg);
+    const handle = await this.executionStore.get(ownerSessionId, executionId);
+    if (handle?.launchPolicy.kind !== "agent_task" || handle.target.workspaceId !== workspaceId) {
+      return null;
+    }
+    return handle;
+  }
+
+  private reportFromCanonicalExecution(handle: ExecutionHandle): {
+    reportMarkdown: string;
+    title?: string;
+    structuredOutput?: unknown;
+    model?: string;
+    thinkingLevel?: ThinkingLevel;
+  } {
+    assert(handle.result?.kind === "completed", "canonical execution must be completed");
+    return {
+      reportMarkdown: handle.result.reportMarkdown,
+      ...(handle.launchPolicy.title != null ? { title: handle.launchPolicy.title } : {}),
+      ...(handle.result.structuredOutput !== undefined
+        ? { structuredOutput: handle.result.structuredOutput }
+        : {}),
+    };
+  }
+
+  private throwCanonicalExecutionFailure(handle: ExecutionHandle): never {
+    assert(handle.result != null, "terminal canonical execution requires a result");
+    if (handle.result.kind === "interrupted") {
+      throw new Error(handle.result.message ?? "Task interrupted");
+    }
+    if (handle.result.kind === "error") {
+      throw new Error(handle.result.error);
+    }
+    throw new Error("Canonical execution is not a failure");
+  }
+
+  /**
+   * Canonical executions persist their immutable terminal result before any legacy waiter or
+   * attention side effect. Legacy workspace status remains as a compatibility projection only;
+   * terminal output is read from ExecutionRegistry and is never injected into parent history.
+   */
+  private async settleCanonicalAgentExecution(params: {
+    workspaceId: string;
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry };
+    result: ExecutionResult;
+  }): Promise<boolean> {
+    const cfg = this.config.loadConfigOrDefault();
+    const handle = await this.getCanonicalAgentExecutionForWorkspace(
+      params.workspaceId,
+      params.entry,
+      cfg
+    );
+    if (handle == null) return false;
+
+    const hadForegroundWaiters =
+      (this.pendingWaitersByTaskId.get(params.workspaceId)?.length ?? 0) > 0;
+    const terminal = await this.executionRegistry.settle(
+      handle.ownerSessionId,
+      handle.executionId,
+      params.result
+    );
+    if (terminal?.result == null) return false;
+
+    await this.editWorkspaceEntry(
+      params.workspaceId,
+      (workspace) => {
+        if (terminal.status === "completed") {
+          workspace.taskStatus = "reported";
+          workspace.reportedAt = terminal.terminalAt ?? terminal.updatedAt;
+          workspace.taskLaunchError = undefined;
+          delete workspace.taskRecoveryAttempts;
+        } else {
+          workspace.taskStatus = "interrupted";
+          workspace.reportedAt = undefined;
+          workspace.taskLaunchError =
+            terminal.result?.kind === "error"
+              ? terminal.result.error
+              : terminal.result?.kind === "interrupted"
+                ? terminal.result.message
+                : undefined;
+        }
+      },
+      { allowMissing: true }
+    );
+    await this.emitWorkspaceMetadata(params.workspaceId);
+
+    if (terminal.result.kind === "completed") {
+      this.resolveWaiters(params.workspaceId, this.reportFromCanonicalExecution(terminal));
+      await this.maybeStartPatchGenerationForReportedTask(params.workspaceId);
+      await this.maybeStartQueuedTasks();
+      await this.finalizeTerminationPhaseForReportedTask(params.workspaceId);
+    } else {
+      const message =
+        terminal.result.kind === "error"
+          ? terminal.result.error
+          : (terminal.result.message ?? "Task interrupted");
+      this.rejectWaiters(params.workspaceId, new Error(message));
+      this.scheduleMaybeStartQueuedTasks();
+    }
+
+    const isWorkflowOwned = params.entry.workspace.workflowTask != null;
+    if (hadForegroundWaiters || isWorkflowOwned) {
+      this.scheduleTerminalAttentionDrain(handle.requesterWorkspaceId);
+      return true;
+    }
+    if (resolveBackgroundWorkAttentionPolicy(handle.attentionPolicy) !== "notify_on_terminal") {
+      return true;
+    }
+
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: handle.requesterWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: handle.executionId,
+      title:
+        coerceNonEmptyString(params.entry.workspace.title) ??
+        coerceNonEmptyString(params.entry.workspace.name) ??
+        "Sub-agent task",
+      outputDelivery: "requires_task_await",
+      terminalOutcome:
+        terminal.status === "completed"
+          ? "completed"
+          : terminal.status === "interrupted"
+            ? "interrupted"
+            : "error",
+    });
+    return true;
+  }
+
+  private async isExecutionHandleInScope(
+    ancestorWorkspaceId: string,
+    handle: ExecutionHandle,
+    ownerSessionId: string,
+    cfg: ProjectsConfig
+  ): Promise<boolean> {
+    if (handle.ownerSessionId !== ownerSessionId) return false;
+    if (ancestorWorkspaceId === ownerSessionId) return true;
+
+    const ancestorExecutionId = findWorkspaceEntry(cfg, ancestorWorkspaceId)?.workspace.executionId;
+    if (ancestorExecutionId == null) return false;
+
+    let parentExecutionId = handle.parentExecutionId;
+    const visited = new Set<string>();
+    for (let depth = 0; parentExecutionId != null && depth < 32; depth += 1) {
+      if (parentExecutionId === ancestorExecutionId) return true;
+      if (visited.has(parentExecutionId)) return false;
+      visited.add(parentExecutionId);
+      const parent = await this.executionRegistry.get(ownerSessionId, parentExecutionId);
+      parentExecutionId = parent?.parentExecutionId;
+    }
+    return false;
+  }
+
+  private resolveLegacyWorkspaceAliasInScope(
+    ancestorWorkspaceId: string,
+    taskId: string,
+    cfg: ProjectsConfig
+  ): string | null {
+    const entry = findWorkspaceEntry(cfg, taskId)?.workspace;
+    if (entry?.parentWorkspaceId == null) return null;
+    const parentById = this.buildAgentTaskIndex(cfg).parentById;
+    return this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)
+      ? taskId
+      : null;
+  }
+
+  /** Canonical scope gate shared by task tool operations for every execution-backed task kind. */
+  private async resolveScopedExecution(
+    ancestorWorkspaceId: string,
+    executionIdOrAlias: string
+  ): Promise<ScopedExecutionResolution> {
+    const cfg = this.config.loadConfigOrDefault();
+    const ownerSessionId = this.resolveExecutionOwnerSessionId(ancestorWorkspaceId, cfg);
+    const handle = await this.executionRegistry.get(ownerSessionId, executionIdOrAlias);
+    if (handle != null) {
+      const inScope =
+        handle.launchPolicy.kind === "agent_task"
+          ? await this.isExecutionHandleInScope(ancestorWorkspaceId, handle, ownerSessionId, cfg)
+          : handle.ownerSessionId === ownerSessionId &&
+            handle.requesterWorkspaceId === ancestorWorkspaceId;
+      return inScope
+        ? { kind: "ok", handle, workspaceId: handle.target.workspaceId }
+        : { kind: "invalid_scope" };
+    }
+
+    if (ancestorWorkspaceId !== ownerSessionId) {
+      const legacyScoped = await this.executionRegistry.get(
+        ancestorWorkspaceId,
+        executionIdOrAlias
+      );
+      if (legacyScoped != null) {
+        return {
+          kind: "ok",
+          handle: legacyScoped,
+          workspaceId: legacyScoped.target.workspaceId,
+        };
+      }
+    }
+
+    // Legacy agent workspaces predate registry aliases and remain discoverable by workspace ID.
+    const workspace = this.listAgentTaskWorkspaces(cfg).find(
+      (candidate) =>
+        candidate.id === executionIdOrAlias || candidate.executionId === executionIdOrAlias
+    );
+    if (workspace == null) return { kind: "not_found" };
+    const workspaceId = workspace.id;
+    assert(workspaceId != null, "resolveScopedExecution requires workspace id");
+    if (this.resolveExecutionOwnerSessionId(workspaceId, cfg) !== ownerSessionId) {
+      return { kind: "invalid_scope" };
+    }
+    return { kind: "not_found" };
+  }
+
+  /** Resolve an execution in requester scope and identify canonical registry records. */
+  async getScopedExecutionSnapshot(
+    ancestorWorkspaceId: string,
+    executionIdOrAlias: string
+  ): Promise<ScopedExecutionSnapshot> {
+    const resolved = await this.resolveScopedExecution(ancestorWorkspaceId, executionIdOrAlias);
+    if (resolved.kind !== "ok") return resolved;
+
+    const canonical = await this.executionStore.get(
+      resolved.handle.ownerSessionId,
+      resolved.handle.executionId
+    );
+    return {
+      kind: "ok",
+      handle: canonical ?? resolved.handle,
+      workspaceId: resolved.workspaceId,
+      source: canonical == null ? "legacy" : "canonical",
+    };
+  }
+
+  /**
+   * Wait on the canonical execution registry while retaining task foreground/background semantics.
+   * Adapted legacy executions are returned to the caller so it can use compatibility persistence.
+   */
+  async waitForScopedExecutionTerminal(
+    ancestorWorkspaceId: string,
+    executionIdOrAlias: string,
+    options: {
+      timeoutMs?: number;
+      abortSignal?: AbortSignal;
+      backgroundOnMessageQueued?: boolean;
+    } = {}
+  ): Promise<ScopedExecutionWaitResult> {
+    const resolved = await this.getScopedExecutionSnapshot(ancestorWorkspaceId, executionIdOrAlias);
+    if (resolved.kind !== "ok") return resolved;
+    if (resolved.source === "legacy") {
+      return { kind: "legacy", handle: resolved.handle, workspaceId: resolved.workspaceId };
+    }
+    if (
+      resolved.handle.status === "completed" ||
+      resolved.handle.status === "interrupted" ||
+      resolved.handle.status === "error"
+    ) {
+      return { kind: "terminal", handle: resolved.handle };
+    }
+
+    this.markTaskForegroundRelevant(resolved.workspaceId);
+    const waitController = new AbortController();
+    const forwardAbort = () => waitController.abort();
+    if (options.abortSignal?.aborted) {
+      waitController.abort();
+    } else {
+      options.abortSignal?.addEventListener("abort", forwardAbort, { once: true });
+    }
+
+    let stopBlockingRequester: (() => void) | null = this.startForegroundAwait(ancestorWorkspaceId);
+    let rejectBackground!: (error: Error) => void;
+    const backgrounded = new Promise<never>((_resolve, reject) => {
+      rejectBackground = reject;
+    });
+    let cleanedUp = false;
+    const shouldBackgroundOnQueuedMessage = options.backgroundOnMessageQueued ?? true;
+    const waiter: BackgroundableForegroundWaiter = {
+      // Agent task persistence is keyed by workspace; workspace turns use their canonical public ID
+      // and resolve back to the wst shadow only inside compatibility helpers.
+      taskId:
+        resolved.handle.launchPolicy.kind === "workspace_turn"
+          ? resolved.handle.executionId
+          : resolved.workspaceId,
+      requestingWorkspaceId: ancestorWorkspaceId,
+      backgroundOnMessageQueued: shouldBackgroundOnQueuedMessage,
+      reject: (error) => {
+        rejectBackground(error);
+        waitController.abort();
+      },
+      cleanup: () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
+        if (shouldBackgroundOnQueuedMessage) {
+          this.unregisterBackgroundableForegroundWaiter(ancestorWorkspaceId, waiter);
+        }
+        options.abortSignal?.removeEventListener("abort", forwardAbort);
+        if (stopBlockingRequester != null) {
+          stopBlockingRequester();
+          stopBlockingRequester = null;
+        }
+      },
+    };
+
+    if (shouldBackgroundOnQueuedMessage) {
+      this.registerBackgroundableForegroundWaiter(ancestorWorkspaceId, waiter);
+    }
+    this.backgroundForegroundWaitIfQueued(shouldBackgroundOnQueuedMessage, ancestorWorkspaceId);
+
+    try {
+      return await Promise.race([
+        this.executionRegistry.waitForTerminal(
+          resolved.handle.ownerSessionId,
+          resolved.handle.executionId,
+          {
+            ...(options.timeoutMs != null ? { timeoutMs: options.timeoutMs } : {}),
+            abortSignal: waitController.signal,
+          }
+        ),
+        backgrounded,
+      ]);
+    } finally {
+      waiter.cleanup();
+    }
   }
 
   setTimelineRecorder(recorder: TimelineRecorder): void {
@@ -1823,6 +2664,28 @@ export class TaskService {
       canonicalModel,
       effectiveThinkingLevel,
       ...(effectiveReasoningMode != null ? { effectiveReasoningMode } : {}),
+    };
+  }
+
+  private resolveProjectChatAutoResumeOptions(ownerWorkspaceId: string): {
+    model: string;
+    agentId: string;
+    thinkingLevel?: ThinkingLevel;
+    reasoningMode?: OpenAIReasoningMode;
+  } | null {
+    const projectChat = this.config.findProjectChatBySessionId(ownerWorkspaceId);
+    if (projectChat == null) {
+      return null;
+    }
+    const orchestratorSettings = projectChat.aiSettingsByAgent?.[projectChat.agentId];
+    const model = coerceNonEmptyString(orchestratorSettings?.model) ?? defaultModel;
+    const thinkingLevel = orchestratorSettings?.thinkingLevel;
+    const reasoningMode = coerceOpenAIReasoningMode(orchestratorSettings?.reasoningMode);
+    return {
+      model,
+      agentId: projectChat.agentId,
+      ...(thinkingLevel != null ? { thinkingLevel } : {}),
+      ...(reasoningMode != null ? { reasoningMode } : {}),
     };
   }
 
@@ -2051,6 +2914,9 @@ export class TaskService {
     log.info("[startup] TaskService.initialize starting", {
       queuedTaskCountAtStartup,
     });
+
+    const reconciledCanonicalWorkspaceTurnCount =
+      await this.reconcileCanonicalWorkspaceTurnRecords();
 
     const staleStartingTasks = this.listAgentTaskWorkspaces(startupConfig).filter(
       (task) => task.taskStatus === "starting" && typeof task.id === "string"
@@ -2400,6 +3266,7 @@ export class TaskService {
 
     log.info("[startup] TaskService.initialize completed", {
       totalMs: Date.now() - startupStartedAt,
+      reconciledCanonicalWorkspaceTurnCount,
       maybeStartQueuedTasksMs,
       awaitingReportTaskCount: awaitingReportTasks.length,
       resumedAwaitingReportCount,
@@ -2550,6 +3417,7 @@ export class TaskService {
       }
 
       const taskId = this.config.generateStableId();
+      const executionId = this.generateExecutionId();
       const workspaceName = buildAgentWorkspaceName(agentId, taskId);
       const nameValidation = validateWorkspaceName(workspaceName);
       if (!nameValidation.valid) {
@@ -2678,6 +3546,7 @@ export class TaskService {
       const createdAt = getIsoNow();
       plans.push({
         taskId,
+        executionId,
         parentWorkspaceId,
         parentMeta,
         agentId,
@@ -2712,13 +3581,34 @@ export class TaskService {
           : {}),
       });
       results.push({
-        taskId,
+        taskId: executionId,
+        workspaceId: taskId,
         kind: "agent",
         status,
         modelString: taskModelString,
         thinkingLevel: effectiveThinkingLevel,
       });
     }
+
+    await Promise.all(
+      plans.map((plan) =>
+        this.executionStore.upsert(
+          this.buildAgentExecutionHandle({
+            executionId: plan.executionId,
+            workspaceId: plan.taskId,
+            requesterWorkspaceId: plan.parentWorkspaceId,
+            cfg,
+            agentId: plan.agentId,
+            title: plan.title,
+            prompt: plan.start.kind === "sendMessage" ? plan.start.prompt : "Resume agent task",
+            status: plan.status,
+            sticky: plan.sticky,
+            attentionPolicy: plan.attentionPolicy,
+            createdAt: plan.createdAt,
+          })
+        )
+      )
+    );
 
     for (const [index, result] of results.entries()) {
       // Workflow callers durably checkpoint returned task IDs before task records are persisted.
@@ -2752,6 +3642,7 @@ export class TaskService {
           kind: plan.workspaceKind,
           path: workspacePath,
           id: plan.taskId,
+          executionId: plan.executionId,
           name: plan.workspaceName,
           title: plan.title,
           createdAt: plan.createdAt,
@@ -2788,7 +3679,7 @@ export class TaskService {
     });
 
     for (const result of results) {
-      await this.emitWorkspaceMetadata(result.taskId);
+      await this.emitWorkspaceMetadata(result.workspaceId);
     }
     for (const plan of plans) {
       if (plan.status === "starting") {
@@ -3001,6 +3892,7 @@ export class TaskService {
       },
       { allowMissing: true }
     );
+    await this.updateExecutionStatusForWorkspace(taskId, "error", message);
     if (transitionedToInterrupted) {
       this.recordTaskInterrupted(taskId, parentWorkspaceId);
     }
@@ -3213,6 +4105,121 @@ export class TaskService {
     this.scheduleMaybeStartQueuedTasks();
   }
 
+  private resolveProjectChatOwner(ownerWorkspaceId: string): {
+    projectPath: string;
+    metadata: WorkspaceMetadata;
+  } | null {
+    const projectChat = this.config.findProjectChatBySessionId(ownerWorkspaceId);
+    if (projectChat == null) {
+      return null;
+    }
+    return { projectPath: projectChat.projectPath, metadata: projectChat.metadata };
+  }
+
+  private resolveProjectChatWorkspaceScopes(
+    ownerWorkspaceId: string,
+    cfg: ProjectsConfig
+  ): Array<{
+    projectPath: string;
+    displayName: string;
+    kind: "parent" | "sub_project";
+    storageProjectPath: string;
+    subProjectPath: string | null;
+    storageProject: ProjectConfig;
+    selectedProject: ProjectConfig;
+  }> | null {
+    const owner = this.resolveProjectChatOwner(ownerWorkspaceId);
+    if (owner == null) return null;
+
+    const ownerProjectPath = stripTrailingSlashes(owner.projectPath);
+    const ownerProject = cfg.projects.get(ownerProjectPath);
+    if (ownerProject == null || ownerProject.projectKind === "system") return null;
+
+    const ownerCreationScope = resolveWorkspaceCreationScope(ownerProjectPath, cfg.projects);
+    const storageProject = cfg.projects.get(ownerCreationScope.projectPath);
+    if (storageProject == null || storageProject.projectKind === "system") return null;
+
+    const toScope = (
+      projectPath: string,
+      projectConfig: ProjectConfig,
+      kind: "parent" | "sub_project"
+    ) => ({
+      projectPath,
+      displayName: getProjectDisplayName(projectPath, projectConfig),
+      kind,
+      storageProjectPath: ownerCreationScope.projectPath,
+      subProjectPath: kind === "sub_project" ? projectPath : null,
+      // Storage, trust, secrets, and checkout ownership remain with the registered parent. Keep the
+      // exact selected project separately because manual creation resolves runtime defaults from it.
+      storageProject,
+      selectedProject: projectConfig,
+    });
+
+    // Child Project Chat is intentionally exact-scope. Parent Project Chat may coordinate only
+    // currently registered direct children; filesystem ancestry alone never grants authority.
+    if (ownerProject.parentProjectPath != null) {
+      return [toScope(ownerProjectPath, ownerProject, "sub_project")];
+    }
+
+    return [
+      toScope(ownerProjectPath, ownerProject, "parent"),
+      ...getSubProjectsForParent(ownerProjectPath, cfg.projects)
+        .filter(([, projectConfig]) => projectConfig.projectKind !== "system")
+        .map(([projectPath, projectConfig]) =>
+          toScope(stripTrailingSlashes(projectPath), projectConfig, "sub_project")
+        ),
+    ];
+  }
+
+  private resolveProjectChatWorkspaceScope(
+    ownerWorkspaceId: string,
+    cfg: ProjectsConfig,
+    requestedProjectPath?: string | null
+  ): {
+    projectPath: string;
+    displayName: string;
+    kind: "parent" | "sub_project";
+    storageProjectPath: string;
+    subProjectPath: string | null;
+    storageProject: ProjectConfig;
+    selectedProject: ProjectConfig;
+  } | null {
+    const scopes = this.resolveProjectChatWorkspaceScopes(ownerWorkspaceId, cfg);
+    if (scopes == null) return null;
+    const owner = this.resolveProjectChatOwner(ownerWorkspaceId);
+    if (owner == null) return null;
+    const targetProjectPath = stripTrailingSlashes(requestedProjectPath ?? owner.projectPath);
+    return scopes.find((scope) => scope.projectPath === targetProjectPath) ?? null;
+  }
+
+  private resolveProjectChatWorkspaceTarget(
+    ownerWorkspaceId: string,
+    workspaceId: string,
+    cfg: ProjectsConfig
+  ): { projectPath: string; workspace: WorkspaceConfigEntry } | null {
+    const scopes = this.resolveProjectChatWorkspaceScopes(ownerWorkspaceId, cfg);
+    if (scopes == null || scopes.length === 0) return null;
+
+    const storageProject = scopes[0].storageProject;
+    const workspace = storageProject.workspaces.find((candidate) => candidate.id === workspaceId);
+    const workspaceSubProjectPath = workspace?.subProjectPath
+      ? stripTrailingSlashes(workspace.subProjectPath)
+      : null;
+    const scope = scopes.find((candidate) => candidate.subProjectPath === workspaceSubProjectPath);
+    if (
+      workspace == null ||
+      scope == null ||
+      workspace.kind === "scratch" ||
+      workspace.parentWorkspaceId != null ||
+      workspace.taskStatus != null ||
+      workspace.workflowTask != null ||
+      (workspace.projects?.length ?? 0) > 1
+    ) {
+      return null;
+    }
+    return { projectPath: scope.projectPath, workspace };
+  }
+
   async createWorkspaceTurn(
     args: WorkspaceTurnCreateArgs
   ): Promise<Result<WorkspaceTurnCreateResult, string>> {
@@ -3225,9 +4232,20 @@ export class TaskService {
       return Err("Task.createWorkspaceTurn: prompt is required");
     }
     const title = coerceNonEmptyString(args.title) ?? "Workspace task";
+    const workspaceTitle = coerceNonEmptyString(args.workspace?.title);
     const mode = args.workspace?.mode ?? "new";
     if (mode !== "new" && mode !== "fork" && mode !== "existing") {
       return Err("Task.createWorkspaceTurn: unsupported workspace mode");
+    }
+    if (mode !== "new" && args.workspace?.projectPath != null) {
+      return Err(
+        'Task.createWorkspaceTurn: workspace.projectPath is only accepted when workspace.mode="new"'
+      );
+    }
+    if (mode === "existing" && args.workspace?.runtimeConfig != null) {
+      return Err(
+        'Task.createWorkspaceTurn: workspace.runtimeConfig is only accepted when workspace.mode="new"'
+      );
     }
     const queueDispatchMode = args.workspace?.queueDispatchMode ?? "tool-end";
     if (queueDispatchMode !== "tool-end" && queueDispatchMode !== "turn-end") {
@@ -3236,7 +4254,10 @@ export class TaskService {
 
     await using _lock = await this.mutex.acquire();
 
-    const parentMetaResult = await this.aiService.getWorkspaceMetadata(ownerWorkspaceId);
+    const projectChatOwner = this.resolveProjectChatOwner(ownerWorkspaceId);
+    const parentMetaResult = projectChatOwner
+      ? Ok(projectChatOwner.metadata)
+      : await this.aiService.getWorkspaceMetadata(ownerWorkspaceId);
     if (!parentMetaResult.success) {
       return Err(`Task.createWorkspaceTurn: owner workspace not found (${parentMetaResult.error})`);
     }
@@ -3247,13 +4268,35 @@ export class TaskService {
     if (parentEntry?.workspace.kind === "scratch") {
       return Err("Task.createWorkspaceTurn: scratch workspace turns are not supported yet");
     }
-    const taskProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+    // Sub-project workspaces and trust live in the top-level parent's storage bucket. Resolve the
+    // same creation scope used by WorkspaceService instead of treating the Project Chat path as the
+    // trust owner (sub-project configs normally leave `trusted` unset).
+    const projectChatWorkspaceScope = projectChatOwner
+      ? this.resolveProjectChatWorkspaceScope(ownerWorkspaceId, cfg, args.workspace?.projectPath)
+      : null;
+    const parentProjectConfig = cfg.projects.get(stripTrailingSlashes(parentMeta.projectPath));
+    const taskStorageProjectConfig =
+      projectChatWorkspaceScope?.storageProject ?? parentProjectConfig;
+    const taskRuntimeDefaultsProjectConfig =
+      projectChatWorkspaceScope?.selectedProject ?? parentProjectConfig;
+    if (projectChatOwner != null && projectChatWorkspaceScope == null) {
+      const ownerProject = cfg.projects.get(stripTrailingSlashes(projectChatOwner.projectPath));
+      if (
+        parentMeta.projectPath === SCRATCH_PROJECT_CONFIG_KEY ||
+        ownerProject?.projectKind === "system"
+      ) {
+        return Err("Task.createWorkspaceTurn: hidden/system Project Chat owners are not supported");
+      }
+      return Err(
+        `Task.createWorkspaceTurn: invalid_scope for project path ${args.workspace?.projectPath ?? projectChatOwner.projectPath}`
+      );
+    }
     if ((parentMeta.projects?.length ?? 0) > 1) {
       // WorkspaceService.create only materializes one project checkout; fail loudly instead of
       // silently dropping secondary repos from a multi-project caller's task context.
       return Err("Task.createWorkspaceTurn: multi-project workspace turns are not supported yet");
     }
-    if (!taskProjectConfig?.trusted) {
+    if (!taskStorageProjectConfig?.trusted) {
       return Err(
         "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
       );
@@ -3276,6 +4319,7 @@ export class TaskService {
     };
 
     const handleId = `${WORKSPACE_TURN_TASK_ID_PREFIX}${this.config.generateStableId()}`;
+    const executionId = this.generateExecutionId();
     const turnId = this.config.generateStableId();
     const createdAt = getIsoNow();
     // Workspace turns currently always run the exec agent (see the sendMessage
@@ -3300,7 +4344,10 @@ export class TaskService {
       const ownsExistingWorkspace = ownerWorkspaceTurns.some(
         (record) => record.createdWorkspace && record.workspaceId === existingWorkspaceId
       );
-      if (!ownsExistingWorkspace) {
+      const projectChatTarget = projectChatOwner
+        ? this.resolveProjectChatWorkspaceTarget(ownerWorkspaceId, existingWorkspaceId, cfg)
+        : null;
+      if (!ownsExistingWorkspace && projectChatTarget == null) {
         return Err("Task.createWorkspaceTurn: invalid_scope for existing workspace");
       }
       targetWorkspaceId = existingWorkspaceId;
@@ -3322,6 +4369,17 @@ export class TaskService {
         const slot = await ensureParallelSlot();
         if (!slot.success) return Err(slot.error);
       }
+      if (workspaceTitle != null) {
+        const updateTitleResult = await this.workspaceService.updateTitle(
+          existingWorkspaceId,
+          workspaceTitle
+        );
+        if (!updateTitleResult.success) {
+          return Err(
+            `Task.createWorkspaceTurn: workspace title update failed (${updateTitleResult.error})`
+          );
+        }
+      }
     } else {
       const slot = await ensureParallelSlot();
       if (!slot.success) return Err(slot.error);
@@ -3330,13 +4388,95 @@ export class TaskService {
         [WORKSPACE_TURN_TASK_TAGS.ownerWorkspaceId]: ownerWorkspaceId,
         [WORKSPACE_TURN_TASK_TAGS.turn]: turnId,
       };
+      const explicitRuntimeConfig = args.workspace?.runtimeConfig;
+      let creationRuntimeConfig: RuntimeConfig | undefined =
+        explicitRuntimeConfig ?? parentMeta.runtimeConfig;
+      let creationTrunkBranch: string | undefined = args.workspace?.trunkBranch ?? parentMeta.name;
+      if (projectChatOwner) {
+        // Project Chat itself uses LocalRuntime, so omitted runtime settings must resolve through the
+        // same project/global mode defaults as manual creation rather than inheriting that local host.
+        // The backend persists the default mode but not manual creation's remembered SSH host, Coder
+        // template, or Docker image; those modes therefore require an explicit runtimeConfig. Devcontainer
+        // configs are discoverable from the project, so the backend can select the same first config as UI.
+        const branchProjectPath =
+          projectChatWorkspaceScope?.storageProjectPath ?? parentMeta.projectPath;
+        const effectiveDefaultRuntime =
+          taskRuntimeDefaultsProjectConfig?.defaultRuntime ?? cfg.defaultRuntime;
+        if (explicitRuntimeConfig == null) {
+          switch (effectiveDefaultRuntime) {
+            case "local":
+              creationRuntimeConfig = { type: "local" };
+              break;
+            case "devcontainer": {
+              const configPaths = await scanDevcontainerConfigs(branchProjectPath);
+              const configPath = configPaths[0];
+              if (configPath == null) {
+                return Err(
+                  "Task.createWorkspaceTurn: the default devcontainer runtime has no discoverable config; pass workspace.runtimeConfig explicitly"
+                );
+              }
+              creationRuntimeConfig = { type: "devcontainer", configPath };
+              break;
+            }
+            case "ssh":
+            case "coder":
+            case "docker":
+              return Err(
+                `Task.createWorkspaceTurn: the default ${effectiveDefaultRuntime} runtime requires frontend-only remembered configuration; pass workspace.runtimeConfig explicitly`
+              );
+            case "worktree":
+            case undefined:
+              creationRuntimeConfig = undefined;
+              break;
+          }
+        }
+
+        if (creationRuntimeConfig?.type === "local") {
+          creationTrunkBranch = undefined;
+        } else {
+          let isGitProject: boolean;
+          try {
+            isGitProject = await inspectInsideGitRepository(branchProjectPath);
+          } catch (error) {
+            return Err(
+              `Task.createWorkspaceTurn: failed to inspect Git repository (${getErrorMessage(error)})`
+            );
+          }
+          let branches: string[] = [];
+          if (isGitProject) {
+            try {
+              branches = await listLocalBranches(branchProjectPath);
+            } catch (error) {
+              return Err(
+                `Task.createWorkspaceTurn: failed to inspect Git branches (${getErrorMessage(error)})`
+              );
+            }
+          }
+
+          // Only an omitted/default worktree may self-heal to local for a non-Git project. Explicit
+          // worktree intent must reach WorkspaceService.create and return its normal actionable error.
+          const omittedDefaultWorktree =
+            explicitRuntimeConfig == null &&
+            (effectiveDefaultRuntime == null || effectiveDefaultRuntime === "worktree");
+          if (omittedDefaultWorktree && branches.length === 0) {
+            creationRuntimeConfig = { type: "local" };
+            creationTrunkBranch = undefined;
+          } else {
+            creationTrunkBranch =
+              args.workspace?.trunkBranch ??
+              (branches.length > 0
+                ? ((await detectDefaultTrunkBranch(branchProjectPath, branches)) ?? branches[0])
+                : undefined);
+          }
+        }
+      }
       const createResult = await this.workspaceService.create(
-        parentMeta.projectPath,
+        projectChatWorkspaceScope?.storageProjectPath ?? parentMeta.projectPath,
         args.workspace?.branchName,
-        args.workspace?.trunkBranch ?? parentMeta.name,
-        title,
-        parentMeta.runtimeConfig,
-        parentMeta.subProjectPath,
+        creationTrunkBranch,
+        workspaceTitle ?? title,
+        creationRuntimeConfig,
+        projectChatWorkspaceScope?.subProjectPath ?? parentMeta.subProjectPath,
         false,
         tags
       );
@@ -3353,28 +4493,34 @@ export class TaskService {
     // creating one by hand) → owner's live runtime settings → owner's
     // persisted settings → app default.
     const workspaceTurnAgentDefault = cfg.agentAiDefaults?.[workspaceTurnAgentId];
-    const model =
+    const model = normalizeToCanonical(
       coerceNonEmptyString(args.modelString) ??
-      coerceNonEmptyString(targetAiSettings?.model) ??
-      coerceNonEmptyString(workspaceTurnAgentDefault?.modelString) ??
-      coerceNonEmptyString(args.parentRuntimeAiSettings?.modelString) ??
-      coerceNonEmptyString(parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.model) ??
-      coerceNonEmptyString(parentMeta.aiSettings?.model) ??
-      defaultModel;
-    const thinkingLevel =
-      args.thinkingLevel != null
+        coerceNonEmptyString(targetAiSettings?.model) ??
+        coerceNonEmptyString(workspaceTurnAgentDefault?.modelString) ??
+        coerceNonEmptyString(args.parentRuntimeAiSettings?.modelString) ??
+        coerceNonEmptyString(parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.model) ??
+        coerceNonEmptyString(parentMeta.aiSettings?.model) ??
+        defaultModel
+    ).trim();
+    const providersConfig = this.aiService.getProvidersConfig();
+    const requestedThinkingLevel =
+      (args.thinkingLevel != null
         ? // Providers config keeps mapped aliases on their target's ladder
           // (see resolveTaskAISettings).
-          resolveThinkingInput(
-            args.thinkingLevel,
-            normalizeToCanonical(model),
-            this.aiService.getProvidersConfig()
-          )
-        : (targetAiSettings?.thinkingLevel ??
-          workspaceTurnAgentDefault?.thinkingLevel ??
-          args.parentRuntimeAiSettings?.thinkingLevel ??
-          parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.thinkingLevel ??
-          parentMeta.aiSettings?.thinkingLevel);
+          resolveThinkingInput(args.thinkingLevel, model, providersConfig)
+        : undefined) ??
+      targetAiSettings?.thinkingLevel ??
+      workspaceTurnAgentDefault?.thinkingLevel ??
+      args.parentRuntimeAiSettings?.thinkingLevel ??
+      parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.thinkingLevel ??
+      parentMeta.aiSettings?.thinkingLevel ??
+      "off";
+    const thinkingLevel = enforceThinkingPolicy(
+      model,
+      requestedThinkingLevel,
+      undefined,
+      providersConfig
+    );
     // Per-workspace pro mode inherits alongside model/thinking; the send path
     // re-gates per model/route so this is inert for non-GPT-5.6 models.
     // The user toggles pro on the parent's ACTIVE agent, so after the exec
@@ -3389,16 +4535,19 @@ export class TaskService {
       parentMeta,
       normalizeAgentId(parentMeta.agentId)
     );
-    const reasoningMode = coerceOpenAIReasoningMode(
-      targetAiSettings != null
-        ? targetAiSettings.reasoningMode
-        : (parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
-            activeParentAiSettings?.reasoningMode ??
-            parentMeta.aiSettings?.reasoningMode)
-    );
+    const reasoningMode =
+      coerceOpenAIReasoningMode(
+        args.reasoningMode ??
+          (targetAiSettings != null
+            ? targetAiSettings.reasoningMode
+            : (parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
+              activeParentAiSettings?.reasoningMode ??
+              parentMeta.aiSettings?.reasoningMode))
+      ) ?? "standard";
 
     const record: WorkspaceTurnTaskHandleRecord = {
       kind: "workspace_turn",
+      executionId,
       handleId,
       ownerWorkspaceId,
       workspaceId: targetWorkspaceId,
@@ -3411,10 +4560,11 @@ export class TaskService {
       title,
       prompt,
       modelString: model,
-      ...(thinkingLevel != null ? { thinkingLevel } : {}),
+      thinkingLevel,
+      reasoningMode,
       ...(args.attentionPolicy != null ? { attentionPolicy: args.attentionPolicy } : {}),
     };
-    await this.taskHandleStore.upsertWorkspaceTurn(record);
+    await this.persistWorkspaceTurnRecord(record);
     if (record.status !== "queued") {
       this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
         handleId,
@@ -3435,7 +4585,7 @@ export class TaskService {
           throw new Error(current.error ?? "Workspace turn was canceled before stream start");
         }
         if (current.status !== "running") {
-          await this.taskHandleStore.upsertWorkspaceTurn({
+          await this.persistWorkspaceTurnRecord({
             ...current,
             status: "running",
             updatedAt: getIsoNow(),
@@ -3454,8 +4604,8 @@ export class TaskService {
       {
         model,
         agentId: workspaceTurnAgentId,
-        ...(thinkingLevel != null ? { thinkingLevel } : {}),
-        ...(reasoningMode != null ? { reasoningMode } : {}),
+        thinkingLevel,
+        reasoningMode,
         muxMetadata: this.buildWorkspaceTurnMuxMetadata(record),
         experiments: args.experiments,
         ...(mode === "existing" ? { queueDispatchMode } : {}),
@@ -3532,10 +4682,13 @@ export class TaskService {
     const acceptedRecord = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
     const acceptedStatus = acceptedRecord?.status === "running" ? "running" : record.status;
     return Ok({
-      taskId: handleId,
+      taskId: executionId,
       kind: "workspace_turn",
       status: acceptedStatus === "queued" ? "queued" : "running",
       workspaceId: targetWorkspaceId,
+      modelString: model,
+      thinkingLevel,
+      reasoningMode,
     });
   }
 
@@ -3645,6 +4798,7 @@ export class TaskService {
     const shouldQueue = activeCount >= taskSettings.maxParallelAgentTasks;
 
     const taskId = this.config.generateStableId();
+    const executionId = this.generateExecutionId();
     const workspaceName = buildAgentWorkspaceName(agentId, taskId);
 
     const nameValidation = validateWorkspaceName(workspaceName);
@@ -3806,11 +4960,27 @@ export class TaskService {
       thinkingLevel: effectiveThinkingLevel,
     });
 
+    const executionHandle = this.buildAgentExecutionHandle({
+      executionId,
+      workspaceId: taskId,
+      requesterWorkspaceId: parentWorkspaceId,
+      cfg,
+      agentId,
+      title: args.title,
+      prompt,
+      status: shouldQueue ? "queued" : "starting",
+      sticky: args.sticky,
+      attentionPolicy: args.attentionPolicy,
+      createdAt,
+    });
+
     if (shouldQueue) {
       const trunkBranch = parentBranchName;
       if (!trunkBranch) {
         return Err("Task.create: parent workspace name missing (cannot queue task)");
       }
+
+      await this.executionStore.upsert(executionHandle);
 
       // NOTE: Queued tasks are persisted immediately, but their workspace is created later
       // when a parallel slot is available. This ensures queued tasks don't create worktrees
@@ -3840,6 +5010,7 @@ export class TaskService {
           kind: parentIsScratch ? "scratch" : undefined,
           path: workspacePath,
           id: taskId,
+          executionId,
           name: workspaceName,
           title: args.title,
           createdAt,
@@ -3884,13 +5055,16 @@ export class TaskService {
       void this.maybeStartQueuedTasks();
       taskQueueDebug("TaskService.create queued scheduled maybeStartQueuedTasks", { taskId });
       return Ok({
-        taskId,
+        taskId: executionId,
+        workspaceId: taskId,
         kind: "agent",
         status: "queued",
         modelString: taskModelString,
         thinkingLevel: effectiveThinkingLevel,
       });
     }
+
+    await this.executionStore.upsert(executionHandle);
 
     const initLogger = this.startWorkspaceInit(taskId, parentMeta.projectPath);
 
@@ -3963,6 +5137,13 @@ export class TaskService {
       }
 
       if (!forkResult.success) {
+        await this.updateExecutionHandleStatus(
+          executionHandle,
+          "error",
+          `Task fork failed: ${forkResult.error}`
+        );
+      }
+      if (!forkResult.success) {
         initLogger.logComplete(-1);
         return Err(`Task fork failed: ${forkResult.error}`);
       }
@@ -4010,6 +5191,7 @@ export class TaskService {
         kind: parentIsScratch ? "scratch" : undefined,
         path: workspacePath,
         id: taskId,
+        executionId,
         name: workspaceName,
         title: args.title,
         createdAt,
@@ -4086,6 +5268,7 @@ export class TaskService {
         typeof sendResult.error === "string"
           ? sendResult.error
           : formatSendMessageError(sendResult.error).message;
+      await this.updateExecutionHandleStatus(executionHandle, "error", message);
       await this.rollbackFailedTaskCreate(
         runtimeForTaskWorkspace,
         parentMeta.projectPath,
@@ -4096,8 +5279,11 @@ export class TaskService {
       return Err(message);
     }
 
+    await this.updateExecutionHandleStatus(executionHandle, "running");
+
     return Ok({
-      taskId,
+      taskId: executionId,
+      workspaceId: taskId,
       kind: "agent",
       status: "running",
       modelString: taskModelString,
@@ -4122,6 +5308,16 @@ export class TaskService {
       "sendMessageToDescendantAgentTask: message must be non-empty"
     );
 
+    const scopedExecution = await this.resolveScopedExecution(ancestorWorkspaceId, taskId);
+    if (scopedExecution.kind === "not_found") return Err({ code: "not_found" });
+    if (
+      scopedExecution.kind === "invalid_scope" ||
+      scopedExecution.handle.launchPolicy.kind !== "agent_task"
+    ) {
+      return Err({ code: "invalid_scope" });
+    }
+    taskId = scopedExecution.workspaceId;
+
     const queuedUpdateResult = await (async (): Promise<
       Result<SendAgentTaskMessageResult | null, SendAgentTaskMessageError>
     > => {
@@ -4143,6 +5339,13 @@ export class TaskService {
         )
       ) {
         return Err({ code: "invalid_scope" as const });
+      }
+      if (entry.workspace.transcriptOnly === true) {
+        return Err({
+          code: "not_active" as const,
+          taskStatus: entry.workspace.taskStatus ?? "unknown",
+          message: "Task workspace is transcript-only and cannot accept updated guidance.",
+        });
       }
       if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
         return Err({
@@ -4191,6 +5394,13 @@ export class TaskService {
         return Err({ code: "invalid_scope" as const });
       }
 
+      if (entry.workspace.transcriptOnly === true) {
+        return Err({
+          code: "not_active" as const,
+          taskStatus: entry.workspace.taskStatus ?? "unknown",
+          message: "Task workspace is transcript-only and cannot accept updated guidance.",
+        });
+      }
       if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
         return Err({
           code: "not_active" as const,
@@ -4298,6 +5508,16 @@ export class TaskService {
     );
     assert(taskId.length > 0, "terminateDescendantAgentTask: taskId must be non-empty");
 
+    const scopedExecution = await this.resolveScopedExecution(ancestorWorkspaceId, taskId);
+    if (scopedExecution.kind === "not_found") return Err("Task not found");
+    if (
+      scopedExecution.kind === "invalid_scope" ||
+      scopedExecution.handle.launchPolicy.kind !== "agent_task"
+    ) {
+      return Err("Task is not a descendant of this workspace");
+    }
+    taskId = scopedExecution.workspaceId;
+
     const terminatedTaskIds: string[] = [];
     const terminationErrors: string[] = [];
 
@@ -4320,6 +5540,16 @@ export class TaskService {
       // Terminate the entire subtree to avoid orphaned descendant tasks.
       const descendants = this.listDescendantAgentTaskIdsFromIndex(index, taskId);
       const toTerminate = Array.from(new Set([taskId, ...descendants]));
+      if (toTerminate.some((id) => index.byId.get(id)?.transcriptOnly === true)) {
+        return Err("Task transcript is retained and cannot be directly terminated");
+      }
+
+      const publicTaskIdByWorkspaceId = new Map(
+        toTerminate.map((workspaceId) => [
+          workspaceId,
+          index.byId.get(workspaceId)?.executionId ?? workspaceId,
+        ])
+      );
 
       // Delete leaves first to avoid leaving children with missing parents.
       const parentById = index.parentById;
@@ -4376,6 +5606,19 @@ export class TaskService {
           continue;
         }
 
+        const taskEntry = findWorkspaceEntry(cfg, id);
+        const canonicalExecution = await this.getCanonicalAgentExecutionForWorkspace(
+          id,
+          taskEntry,
+          cfg
+        );
+        if (canonicalExecution != null) {
+          await this.executionRegistry.settle(
+            canonicalExecution.ownerSessionId,
+            canonicalExecution.executionId,
+            { kind: "interrupted", message: terminationError.message }
+          );
+        }
         this.completedReportsByTaskId.delete(id);
         this.rejectWaiters(id, terminationError);
 
@@ -4430,7 +5673,7 @@ export class TaskService {
           continue;
         }
 
-        terminatedTaskIds.push(id);
+        terminatedTaskIds.push(publicTaskIdByWorkspaceId.get(id) ?? id);
       }
     }
 
@@ -4940,7 +6183,10 @@ export class TaskService {
    * when a new message is queued. Returns the number of waiters signaled.
    * Safe to call repeatedly — already-cleaned-up waiters are skipped.
    */
-  backgroundForegroundWaitsForWorkspace(workspaceId: string): number {
+  backgroundForegroundWaitsForWorkspace(
+    workspaceId: string,
+    interruption: ForegroundWaitInterruption = GENERIC_FOREGROUND_WAIT_INTERRUPTION
+  ): number {
     const set = this.backgroundableForegroundWaitersByWorkspaceId.get(workspaceId);
     if (!set || set.size === 0) return 0;
 
@@ -4954,7 +6200,7 @@ export class TaskService {
         // await. The in-memory mark above covers the immediate next stream-end while this
         // persistence settles. Tracked so handleStreamEnd can await it before reading config.
         this.scheduleNotifyOnTerminalPersist(waiter.taskId, waiter.requestingWorkspaceId);
-        waiter.reject(new ForegroundWaitBackgroundedError());
+        waiter.reject(new ForegroundWaitBackgroundedError(interruption));
         count++;
       } catch {
         // waiter already resolved/rejected — ignore
@@ -5002,63 +6248,70 @@ export class TaskService {
     taskId: string,
     ownerWorkspaceId: string | undefined
   ): Promise<void> {
-    if (isWorkspaceTurnTaskId(taskId)) {
+    if (isWorkspaceTurnTaskId(taskId) || isExecutionId(taskId)) {
       if (ownerWorkspaceId == null) return;
-      const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
-        taskId,
-        async (): Promise<{
-          handleId: string;
-          outcome: TerminalAttentionOutcome;
-          title?: string;
-        } | null> => {
-          const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-          if (current == null) return null;
+      const resolved = await this.resolveScopedWorkspaceTurnRecord(ownerWorkspaceId, taskId);
+      if (resolved.kind === "ok") {
+        const handleId = resolved.record.handleId;
+        const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
+          handleId,
+          async (): Promise<{
+            sourceId: string;
+            outcome: TerminalAttentionOutcome;
+            title?: string;
+          } | null> => {
+            const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+            if (current == null) return null;
 
-          const updatedRecord: WorkspaceTurnTaskHandleRecord =
-            current.attentionPolicy === "notify_on_terminal"
-              ? current
-              : { ...current, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
-          if (updatedRecord !== current) {
-            await this.taskHandleStore.upsertWorkspaceTurn(updatedRecord);
-          }
+            const updatedRecord: WorkspaceTurnTaskHandleRecord =
+              current.attentionPolicy === "notify_on_terminal"
+                ? current
+                : { ...current, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
+            if (updatedRecord !== current) {
+              await this.persistWorkspaceTurnRecord(updatedRecord);
+            }
 
-          // A queued-message/timeout detach can race with child stream-end settlement: the waiter is
-          // gone before notify_on_terminal is durably persisted, so settleWorkspaceTurn may have seen a
-          // blocking policy and skipped the terminal wake-up. If the handle is already terminal here,
-          // enqueue the missing wake-up after releasing the settlement lock.
-          if (
-            this.isTerminalWorkspaceTurnStatus(updatedRecord.status) &&
-            updatedRecord.terminalAttentionNotifiedAt == null
-          ) {
-            return {
-              handleId: updatedRecord.handleId,
-              outcome: workspaceTurnTerminalOutcome(updatedRecord.status),
-              ...(updatedRecord.title != null ? { title: updatedRecord.title } : {}),
-            };
+            // A queued-message/timeout detach can race with child stream-end settlement: the waiter is
+            // gone before notify_on_terminal is durably persisted, so settleWorkspaceTurn may have seen a
+            // blocking policy and skipped the terminal wake-up. If the handle is already terminal here,
+            // enqueue the missing wake-up after releasing the settlement lock.
+            if (
+              this.isTerminalWorkspaceTurnStatus(updatedRecord.status) &&
+              updatedRecord.terminalAttentionNotifiedAt == null
+            ) {
+              return {
+                sourceId: this.workspaceTurnPublicTaskId(updatedRecord),
+                outcome: workspaceTurnTerminalOutcome(updatedRecord.status),
+                ...(updatedRecord.title != null ? { title: updatedRecord.title } : {}),
+              };
+            }
+            return null;
           }
-          return null;
+        );
+        if (pendingNotify != null) {
+          await this.enqueueTerminalAttention({
+            ownerWorkspaceId,
+            sourceKind: "workspace_turn",
+            sourceId: pendingNotify.sourceId,
+            outputDelivery: "requires_task_await",
+            terminalOutcome: pendingNotify.outcome,
+            ...(pendingNotify.title != null ? { title: pendingNotify.title } : {}),
+          });
+          await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
+            const terminal = await this.taskHandleStore.getWorkspaceTurn(
+              ownerWorkspaceId,
+              handleId
+            );
+            if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
+              await this.persistWorkspaceTurnRecord({
+                ...terminal,
+                terminalAttentionNotifiedAt: getIsoNow(),
+              });
+            }
+          });
         }
-      );
-      if (pendingNotify != null) {
-        await this.enqueueTerminalAttention({
-          ownerWorkspaceId,
-          sourceKind: "workspace_turn",
-          sourceId: pendingNotify.handleId,
-          outputDelivery: "requires_task_await",
-          terminalOutcome: pendingNotify.outcome,
-          ...(pendingNotify.title != null ? { title: pendingNotify.title } : {}),
-        });
-        await this.workspaceTurnSettlementLocks.withLock(taskId, async () => {
-          const terminal = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-          if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
-            await this.taskHandleStore.upsertWorkspaceTurn({
-              ...terminal,
-              terminalAttentionNotifiedAt: getIsoNow(),
-            });
-          }
-        });
+        return;
       }
-      return;
     }
     await this.config.editConfig((config) => {
       const found = findWorkspaceEntry(config, taskId);
@@ -5134,7 +6387,7 @@ export class TaskService {
       await this.enqueueTerminalAttention({
         ownerWorkspaceId: record.ownerWorkspaceId,
         sourceKind: "workspace_turn",
-        sourceId: record.handleId,
+        sourceId: this.workspaceTurnPublicTaskId(record),
         outputDelivery: "requires_task_await",
         terminalOutcome: workspaceTurnTerminalOutcome(record.status),
         ...(record.title != null ? { title: record.title } : {}),
@@ -5150,7 +6403,7 @@ export class TaskService {
           resolveBackgroundWorkAttentionPolicy(current.attentionPolicy) === "notify_on_terminal" &&
           current.terminalAttentionNotifiedAt == null
         ) {
-          await this.taskHandleStore.upsertWorkspaceTurn({
+          await this.persistWorkspaceTurnRecord({
             ...current,
             terminalAttentionNotifiedAt: getIsoNow(),
           });
@@ -5237,30 +6490,38 @@ export class TaskService {
 
   async markWorkspaceTurnTerminalAttentionConsumed(params: {
     ownerWorkspaceId: string;
-    handleId: string;
+    taskId: string;
     status: WorkspaceTurnTaskStatus;
   }): Promise<void> {
     assert(
       params.ownerWorkspaceId.length > 0,
       "markWorkspaceTurnTerminalAttentionConsumed requires ownerWorkspaceId"
     );
-    assert(
-      params.handleId.length > 0,
-      "markWorkspaceTurnTerminalAttentionConsumed requires handleId"
-    );
+    assert(params.taskId.length > 0, "markWorkspaceTurnTerminalAttentionConsumed requires taskId");
     if (!this.isTerminalWorkspaceTurnStatus(params.status)) {
       return;
     }
+    const resolved = await this.resolveScopedWorkspaceTurnRecord(
+      params.ownerWorkspaceId,
+      params.taskId
+    );
+    const sourceId =
+      resolved.kind === "ok"
+        ? this.workspaceTurnPublicTaskId(resolved.record)
+        : isWorkspaceTurnTaskId(params.taskId)
+          ? params.taskId
+          : null;
+    if (sourceId == null) return;
     await this.terminalAttentionStore.enqueueIfAbsent({
       ownerWorkspaceId: params.ownerWorkspaceId,
       sourceKind: "workspace_turn",
-      sourceId: params.handleId,
+      sourceId,
       outputDelivery: "requires_task_await",
       terminalOutcome: workspaceTurnTerminalOutcome(params.status),
     });
     await this.terminalAttentionStore.markDelivered(
       params.ownerWorkspaceId,
-      TerminalAttentionStore.notificationId("workspace_turn", params.handleId)
+      TerminalAttentionStore.notificationId("workspace_turn", sourceId)
     );
   }
 
@@ -5315,12 +6576,12 @@ export class TaskService {
     this.pendingTerminalAttentionDrains.add(promise);
   }
 
-  private async buildWorkflowTerminalPrompt(
+  private async buildWorkflowTerminalWake(
     ownerWorkspaceId: string,
     runId: string
-  ): Promise<string | null> {
-    assert(ownerWorkspaceId.length > 0, "buildWorkflowTerminalPrompt requires ownerWorkspaceId");
-    assert(runId.length > 0, "buildWorkflowTerminalPrompt requires runId");
+  ): Promise<{ prompt: string; title: string; workspaceId: string } | null> {
+    assert(ownerWorkspaceId.length > 0, "buildWorkflowTerminalWake requires ownerWorkspaceId");
+    assert(runId.length > 0, "buildWorkflowTerminalWake requires runId");
     const runStore = new WorkflowRunStore({
       sessionDir: this.config.getSessionDir(ownerWorkspaceId),
     });
@@ -5344,14 +6605,64 @@ export class TaskService {
       return null;
     }
     const scriptPath = run.workflow.sourcePath ?? run.workflow.name;
-    return buildWorkflowResultContextMessage({
-      rawCommand: `workflow_run ${scriptPath}`,
-      name: scriptPath,
-      runId: run.id,
-      status: run.status,
-      result: null,
-      run,
-    });
+    return {
+      prompt: buildWorkflowResultContextMessage({
+        rawCommand: `workflow_run ${scriptPath}`,
+        name: scriptPath,
+        runId: run.id,
+        status: run.status,
+        result: null,
+        run,
+      }),
+      title: run.workflow.name,
+      workspaceId: run.workspaceId,
+    };
+  }
+
+  private async buildTerminalAttentionDisplayRecord(
+    notification: TerminalAttentionNotification,
+    cfg: ProjectsConfig
+  ): Promise<BackgroundWorkWakeDisplayRecord> {
+    if (notification.sourceKind === "agent_task") {
+      const execution = await this.executionRegistry.get(
+        notification.ownerWorkspaceId,
+        notification.sourceId
+      );
+      const canonicalWorkspaceId =
+        execution?.launchPolicy.kind === "agent_task" ? execution.target.workspaceId : null;
+      const taskEntry = findWorkspaceEntry(cfg, canonicalWorkspaceId ?? notification.sourceId);
+      return {
+        sourceKind: notification.sourceKind,
+        sourceId: notification.sourceId,
+        outcome: notification.terminalOutcome,
+        title:
+          coerceNonEmptyString(notification.title) ??
+          coerceNonEmptyString(taskEntry?.workspace.title) ??
+          coerceNonEmptyString(taskEntry?.workspace.name) ??
+          "Sub-agent task",
+        workspaceId: canonicalWorkspaceId ?? notification.sourceId,
+      };
+    }
+
+    const resolvedWorkspaceTurn = await this.resolveScopedWorkspaceTurnRecord(
+      notification.ownerWorkspaceId,
+      notification.sourceId
+    );
+    const workspaceTurn = resolvedWorkspaceTurn.kind === "ok" ? resolvedWorkspaceTurn.record : null;
+    const workspaceEntry =
+      workspaceTurn == null ? null : findWorkspaceEntry(cfg, workspaceTurn.workspaceId);
+    return {
+      sourceKind: notification.sourceKind,
+      sourceId: notification.sourceId,
+      outcome: notification.terminalOutcome,
+      title:
+        coerceNonEmptyString(notification.title) ??
+        coerceNonEmptyString(workspaceTurn?.title) ??
+        coerceNonEmptyString(workspaceEntry?.workspace.title) ??
+        coerceNonEmptyString(workspaceEntry?.workspace.name) ??
+        "Workspace turn",
+      ...(workspaceTurn != null ? { workspaceId: workspaceTurn.workspaceId } : {}),
+    };
   }
 
   private async findProgressRespondedTaskIds(
@@ -5362,6 +6673,7 @@ export class TaskService {
 
     const visibleCompletedReports = new Set<string>();
     const awaitingResponse = new Set<string>();
+    const textResponseBlockedTaskIds = new Set<string>();
     const responded = new Set<string>();
     // The duplicate-ending decision only depends on the active context epoch. If compaction already
     // summarized an older progress turn, retain the terminal wake rather than scanning lifetime history.
@@ -5387,20 +6699,33 @@ export class TaskService {
         ) {
           visibleCompletedReports.add(report.taskId);
         }
-        if (report?.status === "in_progress" && candidateTaskIds.has(report.taskId)) {
-          // A newer update requires a newer assistant response before terminal handoff can be
-          // suppressed. This avoids hiding a final result behind an unprocessed progress update.
+        if (report?.status === "in_progress") {
+          // Attribution must consider every outstanding sibling update, not only tasks whose
+          // terminal notifications happen to be in this drain. Otherwise the same plain-text turn
+          // could be misattributed independently to several children as they finish.
           awaitingResponse.add(report.taskId);
+          textResponseBlockedTaskIds.delete(report.taskId);
           responded.delete(report.taskId);
+        }
+        if (report != null) continue;
+      }
+
+      if (message.role === "user") {
+        // The next assistant prose answers this user turn, not an earlier child update. Keep the
+        // obligation for explicit same-child guidance, but do not infer acknowledgement from text.
+        for (const taskId of awaitingResponse) {
+          textResponseBlockedTaskIds.add(taskId);
         }
         continue;
       }
 
       if (message.role === "assistant" && message.metadata?.partial !== true) {
-        for (const taskId of awaitingResponse) {
-          responded.add(taskId);
-        }
-        awaitingResponse.clear();
+        applyAssistantProgressResponse(
+          message,
+          awaitingResponse,
+          textResponseBlockedTaskIds,
+          responded
+        );
       }
     }
     return new Set([...responded].filter((taskId) => visibleCompletedReports.has(taskId)));
@@ -5420,6 +6745,15 @@ export class TaskService {
       return false;
     }
     return historyResult.data.some((message) => {
+      if (message.role === "assistant" && message.metadata?.partial !== true) {
+        return message.parts.some((part) => {
+          const interruption = getProgressReportInterruption(part);
+          return (
+            interruption?.reason === "progress_report_received" &&
+            interruption.sourceTaskId === taskId
+          );
+        });
+      }
       if (message.role !== "user" || message.metadata?.synthetic !== true) return false;
       const text = message.parts
         .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
@@ -5443,8 +6777,9 @@ export class TaskService {
 
     const cfg = this.config.loadConfigOrDefault();
     const entry = findWorkspaceEntry(cfg, ownerWorkspaceId);
-    if (entry == null) {
-      // Owner workspace no longer exists: the terminal artifacts remain retrievable elsewhere.
+    const projectChatResumeOptions = this.resolveProjectChatAutoResumeOptions(ownerWorkspaceId);
+    if (entry == null && projectChatResumeOptions == null) {
+      // Owner session no longer exists: the terminal artifacts remain retrievable elsewhere.
       for (const notification of pending) {
         await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
       }
@@ -5515,10 +6850,9 @@ export class TaskService {
     const injectedNotifications = effectivePending.filter(
       (n) => n.outputDelivery === "already_injected"
     );
-    const injectedTaskIds = injectedNotifications.map((n) => n.sourceId);
-    const awaitHandleIds = effectivePending
-      .filter((n) => n.outputDelivery === "requires_task_await")
-      .map((n) => n.sourceId);
+    const awaitNotifications = effectivePending.filter(
+      (n) => n.outputDelivery === "requires_task_await"
+    );
     const workflowNotifications = effectivePending.filter(
       (n) => n.outputDelivery === "workflow_result_context"
     );
@@ -5527,31 +6861,61 @@ export class TaskService {
     );
 
     const promptSections: string[] = [];
-    if (injectedTaskIds.length > 0) {
+    const backgroundWorkWakeRecords: BackgroundWorkWakeDisplayRecord[] = [];
+    if (injectedNotifications.length > 0) {
       promptSections.push(
         anyInjectedFailure
           ? FAILED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
           : COMPLETED_BACKGROUND_SUBAGENT_HANDOFF_PROMPT
       );
+      backgroundWorkWakeRecords.push(
+        ...(await Promise.all(
+          injectedNotifications.map((notification) =>
+            this.buildTerminalAttentionDisplayRecord(notification, cfg)
+          )
+        ))
+      );
     }
-    if (awaitHandleIds.length > 0) {
-      promptSections.push(buildCompletedWorkspaceTurnPrompt(awaitHandleIds));
+    if (awaitNotifications.length > 0) {
+      promptSections.push(
+        buildCompletedAwaitableExecutionPrompt(
+          awaitNotifications.map((notification) => notification.sourceId)
+        )
+      );
+      backgroundWorkWakeRecords.push(
+        ...(await Promise.all(
+          awaitNotifications.map((notification) =>
+            this.buildTerminalAttentionDisplayRecord(notification, cfg)
+          )
+        ))
+      );
     }
     for (const notification of workflowNotifications) {
-      const workflowPrompt = await this.buildWorkflowTerminalPrompt(
+      const workflowWake = await this.buildWorkflowTerminalWake(
         ownerWorkspaceId,
         notification.sourceId
       );
-      if (workflowPrompt == null) {
+      if (workflowWake == null) {
         await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
         continue;
       }
-      promptSections.push(workflowPrompt);
+      promptSections.push(workflowWake.prompt);
+      backgroundWorkWakeRecords.push({
+        sourceKind: notification.sourceKind,
+        sourceId: notification.sourceId,
+        outcome: notification.terminalOutcome,
+        title: coerceNonEmptyString(notification.title) ?? workflowWake.title,
+        workspaceId: workflowWake.workspaceId,
+      });
     }
     if (promptSections.length === 0) {
       return;
     }
     const prompt = promptSections.join("\n\n");
+    const muxMetadata: Extract<MuxMessageMetadata, { type: "background-work-wake" }> = {
+      type: "background-work-wake",
+      records: backgroundWorkWakeRecords,
+    };
 
     const markPendingDelivered = async () => {
       for (const notification of effectivePending) {
@@ -5565,17 +6929,19 @@ export class TaskService {
       }
     };
 
-    const resumeOptions = await this.resolveParentAutoResumeOptions(
-      ownerWorkspaceId,
-      entry,
-      defaultModel
-    );
+    const resumeOptions =
+      projectChatResumeOptions ??
+      (entry != null
+        ? await this.resolveParentAutoResumeOptions(ownerWorkspaceId, entry, defaultModel)
+        : null);
+    assert(resumeOptions != null, "terminal attention owner resume options must be resolved");
 
     const sendOptions = {
       model: resumeOptions.model,
       agentId: resumeOptions.agentId,
       thinkingLevel: resumeOptions.thinkingLevel,
       reasoningMode: resumeOptions.reasoningMode,
+      muxMetadata,
     };
     let sendResult = await this.workspaceService.sendMessage(
       ownerWorkspaceId,
@@ -5589,7 +6955,8 @@ export class TaskService {
       const latestCfg = this.config.loadConfigOrDefault();
       const latestTaskIndex = this.buildAgentTaskIndex(latestCfg);
       if (
-        findWorkspaceEntry(latestCfg, ownerWorkspaceId) != null &&
+        (findWorkspaceEntry(latestCfg, ownerWorkspaceId) != null ||
+          this.resolveProjectChatAutoResumeOptions(ownerWorkspaceId) != null) &&
         !this.aiService.isStreaming(ownerWorkspaceId) &&
         !this.workspaceService.hasPendingQueuedOrPreparingTurn(ownerWorkspaceId) &&
         !this.interruptedParentWorkspaceIds.has(ownerWorkspaceId) &&
@@ -5651,7 +7018,22 @@ export class TaskService {
       requestingWorkspaceId &&
       this.workspaceService.hasQueuedMessages(requestingWorkspaceId, "tool-end")
     ) {
-      this.backgroundForegroundWaitsForWorkspace(requestingWorkspaceId);
+      const interruption =
+        this.workspaceService.getQueuedForegroundWaitInterruption?.(
+          requestingWorkspaceId,
+          "tool-end"
+        ) ?? GENERIC_FOREGROUND_WAIT_INTERRUPTION;
+      const backgroundedCount = this.backgroundForegroundWaitsForWorkspace(
+        requestingWorkspaceId,
+        interruption
+      );
+      if (backgroundedCount > 0 && interruption.reason === "progress_report_received") {
+        this.workspaceService.consumeQueuedForegroundWaitInterruption?.(
+          requestingWorkspaceId,
+          interruption,
+          "Sub-agent update delivered through the interrupted foreground wait."
+        );
+      }
     }
   }
 
@@ -5661,13 +7043,14 @@ export class TaskService {
     assert(record.handleId.length > 0, "workspace turn record requires handleId");
     assert(record.workspaceId.length > 0, "workspace turn record requires workspaceId");
     return {
-      taskId: record.handleId,
+      taskId: this.workspaceTurnPublicTaskId(record),
       workspaceId: record.workspaceId,
       reportMarkdown:
         record.reportMarkdown ?? "Workspace turn completed without final text output.",
       title: record.title,
       messageId: record.messageId,
       finalMessageRef: record.finalMessageRef,
+      artifacts: record.artifacts,
     };
   }
 
@@ -5775,6 +7158,9 @@ export class TaskService {
           isSelfHealEligibleSettledWorkspaceTurn(current) &&
           (params.next.status !== current.status || params.next.messageId !== current.messageId);
         if (this.isTerminalWorkspaceTurnStatus(current.status) && !resettleStaleTerminal) {
+          // A previous terminal shadow write may have outlived a failed canonical mirror. Retry the
+          // projection before exposing the terminal result to legacy waiters.
+          await this.persistWorkspaceTurnRecord(current);
           const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
           if (
             active?.handleId === params.record.handleId &&
@@ -5782,6 +7168,7 @@ export class TaskService {
           ) {
             this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
           }
+          this.workspaceTurnProgressToolCallIdsByHandleId.delete(current.handleId);
           this.settleWorkspaceTurnWaiters(
             current.handleId,
             current.status === "completed"
@@ -5818,7 +7205,7 @@ export class TaskService {
           });
           delete nextRecord.terminalAttentionNotifiedAt;
         }
-        await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
+        await this.persistWorkspaceTurnRecord(nextRecord);
         const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
         if (
           active?.handleId === params.record.handleId &&
@@ -5826,6 +7213,7 @@ export class TaskService {
         ) {
           this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
         }
+        this.workspaceTurnProgressToolCallIdsByHandleId.delete(params.record.handleId);
         const hadForegroundWaiter = this.settleWorkspaceTurnWaiters(
           params.record.handleId,
           params.waiterSettlement
@@ -5868,13 +7256,16 @@ export class TaskService {
       // treats that tombstone as "already notified" and would swallow the corrected outcome.
       await this.terminalAttentionStore.delete(
         params.record.ownerWorkspaceId,
-        TerminalAttentionStore.notificationId("workspace_turn", params.record.handleId)
+        TerminalAttentionStore.notificationId(
+          "workspace_turn",
+          this.workspaceTurnPublicTaskId(params.record)
+        )
       );
     }
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: params.record.ownerWorkspaceId,
       sourceKind: "workspace_turn",
-      sourceId: params.record.handleId,
+      sourceId: this.workspaceTurnPublicTaskId(params.record),
       outputDelivery: "requires_task_await",
       terminalOutcome: pendingNotify.outcome,
       ...(pendingNotify.title != null ? { title: pendingNotify.title } : {}),
@@ -5884,7 +7275,7 @@ export class TaskService {
       params.record.handleId
     );
     if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
-      await this.taskHandleStore.upsertWorkspaceTurn({
+      await this.persistWorkspaceTurnRecord({
         ...terminal,
         terminalAttentionNotifiedAt: getIsoNow(),
       });
@@ -5892,7 +7283,7 @@ export class TaskService {
   }
 
   async waitForWorkspaceTurn(
-    handleId: string,
+    executionIdOrAlias: string,
     options: {
       timeoutMs?: number;
       abortSignal?: AbortSignal;
@@ -5900,11 +7291,25 @@ export class TaskService {
       backgroundOnMessageQueued?: boolean;
     }
   ): Promise<WorkspaceTurnWaitResult> {
-    assert(handleId.length > 0, "waitForWorkspaceTurn: handleId must be non-empty");
+    assert(executionIdOrAlias.length > 0, "waitForWorkspaceTurn: task ID must be non-empty");
     assert(
       options.requestingWorkspaceId.length > 0,
       "waitForWorkspaceTurn: requestingWorkspaceId must be non-empty"
     );
+    let handleId: string;
+    if (isWorkspaceTurnTaskId(executionIdOrAlias)) {
+      // Preserve synchronous waiter registration for the internal shadow correlation path.
+      handleId = executionIdOrAlias;
+    } else {
+      const resolved = await this.resolveScopedWorkspaceTurnRecord(
+        options.requestingWorkspaceId,
+        executionIdOrAlias
+      );
+      if (resolved.kind !== "ok") {
+        throw new Error("Workspace turn not found or out of scope");
+      }
+      handleId = resolved.record.handleId;
+    }
     const timeoutMs = options.timeoutMs ?? 120_000;
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForWorkspaceTurn: timeoutMs invalid");
 
@@ -6020,11 +7425,22 @@ export class TaskService {
   async reportAgentProgress(
     childWorkspaceId: string,
     toolCallId: string,
-    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown }
+    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown },
+    workspaceTurnContext?: WorkspaceTurnReportContext
   ): Promise<void> {
     assert(childWorkspaceId.length > 0, "reportAgentProgress requires childWorkspaceId");
     assert(toolCallId.length > 0, "reportAgentProgress requires toolCallId");
     assert(report.reportMarkdown.length > 0, "reportAgentProgress requires reportMarkdown");
+
+    if (workspaceTurnContext != null) {
+      await this.reportWorkspaceTurnProgress(
+        childWorkspaceId,
+        toolCallId,
+        report,
+        workspaceTurnContext
+      );
+      return;
+    }
 
     await this.workspaceEventLocks.withLock(childWorkspaceId, async () => {
       const cfg = this.config.loadConfigOrDefault();
@@ -6055,7 +7471,7 @@ export class TaskService {
       const agentType = coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent";
       const title = coerceNonEmptyString(report.title) ?? `Subagent (${agentType}) update`;
       const reportContent = formatSubagentReportUserMessage({
-        childWorkspaceId,
+        taskId: childWorkspaceId,
         agentType,
         title,
         reportMarkdown: report.reportMarkdown,
@@ -6095,6 +7511,24 @@ export class TaskService {
           startStreamInBackground: true,
           queueDedupeKey: `agent-report:${childWorkspaceId}:${toolCallId}`,
           removableQueueDedupeKey: true,
+          foregroundWaitInterruption: {
+            reason: "progress_report_received",
+            sourceTaskId: childWorkspaceId,
+            report: {
+              agentType,
+              title,
+              reportMarkdown: report.reportMarkdown,
+              ...(childEntry.workspace.taskModelString != null
+                ? { model: childEntry.workspace.taskModelString }
+                : {}),
+              ...(childEntry.workspace.taskThinkingLevel != null
+                ? { thinkingLevel: childEntry.workspace.taskThinkingLevel }
+                : {}),
+              ...(report.structuredOutput !== undefined
+                ? { structuredOutput: report.structuredOutput }
+                : {}),
+            },
+          },
         }
       );
       if (!sendResult.success) {
@@ -6103,6 +7537,145 @@ export class TaskService {
           `agent_report failed to wake the parent workspace: ${formattedError.message}`
         );
       }
+    });
+  }
+
+  private async reportWorkspaceTurnProgress(
+    reportingWorkspaceId: string,
+    toolCallId: string,
+    report: { reportMarkdown: string; title?: string; structuredOutput?: unknown },
+    context: WorkspaceTurnReportContext
+  ): Promise<void> {
+    assert(context.handleId.length > 0, "workspace turn report requires handleId");
+    assert(context.ownerWorkspaceId.length > 0, "workspace turn report requires ownerWorkspaceId");
+    assert(context.turnId.length > 0, "workspace turn report requires turnId");
+
+    const resolved = await this.resolveScopedWorkspaceTurnRecord(
+      context.ownerWorkspaceId,
+      context.handleId
+    );
+    if (resolved.kind !== "ok") {
+      throw new Error("agent_report workspace turn is missing or owned by another workspace");
+    }
+    const handleId = resolved.record.handleId;
+    await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        context.ownerWorkspaceId,
+        handleId
+      );
+      if (record == null) {
+        throw new Error("agent_report workspace turn is missing or owned by another workspace");
+      }
+      if (record.workspaceId !== reportingWorkspaceId) {
+        throw new Error("agent_report workspace turn does not belong to this workspace");
+      }
+      if (record.turnId !== context.turnId) {
+        throw new Error("agent_report workspace turn correlation is stale");
+      }
+      if (this.isTerminalWorkspaceTurnStatus(record.status)) {
+        throw new Error("agent_report cannot send updates after the workspace turn has completed");
+      }
+      if (record.status !== "running") {
+        throw new Error("agent_report is only available from an active workspace turn");
+      }
+
+      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(reportingWorkspaceId);
+      if (
+        active?.handleId !== record.handleId ||
+        active.ownerWorkspaceId !== record.ownerWorkspaceId
+      ) {
+        throw new Error("agent_report workspace turn is no longer active");
+      }
+      const reportedToolCallIds =
+        this.workspaceTurnProgressToolCallIdsByHandleId.get(record.handleId) ?? new Set<string>();
+      if (reportedToolCallIds.has(toolCallId)) {
+        return;
+      }
+
+      const cfg = this.config.loadConfigOrDefault();
+      const ownerEntry = findWorkspaceEntry(cfg, record.ownerWorkspaceId);
+      const resumeOptions =
+        this.resolveProjectChatAutoResumeOptions(record.ownerWorkspaceId) ??
+        (ownerEntry != null
+          ? await this.resolveParentAutoResumeOptions(
+              record.ownerWorkspaceId,
+              ownerEntry,
+              defaultModel
+            )
+          : null);
+      if (resumeOptions == null) {
+        throw new Error("agent_report could not find the workspace turn owner");
+      }
+
+      const agentType = "workspace";
+      const title =
+        coerceNonEmptyString(report.title) ??
+        coerceNonEmptyString(record.title) ??
+        "Workspace turn update";
+      const publicTaskId = this.workspaceTurnPublicTaskId(record);
+      const reportContent = formatSubagentReportUserMessage({
+        taskId: publicTaskId,
+        agentType,
+        title,
+        reportMarkdown: report.reportMarkdown,
+        status: "in_progress",
+        workspaceId: reportingWorkspaceId,
+        turnId: record.turnId,
+        ...(record.modelString != null ? { model: record.modelString } : {}),
+        ...(record.thinkingLevel != null
+          ? { thinkingLevel: coerceThinkingLevel(record.thinkingLevel) }
+          : {}),
+        ...(report.structuredOutput !== undefined
+          ? { structuredOutput: report.structuredOutput }
+          : {}),
+      });
+      const progressReport = {
+        agentType,
+        title,
+        reportMarkdown: report.reportMarkdown,
+        workspaceId: reportingWorkspaceId,
+        turnId: record.turnId,
+        ...(record.modelString != null ? { model: record.modelString } : {}),
+        ...(record.thinkingLevel != null
+          ? { thinkingLevel: coerceThinkingLevel(record.thinkingLevel) }
+          : {}),
+        ...(report.structuredOutput !== undefined
+          ? { structuredOutput: report.structuredOutput }
+          : {}),
+      };
+
+      const sendResult = await this.workspaceService.sendMessage(
+        record.ownerWorkspaceId,
+        reportContent,
+        {
+          model: resumeOptions.model,
+          agentId: resumeOptions.agentId,
+          thinkingLevel: resumeOptions.thinkingLevel,
+          reasoningMode: resumeOptions.reasoningMode,
+        },
+        {
+          skipAutoResumeReset: true,
+          synthetic: true,
+          agentInitiated: true,
+          startStreamInBackground: true,
+          queueDedupeKey: `agent-report:${record.handleId}:${toolCallId}`,
+          removableQueueDedupeKey: true,
+          foregroundWaitInterruption: {
+            reason: "progress_report_received",
+            sourceTaskId: publicTaskId,
+            report: progressReport,
+          },
+        }
+      );
+      if (!sendResult.success) {
+        const formattedError = formatSendMessageError(sendResult.error);
+        throw new Error(
+          `agent_report failed to wake the workspace turn owner: ${formattedError.message}`
+        );
+      }
+
+      reportedToolCallIds.add(toolCallId);
+      this.workspaceTurnProgressToolCallIdsByHandleId.set(record.handleId, reportedToolCallIds);
     });
   }
 
@@ -6314,6 +7887,44 @@ export class TaskService {
   }> {
     assert(taskId.length > 0, "waitForAgentReport: taskId must be non-empty");
 
+    const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
+    let scopedCanonicalExecution: ExecutionHandle | null = null;
+    if (requestingWorkspaceId != null) {
+      const directWorkspaceId = this.resolveLegacyWorkspaceAliasInScope(
+        requestingWorkspaceId,
+        taskId,
+        this.config.loadConfigOrDefault()
+      );
+      if (directWorkspaceId != null) {
+        taskId = directWorkspaceId;
+      } else {
+        const resolved = await this.resolveScopedExecution(requestingWorkspaceId, taskId);
+        if (
+          resolved.kind === "invalid_scope" ||
+          (resolved.kind === "ok" && resolved.handle.launchPolicy.kind !== "agent_task")
+        ) {
+          throw new Error("Task is not a descendant");
+        }
+        if (resolved.kind === "not_found") throw new Error("Task not found");
+        scopedCanonicalExecution = await this.executionStore.get(
+          resolved.handle.ownerSessionId,
+          resolved.handle.executionId
+        );
+        taskId = resolved.workspaceId;
+      }
+    }
+
+    // Keep workspace-ID callers on the legacy waiter path. This avoids introducing an async
+    // registry lookup before legacy foreground waiters register, while opaque execution IDs use
+    // the canonical result resolved above.
+    const canonicalExecution = scopedCanonicalExecution;
+    if (canonicalExecution?.status === "completed") {
+      return this.reportFromCanonicalExecution(canonicalExecution);
+    }
+    if (canonicalExecution?.status === "interrupted" || canonicalExecution?.status === "error") {
+      this.throwCanonicalExecutionFailure(canonicalExecution);
+    }
+
     // Report monotonicity invariant: check the in-memory cache before any status-based
     // interruption handling so a finalized report stays awaitable once observed.
     const cached = this.completedReportsByTaskId.get(taskId);
@@ -6331,7 +7942,6 @@ export class TaskService {
     const timeoutMs = options?.timeoutMs ?? 10 * 60 * 1000; // 10 minutes
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForAgentReport: timeoutMs invalid");
 
-    const requestingWorkspaceId = coerceNonEmptyString(options?.requestingWorkspaceId);
     if (requestingWorkspaceId) {
       // A renewed foreground wait means this task is blocking again unless re-backgrounded later.
       this.markTaskForegroundRelevant(taskId);
@@ -6682,8 +8292,10 @@ export class TaskService {
     assert(taskId.length > 0, "getAgentTaskStatus: taskId must be non-empty");
 
     const cfg = this.config.loadConfigOrDefault();
-    const entry = findWorkspaceEntry(cfg, taskId);
-    const status = entry?.workspace.taskStatus;
+    const task = this.listAgentTaskWorkspaces(cfg).find(
+      (candidate) => candidate.id === taskId || candidate.executionId === taskId
+    );
+    const status = task?.taskStatus;
     return status ?? null;
   }
 
@@ -6691,14 +8303,14 @@ export class TaskService {
     assert(taskId.length > 0, "getAgentTaskTimestamps: taskId must be non-empty");
 
     const cfg = this.config.loadConfigOrDefault();
-    const entry = findWorkspaceEntry(cfg, taskId);
-    if (!entry) {
-      return null;
-    }
+    const task = this.listAgentTaskWorkspaces(cfg).find(
+      (candidate) => candidate.id === taskId || candidate.executionId === taskId
+    );
+    if (!task) return null;
 
     return {
-      createdAt: entry.workspace.createdAt,
-      reportedAt: entry.workspace.reportedAt,
+      createdAt: task.createdAt,
+      reportedAt: task.reportedAt,
     };
   }
 
@@ -6712,13 +8324,16 @@ export class TaskService {
     }
 
     const cfg = this.config.loadConfigOrDefault();
+    const tasks = this.listAgentTaskWorkspaces(cfg);
     const statuses = new Map<string, AgentTaskStatusLookup>();
 
     for (const taskId of taskIds) {
-      const entry = findWorkspaceEntry(cfg, taskId);
+      const task = tasks.find(
+        (candidate) => candidate.id === taskId || candidate.executionId === taskId
+      );
       statuses.set(taskId, {
-        exists: entry != null,
-        taskStatus: entry?.workspace.taskStatus ?? null,
+        exists: task != null,
+        taskStatus: task?.taskStatus ?? null,
       });
     }
 
@@ -6830,6 +8445,18 @@ export class TaskService {
     return result;
   }
 
+  async listActiveDescendantAgentExecutionIds(
+    workspaceId: string,
+    options: { excludeWorkflowTasks?: boolean } = {}
+  ): Promise<string[]> {
+    return (
+      await this.listDescendantAgentTasks(workspaceId, {
+        statuses: ["queued", "starting", "running", "awaiting_report"],
+        excludeWorkflowTasks: options.excludeWorkflowTasks,
+      })
+    ).map((task) => task.taskId);
+  }
+
   private async normalizeWorkspaceTurnRecord(
     record: WorkspaceTurnTaskHandleRecord,
     options: {
@@ -6855,7 +8482,7 @@ export class TaskService {
     ) {
       const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
       if (recovered != null) {
-        await this.taskHandleStore.upsertWorkspaceTurn(recovered);
+        await this.persistWorkspaceTurnRecord(recovered);
         await this.cleanupDisposableWorkspaceTurn(recovered);
         const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
         if (
@@ -6960,7 +8587,7 @@ export class TaskService {
             deferredMessageIds: [event.messageId],
           });
         }
-        const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+        const recovered = await this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
         if (
           !options.repairFromHistory ||
           (recovered.status === record.status && recovered.messageId === record.messageId)
@@ -7021,7 +8648,7 @@ export class TaskService {
         staleStatus: record.status,
         nextStatus: recovered.status,
       });
-      await this.taskHandleStore.upsertWorkspaceTurn(recovered);
+      await this.persistWorkspaceTurnRecord(recovered);
       return recovered;
     });
     if (next === recovered) {
@@ -7082,9 +8709,12 @@ export class TaskService {
       delete next.terminalAttentionNotifiedAt;
       await this.terminalAttentionStore.delete(
         record.ownerWorkspaceId,
-        TerminalAttentionStore.notificationId("workspace_turn", record.handleId)
+        TerminalAttentionStore.notificationId(
+          "workspace_turn",
+          this.workspaceTurnPublicTaskId(record)
+        )
       );
-      await this.taskHandleStore.upsertWorkspaceTurn(next);
+      await this.persistWorkspaceTurnRecord(next);
       // Re-register so stream-end/abort/error settlement paths own the handle again.
       this.activeWorkspaceTurnHandleByWorkspaceId.set(record.workspaceId, {
         handleId: record.handleId,
@@ -7101,20 +8731,19 @@ export class TaskService {
 
   async getWorkspaceTurnSnapshot(
     ownerWorkspaceId: string,
-    handleId: string
+    executionIdOrAlias: string
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
-    if (!isWorkspaceTurnTaskId(handleId)) {
-      return null;
-    }
-    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
-    if (record == null) {
-      return null;
-    }
+    const resolved = await this.resolveScopedWorkspaceTurnRecord(
+      ownerWorkspaceId,
+      executionIdOrAlias
+    );
+    if (resolved.kind !== "ok") return null;
     // Snapshot reads back task_await, which must report the child's live state even when
     // a stale settlement (interrupted/error) was later corrected by a self-healed retry.
-    return await this.normalizeWorkspaceTurnRecord(record, {
+    const normalized = await this.normalizeWorkspaceTurnRecord(resolved.record, {
       repairSettledTurnsFromHistory: true,
     });
+    return normalized;
   }
 
   async listWorkspaceTurnTasks(
@@ -7126,17 +8755,269 @@ export class TaskService {
     const result: WorkspaceTurnTaskHandleRecord[] = [];
     for (const record of records) {
       const latest = await this.normalizeWorkspaceTurnRecord(record);
-      if (latest != null && (statuses == null || statuses.has(latest.status))) {
-        result.push(latest);
+      if (latest == null) continue;
+      const canonical =
+        latest.executionId == null
+          ? null
+          : await this.executionStore.get(latest.ownerWorkspaceId, latest.executionId);
+      const projected =
+        canonical == null
+          ? latest
+          : this.projectWorkspaceTurnRecordFromExecution(latest, canonical);
+      if (statuses == null || statuses.has(projected.status)) {
+        result.push(projected);
       }
     }
     return result;
   }
 
+  async listProjectWorkspaces(
+    ownerWorkspaceId: string,
+    options: { includeArchived?: boolean; projectPath?: string } = {}
+  ): Promise<Result<ProjectWorkspaceListResult, string>> {
+    const owner = this.resolveProjectChatOwner(ownerWorkspaceId);
+    if (owner == null) {
+      return Err("project_workspace_list is only available in Project Chat");
+    }
+
+    try {
+      // One metadata load + one owner handle load keeps this bulk tool independent of frontend RPC
+      // loops while preserving backend-canonical IDs for legacy entries.
+      const [allMetadata, turns, activityByWorkspaceId] = await Promise.all([
+        this.config.getAllWorkspaceMetadata(),
+        this.listWorkspaceTurnTasks(ownerWorkspaceId),
+        this.workspaceService.getActivityList(),
+      ]);
+      const cfg = this.config.loadConfigOrDefault();
+      const latestTurnByWorkspace = new Map<string, WorkspaceTurnTaskHandleRecord>();
+      for (const turn of turns) {
+        const previous = latestTurnByWorkspace.get(turn.workspaceId);
+        if (previous == null || previous.updatedAt.localeCompare(turn.updatedAt) < 0) {
+          latestTurnByWorkspace.set(turn.workspaceId, turn);
+        }
+      }
+
+      const includeArchived = options.includeArchived !== false;
+      const scopes = this.resolveProjectChatWorkspaceScopes(ownerWorkspaceId, cfg);
+      if (scopes == null || scopes.length === 0) {
+        return Err("Project Chat workspace scope is unavailable");
+      }
+      const filteredScope =
+        options.projectPath != null
+          ? scopes.find(
+              (scope) => scope.projectPath === stripTrailingSlashes(options.projectPath ?? "")
+            )
+          : null;
+      if (options.projectPath != null && filteredScope == null) {
+        return Err(
+          `project_workspace_list: invalid_scope for project_path ${options.projectPath}; use an exact projectPath from availableProjects`
+        );
+      }
+      const selectedScopes = filteredScope != null ? [filteredScope] : scopes;
+      const workspaces: ProjectWorkspaceSummary[] = [];
+      for (const metadata of allMetadata) {
+        if (stripTrailingSlashes(metadata.projectPath) !== scopes[0].storageProjectPath) continue;
+        const metadataSubProjectPath = metadata.subProjectPath
+          ? stripTrailingSlashes(metadata.subProjectPath)
+          : null;
+        const workspaceScope = selectedScopes.find(
+          (scope) => scope.subProjectPath === metadataSubProjectPath
+        );
+        if (workspaceScope == null) continue;
+        if (this.resolveProjectChatWorkspaceTarget(ownerWorkspaceId, metadata.id, cfg) == null) {
+          continue;
+        }
+        const archived = isWorkspaceArchived(metadata.archivedAt, metadata.unarchivedAt);
+        if (archived && !includeArchived) continue;
+
+        const turn = latestTurnByWorkspace.get(metadata.id);
+        // Workspace turns are fixed to Exec, so expose that exact persisted bucket rather than the
+        // currently selected UI agent's settings. Legacy workspace-wide settings remain the fallback.
+        const execAiSettings = this.resolveWorkspaceAISettings(metadata, "exec");
+        const createdAt = metadata.createdAt;
+        const activityRecency = activityByWorkspaceId[metadata.id]?.recency;
+        const recencyCandidates = [
+          typeof activityRecency === "number" && Number.isFinite(activityRecency)
+            ? activityRecency
+            : undefined,
+          metadata.unarchivedAt != null ? Date.parse(metadata.unarchivedAt) : undefined,
+          createdAt != null ? Date.parse(createdAt) : undefined,
+        ].filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+        const lastActivityAt =
+          recencyCandidates.length > 0
+            ? new Date(Math.max(...recencyCandidates)).toISOString()
+            : undefined;
+        const updatedAt = lastActivityAt;
+        workspaces.push({
+          workspaceId: metadata.id,
+          name: metadata.name,
+          projectPath: workspaceScope.projectPath,
+          projectDisplayName: workspaceScope.displayName,
+          subProjectPath: workspaceScope.subProjectPath,
+          ...(metadata.title != null ? { title: metadata.title } : {}),
+          archived,
+          ...(metadata.transcriptOnly === true ? { transcriptOnly: true } : {}),
+          ...(createdAt != null ? { createdAt } : {}),
+          ...(lastActivityAt != null ? { lastActivityAt } : {}),
+          ...(updatedAt != null ? { updatedAt } : {}),
+          runtimeConfig: metadata.runtimeConfig,
+          ...(execAiSettings != null
+            ? {
+                execAiSettings: {
+                  model: execAiSettings.model,
+                  thinkingLevel: execAiSettings.thinkingLevel ?? "off",
+                  ...(coerceOpenAIReasoningMode(execAiSettings.reasoningMode) != null
+                    ? { reasoningMode: coerceOpenAIReasoningMode(execAiSettings.reasoningMode) }
+                    : {}),
+                },
+              }
+            : {}),
+          ...(turn != null
+            ? {
+                workspaceTurn: {
+                  taskId: this.workspaceTurnPublicTaskId(turn),
+                  status: turn.status,
+                  ...(turn.title != null ? { title: turn.title } : {}),
+                  ...(turn.prompt != null ? { prompt: turn.prompt } : {}),
+                  createdAt: turn.createdAt,
+                  updatedAt: turn.updatedAt,
+                },
+              }
+            : {}),
+        });
+      }
+
+      workspaces.sort(
+        (left, right) =>
+          Number(left.archived) - Number(right.archived) ||
+          (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "") ||
+          left.name.localeCompare(right.name) ||
+          left.workspaceId.localeCompare(right.workspaceId)
+      );
+      return Ok({
+        projectPath: stripTrailingSlashes(owner.projectPath),
+        availableProjects: scopes.map((scope) => ({
+          projectPath: scope.projectPath,
+          displayName: scope.displayName,
+          kind: scope.kind,
+        })),
+        workspaces,
+      });
+    } catch (error) {
+      return Err(`Failed to list project workspaces: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async interruptAllWorkspaceTurnsForOwner(
+    ownerWorkspaceId: string
+  ): Promise<Result<void, string>> {
+    const normalizedOwnerWorkspaceId = ownerWorkspaceId.trim();
+    if (normalizedOwnerWorkspaceId.length === 0) {
+      return Err("Workspace-turn owner is required");
+    }
+
+    // Project removal must close the launch race: once this lock is held, no new workspace turn can
+    // be created for the owner before all currently-live handles are made terminal.
+    await using _lock = await this.mutex.acquire();
+    const activeRecords = await this.listWorkspaceTurnTasks(normalizedOwnerWorkspaceId, {
+      statuses: ["queued", "starting", "running"],
+    });
+    const orderedRecords = activeRecords.toSorted(
+      (left, right) => Number(left.status !== "queued") - Number(right.status !== "queued")
+    );
+    const workspaceIds = new Set<string>();
+    const interruptFailures: Array<{
+      record: WorkspaceTurnTaskHandleRecord;
+      error: string;
+    }> = [];
+
+    // First make every durable handle terminal and cancel all queued follow-ups. Waiting before this
+    // phase completes can deadlock on a same-workspace queued turn that has not been removed yet.
+    for (const record of orderedRecords) {
+      workspaceIds.add(record.workspaceId);
+      const interruptResult = await this.interruptWorkspaceTurn(
+        normalizedOwnerWorkspaceId,
+        record.handleId
+      );
+      if (!interruptResult.success) {
+        interruptFailures.push({ record, error: interruptResult.error });
+      }
+    }
+
+    // Then wait once per owned workspace, in parallel, after every queued/running handle has been
+    // interrupted. This bounds owner cleanup to one stop timeout rather than one timeout per handle.
+    const quiescenceResults = await Promise.all(
+      Array.from(workspaceIds, async (workspaceId): Promise<Result<void, string>> => {
+        const idlePromise = this.workspaceService.waitForIdleAndNoQueuedMessages(workspaceId);
+        try {
+          const idleOutcome = await raceWithAbortAndTimeout(idlePromise, {
+            timeoutMs: TASK_TERMINATION_STOP_STREAM_TIMEOUT_MS,
+          });
+          if (idleOutcome.kind !== "ok") {
+            void idlePromise.catch((error: unknown) => {
+              log.debug("Owned workspace idle wait later threw", { workspaceId, error });
+            });
+            return Err(`Timed out stopping owned workspace ${workspaceId}`);
+          }
+        } catch (error) {
+          return Err(
+            `Failed waiting for owned workspace ${workspaceId}: ${getErrorMessage(error)}`
+          );
+        }
+
+        if (
+          this.aiService.isStreaming(workspaceId) ||
+          this.workspaceService.hasPendingAutoRetry(workspaceId) ||
+          this.workspaceService.hasPendingQueuedOrPreparingTurn(workspaceId)
+        ) {
+          return Err(`Owned workspace ${workspaceId} is still active after interruption`);
+        }
+        return Ok(undefined);
+      })
+    );
+    const quiescenceFailure = quiescenceResults.find((result) => !result.success);
+    if (quiescenceFailure != null && !quiescenceFailure.success) {
+      return quiescenceFailure;
+    }
+
+    for (const failure of interruptFailures) {
+      // A natural settlement can win the per-handle lock after the active snapshot. That is safe;
+      // only a handle that remains live after the failed interrupt must block owner cleanup.
+      const latest = await this.getWorkspaceTurnSnapshot(
+        normalizedOwnerWorkspaceId,
+        failure.record.handleId
+      );
+      if (latest == null || !this.isActiveWorkspaceTurn(latest)) {
+        continue;
+      }
+      return Err(`Failed to interrupt workspace turn ${failure.record.handleId}: ${failure.error}`);
+    }
+
+    const remainingActive = await this.listWorkspaceTurnTasks(normalizedOwnerWorkspaceId, {
+      statuses: ["queued", "starting", "running"],
+    });
+    if (remainingActive.length > 0) {
+      return Err(
+        `Workspace-turn owner still has active tasks: ${remainingActive
+          .map((record) => record.handleId)
+          .join(", ")}`
+      );
+    }
+    return Ok(undefined);
+  }
+
   async interruptWorkspaceTurn(
     ownerWorkspaceId: string,
-    handleId: string
+    executionIdOrAlias: string
   ): Promise<Result<{ workspaceId: string }, string>> {
+    const resolved = await this.resolveScopedWorkspaceTurnRecord(
+      ownerWorkspaceId,
+      executionIdOrAlias
+    );
+    if (resolved.kind !== "ok") {
+      return Err("Workspace turn not found or out of scope");
+    }
+    const handleId = resolved.record.handleId;
     let workspaceId: string | undefined;
     let shouldClearQueuedPrompt = false;
     let shouldStopStream = false;
@@ -7162,7 +9043,7 @@ export class TaskService {
         status: "interrupted",
         updatedAt: getIsoNow(),
       };
-      await this.taskHandleStore.upsertWorkspaceTurn(next);
+      await this.persistWorkspaceTurnRecord(next);
       interruptedRecord = next;
 
       const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
@@ -7195,10 +9076,9 @@ export class TaskService {
       }
     }
     if (shouldStopStream && workspaceId != null) {
-      try {
-        await this.aiService.stopStream(workspaceId, { abandonPartial: false });
-      } catch (error: unknown) {
-        log.debug("interruptWorkspaceTurn: stopStream threw", { handleId, error });
+      const stopResult = await this.workspaceService.interruptWorkspaceTurnStream(workspaceId);
+      if (!stopResult.success) {
+        return Err(`Failed to stop workspace turn stream: ${stopResult.error}`);
       }
     }
     if (interruptedRecord != null) {
@@ -7221,7 +9101,7 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
       if (resolved.metadata == null) {
         return Ok({
           status: "not_found",
@@ -7288,7 +9168,7 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
       if (resolved.metadata == null) {
         return Ok({
           status: "not_found",
@@ -7349,7 +9229,7 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
       if (resolved.metadata == null) {
         return Ok({
           status: "already_removed",
@@ -7388,11 +9268,29 @@ export class TaskService {
     });
   }
 
-  private async withWorkspaceLifecycleLock<T>(
+  private async withWorkspaceLifecycleLock(
+    ownerWorkspaceId: string,
     resolved: ResolvedWorkspaceLifecycleTarget,
-    operation: (lockedResolved: ResolvedWorkspaceLifecycleTarget) => Promise<T>
-  ): Promise<T> {
+    operation: (
+      lockedResolved: ResolvedWorkspaceLifecycleTarget
+    ) => Promise<Result<WorkspaceLifecycleResult, string>>
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
     return await this.workspaceLifecycleLocks.withLock(resolved.workspaceId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const stillOwned =
+        resolved.ownerKind === "project_chat"
+          ? this.resolveProjectChatWorkspaceTarget(ownerWorkspaceId, resolved.workspaceId, cfg) !=
+            null
+          : await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, resolved.workspaceId);
+      if (!stillOwned) {
+        return Ok({
+          status: "invalid_scope",
+          action: resolved.action,
+          ...(resolved.taskId != null ? { taskId: resolved.taskId } : {}),
+          workspaceId: resolved.workspaceId,
+        });
+      }
+
       const lockedResolved = {
         ...resolved,
         metadata: await this.findWorkspaceLifecycleMetadata(resolved.workspaceId),
@@ -7420,21 +9318,23 @@ export class TaskService {
     if (hasTaskId) {
       taskId = target.taskId;
       assert(taskId != null, "workspace lifecycle taskId must be resolved");
-      if (!isWorkspaceTurnTaskId(taskId)) {
+      const resolvedTask = await this.resolveScopedWorkspaceTurnRecord(ownerWorkspaceId, taskId);
+      if (resolvedTask.kind !== "ok") {
         return { status: "invalid_scope", action, taskId };
       }
-      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-      if (record == null) {
-        return { status: "invalid_scope", action, taskId };
-      }
-      taskTitle = record.title;
-      workspaceId = record.workspaceId;
+      taskTitle = resolvedTask.record.title;
+      workspaceId = resolvedTask.record.workspaceId;
     } else {
       assert(target.workspaceId != null, "workspace lifecycle workspaceId must be resolved");
       workspaceId = target.workspaceId;
     }
 
-    const owned = await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId);
+    const cfg = this.config.loadConfigOrDefault();
+    const ownerKind = this.isProjectChatOwner(ownerWorkspaceId) ? "project_chat" : "workspace";
+    const owned =
+      ownerKind === "project_chat"
+        ? this.resolveProjectChatWorkspaceTarget(ownerWorkspaceId, workspaceId, cfg) != null
+        : await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId);
     if (!owned) {
       return {
         status: "invalid_scope",
@@ -7449,6 +9349,7 @@ export class TaskService {
       action,
       ...(taskId != null ? { taskId } : {}),
       ...(taskTitle != null ? { taskTitle } : {}),
+      ownerKind,
       workspaceId,
       metadata,
     };
@@ -7505,7 +9406,7 @@ export class TaskService {
         statuses: ["queued", "starting", "running"],
       })
     ).filter((record) => record.workspaceId === resolved.workspaceId);
-    const activeTaskIds = activeRecords.map((record) => record.handleId);
+    const activeTaskIds = activeRecords.map((record) => this.workspaceTurnPublicTaskId(record));
     if (activeTaskIds.length === 0) {
       return null;
     }
@@ -7533,62 +9434,73 @@ export class TaskService {
     return null;
   }
 
-  listDescendantAgentTasks(
+  async listDescendantAgentTasks(
     workspaceId: string,
     options?: { statuses?: AgentTaskStatus[]; excludeWorkflowTasks?: boolean }
-  ): DescendantAgentTaskInfo[] {
+  ): Promise<DescendantAgentTaskInfo[]> {
     assert(workspaceId.length > 0, "listDescendantAgentTasks: workspaceId must be non-empty");
 
-    const statuses = options?.statuses;
-    const statusFilter = statuses && statuses.length > 0 ? new Set(statuses) : null;
-
+    const statusFilter =
+      options?.statuses != null && options.statuses.length > 0 ? new Set(options.statuses) : null;
     const cfg = this.config.loadConfigOrDefault();
+    const ownerSessionId = this.resolveExecutionOwnerSessionId(workspaceId, cfg);
     const index = this.buildAgentTaskIndex(cfg);
-
+    const handles = await this.executionRegistry.list(ownerSessionId);
     const result: DescendantAgentTaskInfo[] = [];
 
-    const stack: Array<{ taskId: string; depth: number; workflowOwned: boolean }> = [];
-    for (const childTaskId of index.childrenByParent.get(workspaceId) ?? []) {
-      stack.push({ taskId: childTaskId, depth: 1, workflowOwned: false });
-    }
-
-    while (stack.length > 0) {
-      const next = stack.pop()!;
-      const entry = index.byId.get(next.taskId);
-      if (!entry) continue;
-
-      assert(
-        entry.parentWorkspaceId,
-        `listDescendantAgentTasks: task ${next.taskId} is missing parentWorkspaceId`
-      );
-
-      const workflowOwned = next.workflowOwned || entry.workflowTask != null;
-      const status: AgentTaskStatus = entry.taskStatus ?? "running";
+    for (const handle of handles) {
       if (
-        (!statusFilter || statusFilter.has(status)) &&
-        !(options?.excludeWorkflowTasks === true && workflowOwned)
+        handle.launchPolicy.kind !== "agent_task" ||
+        !(await this.isExecutionHandleInScope(workspaceId, handle, ownerSessionId, cfg))
       ) {
-        result.push({
-          taskId: next.taskId,
-          status,
-          parentWorkspaceId: entry.parentWorkspaceId,
-          agentType: entry.agentType,
-          workspaceName: entry.name,
-          title: entry.title,
-          createdAt: entry.createdAt,
-          modelString: entry.aiSettings?.model,
-          thinkingLevel: entry.aiSettings?.thinkingLevel,
-          sticky: entry.taskSticky === true ? true : undefined,
-          depth: next.depth,
-        });
+        continue;
       }
 
-      for (const childTaskId of index.childrenByParent.get(next.taskId) ?? []) {
-        stack.push({ taskId: childTaskId, depth: next.depth + 1, workflowOwned });
+      const entry = index.byId.get(handle.target.workspaceId);
+      const workflowOwned =
+        entry != null && this.isWorkflowOwnedTaskUsingIndex(index, handle.target.workspaceId);
+      if (options?.excludeWorkflowTasks === true && workflowOwned) continue;
+
+      const status: AgentTaskStatus =
+        entry?.taskStatus ??
+        (handle.status === "completed"
+          ? "reported"
+          : handle.status === "interrupted" || handle.status === "error"
+            ? "interrupted"
+            : handle.phase === "awaiting_report"
+              ? "awaiting_report"
+              : handle.status);
+      if (statusFilter != null && !statusFilter.has(status)) continue;
+
+      let depth = 1;
+      let parentExecutionId = handle.parentExecutionId;
+      const ancestorExecutionId = findWorkspaceEntry(cfg, workspaceId)?.workspace.executionId;
+      while (parentExecutionId != null && parentExecutionId !== ancestorExecutionId) {
+        const parent = await this.executionRegistry.get(ownerSessionId, parentExecutionId);
+        if (parent == null) break;
+        depth += 1;
+        parentExecutionId = parent.parentExecutionId;
       }
+
+      const canonicalWorkspace = entry?.executionId === handle.executionId;
+      result.push({
+        taskId: canonicalWorkspace
+          ? handle.executionId
+          : (handle.aliases?.[0] ?? handle.executionId),
+        workspaceId: handle.target.workspaceId,
+        status,
+        parentWorkspaceId: handle.requesterWorkspaceId,
+        agentType: entry?.agentType ?? handle.launchPolicy.agentId,
+        workspaceName: entry?.name,
+        title: entry?.title ?? handle.launchPolicy.title,
+        createdAt: entry?.createdAt ?? handle.createdAt,
+        modelString: entry?.aiSettings?.model,
+        thinkingLevel: entry?.aiSettings?.thinkingLevel,
+        sticky: entry?.taskSticky === true ? true : undefined,
+        depth,
+      });
     }
 
-    // Stable ordering: oldest first, then depth (ties by taskId for determinism).
     result.sort((a, b) => {
       const aTime = a.createdAt ? Date.parse(a.createdAt) : 0;
       const bTime = b.createdAt ? Date.parse(b.createdAt) : 0;
@@ -7596,7 +9508,6 @@ export class TaskService {
       if (a.depth !== b.depth) return a.depth - b.depth;
       return a.taskId.localeCompare(b.taskId);
     });
-
     return result;
   }
 
@@ -7610,52 +9521,14 @@ export class TaskService {
     );
     assert(Array.isArray(taskIds), "filterDescendantAgentTaskIds: taskIds must be an array");
 
-    const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-
     const result: string[] = [];
-    const maybePersisted: string[] = [];
-
     for (const taskId of taskIds) {
       if (typeof taskId !== "string" || taskId.length === 0) continue;
-
-      if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
-        result.push(taskId);
-        continue;
-      }
-
-      const cached = this.completedReportsByTaskId.get(taskId);
-      if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
-        result.push(taskId);
-        continue;
-      }
-
-      maybePersisted.push(taskId);
-    }
-
-    if (maybePersisted.length === 0) {
-      return result;
-    }
-
-    // Terminal failures persist in a separate artifacts file (a failure must
-    // never masquerade as a completed report), so scope checks must consult
-    // BOTH: a background-failed child that was cleaned up or lost to a restart
-    // must stay in scope for task_await so waitForAgentReport can surface the
-    // persisted typed failure instead of degrading to invalid_scope/not_found.
-    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const [reports, failures] = await Promise.all([
-      readSubagentReportArtifactsFile(sessionDir),
-      readSubagentFailureArtifactsFile(sessionDir),
-    ]);
-    for (const taskId of maybePersisted) {
-      if (
-        hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
-        hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
-      ) {
+      const resolved = await this.resolveScopedExecution(ancestorWorkspaceId, taskId);
+      if (resolved.kind === "ok" && resolved.handle.launchPolicy.kind === "agent_task") {
         result.push(taskId);
       }
     }
-
     return result;
   }
 
@@ -7785,30 +9658,8 @@ export class TaskService {
   async isDescendantAgentTask(ancestorWorkspaceId: string, taskId: string): Promise<boolean> {
     assert(ancestorWorkspaceId.length > 0, "isDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "isDescendantAgentTask: taskId required");
-
-    const cfg = this.config.loadConfigOrDefault();
-    const parentById = this.buildAgentTaskIndex(cfg).parentById;
-    if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
-      return true;
-    }
-
-    // The task workspace may have been removed after it settled (cleanup/restart). Preserve scope
-    // checks by consulting persisted report AND failure artifacts in the ancestor session dir —
-    // a terminally-failed child must stay awaitable so its typed failure can be surfaced.
-    const cached = this.completedReportsByTaskId.get(taskId);
-    if (hasAncestorWorkspaceId(cached, ancestorWorkspaceId)) {
-      return true;
-    }
-
-    const sessionDir = this.config.getSessionDir(ancestorWorkspaceId);
-    const [reports, failures] = await Promise.all([
-      readSubagentReportArtifactsFile(sessionDir),
-      readSubagentFailureArtifactsFile(sessionDir),
-    ]);
-    return (
-      hasAncestorWorkspaceId(reports.artifactsByChildTaskId[taskId], ancestorWorkspaceId) ||
-      hasAncestorWorkspaceId(failures.failuresByChildTaskId[taskId], ancestorWorkspaceId)
-    );
+    const resolved = await this.resolveScopedExecution(ancestorWorkspaceId, taskId);
+    return resolved.kind === "ok" && resolved.handle.launchPolicy.kind === "agent_task";
   }
 
   private isDescendantAgentTaskUsingParentById(
@@ -8333,14 +10184,29 @@ export class TaskService {
     return result;
   }
 
-  /**
-   * Topology predicate: does this workspace still have child agent-task nodes in config?
-   * Unlike hasActiveDescendantAgentTasks (which checks runtime activity for scheduling),
-   * this checks structural tree shape — any child node blocks parent deletion regardless
-   * of its status.
-   */
-  private hasChildAgentTasks(index: AgentTaskIndex, workspaceId: string): boolean {
-    return (index.childrenByParent.get(workspaceId)?.length ?? 0) > 0;
+  private async hasBlockingChildAgentTasks(
+    index: AgentTaskIndex,
+    config: ReturnType<Config["loadConfigOrDefault"]>,
+    workspaceId: string
+  ): Promise<boolean> {
+    for (const childWorkspaceId of index.childrenByParent.get(workspaceId) ?? []) {
+      const childEntry = findWorkspaceEntry(config, childWorkspaceId);
+      if (childEntry?.workspace.transcriptOnly !== true) {
+        return true;
+      }
+      const canonicalExecution = await this.getCanonicalAgentExecutionForWorkspace(
+        childWorkspaceId,
+        childEntry,
+        config
+      );
+      if (
+        canonicalExecution == null ||
+        !["completed", "interrupted", "error"].includes(canonicalExecution.status)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private getTaskDepth(
@@ -8609,10 +10475,14 @@ export class TaskService {
         await this.editWorkspaceEntry(taskId, (workspace) => {
           workspace.taskStatus = "starting";
         });
+        await this.updateExecutionStatusForWorkspace(taskId, "starting");
         reservedSlots += 1;
 
         plans.push({
           taskId,
+          executionId: isExecutionId(task.executionId)
+            ? task.executionId
+            : this.generateExecutionId(),
           parentWorkspaceId,
           parentMeta,
           agentId,
@@ -8666,6 +10536,12 @@ export class TaskService {
         ws.taskPrompt = undefined;
       }
     });
+
+    if (status === "queued" || status === "starting" || status === "running") {
+      await this.updateExecutionStatusForWorkspace(workspaceId, status);
+    } else if (status === "awaiting_report") {
+      await this.updateExecutionStatusForWorkspace(workspaceId, "running");
+    }
 
     await this.emitWorkspaceMetadata(workspaceId);
 
@@ -9099,13 +10975,14 @@ export class TaskService {
     };
   }
 
-  private buildTerminalWorkspaceTurnRecordFromEvent(
+  private async buildTerminalWorkspaceTurnRecordFromEvent(
     record: WorkspaceTurnTaskHandleRecord,
     event: StreamEndEvent
-  ): WorkspaceTurnTaskHandleRecord {
+  ): Promise<WorkspaceTurnTaskHandleRecord> {
     const baseRecord = { ...record };
     delete baseRecord.error;
     delete baseRecord.deferredMessageIds;
+    delete baseRecord.artifacts;
     // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
     if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
       return {
@@ -9121,6 +10998,24 @@ export class TaskService {
         },
       };
     }
+
+    let attachFiles: NonNullable<WorkspaceTurnTaskHandleRecord["artifacts"]>["attachFiles"] = [];
+    try {
+      attachFiles = await materializeWorkspaceTurnAttachFileArtifacts({
+        ownerSessionDir: this.config.getSessionDir(record.ownerWorkspaceId),
+        handleId: record.handleId,
+        parts: event.parts,
+      });
+    } catch (error) {
+      // Artifact handoff must never prevent terminal settlement. The original child output remains
+      // in history, so restart recovery can retry materialization while the child still exists.
+      log.warn("Workspace turn attachment materialization failed", {
+        handleId: record.handleId,
+        workspaceId: record.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+
     return {
       ...baseRecord,
       status: "completed",
@@ -9132,6 +11027,7 @@ export class TaskService {
         messageId: event.messageId,
         metadata: event.metadata,
       },
+      ...(attachFiles.length > 0 ? { artifacts: { attachFiles } } : {}),
     };
   }
 
@@ -9165,7 +11061,7 @@ export class TaskService {
       }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
       if (event != null) {
-        return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+        return await this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
       }
     }
     return null;
@@ -9190,7 +11086,7 @@ export class TaskService {
       ) {
         return;
       }
-      await this.taskHandleStore.upsertWorkspaceTurn({
+      await this.persistWorkspaceTurnRecord({
         ...record,
         updatedAt: getIsoNow(),
         deferredMessageIds: [...(record.deferredMessageIds ?? []), event.messageId],
@@ -9382,7 +11278,7 @@ export class TaskService {
       return true;
     }
 
-    const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+    const next = await this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
     await this.settleWorkspaceTurn({
       record,
       next,
@@ -9674,10 +11570,29 @@ export class TaskService {
     const reportArgs = isPlanLike ? null : finalAgentReportArgs;
     const proposePlanResult = this.findProposePlanSuccessInParts(event.parts);
 
+    const canonicalExecution = await this.getCanonicalAgentExecutionForWorkspace(
+      workspaceId,
+      entry,
+      cfg
+    );
+
     // Stream-end settlement: interrupted tasks must settle all pending waiters.
     // A workflow-owned plan step that successfully called propose_plan is already complete,
     // even if the interruption status landed before the provider emitted stream-end.
     if (status === "interrupted") {
+      if (canonicalExecution != null) {
+        await this.settleCanonicalAgentExecution({
+          workspaceId,
+          entry,
+          result: {
+            kind: "interrupted",
+            ...(entry.workspace.taskLaunchError != null
+              ? { message: entry.workspace.taskLaunchError }
+              : {}),
+          },
+        });
+        return;
+      }
       if (isPlanLike && proposePlanResult && entry.workspace.workflowTask != null) {
         await this.handleSuccessfulWorkflowProposePlan({ workspaceId, entry, proposePlanResult });
         return;
@@ -9762,6 +11677,12 @@ export class TaskService {
     // turn. Keep the task active until AgentSession accepts the reserved guidance and clears this
     // durable flag; otherwise turn-end dispatch could deliver a stale report before the correction.
     if ((entry.workspace.taskPendingGuidance?.length ?? 0) > 0) {
+      return;
+    }
+
+    if (canonicalExecution != null) {
+      const result = await this.resolveCanonicalAgentTaskCompletion(workspaceId, entry, event);
+      await this.settleCanonicalAgentExecution({ workspaceId, entry, result });
       return;
     }
 
@@ -10004,6 +11925,20 @@ export class TaskService {
       "failAgentTaskTerminally: errorMessage must be non-empty"
     );
 
+    if (
+      await this.settleCanonicalAgentExecution({
+        workspaceId,
+        entry,
+        result: {
+          kind: "error",
+          error: failure.errorMessage,
+          errorType: failure.errorType,
+        },
+      })
+    ) {
+      return;
+    }
+
     let transitionedToInterrupted = false;
     let parentWorkspaceId = entry.workspace.parentWorkspaceId;
     await this.editWorkspaceEntry(
@@ -10169,6 +12104,10 @@ export class TaskService {
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       sourceId: childWorkspaceId,
+      title:
+        coerceNonEmptyString(childEntry.workspace.title) ??
+        coerceNonEmptyString(childEntry.workspace.name) ??
+        "Sub-agent task",
       outputDelivery: "already_injected",
       terminalOutcome: "failed",
     });
@@ -11167,6 +13106,10 @@ export class TaskService {
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       sourceId: childWorkspaceId,
+      title:
+        coerceNonEmptyString(latestChildEntry?.workspace.title) ??
+        coerceNonEmptyString(latestChildEntry?.workspace.name) ??
+        "Sub-agent task",
       outputDelivery: "already_injected",
       terminalOutcome: "completed",
     });
@@ -11326,6 +13269,89 @@ export class TaskService {
       }
     }
     return null;
+  }
+
+  private async findLatestValidAgentReportArgsInHistory(
+    workspaceId: string,
+    options: { acceptSchemaShapedWorkflowReport?: boolean } = {}
+  ): Promise<{ reportMarkdown: string; title?: string; structuredOutput?: unknown } | null> {
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(workspaceId);
+    if (!historyResult.success) {
+      log.warn("Failed to read sub-agent history for canonical report metadata", {
+        workspaceId,
+        error: historyResult.error,
+      });
+      return null;
+    }
+
+    for (let index = historyResult.data.length - 1; index >= 0; index -= 1) {
+      const message = historyResult.data[index];
+      if (message.role !== "assistant") continue;
+      const report = this.findAgentReportArgsInParts(message.parts, options);
+      if (report != null) return report;
+    }
+    return null;
+  }
+
+  private async resolveCanonicalAgentTaskCompletion(
+    workspaceId: string,
+    entry: { projectPath: string; workspace: WorkspaceConfigEntry },
+    event: StreamEndEvent
+  ): Promise<ExecutionResult> {
+    const finalResponse = this.findFinalAssistantResponseInParts(event.parts);
+    if (finalResponse == null) {
+      return {
+        kind: "error",
+        error: "Task stream ended without final assistant text.",
+        errorType: "missing_final_assistant_text",
+      };
+    }
+
+    const workflowOutputSchema = entry.workspace.workflowTask?.outputSchema;
+    const acceptsSchemaShapedWorkflowReport =
+      workflowOutputSchema !== undefined &&
+      validateJsonSchemaSubsetSchema(workflowOutputSchema, { requireObjectSchema: true }).success;
+    const latestValidReport =
+      this.findAgentReportArgsInParts(event.parts, {
+        acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
+      }) ??
+      (await this.findLatestValidAgentReportArgsInHistory(workspaceId, {
+        acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
+      }));
+    const reportArgs = normalizeWorkflowAgentReportArgsForWorkflowTask(
+      entry.workspace.workflowTask,
+      {
+        reportMarkdown: finalResponse.reportMarkdown,
+        ...(latestValidReport?.title !== undefined ? { title: latestValidReport.title } : {}),
+        ...(latestValidReport?.structuredOutput !== undefined
+          ? { structuredOutput: latestValidReport.structuredOutput }
+          : {}),
+      }
+    );
+    const validationMessage = validateWorkflowAgentReportStructuredOutput({
+      workflowTask: entry.workspace.workflowTask,
+      reportArgs,
+      allowLegacyInvalidOutputSchema: await this.shouldAllowLegacyInvalidWorkflowOutputSchema(
+        workspaceId,
+        entry
+      ),
+    });
+    if (validationMessage != null) {
+      return {
+        kind: "error",
+        error: validationMessage,
+        errorType: "invalid_structured_output",
+      };
+    }
+
+    return {
+      kind: "completed",
+      reportMarkdown: finalResponse.reportMarkdown,
+      ...(reportArgs.structuredOutput !== undefined
+        ? { structuredOutput: reportArgs.structuredOutput }
+        : {}),
+      finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+    };
   }
 
   private async resolveFinalAgentReportArgs(
@@ -11781,7 +13807,7 @@ export class TaskService {
         ? report.title
         : `Subagent (${agentType}) report`;
     const reportContent = formatSubagentReportUserMessage({
-      childWorkspaceId,
+      taskId: childWorkspaceId,
       agentType,
       title: titlePrefix,
       reportMarkdown: report.reportMarkdown,
@@ -11945,7 +13971,11 @@ export class TaskService {
 
   private async canCleanupReportedTask(
     workspaceId: string
-  ): Promise<{ ok: true; parentWorkspaceId: string } | { ok: false; reason: string }> {
+  ): Promise<
+    | { ok: true; cleanup: "legacy-remove"; parentWorkspaceId: string }
+    | { ok: true; cleanup: "retire-to-transcript"; parentWorkspaceId: string }
+    | { ok: false; reason: string }
+  > {
     assert(workspaceId.length > 0, "canCleanupReportedTask: workspaceId must be non-empty");
 
     const config = this.config.loadConfigOrDefault();
@@ -11989,12 +14019,11 @@ export class TaskService {
       return { ok: false, reason: "still_streaming" };
     }
 
-    // Topology gate: a completed task can only be cleaned up when it is a structural leaf
-    // (has no child agent tasks in config). This stays status-agnostic so ancestor deletion
-    // never orphans descendants that have not been pruned yet.
+    // Transcript-only canonical children retain their config/sidebar node and direct session, but
+    // they no longer own an execution resource that should block their parent's retirement.
     const index = this.buildAgentTaskIndex(config);
     const isWorkflowOwnedTask = this.isWorkflowOwnedTaskUsingIndex(index, workspaceId);
-    if (this.hasChildAgentTasks(index, workspaceId)) {
+    if (await this.hasBlockingChildAgentTasks(index, config, workspaceId)) {
       return { ok: false, reason: "has_child_tasks" };
     }
 
@@ -12006,6 +14035,28 @@ export class TaskService {
         parentWorkspaceId,
       });
       return { ok: false, reason: "patch_pending" };
+    }
+
+    const hasCanonicalExecutionId = isExecutionId(entry.workspace.executionId);
+    const canonicalExecution = await this.getCanonicalAgentExecutionForWorkspace(
+      workspaceId,
+      entry,
+      config
+    );
+    if (hasCanonicalExecutionId) {
+      if (canonicalExecution == null) {
+        return { ok: false, reason: "canonical_execution_not_found" };
+      }
+      if (
+        canonicalExecution.status !== "completed" ||
+        canonicalExecution.result?.kind !== "completed"
+      ) {
+        return { ok: false, reason: "canonical_execution_not_completed" };
+      }
+      if (canonicalExecution.retentionPolicy.kind === "retain_workspace") {
+        return { ok: false, reason: "canonical_workspace_retained" };
+      }
+      return { ok: true, cleanup: "retire-to-transcript", parentWorkspaceId };
     }
 
     // Workflow task results are persisted in the workflow run/report artifacts before cleanup,
@@ -12020,7 +14071,7 @@ export class TaskService {
       return { ok: false, reason: "preserved_until_archive" };
     }
 
-    return { ok: true, parentWorkspaceId };
+    return { ok: true, cleanup: "legacy-remove", parentWorkspaceId };
   }
 
   private async cleanupReportedLeafTask(workspaceId: string): Promise<void> {
@@ -12042,6 +14093,24 @@ export class TaskService {
 
       const cleanupEligibility = await this.canCleanupReportedTask(currentWorkspaceId);
       if (!cleanupEligibility.ok) {
+        return;
+      }
+
+      if (cleanupEligibility.cleanup === "retire-to-transcript") {
+        const retireResult = await this.workspaceService.retireToTranscript(currentWorkspaceId);
+        if (!retireResult.success) {
+          log.error("Failed to retire completed canonical task workspace to transcript", {
+            workspaceId: currentWorkspaceId,
+            error: retireResult.error,
+          });
+        } else if (retireResult.data.kind !== "transcript-only") {
+          log.debug("Canonical task workspace retirement preserved the archived workspace", {
+            workspaceId: currentWorkspaceId,
+            result: retireResult.data,
+          });
+        }
+        // Canonical workspaces retain their config/sidebar node and direct session. Never continue
+        // the legacy parent-deletion cascade after attempting the bounded retirement.
         return;
       }
 

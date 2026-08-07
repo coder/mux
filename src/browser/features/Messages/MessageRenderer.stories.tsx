@@ -10,6 +10,7 @@ import { collapseLeftSidebar } from "@/browser/stories/helpers/uiState";
 import { userEvent, waitFor, within } from "@storybook/test";
 import {
   createAssistantMessage,
+  createBackgroundWorkWakeMessage,
   createBashMonitorWakeMessage,
   createGoalBudgetLimitMessage,
   createGoalContinuationMessage,
@@ -29,7 +30,7 @@ import {
   createTaskAwaitTool,
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
-import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
+import { createWorkspace, STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
 
 const meta = { ...appMeta, title: "App/Chat/Messages" };
 export default meta;
@@ -305,6 +306,192 @@ The same compact report typography applies to incremental agent findings.
         );
       }
     });
+  },
+};
+
+export const CanonicalTaskNavigationPhone: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        const projectPath = "/home/user/projects/customer-platform";
+        const childWorkspace = {
+          ...createWorkspace({
+            id: "canonical-task-workspace",
+            name: "canonical-task-navigation-overflow-verification",
+            title: "Workspace display title that stays distinct from the very long execution title",
+            projectName: "customer-platform",
+            projectPath,
+            parentWorkspaceId: "ws-canonical-task-phone",
+            taskStatus: "reported",
+          }),
+          executionId: "opaque-execution-task-id",
+          subProjectPath: `${projectPath}/packages/mobile-client/navigation-experiments`,
+          taskModelString:
+            "openrouter:acmelabs/somextremelylongcustommodelidentifierwithoutanybreakopportunitieswhatsoeverv2instruct",
+          taskThinkingLevel: "xhigh" as const,
+        };
+
+        return setupSimpleChatStory({
+          workspaceId: "ws-canonical-task-phone",
+          workspaceName: "task-navigation-parent",
+          projectName: "customer-platform",
+          projectPath,
+          additionalWorkspaces: [childWorkspace],
+          messages: [
+            createUserMessage("canonical-task-user", "Run the canonical navigation task.", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 60_000,
+            }),
+            createAssistantMessage("canonical-task-assistant", "The execution is complete.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP,
+              toolCalls: [
+                createGenericTool(
+                  "canonical-task-spawn",
+                  "task",
+                  {
+                    agentId: "exec",
+                    prompt:
+                      "Implement and validate canonical task-card navigation across the mobile client sub-project.",
+                    title:
+                      "Execution title with intentionally long navigation, artifact, and responsive verification context",
+                    run_in_background: true,
+                  },
+                  {
+                    status: "completed",
+                    taskId: "opaque-execution-task-id",
+                    workspaceId: childWorkspace.id,
+                    reportMarkdown: "Canonical final report body.",
+                    title: "Final execution report",
+                    modelString: childWorkspace.taskModelString,
+                    thinkingLevel: "xhigh",
+                    artifacts: {
+                      attachFiles: [
+                        {
+                          path: "/tmp/canonical-task/navigation-verification-screenshot-with-a-very-long-filename.png",
+                          filename:
+                            "navigation-verification-screenshot-with-a-very-long-filename.png",
+                          mediaType: "image/png",
+                        },
+                      ],
+                    },
+                  }
+                ),
+                createGenericTool(
+                  "canonical-task-await",
+                  "task_await",
+                  { task_ids: ["opaque-execution-task-id"], timeout_secs: 0 },
+                  {
+                    results: [
+                      {
+                        status: "completed",
+                        taskId: "opaque-execution-task-id",
+                        workspaceId: childWorkspace.id,
+                        reportMarkdown: "Canonical final report body.",
+                        title: "Final execution report",
+                        artifacts: {
+                          attachFiles: [
+                            {
+                              path: "/tmp/canonical-task/navigation-verification-screenshot-with-a-very-long-filename.png",
+                              filename:
+                                "navigation-verification-screenshot-with-a-very-long-filename.png",
+                              mediaType: "image/png",
+                            },
+                          ],
+                          gitFormatPatch: {
+                            childTaskId: "opaque-execution-task-id",
+                            parentWorkspaceId: "ws-canonical-task-phone",
+                            createdAtMs: STABLE_TIMESTAMP,
+                            status: "ready",
+                            projectArtifacts: [
+                              {
+                                projectPath,
+                                projectName: "customer-platform",
+                                storageKey: "customer-platform",
+                                status: "ready",
+                                commitCount: 2,
+                              },
+                            ],
+                            readyProjectCount: 1,
+                            failedProjectCount: 0,
+                            skippedProjectCount: 0,
+                            totalCommitCount: 2,
+                          },
+                        },
+                      },
+                    ],
+                  }
+                ),
+              ],
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const taskCard = await waitFor(() => {
+      const card = canvasElement.querySelector<HTMLElement>('[data-component="TaskToolCall"]');
+      if (!card) throw new Error("Canonical task card did not render");
+      return card;
+    });
+    const taskHeader = taskCard.querySelector<HTMLElement>('[data-scroll-intent="ignore"]');
+    if (!taskHeader) throw new Error("Canonical task header did not render");
+    if (!taskCard.querySelector("[data-task-ai-settings]")) {
+      await userEvent.click(taskHeader);
+    }
+
+    await waitFor(() => {
+      if (taskCard.scrollWidth > taskCard.clientWidth) {
+        throw new Error(
+          `Canonical task card overflows horizontally (${taskCard.scrollWidth}px > ${taskCard.clientWidth}px)`
+        );
+      }
+      const settings = taskCard.querySelector<HTMLElement>("[data-task-ai-settings]");
+      const context = taskCard.querySelector<HTMLElement>("[data-execution-workspace-context]");
+      if (!settings || !context) throw new Error("Long model or workspace context did not render");
+      if (settings.getBoundingClientRect().right > taskCard.getBoundingClientRect().right + 1) {
+        throw new Error("Long canonical task model overflowed the phone card");
+      }
+      if (canvas.getAllByText("Canonical final report body.").length !== 1) {
+        throw new Error("task_await duplicated the canonical final report");
+      }
+      if (canvas.queryAllByText(/Attachment available: navigation-verification/).length === 0) {
+        throw new Error("Canonical task attachment summary did not render");
+      }
+    });
+
+    if (!canvas.queryByText("Patch: ready (1 ready; 2 commits)")) {
+      await userEvent.click(canvas.getByLabelText("1 task completed. Show task wait details"));
+    }
+    await waitFor(() => {
+      if (canvas.queryAllByText("Patch: ready (1 ready; 2 commits)").length === 0) {
+        throw new Error("Canonical git patch artifact summary did not render");
+      }
+      if (canvas.getAllByText("Canonical final report body.").length !== 1) {
+        throw new Error("Expanded task_await duplicated the canonical final report");
+      }
+      if (canvas.getAllByText(/Attachment available: navigation-verification/).length !== 2) {
+        throw new Error(
+          "Canonical task artifacts were not summarized on both execution references"
+        );
+      }
+    });
+
+    const openWorkspace = within(taskCard).getByRole("button", { name: "Open workspace" });
+    if (openWorkspace.getAttribute("aria-label") !== "Open workspace") {
+      throw new Error("Canonical workspace navigation action is not exposed on the phone card");
+    }
   },
 };
 
@@ -656,6 +843,133 @@ export const SyntheticAutoResumeMessages: AppStory = {
       }}
     />
   ),
+};
+
+const BACKGROUND_WORK_WAKE_PROMPT = [
+  "Background sub-agent task(s) have completed.",
+  "",
+  "Background workspace turn(s) have reached a terminal state:",
+  "- wst_verify",
+  "",
+  'Call `task_await({ task_ids: ["wst_verify"], timeout_secs: 0 })` to retrieve the workspace-turn result.',
+  "",
+  "A workflow run also completed:",
+  "- coalesced-research (wfr_coalesced_research)",
+].join("\n");
+
+/**
+ * Terminal attention wakes use the same quiet right-aligned treatment as monitor
+ * wakes. Pixel covers both phone and laptop widths in dark and light themes; the
+ * play expands the coalesced row so the raw provider prompt is also snapshot.
+ */
+export const BackgroundWorkWakeMessages: AppStory = {
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone", "laptop"] },
+    },
+  },
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        collapseLeftSidebar();
+        return setupSimpleChatStory({
+          workspaceId: "ws-background-work-wake",
+          messages: [
+            createUserMessage("msg-1", "Run the audit and verification work in the background", {
+              historySequence: 1,
+              timestamp: STABLE_TIMESTAMP - 300000,
+            }),
+            createAssistantMessage("msg-2", "The background work is running.", {
+              historySequence: 2,
+              timestamp: STABLE_TIMESTAMP - 295000,
+            }),
+            createBackgroundWorkWakeMessage("msg-3", {
+              historySequence: 3,
+              timestamp: STABLE_TIMESTAMP - 290000,
+              promptText: BACKGROUND_WORK_WAKE_PROMPT,
+              records: [
+                {
+                  sourceKind: "agent_task",
+                  sourceId: "task-audit",
+                  outcome: "completed",
+                  title: "Repository audit",
+                  workspaceId: "task-audit",
+                },
+                {
+                  sourceKind: "workspace_turn",
+                  sourceId: "wst_verify",
+                  outcome: "error",
+                  title: "Verification turn",
+                  workspaceId: "workspace-verify",
+                },
+                {
+                  sourceKind: "workflow_run",
+                  sourceId: "wfr_coalesced_research",
+                  outcome: "completed",
+                  title: "coalesced-research",
+                  workspaceId: "ws-background-work-wake",
+                },
+              ],
+            }),
+            createAssistantMessage(
+              "msg-4",
+              "The audit and research completed; the verification turn needs attention.",
+              { historySequence: 4, timestamp: STABLE_TIMESTAMP - 285000 }
+            ),
+            createBackgroundWorkWakeMessage("msg-5", {
+              historySequence: 5,
+              timestamp: STABLE_TIMESTAMP - 60000,
+              promptText: "Background sub-agent task(s) have completed.",
+              records: [
+                {
+                  sourceKind: "agent_task",
+                  sourceId: "task-finish",
+                  outcome: "completed",
+                  title: "Final cleanup",
+                  workspaceId: "task-finish",
+                },
+              ],
+            }),
+          ],
+        });
+      }}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const toggles = await waitFor(
+      () => {
+        const found = canvas.getAllByRole("button", { name: /show details/i });
+        if (found.length !== 2) {
+          throw new Error(`Expected 2 collapsed background work events, found ${found.length}`);
+        }
+        return found;
+      },
+      { timeout: 15_000 }
+    );
+
+    const wakeRows = canvasElement.querySelectorAll<HTMLElement>("[data-background-work-wake]");
+    if (wakeRows.length !== 2) {
+      throw new Error(`Expected 2 background work wake rows, found ${wakeRows.length}`);
+    }
+    for (const row of wakeRows) {
+      const toggle = row.querySelector<HTMLElement>("button");
+      if (!toggle) throw new Error("Background work wake toggle not rendered");
+      if (Math.abs(row.getBoundingClientRect().right - toggle.getBoundingClientRect().right) > 1) {
+        throw new Error("Background work wake summary is not right-aligned");
+      }
+    }
+
+    await userEvent.click(toggles[0]);
+    await waitFor(() => {
+      if (canvas.queryByText(/task_await/) == null) {
+        throw new Error("Expected expanded background work wake to reveal the raw prompt");
+      }
+    });
+  },
 };
 
 const BASH_MONITOR_WAKE_MATCH_PROMPT = [

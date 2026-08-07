@@ -1661,6 +1661,24 @@ describe("WorkspaceStore", () => {
       expect(store.getWorkspaceMetadata("workspace-1")?.pinnedAt).toBe("2026-01-01T00:00:00.000Z");
     });
 
+    it("preserves Project Chat sessions across normal workspace metadata sync", () => {
+      const projectChat = makeWorkspaceMetadata("project-session_bbbbbbbbbb", {
+        name: "project-chat",
+        projectName: "project-1",
+        projectPath: "/project-1",
+        namedWorkspacePath: "/project-1",
+      });
+
+      store.addAuxiliaryChat(projectChat);
+      store.syncWorkspaces(new Map());
+
+      expect(store.getAggregator(projectChat.id)).toBeDefined();
+      expect(store.getWorkspaceMetadata(projectChat.id)?.name).toBe("project-chat");
+
+      store.removeAuxiliaryChat(projectChat.id);
+      expect(store.getAggregator(projectChat.id)).toBeUndefined();
+    });
+
     it("should remove deleted workspaces", () => {
       createAndAddWorkspace(
         store,

@@ -369,6 +369,19 @@ export interface BashMonitorWakeDisplayRecord {
   filterExclude: boolean;
 }
 
+/**
+ * Compact terminal-attention source attached to a synthetic background-work wake.
+ * The full provider-facing prompt remains in the message text; these records are
+ * presentation-only summaries for the transcript.
+ */
+export interface BackgroundWorkWakeDisplayRecord {
+  sourceKind: "agent_task" | "workspace_turn" | "workflow_run";
+  sourceId: string;
+  outcome: "completed" | "failed" | "interrupted" | "error";
+  title: string;
+  workspaceId?: string;
+}
+
 export type MuxMessageMetadata = MuxMessageMetadataBase &
   (
     | {
@@ -422,6 +435,12 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         type: "bash-monitor-wake";
         /** One entry per wake record in the prompt, in prompt order. */
         records: BashMonitorWakeDisplayRecord[];
+      }
+    | {
+        // Synthetic wake-up for terminal background tasks, workspace turns, and workflows.
+        // Keep the full prompt in message text so provider context and task_await guidance are exact.
+        type: "background-work-wake";
+        records: BackgroundWorkWakeDisplayRecord[];
       }
     | {
         type: "goal-pause-boundary";
@@ -751,6 +770,10 @@ export type DisplayedMessage =
       };
       /** Structured review data for rich UI display (from muxMetadata) */
       reviews?: ReviewNoteDataForDisplay[];
+      /** Present when this synthetic turn reports terminal background work. */
+      backgroundWorkWake?: {
+        records: BackgroundWorkWakeDisplayRecord[];
+      };
       /** Present when this synthetic turn is a background bash monitor wake-up. */
       bashMonitorWake?: {
         records: BashMonitorWakeDisplayRecord[];

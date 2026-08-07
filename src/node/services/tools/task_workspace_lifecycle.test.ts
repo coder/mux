@@ -57,7 +57,7 @@ describe("task_workspace_lifecycle tool", () => {
           Ok({
             status: "deleted_worktree" as const,
             action: "delete_worktree" as const,
-            taskId: "wst_delete",
+            taskId: "exe_delete",
             workspaceId: "child-delete",
           })
         )
@@ -76,14 +76,14 @@ describe("task_workspace_lifecycle tool", () => {
     const deleteTool = createTaskWorkspaceLifecycleTool({ ...baseConfig, taskService });
     const deleteResult: unknown = await Promise.resolve(
       deleteTool.execute!(
-        { action: "delete_worktree", targets: [{ taskId: "wst_delete" }] },
+        { action: "delete_worktree", targets: [{ taskId: "exe_delete" }] },
         mockToolCallOptions
       )
     );
 
     expect(deleteOwnedWorkspaceTurnWorktree).toHaveBeenCalledWith(
       "root-workspace",
-      { taskId: "wst_delete" },
+      { taskId: "exe_delete" },
       { interruptActive: false }
     );
     expect(deleteResult).toEqual({
@@ -91,7 +91,7 @@ describe("task_workspace_lifecycle tool", () => {
         {
           status: "deleted_worktree",
           action: "delete_worktree",
-          taskId: "wst_delete",
+          taskId: "exe_delete",
           workspaceId: "child-delete",
         },
       ],

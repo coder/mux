@@ -21,8 +21,10 @@ interface UseAIViewKeybindsParams {
   chatInputAPI: React.RefObject<ChatInputAPI | null>;
   jumpToBottom: () => void;
   loadOlderHistory: (() => void) | null;
-  handleOpenTerminal: () => void;
-  handleOpenInEditor: () => void;
+  /** Null when the active chat has no terminal capability (for example, Project Chat). */
+  handleOpenTerminal: (() => void) | null;
+  /** Null when the active chat has no editable checkout capability. */
+  handleOpenInEditor: (() => void) | null;
   aggregator: StreamingMessageAggregator | undefined; // For compaction detection
   setEditingMessage: (editing: EditingMessageState | undefined) => void;
   vimEnabled: boolean; // For vim-aware interrupt keybind
@@ -135,13 +137,14 @@ export function useAIViewKeybinds({
         return;
       }
 
-      // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_AGENT)
-      if (matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
+      // Open in editor / terminal - work even in input fields (global feel, like TOGGLE_AGENT).
+      // Capability-gated chats must not consume shortcuts for actions they cannot perform.
+      if (handleOpenInEditor && matchesKeybind(e, KEYBINDS.OPEN_IN_EDITOR)) {
         e.preventDefault();
         if (!dialogOpen) handleOpenInEditor();
         return;
       }
-      if (matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
+      if (handleOpenTerminal && matchesKeybind(e, KEYBINDS.OPEN_TERMINAL)) {
         e.preventDefault();
         if (!dialogOpen) handleOpenTerminal();
         return;

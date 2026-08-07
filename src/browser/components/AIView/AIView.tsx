@@ -18,6 +18,8 @@ interface AIViewProps {
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
   className?: string;
+  /** Project chats reuse the transcript engine while omitting checkout-specific chrome and actions. */
+  surface?: "workspace" | "project";
   /** If set, workspace is incompatible (from newer mux version) and this error should be displayed */
   incompatibleRuntime?: string;
   /** True if workspace is still being initialized (postCreateSetup or initWorkspace running) */
@@ -58,7 +60,11 @@ export const AIView: React.FC<AIViewProps> = (props) => {
   }
 
   return (
-    <AgentProvider workspaceId={props.workspaceId} projectPath={props.projectPath}>
+    <AgentProvider
+      workspaceId={props.surface === "project" ? undefined : props.workspaceId}
+      projectPath={props.projectPath}
+      fixedAgentId={props.surface === "project" ? "orchestrator" : undefined}
+    >
       <WorkspaceModeAISync workspaceId={props.workspaceId} />
       <ThinkingProvider workspaceId={props.workspaceId}>
         <BackgroundBashProvider workspaceId={props.workspaceId}>

@@ -38,6 +38,32 @@ describe("agent_report tool", () => {
     });
   });
 
+  it("passes explicit workspace-turn correlation without changing ordinary subagent calls", async () => {
+    using tempDir = new TestTempDir("test-agent-report-tool-workspace-turn");
+    const reportAgentProgress = mock(() => Promise.resolve());
+    const workspaceTurnReportContext = {
+      handleId: "wst_handle",
+      ownerWorkspaceId: "project-chat",
+      turnId: "turn-1",
+    };
+    const tool = createAgentReportTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ordinary-workspace" }),
+      taskService: { reportAgentProgress } as unknown as TaskService,
+      workspaceTurnReportContext,
+    });
+
+    await Promise.resolve(
+      tool.execute!({ reportMarkdown: "still working", title: "Progress" }, mockToolCallOptions)
+    );
+
+    expect(reportAgentProgress).toHaveBeenCalledWith(
+      "ordinary-workspace",
+      "test-call-id",
+      { reportMarkdown: "still working", title: "Progress" },
+      workspaceTurnReportContext
+    );
+  });
+
   it("omits structuredOutput from non-workflow agent_report input", async () => {
     using tempDir = new TestTempDir("test-agent-report-tool-no-structured-schema");
     const taskService = {

@@ -1,4 +1,5 @@
 import type {
+  BackgroundWorkWakeDisplayRecord,
   BashMonitorWakeDisplayRecord,
   CompactionRequestData,
   DisplayedMessage,
@@ -219,6 +220,38 @@ function getValidBashMonitorWakeRecords(
   return records.every(isValidRecord) ? records : undefined;
 }
 
+function getValidBackgroundWorkWakeRecords(
+  muxMeta: MuxMessageMetadata | undefined
+): BackgroundWorkWakeDisplayRecord[] | undefined {
+  if (muxMeta?.type !== "background-work-wake") return undefined;
+  const records: unknown = muxMeta.records;
+  if (!Array.isArray(records) || records.length === 0) return undefined;
+
+  const sourceKinds = new Set<BackgroundWorkWakeDisplayRecord["sourceKind"]>([
+    "agent_task",
+    "workspace_turn",
+    "workflow_run",
+  ]);
+  const outcomes = new Set<BackgroundWorkWakeDisplayRecord["outcome"]>([
+    "completed",
+    "failed",
+    "interrupted",
+    "error",
+  ]);
+  const isValidRecord = (record: unknown): record is BackgroundWorkWakeDisplayRecord =>
+    isPlainObject(record) &&
+    sourceKinds.has(record.sourceKind as BackgroundWorkWakeDisplayRecord["sourceKind"]) &&
+    typeof record.sourceId === "string" &&
+    record.sourceId.length > 0 &&
+    outcomes.has(record.outcome as BackgroundWorkWakeDisplayRecord["outcome"]) &&
+    typeof record.title === "string" &&
+    record.title.length > 0 &&
+    (record.workspaceId === undefined ||
+      (typeof record.workspaceId === "string" && record.workspaceId.length > 0));
+
+  return records.every(isValidRecord) ? records : undefined;
+}
+
 function getRawCommand(muxMetadata: unknown): string | undefined {
   if (!isPlainObject(muxMetadata) || typeof muxMetadata.type !== "string") {
     return undefined;
@@ -269,6 +302,7 @@ function buildUserDisplayedMessages(options: {
         }
       : undefined;
 
+  const backgroundWorkWakeRecords = getValidBackgroundWorkWakeRecords(muxMeta);
   const bashMonitorWakeRecords = getValidBashMonitorWakeRecords(muxMeta);
 
   const compactionFollowUp = getCompactionFollowUpContent(muxMeta);
@@ -309,6 +343,9 @@ function buildUserDisplayedMessages(options: {
       inlineSkillSnapshots,
       compactionRequest,
       reviews: muxMeta?.reviews,
+      backgroundWorkWake: backgroundWorkWakeRecords
+        ? { records: backgroundWorkWakeRecords }
+        : undefined,
       bashMonitorWake: bashMonitorWakeRecords ? { records: bashMonitorWakeRecords } : undefined,
     },
   ];

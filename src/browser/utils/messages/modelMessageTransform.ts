@@ -700,6 +700,10 @@ function coalesceConsecutiveNoProgressTaskAwaitPairs(messages: ModelMessage[]): 
       return false;
     }
 
+    if ((value as { interruption?: unknown }).interruption != null) {
+      return false;
+    }
+
     const results = (value as { results?: unknown }).results;
     if (!Array.isArray(results)) {
       return false;

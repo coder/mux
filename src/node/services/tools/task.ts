@@ -5,11 +5,13 @@ import type { z } from "zod";
 
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
+  ProjectChatTaskToolArgsSchema,
   TaskToolResultSchema,
-  TOOL_DEFINITIONS,
+  buildProjectChatTaskToolDescription,
   buildTaskToolAgentArgsSchema,
   buildTaskToolDescription,
 } from "@/common/utils/tools/toolDefinitions";
+import type { TaskToolArgsSchema } from "@/common/utils/tools/toolDefinitions";
 import {
   RUNTIME_MODE,
   runtimeModeSupportsSharedTaskWorkspace,
@@ -17,7 +19,6 @@ import {
 } from "@/common/types/runtime";
 import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
-import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
 import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
 import {
@@ -26,10 +27,10 @@ import {
   requireTaskService,
   requireWorkspaceId,
 } from "./toolUtils";
-import { getErrorMessage } from "@/common/utils/errors";
 import {
   coerceThinkingLevel,
   parseThinkingInput,
+  type OpenAIReasoningMode,
   type ParsedThinkingInput,
   type ThinkingLevel,
 } from "@/common/types/thinking";
@@ -116,11 +117,20 @@ function buildParentRuntimeAiSettings(
  * against the sub-agent's chosen model in `resolveTaskAISettings`. Throws a
  * descriptive error on invalid input so the model can correct the call.
  */
-function parseTaskAiOverrides(args: { model?: string | null; thinking?: string | null }): {
+function parseTaskAiOverrides(args: {
+  model?: string | null;
+  thinking?: string | null;
+  reasoningMode?: OpenAIReasoningMode | null;
+}): {
   modelString?: string;
   thinkingLevel?: ParsedThinkingInput;
+  reasoningMode?: OpenAIReasoningMode;
 } {
-  const overrides: { modelString?: string; thinkingLevel?: ParsedThinkingInput } = {};
+  const overrides: {
+    modelString?: string;
+    thinkingLevel?: ParsedThinkingInput;
+    reasoningMode?: OpenAIReasoningMode;
+  } = {};
 
   if (args.model != null) {
     const normalized = normalizeModelInput(args.model);
@@ -142,47 +152,22 @@ function parseTaskAiOverrides(args: { model?: string | null; thinking?: string |
     overrides.thinkingLevel = parsed;
   }
 
+  if (args.reasoningMode != null) {
+    overrides.reasoningMode = args.reasoningMode;
+  }
+
   return overrides;
 }
 
 interface SpawnedTaskInfo {
   taskId: string;
+  workspaceId: string;
   status: "queued" | "starting" | "running";
   groupKind?: TaskGroupKind;
   label?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
-
-interface PendingTaskInfo {
-  taskId: string;
-  status: "queued" | "starting" | "running" | "completed" | "interrupted";
-  groupKind?: TaskGroupKind;
-  label?: string;
-  modelString?: string;
-  thinkingLevel?: ThinkingLevel;
-}
-
-interface CompletedTaskInfo {
-  taskId: string;
-  reportMarkdown: string;
-  structuredOutput?: unknown;
-  title?: string;
-  agentId: string;
-  agentType: string;
-  groupKind?: TaskGroupKind;
-  label?: string;
-  modelString?: string;
-  thinkingLevel?: ThinkingLevel;
-}
-
-type ForegroundWaitOutcome =
-  | { kind: "completed"; report: CompletedTaskInfo }
-  | { kind: "backgrounded" }
-  | { kind: "timed_out" }
-  | { kind: "interrupted" }
-  | { kind: "task_interrupted" }
-  | { kind: "error"; error: unknown };
 
 function buildTaskGroupId(workspaceId: string, toolCallId: string | undefined): string {
   return `task-group:${workspaceId}:${toolCallId ?? randomUUID()}`;
@@ -193,6 +178,7 @@ function emitTaskCreatedEvent(params: {
   workspaceId: string;
   toolCallId: string | undefined;
   taskId: string;
+  taskWorkspaceId: string;
 }): void {
   if (!params.config.emitChatEvent || !params.config.workspaceId || !params.toolCallId) {
     return;
@@ -205,81 +191,40 @@ function emitTaskCreatedEvent(params: {
       workspaceId: params.workspaceId,
       toolCallId: params.toolCallId,
       taskId: params.taskId,
+      taskWorkspaceId: params.taskWorkspaceId,
       timestamp: Date.now(),
     } satisfies TaskCreatedEvent,
     "task"
   );
 }
 
-function toAggregatePendingStatus(
-  statuses: ReadonlyArray<PendingTaskInfo["status"]>
-): "queued" | "starting" | "running" {
-  if (statuses.every((status) => status === "queued")) return "queued";
-  if (statuses.every((status) => status === "starting")) return "starting";
-  return "running";
-}
-
-function serializeCompletedReport(report: CompletedTaskInfo) {
-  return {
-    taskId: report.taskId,
-    reportMarkdown: report.reportMarkdown,
-    structuredOutput: report.structuredOutput,
-    title: report.title,
-    agentId: report.agentId,
-    agentType: report.agentType,
-    groupKind: report.groupKind,
-    label: report.label,
-    modelString: report.modelString,
-    thinkingLevel: report.thinkingLevel,
-  };
-}
-
-function serializeCompletedReports(reports: readonly CompletedTaskInfo[]) {
-  return reports.map(serializeCompletedReport);
-}
-
-function buildBackgroundStartNote(taskCount: number): string {
-  return taskCount === 1
-    ? "Task started in background. Use task_await to monitor progress."
-    : "Tasks started in background. Use task_await to monitor progress.";
-}
-
-function buildForegroundContinuationNote(
-  taskCount: number,
-  reason: "backgrounded" | "timed_out"
-): string {
-  if (reason === "backgrounded") {
+function buildTaskStartNote(taskCount: number, runInBackground: boolean): string {
+  if (runInBackground) {
     return taskCount === 1
-      ? "Task sent to background because a new message was queued. Use task_await to monitor progress."
-      : "Tasks were sent to background because a new message was queued. Use task_await to monitor progress.";
+      ? "Task started in background. Use task_await when its output is needed."
+      : "Tasks started in background. Use task_await when their output is needed.";
   }
 
   return taskCount === 1
-    ? "Task exceeded foreground wait limit and continues running in background. Use task_await to monitor progress."
-    : "Tasks exceeded the foreground wait limit and continue running in background. Use task_await to monitor progress.";
+    ? "Task started with blocking attention. Use task_await to retrieve its terminal result."
+    : "Tasks started with blocking attention. Use task_await to retrieve their terminal results.";
 }
 
-function buildInterruptedTaskNote(taskCount: number): string {
-  return taskCount === 1
-    ? "Task was interrupted before reporting. Use task_await to inspect the final task state."
-    : "Some tasks were interrupted before reporting. Use task_await to inspect the final task states.";
-}
-
-function buildPendingTaskResult(params: {
-  tasks: readonly PendingTaskInfo[];
+function buildCreatedTaskResult(params: {
+  tasks: readonly SpawnedTaskInfo[];
   note: string;
-  reports?: readonly CompletedTaskInfo[];
   forceGrouped?: boolean;
 }): z.infer<typeof TaskToolResultSchema> {
-  const status = toAggregatePendingStatus(params.tasks.map((task) => task.status));
-  const serializedReports =
-    params.reports && params.reports.length > 0
-      ? serializeCompletedReports(params.reports)
-      : undefined;
+  const status = params.tasks.every((task) => task.status === "queued")
+    ? "queued"
+    : params.tasks.every((task) => task.status === "starting")
+      ? "starting"
+      : "running";
 
   if (params.tasks.length === 1 && !params.forceGrouped) {
     const task = params.tasks[0];
     return {
+      workspaceId: task.workspaceId,
       status,
       taskId: task.taskId,
       modelString: task.modelString,
@@ -292,6 +237,7 @@ function buildPendingTaskResult(params: {
     status,
     taskIds: params.tasks.map((task) => task.taskId),
     tasks: params.tasks.map((task) => ({
+      workspaceId: task.workspaceId,
       taskId: task.taskId,
       status: task.status,
       groupKind: task.groupKind,
@@ -300,75 +246,7 @@ function buildPendingTaskResult(params: {
       thinkingLevel: task.thinkingLevel,
     })),
     note: params.note,
-    ...(serializedReports ? { reports: serializedReports } : {}),
   };
-}
-
-function buildCompletedTaskResult(params: {
-  reports: readonly CompletedTaskInfo[];
-}): z.infer<typeof TaskToolResultSchema> {
-  const serializedReports = serializeCompletedReports(params.reports);
-  if (serializedReports.length === 1) {
-    const report = serializedReports[0];
-    return {
-      status: "completed",
-      taskId: report.taskId,
-      reportMarkdown: report.reportMarkdown,
-      structuredOutput: report.structuredOutput,
-      title: report.title,
-      agentId: report.agentId,
-      agentType: report.agentType,
-      modelString: report.modelString,
-      thinkingLevel: report.thinkingLevel,
-    };
-  }
-
-  return {
-    status: "completed",
-    taskIds: serializedReports.map((report) => report.taskId),
-    reports: serializedReports,
-  };
-}
-
-function normalizePendingTaskStatuses(params: {
-  taskService: ReturnType<typeof requireTaskService>;
-  createdTasks: readonly SpawnedTaskInfo[];
-  completedReports?: readonly CompletedTaskInfo[];
-}): PendingTaskInfo[] {
-  const completedReportsByTaskId = new Map(
-    (params.completedReports ?? []).map((report) => [report.taskId, report])
-  );
-  return params.createdTasks.map((createdTask) => {
-    const completedReport = completedReportsByTaskId.get(createdTask.taskId);
-    if (completedReport) {
-      return {
-        taskId: createdTask.taskId,
-        status: "completed",
-        groupKind: createdTask.groupKind,
-        label: createdTask.label,
-        modelString: completedReport.modelString ?? createdTask.modelString,
-        thinkingLevel: completedReport.thinkingLevel ?? createdTask.thinkingLevel,
-      };
-    }
-
-    const currentStatus =
-      params.taskService.getAgentTaskStatus(createdTask.taskId) ?? createdTask.status;
-    return {
-      taskId: createdTask.taskId,
-      status:
-        currentStatus === "queued"
-          ? "queued"
-          : currentStatus === "starting"
-            ? "starting"
-            : currentStatus === "interrupted"
-              ? "interrupted"
-              : "running",
-      groupKind: createdTask.groupKind,
-      label: createdTask.label,
-      modelString: createdTask.modelString,
-      thinkingLevel: createdTask.thinkingLevel,
-    };
-  });
 }
 
 export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
@@ -376,16 +254,22 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
   // supported. On local runtimes the field is omitted from the schema entirely, so it never
   // enters LLM context.
   const runtimeMode = resolveRuntimeMode(config);
-  const inputSchema = buildTaskToolAgentArgsSchema({
-    includeIsolation: runtimeModeSupportsSharedTaskWorkspace(runtimeMode),
-  });
+  const projectChat = config.projectChat === true;
+  type ParsedTaskToolArgs = Omit<z.infer<typeof TaskToolArgsSchema>, "run_in_background"> & {
+    run_in_background: boolean | null;
+  };
+  const inputSchema: z.ZodType<ParsedTaskToolArgs> = projectChat
+    ? ProjectChatTaskToolArgsSchema
+    : buildTaskToolAgentArgsSchema({
+        includeIsolation: runtimeModeSupportsSharedTaskWorkspace(runtimeMode),
+      });
   const taskTool = tool({
-    description: buildTaskDescription(config),
+    description: projectChat ? buildProjectChatTaskToolDescription() : buildTaskDescription(config),
     inputSchema,
     execute: async (args, { abortSignal, toolCallId }): Promise<unknown> => {
       // Defensive: tool() should have already validated args via inputSchema,
       // but keep runtime validation here to preserve type-safety.
-      const parsedArgs = TOOL_DEFINITIONS.task.schema.safeParse(args);
+      const parsedArgs = inputSchema.safeParse(args);
       if (!parsedArgs.success) {
         const keys =
           args && typeof args === "object" ? Object.keys(args as Record<string, unknown>) : [];
@@ -418,21 +302,55 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         isolation,
         workspace,
       } = validatedArgs;
+      const projectChatAi =
+        projectChat && "ai" in validatedArgs
+          ? (validatedArgs.ai as
+              | {
+                  model?: string | null;
+                  thinking?: string | null;
+                  reasoningMode?: OpenAIReasoningMode | null;
+                }
+              | null
+              | undefined)
+          : undefined;
+      const reasoningMode =
+        projectChat && "reasoningMode" in validatedArgs
+          ? (validatedArgs.reasoningMode as OpenAIReasoningMode | null | undefined)
+          : undefined;
+
+      const taskKind = projectChat ? (kind ?? "workspace") : kind;
+      // Strict providers represent omitted optional inputs as null. Project Chat stays
+      // non-blocking unless the caller explicitly requests foreground mode with false.
+      const runInBackground = projectChat
+        ? (run_in_background ?? true)
+        : (run_in_background ?? false);
 
       // Explicit per-launch model/thinking overrides. Omitted by default so delegated work
       // inherits the parent's live settings unless the caller requests an override.
-      const aiOverrides = parseTaskAiOverrides({ model, thinking });
+      const aiOverrides = parseTaskAiOverrides({
+        model: projectChatAi?.model ?? model,
+        thinking: projectChatAi?.thinking ?? thinking,
+        reasoningMode: projectChatAi?.reasoningMode ?? reasoningMode,
+      });
+
+      const projectChatProjectPath =
+        projectChat &&
+        workspace != null &&
+        "projectPath" in workspace &&
+        typeof workspace.projectPath === "string"
+          ? workspace.projectPath
+          : undefined;
 
       const workspaceId = requireWorkspaceId(config, "task");
       const taskService = requireTaskService(config, "task");
 
       const parentRuntimeAiSettings = buildParentRuntimeAiSettings(config);
 
-      if (config.planFileOnly && kind === "workspace") {
+      if (config.planFileOnly && taskKind === "workspace") {
         throw new Error(PLAN_AGENT_EXPLORE_ONLY_ERROR);
       }
 
-      if (kind === "workspace") {
+      if (taskKind === "workspace") {
         const created = await taskService.createWorkspaceTurn({
           ownerWorkspaceId: workspaceId,
           prompt,
@@ -442,14 +360,20 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           ...(aiOverrides.thinkingLevel != null
             ? { thinkingLevel: aiOverrides.thinkingLevel }
             : {}),
+          ...(aiOverrides.reasoningMode != null
+            ? { reasoningMode: aiOverrides.reasoningMode }
+            : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
-          // Background launches are non-blocking with terminal wake-up; foreground/default block.
-          attentionPolicy: run_in_background ? "notify_on_terminal" : "blocking_until_terminal",
+          // This flag controls owner attention only; task always returns the created handle promptly.
+          attentionPolicy: runInBackground ? "notify_on_terminal" : "blocking_until_terminal",
           workspace: {
             mode: workspace?.mode ?? "new",
+            ...(projectChatProjectPath != null ? { projectPath: projectChatProjectPath } : {}),
             ...(workspace?.workspaceId != null ? { workspaceId: workspace.workspaceId } : {}),
             ...(workspace?.branchName != null ? { branchName: workspace.branchName } : {}),
             ...(workspace?.trunkBranch != null ? { trunkBranch: workspace.trunkBranch } : {}),
+            ...(workspace?.title != null ? { title: workspace.title } : {}),
+            ...(workspace?.runtimeConfig != null ? { runtimeConfig: workspace.runtimeConfig } : {}),
             ...(workspace?.queueDispatchMode != null
               ? { queueDispatchMode: workspace.queueDispatchMode }
               : {}),
@@ -460,71 +384,20 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           throw new Error(created.error);
         }
 
-        const pendingResult = {
-          status: created.data.status,
-          taskId: created.data.taskId,
-          workspaceId: created.data.workspaceId,
-          handleKind: "workspace_turn" as const,
-          note: buildBackgroundStartNote(1),
-        };
-        if (run_in_background) {
-          return parseToolResult(TaskToolResultSchema, pendingResult, "task");
-        }
-
-        try {
-          const report = await taskService.waitForWorkspaceTurn(created.data.taskId, {
-            abortSignal,
-            requestingWorkspaceId: workspaceId,
-            backgroundOnMessageQueued: true,
-          });
-          return parseToolResult(
-            TaskToolResultSchema,
-            {
-              status: "completed" as const,
-              taskId: created.data.taskId,
-              workspaceId: report.workspaceId ?? created.data.workspaceId,
-              handleKind: "workspace_turn" as const,
-              reportMarkdown: report.reportMarkdown,
-              title: report.title,
-              messageId: report.messageId,
-              finalMessageRef: report.finalMessageRef,
-            },
-            "task"
-          );
-        } catch (error: unknown) {
-          if (abortSignal?.aborted) {
-            throw new Error("Interrupted");
-          }
-          if (error instanceof ForegroundWaitBackgroundedError) {
-            return parseToolResult(
-              TaskToolResultSchema,
-              {
-                ...pendingResult,
-                note: buildForegroundContinuationNote(1, "backgrounded"),
-              },
-              "task"
-            );
-          }
-          const errorMessage = getErrorMessage(error);
-          if (errorMessage === "Timed out waiting for workspace turn") {
-            // The foreground wait exceeded its budget but the workspace turn keeps running. Make it
-            // non-blocking so the owner's stream-end does not re-force a task_await; Mux wakes the
-            // owner with the terminal output instead.
-            await taskService.markBackgroundWorkNotifyOnTerminal?.(
-              created.data.taskId,
-              workspaceId
-            );
-            return parseToolResult(
-              TaskToolResultSchema,
-              {
-                ...pendingResult,
-                note: buildForegroundContinuationNote(1, "timed_out"),
-              },
-              "task"
-            );
-          }
-          throw error;
-        }
+        return parseToolResult(
+          TaskToolResultSchema,
+          {
+            status: created.data.status,
+            taskId: created.data.taskId,
+            workspaceId: created.data.workspaceId,
+            handleKind: "workspace_turn" as const,
+            modelString: created.data.modelString,
+            thinkingLevel: created.data.thinkingLevel,
+            reasoningMode: created.data.reasoningMode,
+            note: buildTaskStartNote(1, runInBackground),
+          },
+          "task"
+        );
       }
 
       const requestedAgentId =
@@ -571,8 +444,8 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           ...(isolation != null ? { isolation } : {}),
           ...(sticky === true ? { sticky: true } : {}),
           ...(parentRuntimeAiSettings != null ? { parentRuntimeAiSettings } : {}),
-          // Background launches are non-blocking with terminal wake-up; foreground/default block.
-          attentionPolicy: run_in_background ? "notify_on_terminal" : "blocking_until_terminal",
+          // This flag controls owner attention only; task always returns the created handle promptly.
+          attentionPolicy: runInBackground ? "notify_on_terminal" : "blocking_until_terminal",
           bestOf:
             taskGroupId != null
               ? {
@@ -589,7 +462,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           if (createdTasks.length > 0) {
             return parseToolResult(
               TaskToolResultSchema,
-              buildPendingTaskResult({
+              buildCreatedTaskResult({
                 tasks: createdTasks,
                 note:
                   `Grouped task creation stopped after spawning ${createdTasks.length} of ${taskGroupCount} task(s): ${created.error}. ` +
@@ -605,6 +478,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
 
         const task = {
           taskId: created.data.taskId,
+          workspaceId: created.data.workspaceId,
           status: created.data.status,
           modelString: created.data.modelString,
           thinkingLevel: created.data.thinkingLevel,
@@ -619,129 +493,20 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           config,
           workspaceId,
           toolCallId,
+          taskWorkspaceId: task.workspaceId,
           taskId: task.taskId,
         });
       }
 
-      if (run_in_background) {
-        return parseToolResult(
-          TaskToolResultSchema,
-          buildPendingTaskResult({
-            tasks: createdTasks,
-            note: buildBackgroundStartNote(createdTasks.length),
-            forceGrouped: taskGroupCount > 1,
-          }),
-          "task"
-        );
-      }
-
-      const waitOutcomes = await Promise.all(
-        createdTasks.map(async (createdTask): Promise<ForegroundWaitOutcome> => {
-          try {
-            const report = await taskService.waitForAgentReport(createdTask.taskId, {
-              abortSignal,
-              requestingWorkspaceId: workspaceId,
-              backgroundOnMessageQueued: true,
-            });
-
-            return {
-              kind: "completed",
-              report: {
-                taskId: createdTask.taskId,
-                reportMarkdown: report.reportMarkdown,
-                structuredOutput: report.structuredOutput,
-                title: report.title,
-                agentId: requestedAgentId,
-                agentType: requestedAgentId,
-                groupKind: createdTask.groupKind,
-                label: createdTask.label,
-                // Prefer the settings the report was produced with: a plan child that
-                // auto-handoffs to exec rewrites its task settings after launch.
-                modelString: report.model ?? createdTask.modelString,
-                thinkingLevel: report.thinkingLevel ?? createdTask.thinkingLevel,
-              } satisfies CompletedTaskInfo,
-            };
-          } catch (error: unknown) {
-            if (abortSignal?.aborted) {
-              return { kind: "interrupted" };
-            }
-            if (error instanceof ForegroundWaitBackgroundedError) {
-              return { kind: "backgrounded" };
-            }
-            const errorMessage = getErrorMessage(error);
-            if (errorMessage === "Timed out waiting for agent_report") {
-              return { kind: "timed_out" };
-            }
-            if (errorMessage === "Task interrupted") {
-              return { kind: "task_interrupted" };
-            }
-            return { kind: "error", error };
-          }
-        })
+      return parseToolResult(
+        TaskToolResultSchema,
+        buildCreatedTaskResult({
+          tasks: createdTasks,
+          note: buildTaskStartNote(createdTasks.length, runInBackground),
+          forceGrouped: taskGroupCount > 1,
+        }),
+        "task"
       );
-
-      if (waitOutcomes.some((outcome) => outcome.kind === "interrupted")) {
-        throw new Error("Interrupted");
-      }
-
-      const unexpectedFailure = waitOutcomes.find(
-        (outcome): outcome is Extract<ForegroundWaitOutcome, { kind: "error" }> =>
-          outcome.kind === "error"
-      );
-      if (unexpectedFailure) {
-        throw unexpectedFailure.error;
-      }
-
-      const completedReports = waitOutcomes.flatMap((outcome) =>
-        outcome.kind === "completed" ? [outcome.report] : []
-      );
-      if (completedReports.length === createdTasks.length) {
-        return parseToolResult(
-          TaskToolResultSchema,
-          buildCompletedTaskResult({ reports: completedReports }),
-          "task"
-        );
-      }
-
-      const wasBackgrounded = waitOutcomes.some((outcome) => outcome.kind === "backgrounded");
-      const didTimeOut = waitOutcomes.some((outcome) => outcome.kind === "timed_out");
-      const hadInterruptedTask = waitOutcomes.some(
-        (outcome) => outcome.kind === "task_interrupted"
-      );
-
-      // Foreground waits that exceeded their budget but whose tasks keep running become
-      // non-blocking: persist notify_on_terminal so the owner is not re-forced to await them.
-      await Promise.all(
-        waitOutcomes.flatMap((outcome, index) => {
-          const task = createdTasks[index];
-          return outcome.kind === "timed_out" && task != null
-            ? [taskService.markBackgroundWorkNotifyOnTerminal?.(task.taskId, workspaceId)]
-            : [];
-        })
-      );
-      if (wasBackgrounded || didTimeOut || hadInterruptedTask) {
-        return parseToolResult(
-          TaskToolResultSchema,
-          buildPendingTaskResult({
-            tasks: normalizePendingTaskStatuses({
-              taskService,
-              createdTasks,
-              completedReports,
-            }),
-            reports: completedReports,
-            note: hadInterruptedTask
-              ? buildInterruptedTaskNote(createdTasks.length)
-              : buildForegroundContinuationNote(
-                  createdTasks.length,
-                  wasBackgrounded ? "backgrounded" : "timed_out"
-                ),
-            forceGrouped: taskGroupCount > 1,
-          }),
-          "task"
-        );
-      }
-
-      throw new Error("Task foreground wait ended without a terminal result");
     },
   });
   return markBuiltInTaskTool(taskTool);

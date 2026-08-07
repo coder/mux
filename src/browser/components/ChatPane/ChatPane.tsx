@@ -62,6 +62,7 @@ import {
   useWorkspaceUsage,
   useWorkspaceStoreRaw,
 } from "@/browser/stores/WorkspaceStore";
+import { ProjectChatHeader } from "../ProjectChatHeader/ProjectChatHeader";
 import { WorkspaceMenuBar } from "../WorkspaceMenuBar/WorkspaceMenuBar";
 import { WorkspaceFooterBar } from "./WorkspaceFooterBar";
 import type { DisplayedMessage, QueuedMessage as QueuedMessageData } from "@/common/types/message";
@@ -162,7 +163,9 @@ interface ChatPaneProps {
   leftSidebarCollapsed: boolean;
   onToggleLeftSidebarCollapsed: () => void;
   runtimeConfig?: RuntimeConfig;
-  onOpenTerminal: (options?: TerminalSessionCreateOptions) => void;
+  onOpenTerminal: ((options?: TerminalSessionCreateOptions) => void) | null;
+  /** Project chats share the transcript/composer without workspace checkout chrome. */
+  surface?: "workspace" | "project";
   /** Hide + inactivate chat pane while immersive review overlay is active. */
   immersiveHidden?: boolean;
 }
@@ -272,10 +275,9 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
       <div
         ref={chatAreaRef}
         aria-hidden={immersiveHidden || undefined}
-        // Tells the app root that this column ends in a row (WorkspaceFooterBar) which reserves the
-        // bottom safe-area inset itself. Dropped while hidden so the inset stays with the root for
-        // whatever replaces the column.
-        data-bottom-inset-owner={immersiveHidden ? undefined : true}
+        // WorkspaceFooterBar reserves the bottom safe-area inset for normal workspaces. Project
+        // Chat has no footer, so leave ownership with the app root.
+        data-bottom-inset-owner={immersiveHidden || props.surface === "project" ? undefined : true}
         className={cn(
           "bg-surface-primary relative flex min-w-96 flex-1 flex-col",
           // Immersive review overlays the entire workspace, so hiding the chat pane removes
@@ -286,18 +288,27 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
         )}
       >
         <PerfRenderMarker id="chat-pane.header">
-          <WorkspaceMenuBar
-            workspaceId={workspaceId}
-            projectName={props.projectName}
-            projectPath={props.projectPath}
-            workspaceName={props.workspaceName}
-            workspaceTitle={workspaceTitle}
-            leftSidebarCollapsed={props.leftSidebarCollapsed}
-            onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
-            namedWorkspacePath={props.namedWorkspacePath}
-            runtimeConfig={props.runtimeConfig}
-            onOpenTerminal={props.onOpenTerminal}
-          />
+          {props.surface === "project" ? (
+            <ProjectChatHeader
+              projectName={props.projectName}
+              projectPath={props.projectPath}
+              leftSidebarCollapsed={props.leftSidebarCollapsed}
+              onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
+            />
+          ) : (
+            <WorkspaceMenuBar
+              workspaceId={workspaceId}
+              projectName={props.projectName}
+              projectPath={props.projectPath}
+              workspaceName={props.workspaceName}
+              workspaceTitle={workspaceTitle}
+              leftSidebarCollapsed={props.leftSidebarCollapsed}
+              onToggleLeftSidebarCollapsed={props.onToggleLeftSidebarCollapsed}
+              namedWorkspacePath={props.namedWorkspacePath}
+              runtimeConfig={props.runtimeConfig}
+              onOpenTerminal={props.onOpenTerminal ?? undefined}
+            />
+          )}
         </PerfRenderMarker>
 
         <ChatPaneContent
@@ -308,19 +319,22 @@ export const ChatPane: React.FC<ChatPaneProps> = (props) => {
           namedWorkspacePath={props.namedWorkspacePath}
           runtimeConfig={props.runtimeConfig}
           onOpenTerminal={props.onOpenTerminal}
+          surface={props.surface}
         />
 
         {/* Reset the footer's scroll and popover state because ChatPane remains mounted across
-            workspace switches. */}
-        <WorkspaceFooterBar
-          key={workspaceId}
-          workspaceId={workspaceId}
-          projectName={props.projectName}
-          projectPath={props.projectPath}
-          workspaceName={props.workspaceName}
-          namedWorkspacePath={props.namedWorkspacePath}
-          runtimeConfig={props.runtimeConfig}
-        />
+            workspace switches. Project Chat intentionally omits branch/runtime chrome. */}
+        {props.surface !== "project" && (
+          <WorkspaceFooterBar
+            key={workspaceId}
+            workspaceId={workspaceId}
+            projectName={props.projectName}
+            projectPath={props.projectPath}
+            workspaceName={props.workspaceName}
+            namedWorkspacePath={props.namedWorkspacePath}
+            runtimeConfig={props.runtimeConfig}
+          />
+        )}
       </div>
     </PerfRenderMarker>
   );
@@ -335,6 +349,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     namedWorkspacePath,
     runtimeConfig,
     onOpenTerminal,
+    surface,
   } = props;
   const workspaceState = useWorkspaceState(workspaceId);
   const chatTranscriptFullWidth = useChatTranscriptFullWidth();
@@ -351,7 +366,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   // Transcript-only workspaces preserve historical chat and usage after the worktree is deleted,
   // so the transcript stays readable while new sends remain disabled.
   const meta = workspaceMetadata.get(workspaceId);
-  const hasRepository = hasWorkspaceRepository(meta);
+  const hasRepository = surface !== "project" && hasWorkspaceRepository(meta);
   const transcriptOnly = meta?.transcriptOnly ?? false;
   const isPreStreamAgentTask =
     Boolean(meta?.parentWorkspaceId) && isBlockedPreStreamTaskStatus(meta?.taskStatus);
@@ -524,7 +539,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     () => ({
       workspaceId,
       latestMessageId,
-      openTerminal: onOpenTerminal,
+      ...(onOpenTerminal ? { openTerminal: onOpenTerminal } : {}),
     }),
     [workspaceId, latestMessageId, onOpenTerminal]
   );
@@ -778,8 +793,12 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   const userMessageNavigationByHistoryId = useMemo(() => {
     const userHistoryIds: string[] = [];
     for (const message of deferredMessages) {
-      // Monitor wake events should not interrupt navigation between human prompts.
-      if (message.type === "user" && message.bashMonitorWake == null) {
+      // Machine-authored wake events should not interrupt navigation between human prompts.
+      if (
+        message.type === "user" &&
+        message.backgroundWorkWake == null &&
+        message.bashMonitorWake == null
+      ) {
         userHistoryIds.push(message.historyId);
       }
     }
@@ -1232,8 +1251,8 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     chatInputAPI,
     jumpToBottom: handleJumpToBottom,
     loadOlderHistory: shouldRenderLoadOlderMessagesButton ? handleLoadOlderHistory : null,
-    handleOpenTerminal: onOpenTerminal,
-    handleOpenInEditor,
+    handleOpenTerminal: onOpenTerminal ? () => onOpenTerminal() : null,
+    handleOpenInEditor: surface === "project" ? null : handleOpenInEditor,
     aggregator,
     setEditingMessage,
     vimEnabled,
@@ -1452,8 +1471,12 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                 <TranscriptHydrationSkeleton />
               ) : showEmptyTranscriptPlaceholder ? (
                 <div className="text-placeholder flex h-full flex-1 flex-col items-center justify-center text-center [&_h3]:m-0 [&_h3]:mb-2.5 [&_h3]:text-base [&_h3]:font-medium [&_p]:m-0 [&_p]:text-[13px]">
-                  <h3>No Messages Yet</h3>
-                  <p>Send a message below to begin</p>
+                  <h3>{surface === "project" ? "Coordinate this project" : "No Messages Yet"}</h3>
+                  <p>
+                    {surface === "project"
+                      ? "Ask Orchestrator to create workspaces, delegate tasks, and keep you updated"
+                      : "Send a message below to begin"}
+                  </p>
                   {hasRepository && (
                     <p className="text-muted mt-5 flex items-start gap-2 text-xs">
                       <Lightbulb aria-hidden="true" className="mt-0.5 h-3 w-3 shrink-0" />

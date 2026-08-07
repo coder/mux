@@ -19,7 +19,10 @@ void mock.module("@/browser/contexts/WorkspaceContext", () => ({
 }));
 
 void mock.module("./SubagentTranscriptDialog", () => ({
-  SubagentTranscriptDialog: () => null,
+  SubagentTranscriptDialog: (props: { open: boolean; taskId: string }) =>
+    props.open ? (
+      <div data-testid="legacy-transcript">Legacy transcript: {props.taskId}</div>
+    ) : null,
 }));
 
 void mock.module("./Shared/ElapsedTimeDisplay", () => ({
@@ -121,10 +124,188 @@ describe("TaskToolCall", () => {
     globalThis.document = originalDocument;
   });
 
-  test("labels workspace tasks and opens their created workspace", () => {
+  for (const scenario of [
+    { kind: "agent", state: "running" },
+    { kind: "agent", state: "completed" },
+    { kind: "agent", state: "error" },
+    { kind: "workspace", state: "running" },
+    { kind: "workspace", state: "completed" },
+    { kind: "workspace", state: "error" },
+  ] as const) {
+    test(`opens canonical ${scenario.state} ${scenario.kind} executions as ordinary workspaces`, () => {
+      const taskId = `opaque-${scenario.kind}-${scenario.state}`;
+      const workspace = createWorkspaceMetadata({
+        id: `workspace-${scenario.kind}-${scenario.state}`,
+        name: `workspace-branch-${scenario.state}`,
+        title: `Workspace display ${scenario.state}`,
+        projectName: "customer-platform",
+        projectPath: "/projects/customer-platform",
+        subProjectPath: "/projects/customer-platform/packages/frontend",
+        taskStatus: scenario.state === "completed" ? "reported" : "running",
+        taskLaunchError: scenario.state === "error" ? "Execution failed to launch." : undefined,
+      });
+      const setSelectedWorkspace = mock((selection: unknown) => {
+        void selection;
+      });
+      workspaceContextMock = {
+        workspaceMetadata: new Map([[workspace.id, workspace]]),
+        setSelectedWorkspace,
+      };
+
+      const args =
+        scenario.kind === "workspace"
+          ? workspaceTaskArgs
+          : {
+              agentId: "exec",
+              prompt: "Implement the navigation change.",
+              title: `Execution title ${scenario.state}`,
+              run_in_background: true,
+            };
+      const ScenarioTaskToolCall = getToolComponent("task", args);
+      const result =
+        scenario.state === "completed"
+          ? {
+              status: "completed" as const,
+              taskId,
+              workspaceId: workspace.id,
+              handleKind: scenario.kind === "workspace" ? ("workspace_turn" as const) : undefined,
+              reportMarkdown: "Finished.",
+            }
+          : {
+              status: "running" as const,
+              taskId,
+              workspaceId: workspace.id,
+              handleKind: scenario.kind === "workspace" ? ("workspace_turn" as const) : undefined,
+              note: "Task started in background.",
+            };
+
+      const view = render(
+        <TooltipProvider>
+          <ScenarioTaskToolCall args={args} result={result} status="completed" />
+        </TooltipProvider>
+      );
+
+      expect(view.getAllByRole("button", { name: "Open workspace" })).toHaveLength(1);
+      expect(view.queryByText("View legacy transcript")).toBeNull();
+      if (!view.queryByText(args.title)) {
+        fireEvent.click(view.getByText("task"));
+      }
+      expect(view.getByText(args.title)).toBeDefined();
+      expect(view.getByText(`workspace: ${workspace.title ?? workspace.name}`)).toBeDefined();
+      expect(view.getByText("customer-platform / packages/frontend")).toBeDefined();
+      fireEvent.click(view.getByRole("button", { name: "Open workspace" }));
+
+      expect(setSelectedWorkspace).toHaveBeenCalledTimes(1);
+      expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
+    });
+  }
+
+  test("never treats an opaque taskId as a workspaceId", () => {
+    const taskId = "opaque-task-id";
+    const wrongWorkspace = createWorkspaceMetadata({ id: taskId, title: "Wrong workspace" });
+    workspaceContextMock = {
+      workspaceMetadata: new Map([[wrongWorkspace.id, wrongWorkspace]]),
+      setSelectedWorkspace: mock(() => undefined),
+    };
+
+    const agentTaskArgs = {
+      agentId: "exec",
+      prompt: "Check target identity.",
+      title: "Identity check",
+      run_in_background: true,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "running",
+            taskId,
+            workspaceId: "canonical-workspace-missing",
+            note: "Task started in background.",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.queryByRole("button", { name: "Open workspace" })).toBeNull();
+    expect(view.queryByText("View legacy transcript")).toBeNull();
+  });
+
+  test("opens a legacy executionId live target instead of the transcript fallback", () => {
     const workspace = createWorkspaceMetadata({
-      id: "created-workspace-1",
-      title: "Created workspace",
+      id: "legacy-live-workspace",
+      executionId: "legacy-live-task",
+    });
+    const setSelectedWorkspace = mock((selection: unknown) => {
+      void selection;
+    });
+    workspaceContextMock = {
+      workspaceMetadata: new Map([[workspace.id, workspace]]),
+      setSelectedWorkspace,
+    };
+    const agentTaskArgs = {
+      agentId: "explore",
+      prompt: "Inspect old history.",
+      title: "Legacy live exploration",
+      run_in_background: true,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "completed",
+            taskId: "legacy-live-task",
+            reportMarkdown: "Legacy live report",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.queryByText("View legacy transcript")).toBeNull();
+    fireEvent.click(view.getByRole("button", { name: "Open workspace" }));
+    expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
+  });
+
+  test("keeps the historical transcript fallback for legacy completed tasks without a live target", () => {
+    workspaceContextMock = { workspaceMetadata: new Map() };
+    const agentTaskArgs = {
+      agentId: "explore",
+      prompt: "Inspect old history.",
+      title: "Legacy exploration",
+      run_in_background: true,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "completed",
+            taskId: "legacy-task",
+            reportMarkdown: "Legacy report",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByText("task"));
+    fireEvent.click(view.getByText("View legacy transcript"));
+    expect(view.getByTestId("legacy-transcript").textContent).toContain("legacy-task");
+  });
+
+  test("opens an archived canonical transcript-only task target", () => {
+    const workspace = createWorkspaceMetadata({
+      id: "archived-transcript",
+      executionId: "exe_archived_transcript",
+      transcriptOnly: true,
+      archivedAt: "2026-08-05T00:00:00.000Z",
     });
     const setSelectedWorkspace = mock((selection: unknown) => {
       void selection;
@@ -139,29 +320,101 @@ describe("TaskToolCall", () => {
         <TaskToolCall
           args={workspaceTaskArgs}
           result={{
-            status: "running",
-            taskId: "wst_workspace_turn",
+            status: "completed",
+            taskId: "exe_archived_transcript",
             workspaceId: workspace.id,
             handleKind: "workspace_turn",
-            note: "Task started in background.",
+            reportMarkdown: "Finished.",
           }}
           status="completed"
         />
       </TooltipProvider>
     );
 
-    expect(view.queryByText("unknown")).toBeNull();
     fireEvent.click(view.getByRole("button", { name: "Open workspace" }));
-
-    expect(setSelectedWorkspace).toHaveBeenCalledTimes(1);
     expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
+  });
+
+  for (const unavailable of ["archived", "removing", "missing"] as const) {
+    test(`hides canonical workspace navigation when the target is ${unavailable}`, () => {
+      const workspaceId = `workspace-${unavailable}`;
+      const workspace = createWorkspaceMetadata({
+        id: workspaceId,
+        executionId: `exe_${unavailable}`,
+        archivedAt: unavailable === "archived" ? "2026-08-05T00:00:00.000Z" : undefined,
+        isRemoving: unavailable === "removing" ? true : undefined,
+      });
+      workspaceContextMock = {
+        workspaceMetadata:
+          unavailable === "missing"
+            ? new Map<string, FrontendWorkspaceMetadata>()
+            : new Map([[workspace.id, workspace]]),
+        setSelectedWorkspace: mock(() => undefined),
+      };
+
+      const view = render(
+        <TooltipProvider>
+          <TaskToolCall
+            args={workspaceTaskArgs}
+            result={{
+              status: "running",
+              taskId: `opaque-${unavailable}`,
+              workspaceId,
+              handleKind: "workspace_turn",
+              note: "Task started in background.",
+            }}
+            status="completed"
+          />
+        </TooltipProvider>
+      );
+
+      expect(view.queryByRole("button", { name: "Open workspace" })).toBeNull();
+      expect(view.queryByText("View legacy transcript")).toBeNull();
+    });
+  }
+
+  test("surfaces progress interruptions from foreground task spawns", () => {
+    const agentTaskArgs = {
+      subagent_type: "explore",
+      prompt: "Trace the report path.",
+      title: "Trace reports",
+      run_in_background: false,
+    };
+    const AgentTaskToolCall = getToolComponent("task", agentTaskArgs);
+    const view = render(
+      <TooltipProvider>
+        <AgentTaskToolCall
+          args={agentTaskArgs}
+          result={{
+            status: "running",
+            taskId: "task-child-progress",
+            interruption: {
+              reason: "progress_report_received",
+              sourceTaskId: "task-child-progress",
+              report: {
+                agentType: "explore",
+                title: "Progress finding",
+                reportMarkdown: "Found the report rendering path.",
+              },
+            },
+            note: "Foreground wait paused because a queued message needs attention.",
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("Wait paused for subagent update")).toBeDefined();
+    expect(view.getByText("Progress finding")).toBeDefined();
+    expect(view.getByText("Found the report rendering path.")).toBeDefined();
+    expect(view.queryByText("background")).toBeNull();
   });
 
   test("prefers live workspace settings over the result snapshot", () => {
     // A plan child's auto-handoff to exec rewrites live metadata after launch; the
     // result snapshot keeps the stale plan-phase settings.
     const workspace = createWorkspaceMetadata({
-      id: "task-child-1",
+      id: "workspace-child-1",
       taskModelString: "anthropic:claude-opus-5",
       taskThinkingLevel: "high",
     });
@@ -182,7 +435,8 @@ describe("TaskToolCall", () => {
           args={agentTaskArgs}
           result={{
             status: "running",
-            taskId: "task-child-1",
+            taskId: "opaque-task-child-1",
+            workspaceId: workspace.id,
             modelString: "openai:gpt-5.2",
             thinkingLevel: "low",
             note: "Task started in background.",
@@ -198,6 +452,39 @@ describe("TaskToolCall", () => {
     expect(settings?.textContent).toContain("Opus 5");
     expect(settings?.textContent).toContain("thinking: high");
     expect(settings?.textContent).not.toContain("thinking: low");
+  });
+
+  test("shows compact attach_file availability without duplicating previews", () => {
+    const view = render(
+      <TooltipProvider>
+        <TaskToolCall
+          args={workspaceTaskArgs}
+          result={{
+            status: "completed",
+            taskId: "wst_artifacts",
+            handleKind: "workspace_turn",
+            workspaceId: "child-workspace",
+            reportMarkdown: "Created the chart.",
+            artifacts: {
+              attachFiles: [
+                {
+                  path: "/owner/task-artifacts/wst_artifacts/chart.png",
+                  filename: "chart.png",
+                  mediaType: "image/png",
+                  sourceToolCallId: "attach-chart",
+                },
+              ],
+            },
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByText("task"));
+
+    expect(view.getByText("Attachment available: chart.png")).toBeDefined();
+    expect(view.container.querySelector("img")).toBeNull();
   });
 
   test("prefers linked report settings over the spawn snapshot after cleanup", () => {
@@ -325,6 +612,110 @@ describe("TaskAwaitToolCall", () => {
 
     expect(view.getByText("Still waiting for 1 task")).toBeDefined();
     expect(view.queryByText("task_await")).toBeNull();
+  });
+
+  test("opens task_await canonical workspace targets without using the opaque taskId", () => {
+    const workspace = createWorkspaceMetadata({
+      id: "await-workspace",
+      title: "Await target workspace",
+      projectName: "customer-platform",
+      projectPath: "/projects/customer-platform",
+      subProjectPath: "/projects/customer-platform/packages/mobile",
+    });
+    const wrongWorkspace = createWorkspaceMetadata({
+      id: "opaque-await-task",
+      title: "Wrong opaque-ID workspace",
+    });
+    const setSelectedWorkspace = mock((selection: unknown) => {
+      void selection;
+    });
+    workspaceContextMock = {
+      workspaceMetadata: new Map([
+        [workspace.id, workspace],
+        [wrongWorkspace.id, wrongWorkspace],
+      ]),
+      setSelectedWorkspace,
+    };
+
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "opaque-await-task",
+            workspaceId: workspace.id,
+            title: "Canonical await execution",
+            reportMarkdown: "Done",
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(view.getByLabelText("1 task completed. Show task wait details"));
+    expect(view.getByText("workspace: Await target workspace")).toBeDefined();
+    expect(view.getByText("customer-platform / packages/mobile")).toBeDefined();
+    expect(view.getAllByRole("button", { name: "Open workspace" })).toHaveLength(1);
+    fireEvent.click(view.getByRole("button", { name: "Open workspace" }));
+
+    expect(setSelectedWorkspace).toHaveBeenCalledTimes(1);
+    expect(setSelectedWorkspace.mock.calls[0][0]).toEqual(workspace);
+  });
+
+  test("shows a compact attachment count for completed task awaits", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [
+          {
+            status: "completed",
+            taskId: "task-1",
+            reportMarkdown: "Done",
+            artifacts: {
+              attachFiles: [
+                {
+                  path: "/owner/task-artifacts/task-1/chart.png",
+                  filename: "chart.png",
+                  mediaType: "image/png",
+                },
+                {
+                  path: "/owner/task-artifacts/task-1/report.pdf",
+                  filename: "report.pdf",
+                  mediaType: "application/pdf",
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    fireEvent.click(view.getByLabelText("1 task completed. Show task wait details"));
+    expect(view.getByText("2 attachments available: chart.png +1")).toBeDefined();
+    expect(view.container.querySelector("img")).toBeNull();
+  });
+
+  test("surfaces progress-report interruptions instead of presenting another wait", () => {
+    const view = renderTaskAwaitToolCall({
+      status: "completed",
+      result: {
+        results: [{ status: "running", taskId: "task-1" }],
+        interruption: {
+          reason: "progress_report_received",
+          sourceTaskId: "task-1",
+          report: {
+            agentType: "explore",
+            title: "Progress finding",
+            reportMarkdown: "Found the report rendering path.",
+          },
+        },
+      },
+    });
+
+    expect(view.getByText("Wait paused for subagent update")).toBeDefined();
+    expect(view.getAllByText("Progress finding").length).toBeGreaterThan(0);
+    expect(view.getByText("Found the report rendering path.")).toBeDefined();
+    expect(view.queryByText(/still waiting/i)).toBeNull();
   });
 
   test("renders interrupted waits as terminal instead of still waiting", () => {
@@ -603,9 +994,10 @@ describe("TaskAwaitToolCall", () => {
     workspaceContextMock = {
       workspaceMetadata: new Map([
         [
-          "task-1",
+          "workspace-1",
           {
-            id: "task-1",
+            id: "workspace-1",
+            executionId: "task-1",
             name: "agent_explore_task",
             projectName: "project",
             projectPath: "/project",
@@ -665,9 +1057,30 @@ describe("TaskSendMessageToolCall", () => {
     );
 
     expect(view.getByText("queued")).toBeDefined();
-    fireEvent.click(view.getByText("task_send_message"));
+    expect(view.getByText("Sent guidance to")).toBeDefined();
     expect(view.getByText("child-task")).toBeDefined();
+    fireEvent.click(view.getByText("Sent guidance to"));
     expect(view.getByText("Use the corrected API shape.")).toBeDefined();
+  });
+
+  test("does not claim rejected guidance was sent", () => {
+    const view = render(
+      <TooltipProvider>
+        <TaskSendMessageToolCall
+          args={taskSendMessageArgs}
+          status="completed"
+          result={{
+            status: "not_active",
+            taskId: "child-task",
+            taskStatus: "reported",
+            error: "Task already completed.",
+          }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("Could not send guidance to")).toBeDefined();
+    expect(view.queryByText("Sent guidance to")).toBeNull();
   });
 });
 

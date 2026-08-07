@@ -52,7 +52,7 @@ test.describe("chat typing performance profiling", () => {
 
   test("perf: type in the New Workspace composer", async ({ page, workspace }, testInfo) => {
     const projectName = path.basename(workspace.demoProject.projectPath);
-    await page.getByRole("button", { name: `Create workspace in ${projectName}` }).click();
+    await page.getByRole("button", { name: `New workspace in ${projectName}` }).click();
 
     const input = page.getByRole("textbox", { name: "Message Claude" });
     await expect(input).toBeVisible({ timeout: 20_000 });

@@ -33,7 +33,7 @@ import {
   GoalSetErrorSchema,
   GoalSetInputSchema,
 } from "./goal";
-import { ProjectConfigSchema } from "./project";
+import { ProjectChatInfoSchema, ProjectConfigSchema } from "./project";
 import {
   MemoryChangeEventSchema,
   MemoryConsolidationRecordSchema,
@@ -688,6 +688,12 @@ export const projects = {
   list: {
     input: z.void(),
     output: z.array(z.tuple([z.string(), ProjectConfigSchema])),
+  },
+  chat: {
+    getOrCreate: {
+      input: z.object({ projectPath: z.string() }).strict(),
+      output: ResultSchema(ProjectChatInfoSchema, z.string()),
+    },
   },
   getFileCompletions: {
     input: z

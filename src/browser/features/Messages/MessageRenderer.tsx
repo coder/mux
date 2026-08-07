@@ -5,6 +5,7 @@ import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinki
 import type { ReviewNoteData } from "@/common/types/review";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 import { UserMessage, type UserMessageNavigation } from "./UserMessage";
+import { BackgroundWorkWakeMessage } from "./BackgroundWorkWakeMessage";
 import { BashMonitorWakeMessage } from "./BashMonitorWakeMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
@@ -89,7 +90,9 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     switch (message.type) {
       case "user":
         renderedMessage =
-          message.bashMonitorWake != null ? (
+          message.backgroundWorkWake != null ? (
+            <BackgroundWorkWakeMessage message={message} className={className} />
+          ) : message.bashMonitorWake != null ? (
             <BashMonitorWakeMessage message={message} className={className} />
           ) : (
             <UserMessage

@@ -1,8 +1,14 @@
+import {
+  PROJECT_CHAT_AGENT_ID,
+  PROJECT_CHAT_VERSION,
+  isProjectSessionId,
+} from "@/common/constants/projectChat";
 import { RuntimeConfigSchema } from "@/common/orpc/schemas/runtime";
 import { WorkspaceMCPOverridesSchema } from "@/common/orpc/schemas/mcp";
 import {
   BestOfGroupSchema,
   ProjectRefSchema,
+  FrontendWorkspaceMetadataSchema,
   WorkflowTaskMetadataSchema,
   WorkspaceGoalDefaultsOverrideSchema,
   WorkspaceHeartbeatSettingsSchema,
@@ -103,6 +109,10 @@ export const WorkspaceConfigSchema = z.object({
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:
       "Per-workspace overrides for goal creation defaults. Sparse; each null field follows the global `goalDefaults`.",
+  }),
+  executionId: z.string().optional().meta({
+    description:
+      "Opaque execution handle for agent-task workspaces. Kept as a lightweight back-reference; lifecycle ownership lives in the execution registry.",
   }),
   parentWorkspaceId: z.string().optional().meta({
     description:
@@ -228,6 +238,10 @@ export const WorkspaceConfigSchema = z.object({
     description:
       "LEGACY: Per-workspace MCP overrides (migrated to <workspace>/.mux/mcp.local.jsonc)",
   }),
+  transcriptOnly: z.boolean().optional().meta({
+    description:
+      "True when live runtime resources were intentionally retired while config, session, and transcript history remain available.",
+  }),
   archivedAt: z.string().optional().meta({
     description:
       "ISO 8601 timestamp when workspace was last archived. Workspace is considered archived if archivedAt > unarchivedAt (or unarchivedAt is absent).",
@@ -251,6 +265,30 @@ export const WorkspaceConfigSchema = z.object({
   }),
 });
 
+export const ProjectChatConfigSchema = z.object({
+  version: z.literal(PROJECT_CHAT_VERSION).meta({
+    description: "Persisted Project Chat schema version",
+  }),
+  sessionId: z.string().refine(isProjectSessionId, {
+    message: "Project Chat session ID must use the generated filename-safe format",
+  }),
+  createdAt: z.string().meta({ description: "ISO 8601 Project Chat creation timestamp" }),
+  agentId: z.literal(PROJECT_CHAT_AGENT_ID).meta({
+    description: "Fixed built-in agent identity for Project Chat",
+  }),
+  aiSettingsByAgent: WorkspaceAISettingsByAgentSchema.optional().meta({
+    description: "Per-agent Project Chat AI settings; orchestrator is the active agent",
+  }),
+});
+
+export const ProjectChatInfoSchema = ProjectChatConfigSchema.extend({
+  projectPath: z.string().meta({ description: "Absolute path of the owning project" }),
+  metadata: FrontendWorkspaceMetadataSchema.meta({
+    description:
+      "Backend-owned virtual metadata for registering the chat session without exposing it through workspace APIs",
+  }),
+});
+
 export const ProjectConfigSchema = z.object({
   displayName: z.string().nullish().meta({
     description: "Custom display name for the project",
@@ -266,6 +304,9 @@ export const ProjectConfigSchema = z.object({
   parentProjectPath: z.string().optional().meta({
     description: "Absolute path to the top-level parent project for one-level sub-projects",
   }),
+  // Project Chat is intentionally separate from workspaces so workspace-wide background jobs,
+  // sidebar counts, archive blockers, and older hidden-workspace behavior cannot sweep it in.
+  projectChat: ProjectChatConfigSchema.optional(),
   workspaces: z.array(WorkspaceConfigSchema),
   idleCompactionHours: z.number().min(1).nullable().optional().meta({
     description:
@@ -290,5 +331,7 @@ export const ProjectConfigSchema = z.object({
   }),
 });
 
+export type ProjectChatConfig = z.infer<typeof ProjectChatConfigSchema>;
+export type ProjectChatInfo = z.infer<typeof ProjectChatInfoSchema>;
 export type WorktreeArchiveSnapshotProject = z.infer<typeof WorktreeArchiveSnapshotProjectSchema>;
 export type WorktreeArchiveSnapshot = z.infer<typeof WorktreeArchiveSnapshotSchema>;

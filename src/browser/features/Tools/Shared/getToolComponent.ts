@@ -45,6 +45,7 @@ import {
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
+import { ProjectWorkspaceListToolCall } from "../ProjectWorkspaceListToolCall";
 import { WorkspaceLifecycleToolCall } from "../WorkspaceLifecycleToolCall";
 import { SetGoalToolCall } from "../SetGoalToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
@@ -204,6 +205,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   task_apply_git_patch: {
     component: TaskApplyGitPatchToolCall,
     schema: TOOL_DEFINITIONS.task_apply_git_patch.schema,
+  },
+  project_workspace_list: {
+    component: ProjectWorkspaceListToolCall,
+    schema: TOOL_DEFINITIONS.project_workspace_list.schema,
   },
   task_workspace_lifecycle: {
     component: WorkspaceLifecycleToolCall,

@@ -1,6 +1,7 @@
 import type { FilePart, SendMessageOptions } from "@/common/orpc/types";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ReviewNoteData } from "@/common/types/review";
+import type { ForegroundWaitInterruption } from "@/common/types/foregroundWaitInterruption";
 
 // Type guard for compaction request metadata (for display text)
 interface CompactionMetadata {
@@ -75,6 +76,8 @@ interface QueuedMessageInternalOptions {
   sealed?: boolean;
   /** Dedupe-keyed maintenance sends are removable by prefix without changing global queue rules. */
   removableDedupeKey?: boolean;
+  /** Why enqueueing this entry should pause a foreground task wait. */
+  foregroundWaitInterruption?: ForegroundWaitInterruption;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
@@ -84,6 +87,17 @@ interface QueuedMessageInternalOptions {
   cancelState?: { canceledBeforeAcceptance: boolean };
   /** Cancels a queued entry even after it has been dequeued into PREPARING. */
   cancelSignal?: AbortSignal;
+}
+
+function foregroundWaitInterruptionsEqual(
+  left: ForegroundWaitInterruption,
+  right: ForegroundWaitInterruption
+): boolean {
+  if (left.reason !== right.reason) return false;
+  return (
+    left.reason !== "progress_report_received" ||
+    (right.reason === "progress_report_received" && left.sourceTaskId === right.sourceTaskId)
+  );
 }
 
 type QueueClearCallbacks = Pick<
@@ -108,6 +122,7 @@ interface QueueEntry {
   dedupeKeys: Set<string>;
   goalInterventionPolicy?: GoalInterventionPolicy;
   dispatchMode: QueueDispatchMode;
+  foregroundWaitInterruption?: ForegroundWaitInterruption;
   /**
    * Sealed entries never accept later batched messages: their callbacks/metadata
    * correlate to exactly one turn (workspace-turn follow-ups, agent skills).
@@ -177,6 +192,28 @@ export class MessageQueue {
   /** Dispatch boundary for the FIFO head entry — the only entry the next drain can send. */
   getNextQueueDispatchMode(): QueueDispatchMode {
     return this.entries[0]?.dispatchMode ?? "tool-end";
+  }
+
+  getNextForegroundWaitInterruption(): ForegroundWaitInterruption | undefined {
+    return this.entries[0]?.foregroundWaitInterruption;
+  }
+
+  consumeNextForegroundWaitInterruption(
+    expected: ForegroundWaitInterruption
+  ): QueueClearCallbacks | null {
+    const entry = this.entries[0];
+    const actual = entry?.foregroundWaitInterruption;
+    if (entry == null || actual == null || !foregroundWaitInterruptionsEqual(actual, expected)) {
+      return null;
+    }
+
+    this.entries.shift();
+    return {
+      ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+      ...(entry.onAcceptedPreStreamFailure != null
+        ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
+        : {}),
+    };
   }
 
   /**
@@ -342,6 +379,7 @@ export class MessageQueue {
         fileParts: [],
         dedupeKeys: new Set<string>(),
         dispatchMode: incomingMode,
+        foregroundWaitInterruption: internal?.foregroundWaitInterruption,
         sealed: incomingIsSealed,
         userAuthored: incomingIsUserAuthored,
         addCount: 0,
@@ -350,6 +388,8 @@ export class MessageQueue {
       };
       this.entries.push(entry);
     }
+
+    entry.foregroundWaitInterruption ??= internal?.foregroundWaitInterruption;
 
     // Explicit pause is sticky within an entry (a batched steer must not unpause).
     entry.goalInterventionPolicy =

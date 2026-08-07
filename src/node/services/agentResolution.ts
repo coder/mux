@@ -47,6 +47,8 @@ export interface ResolveAgentOptions {
   workspacePath: string;
   /** Requested agent ID from the frontend (may be undefined → defaults to exec). */
   requestedAgentId: string | undefined;
+  /** Force a built-in definition, bypassing requested IDs, overrides, disablement, and Exec fallback. */
+  fixedBuiltInAgentId?: string;
   /** When true, skip workspace-specific agents (for "unbricking" broken agent files). */
   disableWorkspaceAgents: boolean;
   /** Caller-supplied tool policy (applied AFTER agent policy for further restriction). */
@@ -183,6 +185,7 @@ export async function resolveAgentForStream(
     runtime,
     workspacePath,
     requestedAgentId: rawAgentId,
+    fixedBuiltInAgentId: rawFixedBuiltInAgentId,
     disableWorkspaceAgents,
     callerToolPolicy,
     cfg,
@@ -196,77 +199,109 @@ export async function resolveAgentForStream(
   // Precedence:
   // - Child workspaces (tasks) use their persisted agentId/agentType.
   // - Main workspaces use the requested agentId (frontend), falling back to exec.
-  const requestedAgentIds = metadata.parentWorkspaceId
-    ? [...resolvePersistedAgentIdCandidates(metadata), "exec"].filter(
-        (agentId, index, candidates) => candidates.indexOf(agentId) === index
-      )
-    : [normalizeRequestedAgentId(rawAgentId)];
+  const fixedBuiltInAgentId = rawFixedBuiltInAgentId
+    ? AgentIdSchema.safeParse(rawFixedBuiltInAgentId)
+    : null;
+  if (fixedBuiltInAgentId != null && !fixedBuiltInAgentId.success) {
+    return Err({
+      type: "unknown",
+      raw: `Invalid fixed built-in agent ID: ${String(rawFixedBuiltInAgentId)}`,
+    });
+  }
+  const fixedAgentId = fixedBuiltInAgentId?.data;
+  const requestedAgentIds = fixedAgentId
+    ? [fixedAgentId]
+    : metadata.parentWorkspaceId
+      ? [...resolvePersistedAgentIdCandidates(metadata), "exec"].filter(
+          (agentId, index, candidates) => candidates.indexOf(agentId) === index
+        )
+      : [normalizeRequestedAgentId(rawAgentId)];
   const requestedAgentId = requestedAgentIds[0] ?? ("exec" as const);
   let effectiveAgentId = requestedAgentId;
 
   // When disableWorkspaceAgents is true, skip workspace-specific agents entirely.
   // Use project path so only built-in/global agents are available. This allows "unbricking"
   // when iterating on agent files — a broken agent in the worktree won't affect message sending.
-  const agentDiscoveryCandidates = getAgentDiscoveryCandidates({
-    metadata,
-    runtime,
-    workspacePath,
-    disableWorkspaceAgents,
-    cfg,
-  });
+  const agentDiscoveryCandidates = fixedAgentId
+    ? [{ runtime, workspacePath }]
+    : getAgentDiscoveryCandidates({
+        metadata,
+        runtime,
+        workspacePath,
+        disableWorkspaceAgents,
+        cfg,
+      });
   let agentDiscoveryRuntime = agentDiscoveryCandidates[0]?.runtime ?? runtime;
   let agentDiscoveryPath = agentDiscoveryCandidates[0]?.workspacePath ?? workspacePath;
 
   const isSubagentWorkspace = Boolean(metadata.parentWorkspaceId);
 
-  // --- Load agent definition (with fallback to exec) ---
+  // --- Load agent definition (with fallback to exec for ordinary workspaces only) ---
   let agentDefinition: Awaited<ReturnType<typeof readAgentDefinition>> | undefined;
-  for (const candidateAgentId of requestedAgentIds) {
-    let fallbackDefinition:
-      | {
-          definition: Awaited<ReturnType<typeof readAgentDefinition>>;
-          discovery: AgentDiscoveryCandidate;
-        }
-      | undefined;
+  if (fixedAgentId) {
+    try {
+      // Fixed built-ins are a backend contract: project/global same-name files cannot override them.
+      agentDefinition = await readAgentDefinition(runtime, workspacePath, fixedAgentId, {
+        skipScopesAbove: "global",
+      });
+    } catch (error) {
+      return Err({
+        type: "unknown",
+        raw: `Fixed built-in agent '${fixedAgentId}' is unavailable: ${getErrorMessage(error)}`,
+      });
+    }
+  } else {
+    for (const candidateAgentId of requestedAgentIds) {
+      let fallbackDefinition:
+        | {
+            definition: Awaited<ReturnType<typeof readAgentDefinition>>;
+            discovery: AgentDiscoveryCandidate;
+          }
+        | undefined;
 
-    for (const discovery of agentDiscoveryCandidates) {
-      try {
-        const definition = await readAgentDefinition(
-          discovery.runtime,
-          discovery.workspacePath,
-          candidateAgentId
-        );
-        if (definition.scope === "project") {
-          agentDefinition = definition;
-          agentDiscoveryRuntime = discovery.runtime;
-          agentDiscoveryPath = discovery.workspacePath;
-          break;
+      for (const discovery of agentDiscoveryCandidates) {
+        try {
+          const definition = await readAgentDefinition(
+            discovery.runtime,
+            discovery.workspacePath,
+            candidateAgentId
+          );
+          if (definition.scope === "project") {
+            agentDefinition = definition;
+            agentDiscoveryRuntime = discovery.runtime;
+            agentDiscoveryPath = discovery.workspacePath;
+            break;
+          }
+          fallbackDefinition ??= { definition, discovery };
+        } catch {
+          // Parent-only project agents may be untracked and absent from child worktrees.
+          // Try the next discovery context before moving to the next persisted agent id.
         }
-        fallbackDefinition ??= { definition, discovery };
-      } catch {
-        // Parent-only project agents may be untracked and absent from child worktrees.
-        // Try the next discovery context before moving to the next persisted agent id.
+      }
+
+      if (agentDefinition != null) {
+        break;
+      }
+      if (fallbackDefinition != null) {
+        agentDefinition = fallbackDefinition.definition;
+        agentDiscoveryRuntime = fallbackDefinition.discovery.runtime;
+        agentDiscoveryPath = fallbackDefinition.discovery.workspacePath;
+        break;
       }
     }
 
-    if (agentDefinition != null) {
-      break;
+    if (agentDefinition == null) {
+      workspaceLog.warn("Failed to load agent definition; falling back", {
+        requestedAgentIds,
+        agentDiscoveryPaths: agentDiscoveryCandidates.map((candidate) => candidate.workspacePath),
+        disableWorkspaceAgents,
+      });
+      agentDefinition = await readAgentDefinition(
+        agentDiscoveryRuntime,
+        agentDiscoveryPath,
+        "exec"
+      );
     }
-    if (fallbackDefinition != null) {
-      agentDefinition = fallbackDefinition.definition;
-      agentDiscoveryRuntime = fallbackDefinition.discovery.runtime;
-      agentDiscoveryPath = fallbackDefinition.discovery.workspacePath;
-      break;
-    }
-  }
-
-  if (agentDefinition == null) {
-    workspaceLog.warn("Failed to load agent definition; falling back", {
-      requestedAgentIds,
-      agentDiscoveryPaths: agentDiscoveryCandidates.map((candidate) => candidate.workspacePath),
-      disableWorkspaceAgents,
-    });
-    agentDefinition = await readAgentDefinition(agentDiscoveryRuntime, agentDiscoveryPath, "exec");
   }
 
   // Keep agent ID aligned with the actual definition used (may fall back to exec).
@@ -276,7 +311,7 @@ export async function resolveAgentForStream(
   // Disabled agents should never run as sub-agents, even if a task workspace already exists
   // on disk (e.g., config changed since creation).
   // For top-level workspaces, fall back to exec to keep the workspace usable.
-  if (agentDefinition.id !== "exec") {
+  if (!fixedAgentId && agentDefinition.id !== "exec") {
     try {
       const resolvedFrontmatter = await resolveAgentFrontmatter(
         agentDiscoveryRuntime,

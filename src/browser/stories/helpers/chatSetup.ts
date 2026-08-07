@@ -7,6 +7,7 @@ import type {
 } from "@/common/orpc/types";
 import type { MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
+import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import type { BackgroundProcessInfo } from "@/common/orpc/schemas/api";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { APIClient } from "@/browser/contexts/API";
@@ -47,6 +48,8 @@ export interface SimpleChatSetupOptions {
   workspaceName?: string;
   projectName?: string;
   projectPath?: string;
+  /** Additional workspaces available for navigation from the transcript. */
+  additionalWorkspaces?: FrontendWorkspaceMetadata[];
   messages: ChatMuxMessage[];
   gitStatus?: GitStatusFixture;
   /** Git diff output for Review tab */
@@ -107,6 +110,7 @@ export function setupSimpleChatStory(opts: SimpleChatSetupOptions): APIClient {
       projectName,
       projectPath,
     }),
+    ...(opts.additionalWorkspaces ?? []),
   ];
 
   const chatHandlers = new Map([[workspaceId, createStaticChatHandler(opts.messages)]]);

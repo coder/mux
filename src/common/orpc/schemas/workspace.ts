@@ -174,6 +174,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "Per-workspace overrides for goal creation defaults (budget, turn cap, explicit-budget). Layered on top of the global `goalDefaults` from app config.",
   }),
+  executionId: z.string().optional().meta({
+    description:
+      "Opaque execution handle for agent-task workspaces. Kept as a lightweight back-reference; lifecycle ownership lives in the execution registry.",
+  }),
   parentWorkspaceId: z.string().optional().meta({
     description:
       "If set, this workspace is a child workspace spawned from the parent workspaceId (enables nesting in UI and backend orchestration).",
@@ -247,6 +251,10 @@ export const WorkspaceMetadataSchema = z.object({
     description:
       "Trunk branch used to create/init this agent task workspace (used for restart-safe init on queued tasks).",
   }),
+  transcriptOnly: z.boolean().optional().meta({
+    description:
+      "True when live runtime resources were intentionally retired while config, session, and transcript history remain available.",
+  }),
   archivedAt: z.string().optional().meta({
     description:
       "ISO 8601 timestamp when workspace was last archived. Workspace is considered archived if archivedAt > unarchivedAt (or unarchivedAt is absent).",
@@ -288,10 +296,6 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
   isInitializing: z.boolean().optional().meta({
     description:
       "True if this workspace is currently initializing (postCreateSetup or initWorkspace running).",
-  }),
-  transcriptOnly: z.boolean().optional().meta({
-    description:
-      "True if this workspace's checkout directory is missing (worktree deleted). Chat history is available but the workspace cannot run commands.",
   }),
 });
 

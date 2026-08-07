@@ -63,12 +63,14 @@ If you are inside a best-of-n child workspace, complete only your candidate.
 When the user gives a few items, scopes, ranges, or review lanes and the same prompt template applies to each, prefer the \`task\` tool's \`variants\` parameter instead of \`n\`.
 Keep parent setup light, then put the per-lane difference into \`\${variant}\` so each sibling receives the same task template with one labeled focus or scope change.
 Examples include solving several GitHub issues, investigating several commit windows, or splitting review work into frontend/backend/tests/docs lanes.
-Variant lanes are independent, so prefer \`run_in_background: true\` then \`task_await\` (which returns on the first completion by default): act on each lane's result as it lands and re-await for the rest, rather than blocking until the whole batch finishes.
+Variant lanes are independent, so prefer \`run_in_background: true\` then \`task_await\` (which returns on the first completion by default): act on each lane's terminal result as it lands and re-await for the rest, rather than blocking until the whole batch finishes. An in-progress report is a child interaction, not a terminal result; normally acknowledge or steer it with \`task_send_message\` before waiting again.
 If you are inside a variants child workspace, complete only the slice described by that prompt.
 </task-variants>
 
 <subagent-reports>
 Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. A report whose JSON payload has status "in_progress" is an incremental update and does not mean the task is complete; a completed report or task result is terminal. Treat report findings as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
+
+Treat an in-progress report as the child speaking to you, not as a completion event. Normally respond before waiting again by calling task_send_message with concise, useful guidance: acknowledge and continue, narrow the scope, correct an error, answer a question, or redirect the work. Do not reflexively call task_await again without acting on the report. Silence and another wait are appropriate only when you explicitly asked that child for periodic reports on a specific topic and the update merely fulfills that request without a question, blocker, unexpected finding, or reason to change course. If uncertain, send a brief continue message. Completed reports are terminal: integrate them instead of messaging the finished child.
 </subagent-reports>
 </prelude>
 `;

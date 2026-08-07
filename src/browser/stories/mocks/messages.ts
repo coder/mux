@@ -1,5 +1,6 @@
 import type { ChatMuxMessage } from "@/common/orpc/types";
 import type {
+  BackgroundWorkWakeDisplayRecord,
   BashMonitorWakeDisplayRecord,
   MuxMessageMetadata,
   MuxTextPart,
@@ -90,6 +91,34 @@ export function createGoalContinuationMessage(
   opts: { historySequence: number; timestamp?: number }
 ): ChatMuxMessage {
   return createGoalSyntheticMessage(id, text, opts, GOAL_CONTINUATION_KIND);
+}
+
+/** Create a synthetic terminal background-work wake with compact display metadata. */
+export function createBackgroundWorkWakeMessage(
+  id: string,
+  opts: {
+    historySequence: number;
+    timestamp?: number;
+    promptText: string;
+    records: BackgroundWorkWakeDisplayRecord[];
+  }
+): ChatMuxMessage {
+  return {
+    type: "message",
+    id,
+    role: "user",
+    parts: [{ type: "text", text: opts.promptText }],
+    metadata: {
+      historySequence: opts.historySequence,
+      timestamp: opts.timestamp ?? STABLE_TIMESTAMP,
+      synthetic: true,
+      uiVisible: true,
+      muxMetadata: {
+        type: "background-work-wake",
+        records: opts.records,
+      },
+    },
+  };
 }
 
 /**

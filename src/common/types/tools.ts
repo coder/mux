@@ -25,6 +25,7 @@ import type {
   HeartbeatToolResultSchema,
   MemoryToolResultSchema,
   AttachFileToolResultSchema,
+  ProjectWorkspaceListToolResultSchema,
   TaskToolResultSchema,
   TaskSendMessageToolResultSchema,
   TaskAwaitToolResultSchema,
@@ -247,6 +248,12 @@ export type AskUserQuestionQuestion = z.infer<typeof AskUserQuestionQuestionSche
 export type AskUserQuestionToolSuccessResult = z.infer<typeof AskUserQuestionToolResultSchema>;
 
 export type AskUserQuestionToolResult = AskUserQuestionToolSuccessResult | ToolErrorResult;
+
+// Project Workspace List Tool Types
+export type ProjectWorkspaceListToolArgs = z.infer<
+  typeof TOOL_DEFINITIONS.project_workspace_list.schema
+>;
+export type ProjectWorkspaceListToolResult = z.infer<typeof ProjectWorkspaceListToolResultSchema>;
 
 // Task Tool Types
 export type TaskToolArgs = z.infer<typeof TOOL_DEFINITIONS.task.schema>;

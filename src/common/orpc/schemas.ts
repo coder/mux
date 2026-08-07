@@ -15,7 +15,12 @@ export {
 } from "./schemas/runtime";
 
 // Project schemas
-export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
+export {
+  ProjectChatConfigSchema,
+  ProjectChatInfoSchema,
+  ProjectConfigSchema,
+  WorkspaceConfigSchema,
+} from "./schemas/project";
 
 // Goal schemas
 export {

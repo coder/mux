@@ -5,9 +5,17 @@ import {
   type ToolsConfigCarrier,
 } from "@/common/utils/agentTools";
 
+export interface WorkspaceTurnReportContext {
+  handleId: string;
+  ownerWorkspaceId: string;
+  turnId: string;
+}
+
 export interface ToolAvailabilityContext {
   workspaceId: string;
   parentWorkspaceId?: string | null;
+  /** Correlated active workspace turn; ordinary workspace identity remains unchanged. */
+  workspaceTurnReportContext?: WorkspaceTurnReportContext | null;
 }
 
 export interface GoalToolAvailability {
@@ -55,10 +63,10 @@ export function getGoalToolAvailability(
  */
 export function getToolAvailabilityOptions(context: ToolAvailabilityContext) {
   return {
-    enableAgentReport: Boolean(context.parentWorkspaceId),
-    // The Review pane is a user-facing parent-workspace concept. Sub-agents
+    enableAgentReport: Boolean(context.parentWorkspaceId ?? context.workspaceTurnReportContext),
+    // The Review pane is a user-facing ordinary-workspace concept. Sub-agents
     // (child task workspaces, identified by a parentWorkspaceId) shouldn't pin
-    // code to it, so withhold the review_pane_* tools from them.
+    // code to it. A correlated workspace turn remains an ordinary workspace.
     enableReviewPane: !context.parentWorkspaceId,
     // skills_catalog_* tools are always available; agent tool policy controls access.
   } as const;

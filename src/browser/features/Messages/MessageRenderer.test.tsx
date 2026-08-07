@@ -421,6 +421,105 @@ This was typed by a user.
   });
 });
 
+describe("MessageRenderer background work wake rows", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    globalThis.localStorage = undefined as unknown as Storage;
+  });
+
+  const wakePrompt = `Background sub-agent task(s) have completed.
+
+Background workspace turn(s) have reached a terminal state:
+- wst_verify
+
+Call task_await({ task_ids: ["wst_verify"], timeout_secs: 0 }) to retrieve the result.`;
+
+  function createWakeMessage(): DisplayedMessage {
+    return {
+      type: "user",
+      id: "background-work-wake",
+      historyId: "background-work-wake",
+      content: wakePrompt,
+      historySequence: 29,
+      isSynthetic: true,
+      backgroundWorkWake: {
+        records: [
+          {
+            sourceKind: "agent_task",
+            sourceId: "task-audit",
+            outcome: "completed",
+            title: "Repository audit",
+            workspaceId: "task-audit",
+          },
+          {
+            sourceKind: "workspace_turn",
+            sourceId: "wst_verify",
+            outcome: "error",
+            title: "Verification turn",
+            workspaceId: "workspace-verify",
+          },
+        ],
+      },
+    };
+  }
+
+  test("renders a quiet compact event without user-message affordances", () => {
+    const { container, getByRole, getByText, queryByRole, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer
+          message={createWakeMessage()}
+          onEditUserMessage={() => undefined}
+          userMessageNavigation={{
+            prevUserMessageId: "previous",
+            nextUserMessageId: "next",
+            onNavigate: () => undefined,
+          }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(getByText("2 background work updates")).toBeDefined();
+    const toggle = getByRole("button", { name: /show details/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText(/task_await/)).toBeNull();
+    expect(container.querySelector("[data-background-work-wake]")).not.toBeNull();
+    expect(container.querySelector("[data-message-meta]")).toBeNull();
+    expect(queryByRole("button", { name: "Copy" })).toBeNull();
+    expect(queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(queryByRole("button", { name: /previous user message/i })).toBeNull();
+    expect(queryByRole("button", { name: /next user message/i })).toBeNull();
+    expect(queryByText("auto")).toBeNull();
+  });
+
+  test("expands to the exact raw prompt and collapses it again", () => {
+    const { getByRole, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={createWakeMessage()} />
+      </TooltipProvider>
+    );
+
+    const toggle = getByRole("button", { name: /show details/i });
+    fireEvent.click(toggle);
+    const details = queryByText(/task_await/);
+    expect(details).toBeDefined();
+    expect(
+      details?.closest("[data-transcript-quote-root]")?.getAttribute("data-transcript-quote-text")
+    ).toBe(wakePrompt);
+
+    fireEvent.click(toggle);
+    expect(queryByText(/task_await/)).toBeNull();
+  });
+});
+
 describe("MessageRenderer bash monitor wake rows", () => {
   beforeEach(() => {
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;

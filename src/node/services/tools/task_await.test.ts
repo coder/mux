@@ -4,7 +4,12 @@ import { describe, it, expect, mock, spyOn } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
-import { COMPLETED_REPORT_REFETCH_NOTE } from "@/common/utils/tools/toolDefinitions";
+import {
+  ATTACH_FILE_ARTIFACT_GUIDANCE,
+  COMPLETED_REPORT_REFETCH_NOTE,
+  buildCompletedTaskResultNote,
+} from "@/common/utils/tools/toolDefinitions";
+import type { ExecutionHandle } from "@/common/types/execution";
 import type { WorkflowRunRecord, WorkflowRunStatus } from "@/common/types/workflow";
 import { createTaskAwaitTool } from "./task_await";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
@@ -37,6 +42,58 @@ function createWorkflowRun(
     updatedAt: "2026-01-01T00:00:05.000Z",
     events,
     steps: [],
+  };
+}
+
+function canonicalAgentHandle(
+  executionId: `exe_${string}`,
+  workspaceId: string,
+  status: ExecutionHandle["status"],
+  result?: ExecutionHandle["result"]
+): ExecutionHandle {
+  return {
+    version: 1,
+    executionId,
+    aliases: [workspaceId],
+    ownerSessionId: "parent-workspace",
+    requesterWorkspaceId: "parent-workspace",
+    target: { kind: "workspace", workspaceId, origin: "created" },
+    launchPolicy: { kind: "agent_task", agentId: "exec", title: `title:${workspaceId}` },
+    completionPolicy: { kind: "final_assistant_message" },
+    retentionPolicy: { kind: "delete_workspace_on_completion" },
+    attentionPolicy: "blocking_until_terminal",
+    status,
+    ...(result != null ? { result } : {}),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:01.000Z",
+    ...(status === "completed" || status === "interrupted" || status === "error"
+      ? { terminalAt: "2026-01-01T00:00:01.000Z" }
+      : {}),
+  };
+}
+
+function canonicalWorkspaceTurnHandle(
+  status: ExecutionHandle["status"],
+  result?: ExecutionHandle["result"]
+): ExecutionHandle {
+  return {
+    version: 1,
+    executionId: "exe_workspace_turn",
+    aliases: ["wst_workspace_turn"],
+    ownerSessionId: "parent-workspace",
+    requesterWorkspaceId: "parent-workspace",
+    target: { kind: "workspace", workspaceId: "child-workspace", origin: "created" },
+    launchPolicy: { kind: "workspace_turn", turnId: "turn-1", title: "Workspace turn" },
+    completionPolicy: { kind: "final_assistant_message" },
+    retentionPolicy: { kind: "retain_workspace" },
+    attentionPolicy: "blocking_until_terminal",
+    status,
+    ...(result != null ? { result } : {}),
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:01.000Z",
+    ...(status === "completed" || status === "interrupted" || status === "error"
+      ? { terminalAt: "2026-01-01T00:00:01.000Z" }
+      : {}),
   };
 }
 
@@ -73,6 +130,16 @@ describe("task_await tool", () => {
             parts: [{ type: "text", text: "Done" }],
             metadata: {},
           },
+          artifacts: {
+            attachFiles: [
+              {
+                path: "/owner/task-artifacts/wst_done/report.pdf",
+                filename: "report.pdf",
+                mediaType: "application/pdf",
+                sourceToolCallId: "attach-report",
+              },
+            ],
+          },
         })
       ),
     } as unknown as TaskService;
@@ -92,13 +159,25 @@ describe("task_await tool", () => {
         title: "Summary",
         messageId: "msg_1",
         finalMessageRef: { messageId: "msg_1", partCount: 1, textCharCount: 4 },
-        note: COMPLETED_REPORT_REFETCH_NOTE,
+        artifacts: {
+          attachFiles: [
+            {
+              path: "/owner/task-artifacts/wst_done/report.pdf",
+              filename: "report.pdf",
+              mediaType: "application/pdf",
+              sourceToolCallId: "attach-report",
+            },
+          ],
+        },
+        note: buildCompletedTaskResultNote(true),
       },
     ]);
+    expect(result.results[0]?.note).toContain(ATTACH_FILE_ARTIFACT_GUIDANCE);
+    expect(JSON.stringify(result)).not.toContain("base64");
     expect(result.results[0]?.finalMessage).toBeUndefined();
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
-      handleId: "wst_done",
+      taskId: "wst_done",
       status: "completed",
     });
   });
@@ -263,7 +342,7 @@ describe("task_await tool", () => {
 
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
-      handleId: "wst_running",
+      taskId: "wst_running",
       status: "completed",
     });
     expect(observedTimeoutMs).toBe(600_000);
@@ -324,7 +403,7 @@ describe("task_await tool", () => {
     ]);
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
-      handleId: "wst_race",
+      taskId: "wst_race",
       status: "completed",
     });
   });
@@ -376,8 +455,90 @@ describe("task_await tool", () => {
     ]);
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
-      handleId: "wst_failed",
+      taskId: "wst_failed",
       status: "error",
+    });
+  });
+
+  it("routes canonical workspace-turn snapshots and wst aliases through execution handles", async () => {
+    using tempDir = new TestTempDir("test-task-await-canonical-workspace-turn");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    let handle = canonicalWorkspaceTurnHandle("running");
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
+    const taskService = {
+      listActiveDescendantAgentExecutionIds: mock(() => Promise.resolve([])),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([])),
+      isWorkflowOwnedDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      getScopedExecutionSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "ok" as const,
+          handle,
+          workspaceId: handle.target.workspaceId,
+          source: "canonical" as const,
+        })
+      ),
+      markWorkspaceTurnTerminalAttentionConsumed,
+    } as unknown as TaskService;
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const execute = async (taskId: string) =>
+      (await Promise.resolve(
+        tool.execute!({ task_ids: [taskId], timeout_secs: 0 }, mockToolCallOptions)
+      )) as { results: Array<Record<string, unknown>> };
+
+    expect((await execute("exe_workspace_turn")).results[0]).toMatchObject({
+      status: "running",
+      taskId: "exe_workspace_turn",
+      handleKind: "workspace_turn",
+      workspaceId: "child-workspace",
+      note: "Workspace turn is still running.",
+    });
+
+    handle = canonicalWorkspaceTurnHandle("completed", {
+      kind: "completed",
+      reportMarkdown: "Canonical result",
+      finalMessageRef: { messageId: "msg-canonical", textCharCount: 16 },
+      artifacts: { attachFiles: [] },
+    });
+    const canonicalCompleted = (await execute("exe_workspace_turn")).results[0];
+    const aliasCompleted = (await execute("wst_workspace_turn")).results[0];
+    expect(canonicalCompleted).toMatchObject({
+      status: "completed",
+      taskId: "exe_workspace_turn",
+      handleKind: "workspace_turn",
+      workspaceId: "child-workspace",
+      reportMarkdown: "Canonical result",
+      finalMessageRef: { messageId: "msg-canonical", textCharCount: 16 },
+    });
+    expect(aliasCompleted).toEqual({ ...canonicalCompleted, taskId: "wst_workspace_turn" });
+
+    handle = canonicalWorkspaceTurnHandle("error", {
+      kind: "error",
+      error: "Canonical failure",
+    });
+    expect((await execute("exe_workspace_turn")).results[0]).toMatchObject({
+      status: "error",
+      taskId: "exe_workspace_turn",
+      handleKind: "workspace_turn",
+      workspaceId: "child-workspace",
+      error: "Canonical failure",
+    });
+
+    handle = canonicalWorkspaceTurnHandle("interrupted", {
+      kind: "interrupted",
+      message: "Stopped",
+    });
+    expect((await execute("exe_workspace_turn")).results[0]).toMatchObject({
+      status: "interrupted",
+      taskId: "exe_workspace_turn",
+      handleKind: "workspace_turn",
+      workspaceId: "child-workspace",
+      note: "Stopped",
+    });
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-workspace",
+      taskId: "exe_workspace_turn",
+      status: "completed",
     });
   });
 
@@ -514,6 +675,212 @@ describe("task_await tool", () => {
       }),
     ]);
   });
+  it("maps canonical registry terminal results for execution ids and aliases", async () => {
+    using tempDir = new TestTempDir("test-task-await-canonical-terminal-results");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const handles = new Map<string, ExecutionHandle>([
+      [
+        "exe_completed",
+        canonicalAgentHandle("exe_completed", "completed-alias", "completed", {
+          kind: "completed",
+          reportMarkdown: "canonical report",
+          structuredOutput: { durable: true },
+        }),
+      ],
+      [
+        "error-alias",
+        canonicalAgentHandle("exe_error", "error-alias", "error", {
+          kind: "error",
+          error: "canonical failure",
+          errorType: "provider_error",
+        }),
+      ],
+      [
+        "exe_interrupted",
+        canonicalAgentHandle("exe_interrupted", "interrupted-alias", "interrupted", {
+          kind: "interrupted",
+          message: "stopped by user",
+        }),
+      ],
+    ]);
+    const waitForAgentReport = mock(() => {
+      throw new Error("legacy report fallback must not run for canonical executions");
+    });
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      filterDescendantAgentTaskIds: mock((_workspaceId: string, taskIds: string[]) =>
+        Promise.resolve(taskIds)
+      ),
+      isWorkflowOwnedDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getScopedExecutionSnapshot: mock((_workspaceId: string, taskId: string) => {
+        const handle = handles.get(taskId);
+        return Promise.resolve(
+          handle == null
+            ? ({ kind: "not_found" } as const)
+            : ({
+                kind: "ok",
+                handle,
+                workspaceId: handle.target.workspaceId,
+                source: "canonical",
+              } as const)
+        );
+      }),
+      waitForAgentReport,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!(
+        {
+          task_ids: ["exe_completed", "error-alias", "exe_interrupted"],
+          timeout_secs: 0,
+        },
+        mockToolCallOptions
+      )
+    )) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([
+      {
+        status: "completed",
+        taskId: "exe_completed",
+        reportMarkdown: "canonical report",
+        structuredOutput: { durable: true },
+        title: "title:completed-alias",
+        elapsed_ms: 1000,
+        note: COMPLETED_REPORT_REFETCH_NOTE,
+      },
+      {
+        status: "error",
+        taskId: "error-alias",
+        error: "canonical failure",
+        elapsed_ms: 1000,
+      },
+      {
+        status: "interrupted",
+        taskId: "exe_interrupted",
+        elapsed_ms: 1000,
+        note: "stopped by user",
+      },
+    ]);
+    expect(waitForAgentReport).not.toHaveBeenCalled();
+  });
+
+  it("waits through the canonical execution adapter and returns active timeout snapshots", async () => {
+    using tempDir = new TestTempDir("test-task-await-canonical-wait");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const running = canonicalAgentHandle("exe_running", "running-alias", "running");
+    const completed = canonicalAgentHandle("exe_running", "running-alias", "completed", {
+      kind: "completed",
+      reportMarkdown: "settled canonically",
+    });
+    const getScopedExecutionSnapshot = mock(() =>
+      Promise.resolve({
+        kind: "ok" as const,
+        handle: running,
+        workspaceId: "running-alias",
+        source: "canonical" as const,
+      })
+    );
+    const waitForScopedExecutionTerminal = mock(() =>
+      Promise.resolve({ kind: "terminal" as const, handle: completed })
+    );
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      filterDescendantAgentTaskIds: mock((_workspaceId: string, taskIds: string[]) =>
+        Promise.resolve(taskIds)
+      ),
+      isWorkflowOwnedDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getScopedExecutionSnapshot,
+      waitForScopedExecutionTerminal,
+      waitForAgentReport: mock(() => {
+        throw new Error("legacy report fallback must not run");
+      }),
+    } as unknown as TaskService;
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const completedResult: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["running-alias"], timeout_secs: 1 }, mockToolCallOptions)
+    );
+    expect(completedResult).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "running-alias",
+          reportMarkdown: "settled canonically",
+          title: "title:running-alias",
+          elapsed_ms: 1000,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
+    });
+    expect(waitForScopedExecutionTerminal).toHaveBeenCalledWith(
+      "parent-workspace",
+      "running-alias",
+      expect.objectContaining({ timeoutMs: 1000, backgroundOnMessageQueued: true })
+    );
+
+    const nowSpy = spyOn(Date, "now").mockReturnValue(Date.parse("2026-01-01T00:00:02.000Z"));
+    try {
+      const activeResult: unknown = await Promise.resolve(
+        tool.execute!({ task_ids: ["running-alias"], timeout_secs: 0 }, mockToolCallOptions)
+      );
+      expect(activeResult).toEqual({
+        results: [{ status: "running", taskId: "running-alias", elapsed_ms: 2000 }],
+      });
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("keeps adapted legacy executions on the report artifact fallback", async () => {
+    using tempDir = new TestTempDir("test-task-await-adapted-legacy-fallback");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const legacy = canonicalAgentHandle(
+      "exe_legacy_agent_task_deadbeef",
+      "legacy-child",
+      "completed",
+      {
+        kind: "completed",
+        reportMarkdown: "adapted snapshot",
+      }
+    );
+    const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "legacy artifact" }));
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      filterDescendantAgentTaskIds: mock((_workspaceId: string, taskIds: string[]) =>
+        Promise.resolve(taskIds)
+      ),
+      isWorkflowOwnedDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getScopedExecutionSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "ok" as const,
+          handle: legacy,
+          workspaceId: "legacy-child",
+          source: "legacy" as const,
+        })
+      ),
+      getAgentTaskStatus: mock(() => "reported" as const),
+      waitForAgentReport,
+    } as unknown as TaskService;
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["legacy-child"], timeout_secs: 0 }, mockToolCallOptions)
+    );
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "legacy-child",
+          reportMarkdown: "legacy artifact",
+          title: undefined,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
+    });
+    expect(waitForAgentReport).toHaveBeenCalledTimes(1);
+  });
+
   it("returns completed results for all awaited tasks", async () => {
     using tempDir = new TestTempDir("test-task-await-tool");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
@@ -1601,7 +1968,19 @@ describe("task_await tool", () => {
     using tempDir = new TestTempDir("test-task-await-tool-backgrounded");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
-    const waitForAgentReport = mock(() => Promise.reject(new ForegroundWaitBackgroundedError()));
+    const waitForAgentReport = mock(() =>
+      Promise.reject(
+        new ForegroundWaitBackgroundedError({
+          reason: "progress_report_received",
+          sourceTaskId: "t1",
+          report: {
+            agentType: "explore",
+            title: "Progress",
+            reportMarkdown: "Found the relevant path.",
+          },
+        })
+      )
+    );
     const getAgentTaskStatus = mock(() => "running" as const);
 
     const taskService = {
@@ -1618,13 +1997,85 @@ describe("task_await tool", () => {
     );
 
     expect(result).toEqual({
-      results: [
-        {
-          status: "running",
-          taskId: "t1",
-          note: "Task sent to background because a new message was queued. Use task_await to monitor progress.",
+      results: [{ status: "running", taskId: "t1" }],
+      interruption: {
+        reason: "progress_report_received",
+        sourceTaskId: "t1",
+        report: {
+          agentType: "explore",
+          title: "Progress",
+          reportMarkdown: "Found the relevant path.",
         },
+      },
+    });
+  });
+
+  it("releases a multi-task wait immediately when one child reports progress", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-progress-interruption");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const interruption = {
+      reason: "progress_report_received",
+      sourceTaskId: "t1",
+      report: {
+        agentType: "explore",
+        title: "Progress",
+        reportMarkdown: "Found the relevant path.",
+      },
+    } as const;
+    let interruptFirstWait: ((error: Error) => void) | undefined;
+    let secondWaitSignal: AbortSignal | undefined;
+    let markSecondWaitStarted: (() => void) | undefined;
+    const secondWaitStarted = new Promise<void>((resolve) => {
+      markSecondWaitStarted = resolve;
+    });
+
+    const waitForAgentReport = mock((taskId: string, options?: { abortSignal?: AbortSignal }) => {
+      if (taskId === "t1") {
+        return new Promise<never>((_resolve, reject) => {
+          interruptFirstWait = reject;
+        });
+      }
+      secondWaitSignal = options?.abortSignal;
+      markSecondWaitStarted?.();
+      return new Promise<never>((_resolve, reject) => {
+        options?.abortSignal?.addEventListener("abort", () => reject(new Error("Interrupted")), {
+          once: true,
+        });
+      });
+    });
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      waitForAgentReport,
+      getAgentTaskStatus: mock(() => "running" as const),
+    } as unknown as TaskService;
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const outerController = new AbortController();
+    const resultPromise = Promise.resolve(
+      tool.execute!(
+        { task_ids: ["t1", "t2"] },
+        { ...mockToolCallOptions, abortSignal: outerController.signal }
+      )
+    );
+
+    await secondWaitStarted;
+    interruptFirstWait?.(new ForegroundWaitBackgroundedError(interruption));
+    for (let i = 0; i < 10 && secondWaitSignal?.aborted !== true; i += 1) {
+      await Promise.resolve();
+    }
+    const releasedByProgressReport = secondWaitSignal?.aborted === true;
+    if (!releasedByProgressReport) {
+      outerController.abort();
+      await resultPromise.catch(() => undefined);
+    }
+    expect(releasedByProgressReport).toBe(true);
+
+    expect(await resultPromise).toEqual({
+      results: [
+        { status: "running", taskId: "t1" },
+        { status: "running", taskId: "t2" },
       ],
+      interruption,
     });
   });
 

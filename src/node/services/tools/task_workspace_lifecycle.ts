@@ -4,14 +4,8 @@ import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools"
 import {
   TaskWorkspaceLifecycleToolResultSchema,
   TOOL_DEFINITIONS,
-  type TaskWorkspaceLifecycleActionSchema,
 } from "@/common/utils/tools/toolDefinitions";
-import { isWorkspaceTurnTaskId } from "@/node/services/taskHandleStore";
 import { parseToolResult, requireTaskService, requireWorkspaceId } from "./toolUtils";
-
-import type { z } from "zod";
-
-type LifecycleAction = z.infer<typeof TaskWorkspaceLifecycleActionSchema>;
 
 interface LifecycleTarget {
   taskId?: string | null;
@@ -30,21 +24,6 @@ function normalizeTarget(target: LifecycleTarget): { taskId?: string; workspaceI
 
 function targetKey(target: { taskId?: string; workspaceId?: string }): string {
   return target.taskId != null ? `task:${target.taskId}` : `workspace:${target.workspaceId ?? ""}`;
-}
-
-function rejectInvalidWorkspaceTaskId(
-  action: LifecycleAction,
-  target: { taskId?: string; workspaceId?: string }
-) {
-  if (target.taskId == null || isWorkspaceTurnTaskId(target.taskId)) {
-    return null;
-  }
-  return {
-    status: "invalid_scope" as const,
-    action,
-    taskId: target.taskId,
-    note: "task_workspace_lifecycle only accepts workspace-turn task IDs (wst_...).",
-  };
 }
 
 export const createTaskWorkspaceLifecycleTool: ToolFactory = (config: ToolConfiguration) => {
@@ -71,11 +50,6 @@ export const createTaskWorkspaceLifecycleTool: ToolFactory = (config: ToolConfig
 
       const results = await Promise.all(
         targets.map(async (target) => {
-          const invalidTaskId = rejectInvalidWorkspaceTaskId(args.action, target);
-          if (invalidTaskId != null) {
-            return invalidTaskId;
-          }
-
           switch (args.action) {
             case "archive": {
               const result = await taskService.archiveOwnedWorkspaceTurnWorkspace(

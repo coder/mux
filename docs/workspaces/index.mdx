@@ -7,6 +7,17 @@ Workspaces let you run multiple agent sessions in parallel.
 
 Each workspace has its own chat history and, depending on runtime, its own working directory and Git checkout state.
 
+## Project Chat
+
+Selecting a project opens its persistent **Project Chat**. This is the primary place to coordinate work across the project:
+
+- Ask Orchestrator to create a workspace for a task.
+- Keep chatting while workspace agents implement, compile, and test in the background.
+- Ask Orchestrator to follow up in an existing workspace or archive and remove workspaces when they are no longer needed.
+- Open any workspace from the sidebar when you want its detailed transcript or checkout-specific controls.
+
+Created workspaces appear in the project sidebar immediately. The project row's **+** action (or `Ctrl+N`) still opens the manual workspace creation form when you want to choose the branch or runtime yourself.
+
 ## Runtimes
 
 Runtimes decide where a workspace runs and how isolated its filesystem is:

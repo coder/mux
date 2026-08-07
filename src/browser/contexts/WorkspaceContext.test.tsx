@@ -993,7 +993,7 @@ describe("WorkspaceContext", () => {
     expect(workspaceApi.getInfo).toHaveBeenCalledWith({ workspaceId: "ws-info" });
   });
 
-  test("beginWorkspaceCreation clears selection and tracks pending state", async () => {
+  test("beginWorkspaceCreation clears selection and opens an explicit manual draft", async () => {
     createMockAPI({
       workspace: {
         list: () => Promise.resolve([createProjectWorkspaceMetadata("ws-existing", "/existing")]),
@@ -1014,6 +1014,7 @@ describe("WorkspaceContext", () => {
 
     expect(ctx().selectedWorkspace).toBeNull();
     expect(ctx().pendingNewWorkspaceProject).toBe("/new/project");
+    expect(ctx().pendingNewWorkspaceDraftId).toBeTruthy();
   });
 
   test("reacts to metadata update events (new workspace)", async () => {
@@ -1568,13 +1569,14 @@ describe("WorkspaceContext", () => {
 
     await waitFor(() => expect(ctx().loading).toBe(false));
 
-    // User starts workspace creation (this sets pendingNewWorkspaceProject)
+    // User starts manual workspace creation (this opens a project-scoped draft).
     act(() => {
       ctx().beginWorkspaceCreation("/new-project");
     });
 
     // Verify pending state is set
     expect(ctx().pendingNewWorkspaceProject).toBe("/new-project");
+    expect(ctx().pendingNewWorkspaceDraftId).toBeTruthy();
     expect(ctx().selectedWorkspace).toBeNull();
 
     // Now the launch project response arrives

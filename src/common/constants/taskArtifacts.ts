@@ -1,0 +1,2 @@
+export const WORKSPACE_TURN_TASK_ARTIFACTS_DIR = "task-artifacts";
+export const MAX_WORKSPACE_TURN_ATTACH_FILE_ARTIFACTS = 10;

@@ -11,7 +11,8 @@ import type { ComponentType } from "react";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { LAST_VISITED_ROUTE_KEY, LEFT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
+import { getProjectRouteId } from "@/common/utils/projectRouteId";
 import { MOBILE_TOUCH_TARGET_PX, NARROW_VIEWPORT_MAX_WIDTH_PX } from "@/constants/layout";
 
 import { appMeta, AppWithMocks, PIXEL_DISABLED, type AppStory } from "./meta.js";
@@ -19,6 +20,7 @@ import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { STABLE_TIMESTAMP, createWorkspace, groupWorkspacesByProject } from "./mocks/workspaces";
 import { setupSimpleChatStory } from "./helpers/chatSetup";
 import { clearWorkspaceSelection, collapseRightSidebar, expandProjects } from "./helpers/uiState";
+import { createStaticChatHandler } from "./mocks/chatHandlers";
 import { createMockORPCClient } from "./mocks/orpc";
 import {
   blurActiveElement,
@@ -137,17 +139,26 @@ async function stabilizePhoneViewportStory(canvasElement: HTMLElement) {
   blurActiveElement();
 }
 
-export const IPhone16e: AppStory = {
+export const IPhone16eProjectChat: AppStory = {
   render: () => (
     <AppWithMocks
-      setup={() =>
-        setupSimpleChatStory({
-          workspaceId: "ws-iphone-16e",
-          workspaceName: "mobile",
-          projectName: "mux",
-          messages: [...MESSAGES],
-        })
-      }
+      setup={() => {
+        const projectPath = "/Users/dev/projects/customer-platform-with-a-long-name";
+        clearWorkspaceSelection();
+        updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, true);
+        updatePersistedState(
+          LAST_VISITED_ROUTE_KEY,
+          `/project?project=${getProjectRouteId(projectPath)}`
+        );
+        const handler = createStaticChatHandler([...MESSAGES]);
+        return createMockORPCClient({
+          projects: new Map([
+            [projectPath, { workspaces: [], trusted: true, displayName: "Customer Platform" }],
+          ]),
+          workspaces: [],
+          onChat: (_workspaceId, emit) => handler(emit),
+        });
+      }}
     />
   ),
   decorators: [IPhone16eDecorator],
@@ -159,6 +170,64 @@ export const IPhone16e: AppStory = {
   },
   play: async ({ canvasElement }) => {
     await stabilizePhoneViewportStory(canvasElement);
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(() => {
+      if (!storyRoot.querySelector('[data-testid="project-chat-header"]')) {
+        throw new Error("Project Chat header not rendered");
+      }
+      if (storyRoot.scrollWidth > storyRoot.clientWidth) {
+        throw new Error(
+          `Project Chat overflowed horizontally: ${storyRoot.scrollWidth}px > ${storyRoot.clientWidth}px`
+        );
+      }
+    });
+  },
+};
+
+export const IPhone16eProjectChatTrustGate: AppStory = {
+  tags: ["project-chat-trust-gate"],
+  render: () => (
+    <AppWithMocks
+      setup={() => {
+        const projectPath = "/Users/dev/projects/untrusted-customer-platform";
+        clearWorkspaceSelection();
+        updatePersistedState(LEFT_SIDEBAR_COLLAPSED_KEY, true);
+        updatePersistedState(
+          LAST_VISITED_ROUTE_KEY,
+          `/project?project=${getProjectRouteId(projectPath)}`
+        );
+        return createMockORPCClient({
+          projects: new Map([
+            [projectPath, { workspaces: [], trusted: false, displayName: "Customer Platform" }],
+          ]),
+          workspaces: [],
+        });
+      }}
+    />
+  ),
+  decorators: [IPhone16eDecorator],
+  parameters: {
+    ...appMeta.parameters,
+    // The trust dialog portals outside the fixed-width frame in the Storybook test runner. Keep the
+    // story as a deterministic interaction contract; responsive capture is validated at phone width.
+    pixel: PIXEL_DISABLED,
+  },
+  play: async ({ canvasElement }) => {
+    const storyRoot = document.getElementById("storybook-root") ?? canvasElement;
+    await waitFor(() => {
+      if (!storyRoot.querySelector('[data-testid="project-chat-trust-gate"]')) {
+        throw new Error("Project Chat trust gate not rendered");
+      }
+      const dialog = document.body.querySelector<HTMLElement>('[role="dialog"]');
+      if (!dialog?.textContent?.includes("Trust this project?")) {
+        throw new Error("Project Chat trust confirmation not rendered");
+      }
+      if (storyRoot.scrollWidth > storyRoot.clientWidth) {
+        throw new Error(
+          `Project Chat trust gate overflowed horizontally: ${storyRoot.scrollWidth}px > ${storyRoot.clientWidth}px`
+        );
+      }
+    });
   },
 };
 
