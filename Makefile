@@ -406,7 +406,7 @@ test-integration: node_modules/.installed build-main ## Run all tests (unit + in
 
 test-unit: node_modules/.installed build-main ## Run unit tests
 	@bun test src
-	@bun test ./tests/ui/storybook/
+	@bun test ./tests/ui/storybook/ ./tests/ui/domIsolation.test.ts
 
 test: test-unit ## Alias for test-unit
 

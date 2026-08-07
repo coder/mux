@@ -225,6 +225,17 @@ export function installDom(): () => void {
       previous.IntersectionObserver;
     (globalThis as unknown as { ResizeObserver?: unknown }).ResizeObserver =
       previous.ResizeObserver;
+
+    // Self-heal: some tests tear down with `globalThis.document = undefined`,
+    // and installDom() snapshots taken after such a teardown would restore that
+    // poisoned state here, propagating an undefined `document` to the NEXT test
+    // file's module evaluation. Modules that probe the environment at eval time
+    // (e.g. @react-dnd/asap, Radix's use-layout-effect) then crash or mis-bind,
+    // failing every later react-dnd consumer in the process. Keep a baseline
+    // DOM alive at file boundaries instead.
+    if (typeof globalThis.document === "undefined" || typeof globalThis.window === "undefined") {
+      installDom();
+    }
   };
 }
 
@@ -243,3 +254,12 @@ export function installDom(): () => void {
 if (typeof globalThis.document === "undefined") {
   installDom();
 }
+
+// Evaluate react-dnd (and its @react-dnd/asap dependency) while the baseline
+// DOM above is guaranteed live. asap binds a MutationObserver-based scheduler
+// at module-eval time and crashes on `document.createTextNode` if it is first
+// evaluated at a file boundary where a teardown clobbered `document` while the
+// baseline MutationObserver global survives. A require (not a hoisted static
+// import) is required so evaluation happens after the bootstrap.
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+require("react-dnd");
