@@ -114,6 +114,38 @@ describe("BackupSection", () => {
     await canvas.findByText("Backup to repository");
   });
 
+  test("loads settings when the config change subscription fails", async () => {
+    const client = createMockORPCClient({
+      backupSettings: {
+        repoUrl: "git@github.com:example/dotfiles.git",
+        branch: "main",
+        path: "mux/",
+      },
+    });
+    jest
+      .spyOn(client.config, "onConfigChanged")
+      .mockImplementation(() => Promise.reject(new Error("ipc failure")));
+
+    const view = render(
+      React.createElement(
+        ThemeProvider,
+        null,
+        React.createElement(
+          TooltipProvider,
+          null,
+          React.createElement(APIProvider, {
+            client,
+            children: React.createElement(BackupSection),
+          })
+        )
+      )
+    );
+    const canvas = within(view.container);
+
+    const repoInput = await canvas.findByLabelText("Repository URL");
+    expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+  });
+
   test("wires keyboard actions through save, validate, preview, backup, and restore", async () => {
     const { client, view } = renderBackupSection();
     const canvas = within(view.container);

@@ -202,24 +202,31 @@ export function BackupSection() {
     };
 
     void (async () => {
+      // Subscribed before the initial load so no change can land between the two, but a
+      // failed subscription must not block that load: it only costs live updates.
+      let nextEvent: Promise<IteratorResult<unknown>> | null = null;
       try {
         const subscribedIterator = await api.config.onConfigChanged(undefined, { signal });
         if (signal.aborted) {
           await subscribedIterator.return?.();
           return;
         }
-
         iterator = subscribedIterator;
-        let nextEvent = subscribedIterator.next();
-        await refresh();
-        while (!signal.aborted) {
+        nextEvent = subscribedIterator.next();
+      } catch {
+        // Fall through to the initial load without live updates.
+      }
+      const subscribed = iterator;
+      await refresh();
+      try {
+        while (subscribed !== null && nextEvent !== null && !signal.aborted) {
           const event = await nextEvent;
           if (event.done || signal.aborted) break;
-          nextEvent = subscribedIterator.next();
+          nextEvent = subscribed.next();
           await refresh();
         }
       } catch {
-        // Keep the section mounted if the config subscription fails.
+        // Keep the section mounted if the config stream fails.
       }
     })();
 
