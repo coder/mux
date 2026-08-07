@@ -3,10 +3,11 @@
 // if `document` was undefined when react-dom loaded.
 import "../../../../../tests/ui/dom";
 
-import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { createContext, type ReactNode } from "react";
 import { installDom } from "../../../../../tests/ui/dom";
+import { restoreModulesAfterSuite } from "../../../../../tests/ui/moduleMocks";
 import * as RealAPIModule from "@/browser/contexts/API";
 import * as RealExperimentsModule from "@/browser/hooks/useExperiments";
 import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
@@ -176,18 +177,11 @@ function createFakeMemoryApi(initialFiles: MemoryFileInfo[], options: FakeMemory
 
 let fake: ReturnType<typeof createFakeMemoryApi> | null = null;
 
-// bun test shares module mocks across suites; capture the real exports so
-// afterAll can restore them (a leaked closed-Dialog stub renders nothing,
-// emptying any later suite that mounts a dialog trigger).
-const realAPIExports = { ...RealAPIModule };
-const realExperimentsExports = { ...RealExperimentsModule };
-const realDialogExports = { ...RealDialogModule };
-
-afterAll(() => {
-  void mock.module("@/browser/contexts/API", () => realAPIExports);
-  void mock.module("@/browser/hooks/useExperiments", () => realExperimentsExports);
-  void mock.module("@/browser/components/Dialog/Dialog", () => realDialogExports);
-});
+restoreModulesAfterSuite([
+  ["@/browser/contexts/API", { ...RealAPIModule }],
+  ["@/browser/hooks/useExperiments", { ...RealExperimentsModule }],
+  ["@/browser/components/Dialog/Dialog", { ...RealDialogModule }],
+]);
 
 void mock.module("@/browser/contexts/API", () => ({
   APIContext: createContext(null),

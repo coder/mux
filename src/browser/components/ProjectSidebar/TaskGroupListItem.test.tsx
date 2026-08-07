@@ -71,9 +71,12 @@ describe("TaskGroupListItem", () => {
     window.addEventListener("keydown", onWindowKeydown);
     const view = renderTaskGroup({ kind: "variants", onArchiveAll, onToggle });
     fireEvent.contextMenu(view.getByTestId("task-group-best-of-demo"));
-    // findByRole: the menu item stays hidden from the a11y tree until Radix
-    // popper's async positioning resolves, so a sync query races it.
-    const menuItem = await view.findByRole("button", { name: /Archive all variants/ });
+    // hidden: PositionedMenu keeps content visibility-hidden until a rAF
+    // placement pass; shortcut handling must not depend on that timing.
+    const menuItem = await view.findByRole("button", {
+      name: /Archive all variants/,
+      hidden: true,
+    });
 
     fireEvent.keyDown(menuItem, { key: "Enter" });
     expect(onToggle).not.toHaveBeenCalled();

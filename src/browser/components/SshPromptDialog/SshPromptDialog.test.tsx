@@ -9,6 +9,10 @@ import {
 } from "@/browser/testUtils";
 import type { ReactNode } from "react";
 import { installDom } from "../../../../tests/ui/dom";
+import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
+
+restoreModulesAfterSuite([["@/browser/components/Dialog/Dialog", { ...RealDialogModule }]]);
 
 // Self-contained dialog stub — bun's mock.module is process-global, so other
 // test files may register incomplete Dialog stubs that omit

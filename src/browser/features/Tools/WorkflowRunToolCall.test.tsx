@@ -2,6 +2,8 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { GlobalWindow } from "happy-dom";
 import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
+import * as RealDialogModule from "@/browser/components/Dialog/Dialog";
 import {
   cloneElement,
   createContext,
@@ -54,6 +56,8 @@ interface MockDialogTriggerChildProps {
   "aria-expanded"?: boolean;
   "aria-haspopup"?: "dialog";
 }
+
+restoreModulesAfterSuite([["@/browser/components/Dialog/Dialog", { ...RealDialogModule }]]);
 
 void mock.module("@/browser/components/Dialog/Dialog", () => ({
   Dialog: (props: {
