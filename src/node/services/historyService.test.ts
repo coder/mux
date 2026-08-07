@@ -2381,7 +2381,7 @@ describe("HistoryService", () => {
       }
     });
 
-    it("strips chat usage before an archive-confined cut can change the window", async () => {
+    it("restores chat usage when an archive-confined cut fails before committing", async () => {
       // Malformed boundary-less state: rotation created the archive, then the
       // boundary row was deleted, so the whole file pair is one active window.
       await appendNumberedMessages(service, wsId, 12);
@@ -2396,11 +2396,12 @@ describe("HistoryService", () => {
       const deleteResult = await service.deleteMessage(wsId, "boundary-1");
       expect(deleteResult.success).toBe(true);
 
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
       const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
 
       // Fail the archive rewrite (the only serialize whose rows are archive
-      // rows). The chat sanitization must already be durable at that point so
-      // a crash here cannot leave a shrunken window with reseedable usage.
+      // rows). No window-changing step committed, so the pre-cut sanitization
+      // must be rolled back and the retained usage stays seedable.
       const internals = service as unknown as {
         serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
       };
@@ -2417,19 +2418,14 @@ describe("HistoryService", () => {
         const truncateResult = await service.truncateHistory(wsId, 0.25);
         expect(truncateResult.success).toBe(false);
         expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
-        const activeAssistant = (await readJsonlFile(chatPath(wsId))).find(
-          (msg) => msg.id === "assistant-active"
-        );
-        expect(activeAssistant).toBeDefined();
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
       } finally {
         serializeSpy.mockRestore();
       }
     });
 
-    it("strips chat usage before a whole-archive cut can change the window", async () => {
-      // Same malformed boundary-less state, but the cut consumes the archive:
-      // the archive delete must find chat usage already stripped.
+    it("restores chat usage when a whole-archive cut fails before committing", async () => {
+      // Same malformed boundary-less state, but the cut consumes the archive.
       await appendNumberedMessages(service, wsId, 2);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
       await service.appendToHistory(
@@ -2446,6 +2442,7 @@ describe("HistoryService", () => {
       const deleteResult = await service.deleteMessage(wsId, "boundary-1");
       expect(deleteResult.success).toBe(true);
 
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
       const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
 
       const realRm = fs.rm;
@@ -2461,13 +2458,59 @@ describe("HistoryService", () => {
         const truncateResult = await service.truncateHistory(wsId, 0.5);
         expect(truncateResult.success).toBe(false);
         expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        // Cut not applied: all chat rows survive, but usage is stripped.
-        expect(chatRows.some((msg) => msg.id === "user-heavy")).toBe(true);
-        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
       } finally {
         rmSpy.mockRestore();
+      }
+    });
+
+    it("keeps usage stripped when the chat cut fails after the archive delete", async () => {
+      // The window already changed (archive rows deleted), so the failure
+      // must NOT restore usage: a restart pairing the shrunken window with
+      // pre-cut usage would reseed a spurious auto-compaction.
+      await appendNumberedMessages(service, wsId, 2);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
+      expect(deleteResult.success).toBe(true);
+
+      // Serialize call 1 is the pre-cut sanitization; call 2 is the chat cut.
+      const internals = service as unknown as {
+        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
+      };
+      const realSerialize = internals.serializeHistoryEntries.bind(service);
+      let serializeCalls = 0;
+      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
+        (messages: MuxMessage[], workspaceId: string) => {
+          serializeCalls += 1;
+          if (serializeCalls === 2) {
+            throw new Error("injected chat cut serialize failure");
+          }
+          return realSerialize(messages, workspaceId);
+        }
+      );
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        expect(truncateResult.success).toBe(false);
+        expect(await fileExists(archivePath(wsId))).toBe(false);
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        // Chat cut not applied: rows survive, but usage stays stripped.
+        expect(chatRows.some((msg) => msg.id === "user-heavy")).toBe(true);
+        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant).toBeDefined();
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      } finally {
+        serializeSpy.mockRestore();
       }
     });
 
