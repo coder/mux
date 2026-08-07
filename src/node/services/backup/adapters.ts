@@ -6,7 +6,7 @@ import { normalizeUserPreferences } from "@/common/config/schemas/userPreference
 import {
   BackupServiceError,
   type BackupGitRepo,
-  type BackupPayload,
+  type BackupPayloadStore,
   type PreparedBackupRepository,
 } from "./backupService";
 import { BACKUP_GIT_TIMEOUT_MS } from "@/constants/terminationTimeouts";
@@ -83,7 +83,7 @@ export function createBackupGitRepo(options: {
 
     async prepare(settings) {
       const cache = newCache(settings);
-      const remoteCommit = await cache.materialize(settings.path);
+      const remoteCommit = await cache.materialize();
       const repository = {
         rootDir: cache.cachePath,
         credential: cache.credential ?? "ambient",
@@ -93,13 +93,13 @@ export function createBackupGitRepo(options: {
       return repository;
     },
 
-    async getPushChanges(repository, managedPath) {
-      return parsePorcelainStatus(await cacheFor(repository).porcelainStatus(managedPath));
+    async getPushChanges(repository) {
+      return parsePorcelainStatus(await cacheFor(repository).porcelainStatus());
     },
 
     async commitAndPush(repository, commitOptions) {
       const cache = cacheFor(repository);
-      const commit = await cache.stageAndCommit(commitOptions.managedPath, commitOptions.message);
+      const commit = await cache.stageAndCommit(commitOptions.message);
       if (commit == null) {
         // Nothing to commit, but the remote may have moved since prepare(). Reporting
         // "unchanged" without checking would persist a commit that no longer describes
@@ -139,7 +139,7 @@ function sameMode(a: BackupFile, b: BackupFile): boolean {
   return (a.executable === true) === (b.executable === true);
 }
 
-export function createBackupPayloadStore(options: { config: Config }): BackupPayload {
+export function createBackupPayloadStore(options: { config: Config }): BackupPayloadStore {
   const muxRoot = options.config.rootDir;
 
   // Walks the chain so a symlinked ancestor is rejected before writeBackupPayload's

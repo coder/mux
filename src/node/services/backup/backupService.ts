@@ -4,11 +4,12 @@ import type { Config } from "@/node/config";
 import type { Result } from "@/common/types/result";
 import { Err, Ok } from "@/common/types/result";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
-import type {
-  BackupCommandApproval,
-  BackupCredentialKind,
-  BackupFileChange,
-  BackupOperationError,
+import {
+  BackupOperationErrorSchema,
+  type BackupCommandApproval,
+  type BackupCredentialKind,
+  type BackupFileChange,
+  type BackupOperationError,
 } from "@/common/orpc/schemas/backup";
 import {
   SettingsBackupInputSchema,
@@ -30,21 +31,17 @@ export interface BackupGitRepo {
     empty: boolean;
   }>;
   prepare(settings: SettingsBackupInput): Promise<PreparedBackupRepository>;
-  getPushChanges(
-    repository: PreparedBackupRepository,
-    managedPath: string
-  ): Promise<BackupFileChange[]>;
+  getPushChanges(repository: PreparedBackupRepository): Promise<BackupFileChange[]>;
   commitAndPush(
     repository: PreparedBackupRepository,
     options: {
-      managedPath: string;
       message: string;
       expectedRemoteCommit: string | null;
     }
   ): Promise<{ commit: string; changed: boolean; credential: BackupCredentialKind }>;
 }
 
-export interface BackupPayload {
+export interface BackupPayloadStore {
   exportTo(options: {
     repositoryRoot: string;
     managedPath: string;
@@ -69,7 +66,7 @@ export interface BackupPayload {
 
 export interface BackupServiceDependencies {
   gitRepo: BackupGitRepo;
-  payload: BackupPayload;
+  payload: BackupPayloadStore;
 }
 
 type BackupErrorCode = BackupOperationError["code"];
@@ -109,17 +106,6 @@ function snapshotOrder(name: string): string {
   return `${match?.[1] ?? ""}\u0000${match?.[2] ?? ""}\u0000${name}`;
 }
 
-const BACKUP_ERROR_CODES = new Set<BackupErrorCode>([
-  "AUTH_FAILED",
-  "REMOTE_UNREACHABLE",
-  "REPOSITORY_CHANGED",
-  "INVALID_BACKUP",
-  "SECRET_DETECTED",
-  "COMMAND_APPROVAL_REQUIRED",
-  "IO_ERROR",
-  "GIT_ERROR",
-]);
-
 export class BackupServiceError extends Error {
   constructor(
     public readonly code: BackupErrorCode,
@@ -155,12 +141,10 @@ function toOperationError(error: unknown): BackupOperationError {
 
   if (error instanceof Error) {
     const candidate = error as Error & { code?: unknown; files?: unknown };
-    if (
-      typeof candidate.code === "string" &&
-      BACKUP_ERROR_CODES.has(candidate.code as BackupErrorCode)
-    ) {
+    const code = BackupOperationErrorSchema.shape.code.safeParse(candidate.code);
+    if (code.success) {
       return {
-        code: candidate.code as BackupErrorCode,
+        code: code.data,
         message: candidate.message,
         files: Array.isArray(candidate.files)
           ? candidate.files.filter((file): file is string => typeof file === "string")
@@ -257,34 +241,27 @@ export class BackupService {
     >
   > {
     return this.withRepoLock(settings, async (normalized) => {
-      try {
-        const repository = await this.dependencies.gitRepo.prepare(normalized);
-        // One critical section: the reported restore plan and the exported payload must describe
-        // the same local state, or the two halves of the preview disagree.
-        const { restorePreview, exported } = await this.withLocalPayload(async () => ({
-          restorePreview: await this.dependencies.payload.previewRestore({
-            repositoryRoot: repository.rootDir,
-            managedPath: normalized.path,
-          }),
-          exported: await this.dependencies.payload.exportTo({
-            repositoryRoot: repository.rootDir,
-            managedPath: normalized.path,
-          }),
-        }));
-        const pushChanges = await this.dependencies.gitRepo.getPushChanges(
-          repository,
-          normalized.path
-        );
-        return Ok({
-          pushChanges,
-          restoreChanges: restorePreview.changes,
-          localOnlyFiles: restorePreview.localOnlyFiles,
-          redactions: exported.redactions,
-          commandApprovals: restorePreview.commandApprovals,
-        });
-      } catch (error) {
-        return Err(toOperationError(error));
-      }
+      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      // One critical section: the reported restore plan and the exported payload must describe
+      // the same local state, or the two halves of the preview disagree.
+      const { restorePreview, exported } = await this.withLocalPayload(async () => ({
+        restorePreview: await this.dependencies.payload.previewRestore({
+          repositoryRoot: repository.rootDir,
+          managedPath: normalized.path,
+        }),
+        exported: await this.dependencies.payload.exportTo({
+          repositoryRoot: repository.rootDir,
+          managedPath: normalized.path,
+        }),
+      }));
+      const pushChanges = await this.dependencies.gitRepo.getPushChanges(repository);
+      return Ok({
+        pushChanges,
+        restoreChanges: restorePreview.changes,
+        localOnlyFiles: restorePreview.localOnlyFiles,
+        redactions: exported.redactions,
+        commandApprovals: restorePreview.commandApprovals,
+      });
     });
   }
 
@@ -304,40 +281,35 @@ export class BackupService {
   > {
     const approvedSecretDigest = options.approvedSecretDigest;
     return this.withRepoLock(settings, async (normalized) => {
-      try {
-        const repository = await this.dependencies.gitRepo.prepare(normalized);
-        const exported = await this.withLocalPayload(() =>
-          this.dependencies.payload.exportTo({
-            repositoryRoot: repository.rootDir,
-            managedPath: normalized.path,
-          })
-        );
-        // Approval is bound to the exact flagged bytes, so an override the user granted for
-        // one payload cannot publish a different one another window wrote in between.
-        if (exported.secretFiles.length > 0 && approvedSecretDigest !== exported.secretApproval) {
-          throw new BackupServiceError(
-            "SECRET_DETECTED",
-            "Potential secrets were found in the backup payload",
-            exported.secretFiles,
-            exported.secretApproval
-          );
-        }
-
-        const pushed = await this.dependencies.gitRepo.commitAndPush(repository, {
+      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      const exported = await this.withLocalPayload(() =>
+        this.dependencies.payload.exportTo({
+          repositoryRoot: repository.rootDir,
           managedPath: normalized.path,
-          message: "Back up Mux settings",
-          expectedRemoteCommit: repository.remoteCommit,
-        });
-        await this.persistSettings(normalized, { lastPushedCommit: pushed.commit });
-        // The pushing credential, not the one prepare() used: the ladder can fall through
-        // to a later rung when the earlier one can read but not write.
-        return Ok({
-          ...pushed,
-          redactions: exported.redactions,
-        });
-      } catch (error) {
-        return Err(toOperationError(error));
+        })
+      );
+      // Approval is bound to the exact flagged bytes, so an override the user granted for
+      // one payload cannot publish a different one another window wrote in between.
+      if (exported.secretFiles.length > 0 && approvedSecretDigest !== exported.secretApproval) {
+        throw new BackupServiceError(
+          "SECRET_DETECTED",
+          "Potential secrets were found in the backup payload",
+          exported.secretFiles,
+          exported.secretApproval
+        );
       }
+
+      const pushed = await this.dependencies.gitRepo.commitAndPush(repository, {
+        message: "Back up Mux settings",
+        expectedRemoteCommit: repository.remoteCommit,
+      });
+      await this.persistSettings(normalized, { lastPushedCommit: pushed.commit });
+      // The pushing credential, not the one prepare() used: the ladder can fall through
+      // to a later rung when the earlier one can read but not write.
+      return Ok({
+        ...pushed,
+        redactions: exported.redactions,
+      });
     });
   }
 
@@ -353,62 +325,58 @@ export class BackupService {
     const approvedCommandTokens =
       options.approvedCommandTokens == null ? undefined : [...options.approvedCommandTokens];
     return this.withRepoLock(settings, async (normalized) => {
-      try {
-        const repository = await this.dependencies.gitRepo.prepare(normalized);
-        // Bound to a local because the narrowing does not survive into the closure below.
-        const remoteCommit = repository.remoteCommit;
-        if (remoteCommit == null) {
-          throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
-        }
+      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      // Bound to a local because the narrowing does not survive into the closure below.
+      const remoteCommit = repository.remoteCommit;
+      if (remoteCommit == null) {
+        throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
+      }
 
-        // One critical section from the check through the write loop: a concurrent push must not
-        // collect a half-restored Mux root, and a concurrent restore must not interleave its
-        // writes with this one.
-        return await this.withLocalPayload(async () => {
-          // Before the snapshot, so a restore blocked on command approval does not leave an
-          // unredacted copy of the local settings on disk.
-          await this.dependencies.payload.validateRestore({
+      // One critical section from the check through the write loop: a concurrent push must not
+      // collect a half-restored Mux root, and a concurrent restore must not interleave its
+      // writes with this one.
+      return await this.withLocalPayload(async () => {
+        // Before the snapshot, so a restore blocked on command approval does not leave an
+        // unredacted copy of the local settings on disk.
+        await this.dependencies.payload.validateRestore({
+          repositoryRoot: repository.rootDir,
+          managedPath: normalized.path,
+          approvedCommandTokens,
+        });
+        const snapshotPath = await this.createSnapshotPath();
+        try {
+          await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
+        } catch (error) {
+          // Nothing has been restored yet, so a snapshot that did not finish is an empty or
+          // partial unredacted copy that no recovery can use, and every retry would add one.
+          await fs.rm(snapshotPath, { recursive: true, force: true });
+          throw error;
+        }
+        try {
+          const restored = await this.dependencies.payload.restore({
             repositoryRoot: repository.rootDir,
             managedPath: normalized.path,
             approvedCommandTokens,
           });
-          const snapshotPath = await this.createSnapshotPath();
-          try {
-            await this.dependencies.payload.writeSafetySnapshot(snapshotPath);
-          } catch (error) {
-            // Nothing has been restored yet, so a snapshot that did not finish is an empty or
-            // partial unredacted copy that no recovery can use, and every retry would add one.
-            await fs.rm(snapshotPath, { recursive: true, force: true });
-            throw error;
-          }
-          try {
-            const restored = await this.dependencies.payload.restore({
-              repositoryRoot: repository.rootDir,
-              managedPath: normalized.path,
-              approvedCommandTokens,
-            });
-            await this.persistSettings(normalized, { lastRestoredCommit: remoteCommit });
-            return Ok({
-              commit: remoteCommit,
-              snapshotPath,
-              changedFiles: restored.changedFiles,
-              localOnlyFiles: restored.localOnlyFiles,
-            });
-          } catch (error) {
-            // Past the snapshot, the restore may have overwritten files before failing, and
-            // the snapshot is the only recovery path, so the failure must carry it.
-            return Err({ ...toOperationError(error), snapshotPath });
-          } finally {
-            // Released only now, because until this restore returns its snapshot is the recovery
-            // point it may still hand back. Reaping is safe here rather than gated on other
-            // restores because the local payload lock already excludes them.
-            await releaseSnapshot(snapshotPath);
-            await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
-          }
-        });
-      } catch (error) {
-        return Err(toOperationError(error));
-      }
+          await this.persistSettings(normalized, { lastRestoredCommit: remoteCommit });
+          return Ok({
+            commit: remoteCommit,
+            snapshotPath,
+            changedFiles: restored.changedFiles,
+            localOnlyFiles: restored.localOnlyFiles,
+          });
+        } catch (error) {
+          // Past the snapshot, the restore may have overwritten files before failing, and
+          // the snapshot is the only recovery path, so the failure must carry it.
+          return Err({ ...toOperationError(error), snapshotPath });
+        } finally {
+          // Released only now, because until this restore returns its snapshot is the recovery
+          // point it may still hand back. Reaping is safe here rather than gated on other
+          // restores because the local payload lock already excludes them.
+          await releaseSnapshot(snapshotPath);
+          await this.reapOldSnapshots(path.dirname(snapshotPath), snapshotPath);
+        }
+      });
     });
   }
 
@@ -532,6 +500,12 @@ export class BackupService {
     } catch (error) {
       return Promise.resolve(Err(toOperationError(error)));
     }
-    return this.locks.withLock(repoLockKey(normalized), () => operation(normalized));
+    return this.locks.withLock(repoLockKey(normalized), async () => {
+      try {
+        return await operation(normalized);
+      } catch (error) {
+        return Err(toOperationError(error));
+      }
+    });
   }
 }

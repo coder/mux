@@ -114,9 +114,8 @@ export function BackupSection() {
   const [draft, setDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
   const [savedDraft, setSavedDraft] = useState<BackupDraft>(DEFAULT_DRAFT);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
   const [activeAction, setActiveAction] = useState<
-    "validate" | "preview" | "push" | "restore" | null
+    "save" | "validate" | "preview" | "push" | "restore" | null
   >(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -135,7 +134,8 @@ export function BackupSection() {
     draft.branch !== savedDraft.branch ||
     draft.path !== savedDraft.path;
   const configured = savedDraft.repoUrl.trim() !== "";
-  const busy = saving || activeAction !== null;
+  const saving = activeAction === "save";
+  const busy = activeAction !== null;
 
   useEffect(() => {
     if (!api) {
@@ -174,7 +174,7 @@ export function BackupSection() {
   }, [api]);
 
   async function handleSave() {
-    if (!api || saving || activeAction !== null) return;
+    if (!api || activeAction !== null) return;
     if (draft.repoUrl.trim() === "") {
       setSaveError("Repository URL is required.");
       return;
@@ -188,7 +188,7 @@ export function BackupSection() {
       return;
     }
 
-    setSaving(true);
+    setActiveAction("save");
     setSaveError(null);
     setActionError(null);
     setStatusMessage(null);
@@ -219,7 +219,7 @@ export function BackupSection() {
     } catch (error) {
       setSaveError(getErrorMessage(error));
     } finally {
-      setSaving(false);
+      setActiveAction(null);
     }
   }
 

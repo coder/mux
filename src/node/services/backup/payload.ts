@@ -13,6 +13,8 @@ import {
   hasCredentialUrlParameters,
   isWindowsUnusableSegment,
 } from "@/common/config/schemas/settingsBackup";
+import { isPlainObject } from "@/common/utils/isPlainObject";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import type { BackupCommandApproval } from "@/common/orpc/schemas/backup";
 
 export const BACKUP_SCHEMA_VERSION = 1;
@@ -621,44 +623,41 @@ async function isRegularFile(filePath: string): Promise<boolean> {
   return (await lstatOrNull(filePath))?.isFile() === true;
 }
 
-async function collectDirectory(
-  root: BackupRoot,
-  relativeRoot: string,
-  filter: (relativePath: string, entry: Dirent) => boolean,
-  output: BackupFile[],
-  budget: ByteBudget,
-  links: HardLinkTracker
-): Promise<void> {
-  const absoluteRoot = path.join(root.path, ...relativeRoot.split("/"));
-  // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
-  // refuses to write through symlinks anyway, so they are simply not backed up.
-  if ((await lstatOrNull(absoluteRoot))?.isSymbolicLink() === true) return;
-
-  let entries: Dirent[];
-  try {
-    entries = await fs.readdir(absoluteRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw error;
-  }
-
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (isHiddenName(entry.name)) continue;
-    const relativePath = toPosixPath(relativeRoot, entry.name);
-    if (!filter(relativePath, entry)) continue;
-    if (entry.isDirectory()) {
-      await collectDirectory(root, relativePath, filter, output, budget, links);
-    } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
-      output.push(await readBackupFile(root, relativePath, budget, links));
-    }
-  }
-}
-
 export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFile[]> {
   const root = await resolveRoot(muxRoot);
   const files: BackupFile[] = [];
   const budget = createByteBudget();
   const links = createHardLinkTracker();
+
+  async function collectDirectory(
+    relativeRoot: string,
+    filter: (relativePath: string, entry: Dirent) => boolean
+  ): Promise<void> {
+    const absoluteRoot = path.join(root.path, ...relativeRoot.split("/"));
+    // A symlinked collection root would let readdir walk outside MUX_ROOT, and restore
+    // refuses to write through symlinks anyway, so they are simply not backed up.
+    if ((await lstatOrNull(absoluteRoot))?.isSymbolicLink() === true) return;
+
+    let entries: Dirent[];
+    try {
+      entries = await fs.readdir(absoluteRoot, { withFileTypes: true });
+    } catch (error) {
+      if (isErrnoWithCode(error, "ENOENT")) return;
+      throw error;
+    }
+
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+      if (isHiddenName(entry.name)) continue;
+      const relativePath = toPosixPath(relativeRoot, entry.name);
+      if (!filter(relativePath, entry)) continue;
+      if (entry.isDirectory()) {
+        await collectDirectory(relativePath, filter);
+      } else if (entry.isFile() && !isForbiddenBasename(entry.name)) {
+        files.push(await readBackupFile(root, relativePath, budget, links));
+      }
+    }
+  }
+
   for (const relativePath of ["AGENTS.md", "mcp.jsonc"]) {
     if (await isRegularFile(path.join(root.path, relativePath))) {
       files.push(await readBackupFile(root, relativePath, budget, links));
@@ -666,15 +665,11 @@ export async function collectAllowlistedFiles(muxRoot: string): Promise<BackupFi
   }
 
   await collectDirectory(
-    root,
     "agents",
-    (relativePath, entry) => entry.isDirectory() || /^agents\/[^/]+\.md$/.test(relativePath),
-    files,
-    budget,
-    links
+    (relativePath, entry) => entry.isDirectory() || /^agents\/[^/]+\.md$/.test(relativePath)
   );
-  await collectDirectory(root, "skills", () => true, files, budget, links);
-  await collectDirectory(root, "memory/global", () => true, files, budget, links);
+  await collectDirectory("skills", () => true);
+  await collectDirectory("memory/global", () => true);
   links.assertContained();
   return files.sort((a, b) => a.path.localeCompare(b.path));
 }
@@ -808,8 +803,8 @@ export function mergeBackupPreferences(
  * place to hide a credential that `resolveHeaders` would never read.
  */
 function isPortableReference(value: unknown): boolean {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
+  const record = readRecord(value);
+  if (!record) return false;
   const keys = Object.keys(record);
   return keys.length === 1 && typeof record.secret === "string" && record.secret.trim() !== "";
 }
@@ -843,17 +838,12 @@ function parseJsoncObjectWithTree(
   const errors: jsonc.ParseError[] = [];
   const parsed: unknown = jsonc.parse(raw, errors);
   const tree = jsonc.parseTree(raw);
-  if (
-    errors.length > 0 ||
-    !parsed ||
-    typeof parsed !== "object" ||
-    Array.isArray(parsed) ||
-    tree?.type !== "object"
-  ) {
+  const record = readRecord(parsed);
+  if (errors.length > 0 || !record || tree?.type !== "object") {
     throw new Error(`Invalid ${fileName}`);
   }
   assertNoDuplicateKeys(tree, fileName);
-  return { parsed: parsed as Record<string, unknown>, tree };
+  return { parsed: record, tree };
 }
 
 function parseJsoncObject(raw: string, fileName: string): Record<string, unknown> {
@@ -1086,7 +1076,7 @@ function redactMcpConfig(content: Buffer): {
     for (const field of objectKeyNames(tree, ["servers", serverName])) {
       const fieldPath: jsonc.JSONPath = ["servers", serverName, field];
       const value = readOwn(server, field);
-      const isPortableField = hasOwn(PORTABLE_SERVER_FIELDS, field)
+      const isPortableField = Object.hasOwn(PORTABLE_SERVER_FIELDS, field)
         ? PORTABLE_SERVER_FIELDS[field]
         : undefined;
       if (isPortableField) {
@@ -1455,10 +1445,8 @@ function parseManifest(raw: string, portable: boolean): BackupManifest {
   if (!tree) throw new Error("Invalid backup manifest");
   assertNoDuplicateKeys(tree, "backup manifest");
   const value: unknown = JSON.parse(raw);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Invalid backup manifest");
-  }
-  const manifest = value as Partial<BackupManifest>;
+  if (!isPlainObject(value)) throw new Error("Invalid backup manifest");
+  const manifest: Partial<BackupManifest> = value;
   if (
     manifest.schemaVersion !== BACKUP_SCHEMA_VERSION ||
     typeof manifest.exportedAt !== "string" ||
@@ -1551,7 +1539,7 @@ async function readManifestEntry(
       })
     ).content;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if (isErrnoWithCode(error, "ENOENT")) {
       throw new Error(`Backup is missing '${relativePath}'`);
     }
     throw error;
@@ -1945,14 +1933,20 @@ function objectTrailingJsoncText(text: string, objectNode: jsonc.Node): string {
 function jsoncPropertyInsertion(
   text: string,
   objectNode: jsonc.Node,
-  property: jsonc.Node,
-  previousProperty: jsonc.Node | undefined,
-  nextProperty: jsonc.Node | undefined
+  propertyIndex: number
 ): JsoncPropertyInsertion {
+  const properties = objectNode.children ?? [];
+  const property = properties[propertyIndex];
+  if (!property) throw new Error("Invalid JSONC property index");
   return {
-    leadingText: leadingJsoncTriviaText(text, objectNode, property, previousProperty),
+    leadingText: leadingJsoncTriviaText(text, objectNode, property, properties[propertyIndex - 1]),
     propertyText: text.slice(property.offset, property.offset + property.length),
-    trailingCommentText: trailingJsoncCommentText(text, objectNode, property, nextProperty),
+    trailingCommentText: trailingJsoncCommentText(
+      text,
+      objectNode,
+      property,
+      properties[propertyIndex + 1]
+    ),
   };
 }
 
@@ -1978,15 +1972,7 @@ function preserveLocalOnlyMcpServers(
     return {
       kind: "insert",
       objectPath: [],
-      entries: [
-        jsoncPropertyInsertion(
-          localText,
-          localTree,
-          property,
-          properties[index - 1],
-          properties[index + 1]
-        ),
-      ],
+      entries: [jsoncPropertyInsertion(localText, localTree, index)],
       objectTrailingText:
         index === properties.length - 1 ? objectTrailingJsoncText(localText, localTree) : "",
     };
@@ -2002,15 +1988,7 @@ function preserveLocalOnlyMcpServers(
   const entries = localProperties.flatMap((property, index) => {
     const key: unknown = property.children?.[0]?.value;
     return typeof key === "string" && !backupNames.has(key)
-      ? [
-          jsoncPropertyInsertion(
-            localText,
-            localServersNode,
-            property,
-            localProperties[index - 1],
-            localProperties[index + 1]
-          ),
-        ]
+      ? [jsoncPropertyInsertion(localText, localServersNode, index)]
       : [];
   });
   if (entries.length === 0) return { kind: "none" };
@@ -2131,7 +2109,7 @@ function resolveRestoredHeaders(
     const names = objectKeyNames(backupTree, ["servers", name, "headers"]);
     const restored: Record<string, unknown> = {};
     for (const headerName of names) {
-      if (!hasOwn(localHeaders, headerName)) continue;
+      if (!Object.hasOwn(localHeaders, headerName)) continue;
       restored[headerName] = localHeaders[headerName];
     }
 
@@ -2166,16 +2144,12 @@ function objectKeyNames(tree: jsonc.Node | undefined, jsonPath: jsonc.JSONPath):
   });
 }
 
-function hasOwn(record: Record<string, unknown>, key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(record, key);
-}
-
 /**
  * Header and server names come from the backup, so a name like `constructor` would otherwise
  * read an `Object.prototype` member and hand a function to `jsonc.modify`.
  */
 function readOwn(record: Record<string, unknown>, key: string): unknown {
-  return hasOwn(record, key) ? record[key] : undefined;
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 /** The url the restored entry ends up with, since a redacted url is itself put back from local. */
@@ -2202,6 +2176,11 @@ function readUrl(server: Record<string, unknown> | undefined): string | undefine
   return typeof url === "string" ? url : undefined;
 }
 
+/**
+ * Structural, never `isPlainObject`: `jsonc.parse` assigns a `__proto__` key through the
+ * prototype, so a polluted entry has a non-standard prototype but must stay visible here,
+ * or its sibling keys (an executable `command`, a redacted header) escape scanning.
+ */
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

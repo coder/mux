@@ -1,4 +1,5 @@
 import type { BackupCredentialKind } from "@/common/orpc/schemas/backup";
+import { shellQuote } from "@/common/utils/shell";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
 import { SSH_PROTOCOL_SCHEMES } from "@/constants/git";
 
@@ -187,10 +188,6 @@ function ambientValue(
 ): string | null {
   const value = options.env?.[name] ?? process.env[name];
   return value !== undefined && value.trim() !== "" ? value : null;
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 
 async function sshEnvOverrides(

@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { execFileAsync, type ExecFileAsyncOptions } from "@/node/utils/disposableExec";
+import { isErrnoWithCode } from "@/node/utils/fs";
 import {
   BackupAuthFailedError,
   BackupRemoteUnreachableError,
@@ -351,7 +352,7 @@ async function normalizeGitMetadataLinks(dir: string): Promise<void> {
   try {
     entries = await fs.readdir(dir);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    if (isErrnoWithCode(error, "ENOENT")) return;
     throw error;
   }
   for (const entry of entries) {
@@ -707,7 +708,7 @@ export class BackupRepoCache {
     try {
       await fs.rename(this.cachePath, tombstone);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (isErrnoWithCode(error, "ENOENT")) return;
       throw error;
     } finally {
       this.baseRemoteCommit = undefined;
@@ -970,10 +971,10 @@ export class BackupRepoCache {
    * causes; that costs at most a fresh clone, because every prepare resets to the remote anyway.
    * Ownership refusals and classified remote failures are rethrown instead of rebuilding.
    */
-  async materialize(managedPath: string): Promise<string | null> {
+  async materialize(): Promise<string | null> {
     try {
       await this.ensureCache();
-      return await this.materializeFromRemote(managedPath);
+      return await this.materializeFromRemote();
     } catch (error) {
       if (
         error instanceof BackupCacheSafetyError ||
@@ -985,29 +986,29 @@ export class BackupRepoCache {
       }
       await this.discardCache();
       await this.ensureCache();
-      return await this.materializeFromRemote(managedPath);
+      return await this.materializeFromRemote();
     }
   }
 
-  private async materializeFromRemote(managedPath: string): Promise<string | null> {
+  private async materializeFromRemote(): Promise<string | null> {
     await this.fetch();
     const remoteCommit = await this.resetHardToRemote();
-    await this.cleanManagedPath(managedPath);
+    await this.cleanManagedPath();
     return remoteCommit;
   }
 
-  async cleanManagedPath(managedPath: string): Promise<void> {
+  async cleanManagedPath(): Promise<void> {
     // -x so an ignored leftover from a preview or a blocked push cannot survive the
     // reset and be read back as if it were the remote's backup. Mux owns this path.
-    await this.localGit(["clean", "-fdx", "--", safeRelativePath(managedPath)]);
+    await this.localGit(["clean", "-fdx", "--", safeRelativePath(this.options.managedPath)]);
   }
 
-  async stageAndCommit(managedPath: string, message: string): Promise<string | null> {
-    const target = safeRelativePath(managedPath);
+  async stageAndCommit(message: string): Promise<string | null> {
+    const target = safeRelativePath(this.options.managedPath);
     // -f because the target may be a dotfiles repo whose ignore rules match payload
     // names. Skipping one file would push a manifest that references missing content.
     await this.localGit(["add", "-A", "-f", "--", target]);
-    const status = await this.porcelainStatus(target);
+    const status = await this.porcelainStatus();
     if (!status) return null;
 
     await this.localGit([...GIT_IDENTITY_ARGS, "commit", "-m", message, "--", target]);
@@ -1060,9 +1061,16 @@ export class BackupRepoCache {
    * are verbatim and a rename is two NUL-separated fields instead. Not trimmed: a trailing NUL
    * is the record terminator, and a pathname may legitimately end in whitespace.
    */
-  async porcelainStatus(managedPath?: string): Promise<string> {
-    const args = ["status", "--porcelain=v1", "-z", "--untracked-files=all"];
-    if (managedPath) args.push("--", safeRelativePath(managedPath));
-    return (await this.localGit(args)).stdout;
+  async porcelainStatus(): Promise<string> {
+    return (
+      await this.localGit([
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=all",
+        "--",
+        safeRelativePath(this.options.managedPath),
+      ])
+    ).stdout;
   }
 }

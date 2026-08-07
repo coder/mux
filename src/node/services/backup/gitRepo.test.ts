@@ -64,12 +64,12 @@ describe("BackupRepoCache", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  function createRepo(): BackupRepoCache {
+  function createRepo(managedPath = "mux"): BackupRepoCache {
     return new BackupRepoCache({
       repoUrl: originPath,
       branch: "main",
       cacheRoot,
-      managedPath: "mux",
+      managedPath,
     });
   }
 
@@ -159,7 +159,7 @@ describe("BackupRepoCache", () => {
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "after lock recovery\n");
 
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit after the stale locks were cleared");
     expect(await repo.push()).toBe(commit);
     for (const lock of staleLocks) expect(await pathExists(lock)).toBe(false);
@@ -171,7 +171,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
-    const seeded = await repo.stageAndCommit("mux", "Back up settings");
+    const seeded = await repo.stageAndCommit("Back up settings");
     if (seeded === null) throw new Error("Expected the seed commit");
     await repo.push();
 
@@ -203,7 +203,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "before the interruption\n");
-    const seeded = await repo.stageAndCommit("mux", "Back up settings");
+    const seeded = await repo.stageAndCommit("Back up settings");
     if (seeded === null) throw new Error("Expected the seed commit");
     await repo.push();
     await fs.rm(repo.cachePath, { recursive: true, force: true });
@@ -278,13 +278,13 @@ describe("BackupRepoCache", () => {
     ];
     for (const corrupt of corruptions) {
       const seed = createRepo();
-      await seed.materialize("mux");
+      await seed.materialize();
       await writeManagedFile(seed, "AGENTS.md", "backed up\n");
-      if ((await seed.stageAndCommit("mux", "Back up settings")) !== null) await seed.push();
+      if ((await seed.stageAndCommit("Back up settings")) !== null) await seed.push();
       await corrupt(path.join(seed.cachePath, ".git"));
 
       const reopened = createRepo();
-      expect(await reopened.materialize("mux")).not.toBeNull();
+      expect(await reopened.materialize()).not.toBeNull();
       expect(await fs.readFile(path.join(reopened.cachePath, "mux", "AGENTS.md"), "utf-8")).toBe(
         "backed up\n"
       );
@@ -293,7 +293,7 @@ describe("BackupRepoCache", () => {
 
   it("keeps a healthy cache when the remote is unreachable", async () => {
     const repo = createRepo();
-    await repo.materialize("mux");
+    await repo.materialize();
     // Identifies this exact clone: a discard would replace the cache with a fresh one, and the
     // rebuilt `.git` alone cannot tell the two apart.
     const clonedAt = path.join(repo.cachePath, ".git", "mux-clone-marker");
@@ -301,7 +301,7 @@ describe("BackupRepoCache", () => {
     const unreachable = new BackupRemoteUnreachableError(new Error("Could not resolve host"));
     const spy = spyOn(repo, "fetch").mockImplementation(() => Promise.reject(unreachable));
 
-    const caught = await repo.materialize("mux").catch((error: unknown) => error);
+    const caught = await repo.materialize().catch((error: unknown) => error);
     spy.mockRestore();
 
     // Rebuilding would discard the cache and the retried fetch would still fail, so an outage
@@ -312,7 +312,7 @@ describe("BackupRepoCache", () => {
 
   it("keeps the cache when metadata is swapped after it was checked", async () => {
     const repo = createRepo();
-    await repo.materialize("mux");
+    await repo.materialize();
     const clonedAt = path.join(repo.cachePath, ".git", "mux-clone-marker");
     await fs.writeFile(clonedAt, "original\n", "utf-8");
     const outside = path.join(cacheRoot, "outside-target");
@@ -326,7 +326,7 @@ describe("BackupRepoCache", () => {
       return null;
     });
 
-    const caught = await repo.materialize("mux").catch((error: unknown) => error);
+    const caught = await repo.materialize().catch((error: unknown) => error);
     spy.mockRestore();
 
     expect(caught).toBeInstanceOf(BackupCacheSafetyError);
@@ -336,7 +336,7 @@ describe("BackupRepoCache", () => {
 
   it("refuses to discard a cache path that was replaced after it was checked", async () => {
     const repo = createRepo();
-    await repo.materialize("mux");
+    await repo.materialize();
     const foreign = path.join(repo.cachePath, "important.txt");
     // The discard follows a failure, which cannot say what is at the path by then. Swapping the
     // whole cache directory reaches discardCache with content it never validated.
@@ -347,7 +347,7 @@ describe("BackupRepoCache", () => {
       throw new Error("index file corrupt");
     });
 
-    const caught = await repo.materialize("mux").catch((error: unknown) => error);
+    const caught = await repo.materialize().catch((error: unknown) => error);
     spy.mockRestore();
 
     expect(caught).toBeInstanceOf(BackupCacheSafetyError);
@@ -379,7 +379,7 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBeNull();
     expect(await repo.resetHardToRemote()).toBeNull();
     await writeManagedFile(repo, "AGENTS.md", "first backup\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected the bootstrap commit");
 
     expect(commit).toMatch(/^[0-9a-f]{64}$/);
@@ -411,7 +411,7 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBeNull();
     expect(await repo.resetHardToRemote()).toBeNull();
     await writeManagedFile(repo, "AGENTS.md", "first backup\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected the bootstrap commit");
 
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
@@ -432,7 +432,7 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBeNull();
     expect(await repo.resetHardToRemote()).toBeNull();
     await writeManagedFile(repo, "AGENTS.md", "first backup\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected the bootstrap commit");
 
     expect(commit).toMatch(/^[0-9a-f]{64}$/);
@@ -499,9 +499,9 @@ describe("BackupRepoCache", () => {
     expect(await repo.fetch()).toBeNull();
     expect(await repo.resetHardToRemote()).toBeNull();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    expect(await repo.porcelainStatus("mux")).toContain("mux/AGENTS.md");
+    expect(await repo.porcelainStatus()).toContain("mux/AGENTS.md");
 
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected the bootstrap commit");
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
     expect(await repo.push()).toBe(commit);
@@ -543,7 +543,7 @@ describe("BackupRepoCache", () => {
     // below the managed directory rather than only its direct children.
     expect(await pathExists(path.join(repo.cachePath, "mux/skills/demo/SKILL.md"))).toBe(true);
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
@@ -563,7 +563,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
 
     const rejected = await repo.push().then(
@@ -701,7 +701,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
@@ -729,7 +729,7 @@ describe("BackupRepoCache", () => {
     // prove the per-invocation option protects commands after the config is altered again.
     await git(["-C", repo.cachePath, "config", "--unset", "core.hookspath"]);
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    expect(await repo.stageAndCommit("mux", "Back up settings")).not.toBeNull();
+    expect(await repo.stageAndCommit("Back up settings")).not.toBeNull();
 
     expect(await pathExists(marker)).toBe(false);
   });
@@ -784,7 +784,7 @@ describe("BackupRepoCache", () => {
     await repo.ensureCache();
     await repo.fetch();
     await repo.resetHardToRemote();
-    await repo.cleanManagedPath("mux");
+    await repo.cleanManagedPath();
 
     expect(await pathExists(path.join(repo.cachePath, ".git", "config.worktree"))).toBe(false);
     expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
@@ -821,7 +821,7 @@ describe("BackupRepoCache", () => {
     await repo.ensureCache();
     await repo.fetch();
     await repo.resetHardToRemote();
-    await repo.cleanManagedPath("mux");
+    await repo.cleanManagedPath();
 
     expect(await fs.readFile(path.join(repo.cachePath, "mux/AGENTS.md"), "utf-8")).toBe(
       "managed\n"
@@ -852,7 +852,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
@@ -895,7 +895,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
 
-    expect(await repo.porcelainStatus("mux")).toBe("");
+    expect(await repo.porcelainStatus()).toBe("");
     expect(
       await git(["config", "--file", configPath, "--get", "core.repositoryformatversion"])
     ).toBe("1");
@@ -913,7 +913,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
 
-    expect(await repo.porcelainStatus("mux")).toBe("");
+    expect(await repo.porcelainStatus()).toBe("");
   });
 
   it("rejects a cache with symlinked git metadata and leaves the target unwritten", async () => {
@@ -945,7 +945,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    if ((await repo.stageAndCommit("mux", "Back up settings")) === null) {
+    if ((await repo.stageAndCommit("Back up settings")) === null) {
       throw new Error("Expected a commit");
     }
     await repo.push();
@@ -970,7 +970,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "instructions\n");
-    const commit = await repo.stageAndCommit("mux", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
 
@@ -1064,8 +1064,8 @@ describe("BackupRepoCache", () => {
     expect(await pathExists(path.join(repo.cachePath, "mux/AGENTS.md"))).toBe(true);
 
     await fs.writeFile(path.join(repo.cachePath, "mux", "AGENTS.md"), "updated\n", "utf-8");
-    expect(await repo.porcelainStatus("mux/")).toContain("mux/AGENTS.md");
-    const commit = await repo.stageAndCommit("mux/", "Back up settings");
+    expect(await repo.porcelainStatus()).toContain("mux/AGENTS.md");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
     expect(await git(["--git-dir", originPath, "show", "main:mux/AGENTS.md"])).toBe("updated");
@@ -1109,11 +1109,11 @@ describe("BackupRepoCache", () => {
     const stray = path.join(repo.cachePath, "mux1", "stray.txt");
     await fs.mkdir(path.dirname(stray), { recursive: true });
     await fs.writeFile(stray, "untracked\n", "utf-8");
-    await repo.cleanManagedPath("mux[1]");
+    await repo.cleanManagedPath();
     expect(await pathExists(stray)).toBe(true);
 
     await fs.writeFile(path.join(repo.cachePath, "mux[1]", "AGENTS.md"), "updated\n", "utf-8");
-    const commit = await repo.stageAndCommit("mux[1]", "Back up settings");
+    const commit = await repo.stageAndCommit("Back up settings");
     if (commit === null) throw new Error("Expected a commit");
     await repo.push();
     expect(await git(["--git-dir", originPath, "show", `main:mux[1]/AGENTS.md`])).toBe("updated");
@@ -1262,11 +1262,11 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "first\n");
-    const commit = await repo.stageAndCommit("mux", "Initial backup");
+    const commit = await repo.stageAndCommit("Initial backup");
     if (commit === null) throw new Error("Expected the initial commit");
 
     await writeManagedFile(repo, "AGENTS.md", "second\n");
-    expect(await repo.porcelainStatus("mux")).toContain("mux/AGENTS.md");
+    expect(await repo.porcelainStatus()).toContain("mux/AGENTS.md");
   });
 
   it("refuses managed paths that are not a real subdirectory", async () => {
@@ -1277,7 +1277,7 @@ describe("BackupRepoCache", () => {
 
     for (const unsafe of [".", "./", "..", "mux/../..", "/mux", "mux\\..\\.."]) {
       try {
-        await repo.cleanManagedPath(unsafe);
+        await createRepo(unsafe).cleanManagedPath();
         throw new Error(`Expected '${unsafe}' to be rejected`);
       } catch (error) {
         if (!(error instanceof Error)) throw error;
@@ -1292,14 +1292,14 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "initial\n");
-    const initialCommit = await repo.stageAndCommit("mux", "Initial backup");
+    const initialCommit = await repo.stageAndCommit("Initial backup");
     if (initialCommit === null) throw new Error("Expected the initial commit");
     await repo.push();
 
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "local update\n");
-    const localCommit = await repo.stageAndCommit("mux", "Local update");
+    const localCommit = await repo.stageAndCommit("Local update");
     if (localCommit === null) throw new Error("Expected the local update commit");
 
     const otherPath = path.join(tempDir, "other");
@@ -1335,7 +1335,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "initial\n");
-    if ((await repo.stageAndCommit("mux", "Initial backup")) === null) {
+    if ((await repo.stageAndCommit("Initial backup")) === null) {
       throw new Error("Expected the initial commit");
     }
     await repo.push();
@@ -1343,7 +1343,7 @@ describe("BackupRepoCache", () => {
     await repo.fetch();
     await repo.resetHardToRemote();
     await writeManagedFile(repo, "AGENTS.md", "local update\n");
-    if ((await repo.stageAndCommit("mux", "Local update")) === null) {
+    if ((await repo.stageAndCommit("Local update")) === null) {
       throw new Error("Expected the local update commit");
     }
 

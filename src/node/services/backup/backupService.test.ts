@@ -12,7 +12,7 @@ import {
   BackupService,
   BackupServiceError,
   type BackupGitRepo,
-  type BackupPayload,
+  type BackupPayloadStore,
   type PreparedBackupRepository,
 } from "./backupService";
 
@@ -68,7 +68,7 @@ function createGitRepo(overrides: Partial<BackupGitRepo> = {}): BackupGitRepo {
   };
 }
 
-function createPayload(overrides: Partial<BackupPayload> = {}): BackupPayload {
+function createPayload(overrides: Partial<BackupPayloadStore> = {}): BackupPayloadStore {
   return {
     exportTo: () => Promise.resolve({ redactions: [], secretFiles: [], secretApproval: "" }),
     previewRestore: () =>

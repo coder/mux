@@ -75,11 +75,10 @@ describe("backup adapters", () => {
     expect(repository.remoteCommit).toBeNull();
 
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
-    const changes = await gitRepo.getPushChanges(repository, settings.path);
+    const changes = await gitRepo.getPushChanges(repository);
     expect(changes.map((change) => change.path)).toContain("mux/AGENTS.md");
 
     const pushed = await gitRepo.commitAndPush(repository, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
@@ -91,13 +90,12 @@ describe("backup adapters", () => {
     const second = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
     const unchanged = await gitRepo.commitAndPush(second, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: second.remoteCommit,
     });
     expect(unchanged.changed).toBe(false);
     expect(unchanged.commit).toBe(pushed.commit);
-    expect(await gitRepo.getPushChanges(second, settings.path)).toEqual([]);
+    expect(await gitRepo.getPushChanges(second)).toEqual([]);
   });
 
   it("pushes payload files the target repository would otherwise ignore", async () => {
@@ -125,7 +123,6 @@ describe("backup adapters", () => {
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(repository, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
@@ -199,14 +196,13 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
 
     const second = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
-    expect(await gitRepo.getPushChanges(second, settings.path)).toEqual([]);
+    expect(await gitRepo.getPushChanges(second)).toEqual([]);
 
     // Another client advances the branch after this cache fetched it.
     const other = path.join(tempDir, "other-client");
@@ -228,7 +224,6 @@ describe("backup adapters", () => {
 
     try {
       await gitRepo.commitAndPush(second, {
-        managedPath: settings.path,
         message: "Back up Mux settings",
         expectedRemoteCommit: second.remoteCommit,
       });
@@ -246,7 +241,6 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
@@ -273,7 +267,6 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
@@ -508,7 +501,6 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
@@ -521,7 +513,6 @@ describe("backup adapters", () => {
     expect(second.remoteCommit).toBeNull();
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(second, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: second.remoteCommit,
     });
@@ -652,7 +643,7 @@ describe("backup adapters", () => {
       remoteCommit: null,
     } as const;
     try {
-      await gitRepo.getPushChanges(repository, settings.path);
+      await gitRepo.getPushChanges(repository);
       throw new Error("Expected the unprepared repository to be rejected");
     } catch (error) {
       if (!(error instanceof Error)) throw error;
@@ -922,7 +913,6 @@ describe("backup adapters", () => {
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(repository, {
-      managedPath: settings.path,
       message: "Back up Mux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
@@ -931,7 +921,7 @@ describe("backup adapters", () => {
     const next = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: next.rootDir, managedPath: settings.path });
 
-    const changes = await gitRepo.getPushChanges(next, settings.path);
+    const changes = await gitRepo.getPushChanges(next);
     expect(changes.map((change) => change.path)).toContain("mux/agents/second.md");
     expect(changes.every((change) => !change.path.includes(" -> "))).toBe(true);
   });
@@ -946,9 +936,7 @@ describe("backup adapters", () => {
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
 
-    const paths = (await gitRepo.getPushChanges(repository, settings.path)).map(
-      (change) => change.path
-    );
+    const paths = (await gitRepo.getPushChanges(repository)).map((change) => change.path);
 
     expect(paths).toContain("mux/skills/café/SKILL.md");
   });
