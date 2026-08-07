@@ -6010,6 +6010,11 @@ export class AgentSession {
         if (!rollbackResult.success) {
           throw new Error(`Failed to rollback heartbeat reset boundary: ${rollbackResult.error}`);
         }
+        // Rollback restored the pre-reset provider context, so the invalidation
+        // from appendHeartbeatContextResetBoundary no longer applies. Re-enable
+        // seeding so the queued turn recovers the restored history's usage and
+        // on-send compaction still fires for a near-limit context.
+        this.usageSeedingSuppressed = false;
         this.onPostCompactionStateChange?.();
       } else {
         await this.clearPendingFollowUpFromSummary(lastMessage);

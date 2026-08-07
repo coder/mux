@@ -961,6 +961,50 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("heartbeat reset rollback re-enables usage seeding for the queued turn", async () => {
+    const workspaceId = "ws-heartbeat-rollback-reenables-seeding";
+    const { session, historyService } = await createSessionHarness({ workspaceId });
+
+    const appendAssistant = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-near-limit", "assistant", "reply", {
+        timestamp: Date.now() - 1_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+      })
+    );
+    expect(appendAssistant.success).toBe(true);
+
+    const appendBoundary = await session.appendHeartbeatContextResetBoundary({
+      boundaryText: "Heartbeat context reset boundary",
+      pendingFollowUp: {
+        text: "heartbeat follow-up",
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        dispatchOptions: { requireIdle: true },
+      },
+    });
+    expect(appendBoundary.success).toBe(true);
+
+    // User input queued after the boundary forces the idle-only follow-up to roll back.
+    session.queueMessage("queued user input", { model: "openai:gpt-4o", agentId: "exec" });
+
+    const dispatched = await session.dispatchPendingCompactionFollowUpIfNeeded();
+    expect(dispatched).toBe(false);
+
+    const seenUsages = installUsageCapturingMonitor(session);
+    const result = await session.sendMessage("post-rollback send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
+
+    session.dispose();
+  });
+
   test("surfaces nested dispatch failures after mid-stream compaction interrupt", async () => {
     const workspaceId = "ws-auto-compaction-mid-stream-dispatch-failure";
 
