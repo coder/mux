@@ -427,6 +427,58 @@ interface StdioLaunch {
 }
 
 /**
+ * mkdir -p that self-heals corrupted plugin data state: when the target or one
+ * of its ancestors exists as a non-directory (a stray file where
+ * `~/.mux/plugin-data` or an instance dir should be), the offending entry is
+ * quarantined (renamed aside) and the mkdir retried, instead of ENOTDIR/EEXIST
+ * permanently bricking every test/launch until the user repairs disk state by
+ * hand. Renaming preserves whatever data the file held.
+ */
+async function mkdirSelfHealing(target: string): Promise<void> {
+  try {
+    await fsPromises.mkdir(target, { recursive: true });
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EEXIST" && code !== "ENOTDIR") {
+      throw error;
+    }
+  }
+
+  // Walk root→leaf to find the shallowest existing non-directory prefix.
+  const prefixes: string[] = [];
+  for (let current = target; ; current = path.dirname(current)) {
+    prefixes.unshift(current);
+    if (path.dirname(current) === current) {
+      break;
+    }
+  }
+  for (const prefix of prefixes) {
+    let isDirectory: boolean;
+    try {
+      // stat (not lstat): a symlink to a directory is a valid path segment.
+      isDirectory = (await fsPromises.stat(prefix)).isDirectory();
+    } catch {
+      // Nothing (or a broken symlink) at this prefix. lstat distinguishes:
+      // a broken symlink still occupies the name and must be quarantined.
+      const lstat = await fsPromises.lstat(prefix).catch(() => null);
+      if (lstat === null) {
+        break;
+      }
+      isDirectory = false;
+    }
+    if (!isDirectory) {
+      const quarantine = `${prefix}.corrupt-${Date.now()}`;
+      log.warn(`[MCP] Quarantining non-directory plugin data path '${prefix}' to '${quarantine}'`);
+      await fsPromises.rename(prefix, quarantine);
+      break;
+    }
+  }
+
+  await fsPromises.mkdir(target, { recursive: true });
+}
+
+/**
  * Compose the shell command string and exec options for a stdio server.
  *
  * Servers with `args` set (Agent Plugins) run in argv mode: `command` and each
@@ -448,7 +500,7 @@ export async function prepareStdioLaunch(info: MCPStdioServerInfo): Promise<Stdi
       dataPath !== undefined && path.isAbsolute(dataPath),
       "prepareStdioLaunch: plugin stdio server must carry an absolute PLUGIN_DATA env"
     );
-    await fsPromises.mkdir(dataPath, { recursive: true });
+    await mkdirSelfHealing(dataPath);
 
     // A ${PLUGIN_DATA}-rooted cwd (e.g. "${PLUGIN_DATA}/nested") is
     // client-managed writable state that may not exist yet, and exec()
@@ -461,7 +513,7 @@ export async function prepareStdioLaunch(info: MCPStdioServerInfo): Promise<Stdi
         !relativeToData.startsWith("..") &&
         !path.isAbsolute(relativeToData);
       if (insideData) {
-        await fsPromises.mkdir(info.cwd, { recursive: true });
+        await mkdirSelfHealing(info.cwd);
       }
     }
   }

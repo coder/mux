@@ -1355,6 +1355,60 @@ describe("prepareStdioLaunch", () => {
     expect(launch.cwd).toBe(nestedCwd);
   });
 
+  test("quarantines a stray file occupying the PLUGIN_DATA path and still launches", async () => {
+    using tmp = new DisposableTempDir("mcp-plugin-data-corrupt");
+    // Corrupt state: plugin-data (the PARENT of every instance dir) is a file.
+    const dataRoot = path.join(tmp.path, "plugin-data");
+    await fs.writeFile(dataRoot, "not a directory", "utf8");
+    const dataPath = path.join(dataRoot, "abc123");
+
+    const launch = await prepareStdioLaunch({
+      transport: "stdio",
+      command: "bunx",
+      args: [],
+      env: { PLUGIN_ROOT: tmp.path, PLUGIN_DATA: dataPath },
+      disabled: false,
+      plugin: {
+        pluginName: "demo",
+        serverName: "srv",
+        sourceScope: "global",
+        sourceLocation: ".mux/plugins/demo",
+      },
+    });
+
+    expect((await fs.stat(dataPath)).isDirectory()).toBe(true);
+    expect(launch.env?.PLUGIN_DATA).toBe(dataPath);
+    // The stray file is quarantined (renamed), not deleted.
+    const quarantined = (await fs.readdir(tmp.path)).find((name) =>
+      name.startsWith("plugin-data.corrupt-")
+    );
+    expect(quarantined).toBeDefined();
+    expect(await fs.readFile(path.join(tmp.path, quarantined!), "utf8")).toBe("not a directory");
+  });
+
+  test("quarantines a file occupying the instance data dir itself", async () => {
+    using tmp = new DisposableTempDir("mcp-plugin-data-corrupt-leaf");
+    const dataPath = path.join(tmp.path, "plugin-data", "abc123");
+    await fs.mkdir(path.dirname(dataPath), { recursive: true });
+    await fs.writeFile(dataPath, "stale blob", "utf8");
+
+    await prepareStdioLaunch({
+      transport: "stdio",
+      command: "bunx",
+      args: [],
+      env: { PLUGIN_ROOT: tmp.path, PLUGIN_DATA: dataPath },
+      disabled: false,
+      plugin: {
+        pluginName: "demo",
+        serverName: "srv",
+        sourceScope: "global",
+        sourceLocation: ".mux/plugins/demo",
+      },
+    });
+
+    expect((await fs.stat(dataPath)).isDirectory()).toBe(true);
+  });
+
   test("rejects plugin servers without an absolute PLUGIN_DATA env (defensive)", async () => {
     // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
     await expect(
