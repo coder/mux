@@ -2019,6 +2019,36 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(3);
     });
 
+    it("strips stale contextUsage from rows retained by partial truncation", async () => {
+      // Filler prefix makes the newest assistant row survive a 50% cut.
+      await appendNumberedMessages(service, wsId, 8);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-usage", "assistant", "reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          contextProviderMetadata: { anthropic: {} },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.length).toBeGreaterThan(0);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        const retainedAssistant = remaining.data.find((msg) => msg.id === "assistant-usage");
+        expect(retainedAssistant).toBeDefined();
+        expect(retainedAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(retainedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
+        // Only usage snapshots are sanitized; the rest of the row survives.
+        expect(retainedAssistant?.metadata?.model).toBe("openai:gpt-4o");
+      }
+    });
+
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

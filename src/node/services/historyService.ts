@@ -2004,7 +2004,23 @@ export class HistoryService {
         }
 
         // Keep messages after removeCount
-        const remainingMessages = messages.slice(removeCount);
+        const remainingMessages = messages.slice(removeCount).map((msg) => {
+          // Retained rows' contextUsage measured the pre-truncation context
+          // (including the removed prefix). Persisting it would reseed stale
+          // auto-compaction pressure, even across app restarts. Strip it; the
+          // next provider response reports fresh usage.
+          if (msg.metadata?.contextUsage === undefined) {
+            return msg;
+          }
+          return {
+            ...msg,
+            metadata: {
+              ...msg.metadata,
+              contextUsage: undefined,
+              contextProviderMetadata: undefined,
+            },
+          };
+        });
         const deletedMessages = messages.slice(0, removeCount);
         const deletedSequences = deletedMessages
           .map((msg) => msg.metadata?.historySequence)
