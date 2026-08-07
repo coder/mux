@@ -3835,21 +3835,6 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     return { aiService, config, historyService, workspaceService, goalService, cleanup };
   }
 
-  // Simulates the in-memory snapshot a previous stream left behind:
-  // 95k of gpt-4o's 128k window is past the 70% on-send compaction threshold.
-  function seedStaleHighContextUsage(session: AgentSession): void {
-    (session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState = {
-      lastContextUsage: createDisplayUsage(
-        { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
-        "openai:gpt-4o"
-      ),
-    };
-  }
-
-  function getUsageState(session: AgentSession): AutoCompactionUsageState | undefined {
-    return (session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState;
-  }
-
   test("idle wait follows auto-retry startup into the resumed stream", async () => {
     const { workspaceService, cleanup } = await createServices();
     const workspaceId = "idle-wait-auto-retry-starting";
@@ -4335,7 +4320,15 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         workspaceId,
         harness.session
       );
-      seedStaleHighContextUsage(harness.session);
+      // In-memory snapshot the previous stream left behind: 95k exceeds 70% of
+      // gpt-4o's 128k window, so a send with this state would auto-compact.
+      (harness.session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState =
+        {
+          lastContextUsage: createDisplayUsage(
+            { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+            "openai:gpt-4o"
+          ),
+        };
 
       const replaceResult = await workspaceService.replaceHistory(
         workspaceId,
@@ -4375,7 +4368,6 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
   test("context reset clears stale session usage state", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "context-reset-clears-usage-state";
-    const harness = await createAgentSessionHarness({ workspaceId, config, historyService });
     try {
       await config.addWorkspace("/tmp/context-reset-usage-project", {
         id: workspaceId,
@@ -4393,20 +4385,28 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         ).success
       ).toBe(true);
 
+      const clearUsageState = mock(() => undefined);
+      const session = {
+        isBusy: mock(() => false),
+        hasQueuedMessages: mock(() => false),
+        isPreparingTurn: mock(() => false),
+        hasPendingAutoRetry: mock(() => false),
+        emitChatEvent: mock(() => undefined),
+        clearUsageState,
+        clearFileState: mock(() => undefined),
+      } as unknown as AgentSession;
       (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
         workspaceId,
-        harness.session
+        session
       );
-      seedStaleHighContextUsage(harness.session);
 
       expect(await workspaceService.resetContext(workspaceId)).toEqual({
         success: true,
         data: "reset",
       });
 
-      expect(getUsageState(harness.session)).toBeUndefined();
+      expect(clearUsageState).toHaveBeenCalledTimes(1);
     } finally {
-      harness.session.dispose();
       await cleanup();
     }
   });
@@ -4414,7 +4414,6 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
   test("full history clear clears stale session usage state", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "full-clear-clears-usage-state";
-    const harness = await createAgentSessionHarness({ workspaceId, config, historyService });
     try {
       await config.addWorkspace("/tmp/full-clear-usage-project", {
         id: workspaceId,
@@ -4432,18 +4431,25 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         ).success
       ).toBe(true);
 
+      const clearUsageState = mock(() => undefined);
+      const session = {
+        isBusy: mock(() => false),
+        emitChatEvent: mock(() => undefined),
+        clearUsageState,
+        clearFileState: mock(() => undefined),
+      } as unknown as AgentSession;
       (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
         workspaceId,
-        harness.session
+        session
       );
-      seedStaleHighContextUsage(harness.session);
 
-      const result = await workspaceService.truncateHistory(workspaceId, 1.0);
+      // A zero-percentage truncation rewrites nothing, so usage must survive.
+      expect((await workspaceService.truncateHistory(workspaceId, 0)).success).toBe(true);
+      expect(clearUsageState).toHaveBeenCalledTimes(0);
 
-      expect(result.success).toBe(true);
-      expect(getUsageState(harness.session)).toBeUndefined();
+      expect((await workspaceService.truncateHistory(workspaceId, 1.0)).success).toBe(true);
+      expect(clearUsageState).toHaveBeenCalledTimes(1);
     } finally {
-      harness.session.dispose();
       await cleanup();
     }
   });

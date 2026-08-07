@@ -2737,7 +2737,9 @@ export class AgentSession {
         this.workspaceId,
         truncateTargetId
       );
-      if (!truncateResult.success) {
+      if (truncateResult.success) {
+        this.clearUsageState();
+      } else {
         const isMissingEditTarget =
           truncateResult.error.includes("Message with ID") &&
           truncateResult.error.includes("not found in history");
@@ -3419,10 +3421,10 @@ export class AgentSession {
   }
 
   /**
-   * Called when history is rewritten to a fresh boundary outside the compaction
-   * stream path (Start Here, /reset, /clear): stale usage would make the next
-   * send auto-compact the already-cleared context. sendMessage re-seeds accurate
-   * usage from post-boundary history.
+   * Invalidate cached context usage after the active provider context is
+   * rewritten (boundary append, truncation, history replacement): stale usage
+   * would make the next send auto-compact the already-rewritten context. The
+   * next send re-seeds from post-rewrite history.
    */
   clearUsageState(): void {
     this.lastUsageState = undefined;
@@ -4606,6 +4608,8 @@ export class AgentSession {
       return false;
     }
 
+    this.clearUsageState();
+
     // This clear bypasses WorkspaceService.replaceHistory, so announce it on the chat funnel the
     // timeline already consumes: a log that cannot explain missing history defeats its purpose.
     this.emitChatEvent({
@@ -5206,7 +5210,7 @@ export class AgentSession {
 
           // Compaction collapses history to a boundary summary, so prior context-usage snapshots
           // are stale. Clear them to prevent immediate re-trigger loops on the follow-up turn.
-          this.lastUsageState = undefined;
+          this.clearUsageState();
 
           if (completedCompactionRequest?.source === "auto-compaction") {
             this.emitChatEvent({
@@ -6734,6 +6738,7 @@ export class AgentSession {
       pendingFollowUp: params.pendingFollowUp,
     });
     if (result.success) {
+      this.clearUsageState();
       this.onPostCompactionStateChange?.();
     }
     return result;

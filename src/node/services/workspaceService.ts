@@ -9677,7 +9677,9 @@ export class WorkspaceService extends EventEmitter {
       return Err(truncateResult.error);
     }
 
-    session?.clearUsageState();
+    if (effectivePercentage > 0) {
+      session?.clearUsageState();
+    }
 
     const deletedSequences = truncateResult.data;
     if (deletedSequences.length > 0) {
@@ -9872,6 +9874,8 @@ export class WorkspaceService extends EventEmitter {
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
         }
+        // History is already gone even if the summary append below fails.
+        this.sessions.get(workspaceId)?.clearUsageState();
         this.timelineRecorder.record(workspaceId, {
           kind: "history.cleared",
           source: { system: "chat" },

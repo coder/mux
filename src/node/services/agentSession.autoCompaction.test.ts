@@ -12,6 +12,7 @@ import {
   type MuxMessage,
 } from "@/common/types/message";
 import { GOAL_CONTINUATION_KIND } from "@/constants/goals";
+import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { Ok, Err } from "@/common/types/result";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
@@ -850,6 +851,24 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
 
     expect(result.success).toBe(true);
     expect(checkBeforeSend).toHaveBeenCalledTimes(1);
+
+    session.dispose();
+  });
+
+  test("heartbeat context reset clears stale usage before its follow-up dispatches", async () => {
+    const workspaceId = "ws-heartbeat-reset-clears-usage";
+    const { session } = await createSessionHarness({ workspaceId });
+
+    const sessionState = session as unknown as { lastUsageState?: AutoCompactionUsageState };
+    sessionState.lastUsageState = { totalTokens: 95_000 };
+
+    const result = await session.appendHeartbeatContextResetBoundary({
+      boundaryText: "Heartbeat context reset boundary",
+      pendingFollowUp: { text: "heartbeat follow-up", model: "openai:gpt-4o", agentId: "exec" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(sessionState.lastUsageState).toBeUndefined();
 
     session.dispose();
   });
