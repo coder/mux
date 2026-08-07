@@ -335,9 +335,12 @@ export function execFileAsync(
     options?.signal?.removeEventListener("abort", onAbort);
   };
   const killChild = () => {
-    if (child.exitCode === null && child.signalCode === null) {
-      if (options?.maxOutputBytes !== undefined) terminateCappedCommand(child);
-      else child.kill();
+    if (options?.maxOutputBytes !== undefined) {
+      // Even after the leader exits: a descendant holding the inherited pipes keeps `close`
+      // from firing, and the group outlives its leader while any member survives.
+      terminateCappedCommand(child);
+    } else if (child.exitCode === null && child.signalCode === null) {
+      child.kill();
     }
   };
   const onAbort = () => killChild();

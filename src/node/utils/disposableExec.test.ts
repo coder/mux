@@ -450,6 +450,56 @@ describe("disposableExec", () => {
     }
   });
 
+  test("timeout kills a capped command's group after the leader already exited", async () => {
+    if (process.platform === "win32") return;
+    const pidFile = path.join(os.tmpdir(), `mux-leader-exited-${process.pid}-${Date.now()}`);
+    // The leader exits immediately, leaving only the background descendant holding the pipes.
+    using proc = execFileAsync("sh", ["-c", 'sleep 30 & echo $! > "$1"', "sh", pidFile], {
+      maxOutputBytes: 1024,
+      timeoutMs: 100,
+    });
+    const child = (proc as unknown as { child: ChildProcess }).child;
+    activeProcesses.add(child);
+    let passed = false;
+
+    try {
+      // The leader exited 0 before the timeout, so the settled result is a success; what the
+      // timeout must guarantee is that settling does not wait out the descendant's lifetime.
+      await Promise.race([
+        proc.result,
+        new Promise<never>((_, reject) => {
+          const timeout = setTimeout(
+            () => reject(new Error("timeout result did not settle promptly")),
+            2_000
+          );
+          timeout.unref?.();
+        }),
+      ]);
+      expect(child.exitCode).toBe(0);
+
+      const descendantPid = Number((await fs.readFile(pidFile, "utf-8")).trim());
+      let descendantRunning = true;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        try {
+          process.kill(descendantPid, 0);
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        } catch {
+          descendantRunning = false;
+          break;
+        }
+      }
+      expect(descendantRunning).toBe(false);
+      passed = true;
+    } finally {
+      if (!passed && child.pid !== undefined) killProcessTree(child.pid);
+      if (!passed) {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
+      await fs.rm(pidFile, { force: true });
+    }
+  });
+
   test("an uncapped command stays in this process's group", async () => {
     // Reads /proc rather than spawning ps, so the assertion cannot be slower than the process it
     // is inspecting. Linux-only, which is where the unit suite runs.
