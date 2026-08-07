@@ -20,6 +20,7 @@ import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyFor
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
+  findLatestContextBoundaryIndex,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
@@ -1917,12 +1918,15 @@ export class HistoryService {
    * Truncate history by removing approximately the given percentage of tokens from the beginning
    * @param workspaceId The workspace ID
    * @param percentage Percentage to truncate (0.0 to 1.0). 1.0 = delete all
-   * @returns Result containing array of deleted historySequence numbers
+   * @returns Result with deleted historySequence numbers plus whether the cut
+   *          reached the active provider-context window (at or past the latest
+   *          durable boundary). Callers use that flag to decide whether cached
+   *          context usage is stale.
    */
   async truncateHistory(
     workspaceId: string,
     percentage: number
-  ): Promise<Result<number[], string>> {
+  ): Promise<Result<{ deletedSequences: number[]; activeContextTruncated: boolean }, string>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
@@ -1944,7 +1948,7 @@ export class HistoryService {
 
           // Reset sequence counter when clearing history
           this.sequenceCounters.set(workspaceId, 0);
-          return Ok(deletedSequences);
+          return Ok({ deletedSequences, activeContextTruncated: true });
         }
 
         // Structural rewrite requires full history content (oldest rows live in
@@ -1955,7 +1959,7 @@ export class HistoryService {
           ...(await this.readChatHistory(workspaceId)),
         ];
         if (messages.length === 0) {
-          return Ok([]); // Nothing to truncate
+          return Ok({ deletedSequences: [], activeContextTruncated: false }); // Nothing to truncate
         }
 
         // Get tokenizer for counting (use a default model)
@@ -1989,7 +1993,7 @@ export class HistoryService {
         // rewrite anything — collapsing the archive back into chat.jsonl would
         // undo rotation and put lifetime history back on the hot path.
         if (removeCount === 0) {
-          return Ok([]);
+          return Ok({ deletedSequences: [], activeContextTruncated: false });
         }
 
         // If we're removing all messages, use fast path
@@ -2000,8 +2004,16 @@ export class HistoryService {
           const deletedSequences = messages
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
-          return Ok(deletedSequences);
+          return Ok({ deletedSequences, activeContextTruncated: true });
         }
+
+        // The cut changes the active provider context only when it removes the
+        // latest durable boundary (or any row after it). A cut confined to
+        // sealed pre-boundary rows leaves the provider window and its usage
+        // snapshots valid.
+        const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
+        const activeContextTruncated =
+          latestBoundaryIndex >= 0 ? removeCount > latestBoundaryIndex : true;
 
         // Keep messages after removeCount
         const remainingMessages = messages.slice(removeCount).map((msg) => {
@@ -2009,7 +2021,7 @@ export class HistoryService {
           // (including the removed prefix). Persisting it would reseed stale
           // auto-compaction pressure, even across app restarts. Strip it; the
           // next provider response reports fresh usage.
-          if (msg.metadata?.contextUsage === undefined) {
+          if (!activeContextTruncated || msg.metadata?.contextUsage === undefined) {
             return msg;
           }
           return {
@@ -2065,7 +2077,7 @@ export class HistoryService {
         );
         this.sequenceCounters.set(workspaceId, nextSeq);
 
-        return Ok(deletedSequences);
+        return Ok({ deletedSequences, activeContextTruncated });
       } catch (error) {
         const message = getErrorMessage(error);
         return Err(`Failed to truncate history: ${message}`);
@@ -2078,7 +2090,7 @@ export class HistoryService {
     if (!result.success) {
       return Err(result.error);
     }
-    return Ok(result.data);
+    return Ok(result.data.deletedSequences);
   }
 
   /**

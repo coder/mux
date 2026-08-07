@@ -3905,7 +3905,9 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       bashMonitorRecoveryPromise: Promise<void>;
     };
     internal.bashMonitorRecoveryPromise = recovery.promise;
-    const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(Ok([]));
+    const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(
+      Ok({ deletedSequences: [], activeContextTruncated: true })
+    );
 
     try {
       const clearPromise = workspaceService.truncateHistory(workspaceId, 1.0);

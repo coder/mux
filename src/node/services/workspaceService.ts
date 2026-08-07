@@ -9669,9 +9669,11 @@ export class WorkspaceService extends EventEmitter {
     // Invalidate usage inside the truncate step, immediately after the rewrite
     // commits: later wrapper steps (monitor-wake restoration) can fail after
     // chat.jsonl has already changed, and stale usage must not survive that.
+    // A cut confined to sealed pre-boundary rows leaves the active provider
+    // context (and its usage snapshots) valid, so it must not invalidate.
     const truncate = async () => {
       const result = await this.historyService.truncateHistory(workspaceId, effectivePercentage);
-      if (result.success && effectivePercentage > 0) {
+      if (result.success && result.data.activeContextTruncated) {
         this.sessions.get(workspaceId)?.clearUsageState();
       }
       return result;
@@ -9686,7 +9688,7 @@ export class WorkspaceService extends EventEmitter {
       return Err(truncateResult.error);
     }
 
-    const deletedSequences = truncateResult.data;
+    const deletedSequences = truncateResult.data.deletedSequences;
     if (deletedSequences.length > 0) {
       const deleteMessage: DeleteMessage = {
         type: "delete",

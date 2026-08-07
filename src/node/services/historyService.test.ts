@@ -2034,7 +2034,8 @@ describe("HistoryService", () => {
       const truncateResult = await service.truncateHistory(wsId, 0.5);
       expect(truncateResult.success).toBe(true);
       if (truncateResult.success) {
-        expect(truncateResult.data.length).toBeGreaterThan(0);
+        expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
+        expect(truncateResult.data.activeContextTruncated).toBe(true);
       }
 
       const remaining = await service.getHistoryFromLatestBoundary(wsId);
@@ -2049,6 +2050,34 @@ describe("HistoryService", () => {
       }
     });
 
+    it("preserves contextUsage when the cut stays before the latest boundary", async () => {
+      // Heavy sealed prefix, then a boundary, then a light active epoch whose
+      // usage snapshot must survive a cut confined to pre-boundary rows.
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.25);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
+        expect(truncateResult.data.activeContextTruncated).toBe(false);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    });
+
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
@@ -2059,7 +2088,10 @@ describe("HistoryService", () => {
       const truncateResult = await service.truncateHistory(wsId, 0);
       expect(truncateResult.success).toBe(true);
       if (truncateResult.success) {
-        expect(truncateResult.data).toEqual([]);
+        expect(truncateResult.data).toEqual({
+          deletedSequences: [],
+          activeContextTruncated: false,
+        });
       }
 
       // No-op truncation must not collapse the archive back into chat.jsonl.
