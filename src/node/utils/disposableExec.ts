@@ -312,6 +312,10 @@ export function execFileAsync(
   const child = spawn(file, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ? { ...process.env, ...options.env } : undefined,
+    // Its own process group, so killing the tree has a group to signal and a descendant cannot
+    // outlive the command that spawned it. Not on Windows, where `detached` opens a console
+    // window and `killProcessTree` walks the tree with `taskkill /T` instead.
+    detached: process.platform !== "win32",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   const cleanup = () => {
@@ -349,7 +353,11 @@ export function execFileAsync(
       if (maxStdoutBytes !== undefined && Buffer.byteLength(stdout, "utf-8") > maxStdoutBytes) {
         stdoutOverflow = true;
         stdout = "";
-        child.kill("SIGKILL");
+        // The whole tree, because the command being cut off may have spawned the thing actually
+        // producing the flood (git's ssh transport, a credential helper), and killing only the
+        // direct child would leave it running.
+        if (child.pid !== undefined && child.pid > 0) killProcessTree(child.pid);
+        else child.kill("SIGKILL");
         // "close" only fires once every stdio pipe is released, and descendants of the killed
         // child inherit those pipes. Waiting for them would let the flood we are bailing out of
         // decide how long the bail-out takes, so stop reading the output we just discarded.

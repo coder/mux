@@ -349,7 +349,33 @@ describe("disposableExec", () => {
     activeProcesses.add((proc as any).child);
 
     await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
-    expect((proc as any).child.killed).toBe(true);
+    // The signal rather than `killed`, which only records a kill sent through this handle and
+    // stays false when the process group is signalled instead.
+    expect((proc as any).child.signalCode).toBe("SIGKILL");
+  });
+
+  test("maxStdoutBytes kills descendants of the capped command", async () => {
+    if (process.platform === "win32") return;
+    const marker = `mux-cap-descendant-${process.pid}-${Date.now()}`;
+    const pattern = `sleep 30; echo ${marker}`;
+    using proc = execFileAsync(
+      "sh",
+      ["-c", `sh -c '${pattern}' & yes abcdefghij | head -c 200000; wait`],
+      { maxStdoutBytes: 1024 }
+    );
+    activeProcesses.add((proc as any).child);
+
+    await expect(proc.result).rejects.toThrow(/more than 1024 bytes of output/);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Killing only the direct child would leave this shell running, holding whatever the real
+    // producer of the flood was (git's ssh transport, a credential helper).
+    using survivors = execFileAsync("pgrep", ["-fc", pattern]);
+    const found = await survivors.result.then(
+      (ok) => ok.stdout.trim(),
+      () => "0" // pgrep exits non-zero when nothing matches
+    );
+    expect(found).toBe("0");
   });
 
   test("maxStdoutBytes leaves output under the cap untouched", async () => {

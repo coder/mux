@@ -531,7 +531,10 @@ async function writeCheckedFile(
     // creation mode does nothing when the destination already exists. Masking would carry an
     // existing file's setuid, setgid, sticky, and owner-execute bits into a config file.
     if (ownerOnly) next = 0o600;
-    if (next !== stat.mode) await handle.chmod(next);
+    // Compared against the permission bits alone: `stat.mode` also carries the file type, so
+    // comparing whole modes never matches and chmods a file whose mode is already correct, which
+    // fails with EPERM when the destination is writable but owned by someone else.
+    if (next !== base) await handle.chmod(next);
   } finally {
     await handle.close();
   }
@@ -2217,6 +2220,14 @@ interface RestorePlan {
   backupPreferences: unknown;
 }
 
+async function assertDirectoryAccepts(directory: string, relativePath: string): Promise<void> {
+  try {
+    await fs.access(directory, fs.constants.W_OK | fs.constants.X_OK);
+  } catch {
+    throw new Error(`Cannot restore '${relativePath}': the destination is not writable`);
+  }
+}
+
 /**
  * The write opens an existing destination `O_WRONLY` and otherwise creates it along with any
  * missing parent, so a readable-but-unwritable destination fails there instead of here, once
@@ -2230,6 +2241,11 @@ async function assertRestoreDestinationWritable(
 ): Promise<void> {
   let probe = destination;
   let mode = fs.constants.W_OK;
+  if (existing !== null && existing.nlink > 1) {
+    // A multi-link destination is severed by unlinking it, which the directory holding the name
+    // has to permit, not the file itself.
+    await assertDirectoryAccepts(path.dirname(destination), relativePath);
+  }
   if (existing === null) {
     // The write's mkdir is recursive, so the directory that has to accept the new entry is the
     // nearest one that already exists, which is not always the immediate parent.
