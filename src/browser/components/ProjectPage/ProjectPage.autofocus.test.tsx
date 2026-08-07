@@ -1,16 +1,43 @@
 import { useEffect } from "react";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requireTestModule } from "@/browser/testUtils";
 import { RouterProvider } from "@/browser/contexts/RouterContext";
 import { SettingsProvider } from "@/browser/contexts/SettingsContext";
 import { cleanup, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
+import * as RealAPIModule from "@/browser/contexts/API";
+import * as RealProvidersConfigModule from "@/browser/hooks/useProvidersConfig";
+import * as RealConfiguredProvidersBarModule from "@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar";
+import * as RealProjectContextModule from "@/browser/contexts/ProjectContext";
+import * as RealChatInputModule from "@/browser/features/ChatInput/index";
 import type * as ProjectPageModule from "@/browser/components/ProjectPage/ProjectPage";
 import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 
 let cleanupDom: (() => void) | null = null;
 let focusMock: ReturnType<typeof mock> | null = null;
 let readyCalls = 0;
+
+// mock.restore() does not undo mock.module, and bun test shares module mocks
+// across suites, so the last beforeEach registration would otherwise leak into
+// every later file (a leaked api-less useAPI broke unrelated menu tests).
+// Restore the real modules once this suite finishes. lottie-react stays mocked:
+// evaluating the real module crashes on canvas access in happy-dom.
+const realModuleExports: Array<[string, Record<string, unknown>]> = [
+  ["@/browser/contexts/API", { ...RealAPIModule }],
+  ["@/browser/hooks/useProvidersConfig", { ...RealProvidersConfigModule }],
+  [
+    "@/browser/components/ConfiguredProvidersBar/ConfiguredProvidersBar",
+    { ...RealConfiguredProvidersBarModule },
+  ],
+  ["@/browser/contexts/ProjectContext", { ...RealProjectContextModule }],
+  ["@/browser/features/ChatInput/index", { ...RealChatInputModule }],
+];
+
+afterAll(() => {
+  for (const [modulePath, exports] of realModuleExports) {
+    void mock.module(modulePath, () => exports);
+  }
+});
 
 function registerProjectPageMocks() {
   // Re-register mocks before each test because afterEach restores them and this

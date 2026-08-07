@@ -64,14 +64,16 @@ describe("TaskGroupListItem", () => {
     expect(groupRow.textContent).toContain("1 queued");
   });
 
-  test("handles menu shortcuts without toggling the group or reaching window handlers", () => {
+  test("handles menu shortcuts without toggling the group or reaching window handlers", async () => {
     const onWindowKeydown = mock(() => undefined);
     const onArchiveAll = mock(() => Promise.resolve());
     const onToggle = mock(() => undefined);
     window.addEventListener("keydown", onWindowKeydown);
     const view = renderTaskGroup({ kind: "variants", onArchiveAll, onToggle });
     fireEvent.contextMenu(view.getByTestId("task-group-best-of-demo"));
-    const menuItem = view.getByRole("button", { name: /Archive all variants/ });
+    // findByRole: the menu item stays hidden from the a11y tree until Radix
+    // popper's async positioning resolves, so a sync query races it.
+    const menuItem = await view.findByRole("button", { name: /Archive all variants/ });
 
     fireEvent.keyDown(menuItem, { key: "Enter" });
     expect(onToggle).not.toHaveBeenCalled();
