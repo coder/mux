@@ -2100,26 +2100,6 @@ export class HistoryService {
         // deletion of rows the cut removes anyway, so no failure or crash can
         // lose retained rows or leave duplicates behind.
         //
-        // When the cut spans two files and usage must be stripped, sanitize
-        // chat.jsonl FIRST (metadata-only atomic write, rows unchanged) and
-        // roll it back byte-exactly if the cut fails before any window-
-        // changing step commits, so every runtime failure returns Err with
-        // both files as they were. A process death between the sanitize
-        // commit and the cut commit leaves the window unchanged with usage
-        // stripped, the same state every legitimate active-window cut
-        // deliberately creates (one unmonitored send, repaired by the next
-        // provider response); the inverse ordering's death window instead
-        // pairs a changed window with stale usage, which a restart reseeds
-        // into a spurious auto-compaction that nothing repairs.
-        const needsPreSanitize = activeContextTruncated && archivedMessages.length > 0;
-        let originalChat: string | null = null;
-        if (needsPreSanitize) {
-          originalChat = await fs.readFile(historyPath, "utf-8").catch(() => null);
-          await writeFileAtomic(
-            historyPath,
-            this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
-          );
-        }
         // Deleting the whole archive commits a window change only when the
         // window extends into it (boundary inside the archive, or none at
         // all). A normally rotated archive holds only sealed pre-boundary
@@ -2129,6 +2109,34 @@ export class HistoryService {
           messages,
           archivedMessages.length
         );
+        // Sanitize chat.jsonl BEFORE the cut only when the archive step that
+        // runs first is itself window-changing (an archive-confined cut
+        // removing window rows, or a whole-archive delete of window rows;
+        // both need a boundary-less or boundary-in-archive layout). Then a
+        // crash between sanitize and cut leaves the window unchanged with
+        // usage stripped: one unmonitored send, either repaired by the next
+        // provider response or surfaced as a provider context-length error,
+        // the same states as histories predating usage snapshots. The
+        // inverse ordering's crash window pairs a changed window with stale
+        // usage, which a restart reseeds into a spurious auto-compaction
+        // that nothing repairs. In normal rotated layouts the only
+        // window-changing step is the final chat cut, which strips usage in
+        // the same atomic write, so no separate sanitize write exists for a
+        // crash to strand. Runtime failures before any window-changing
+        // commit roll the sanitize back byte-exactly, returning Err with
+        // both files as they were.
+        const needsPreSanitize =
+          removeCount < archivedMessages.length
+            ? activeContextTruncated
+            : archiveDeleteChangesWindow;
+        let originalChat: string | null = null;
+        if (needsPreSanitize) {
+          originalChat = await fs.readFile(historyPath, "utf-8").catch(() => null);
+          await writeFileAtomic(
+            historyPath,
+            this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
+          );
+        }
         let windowChanged = false;
         try {
           if (removeCount < archivedMessages.length) {

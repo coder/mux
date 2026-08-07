@@ -2358,18 +2358,16 @@ describe("HistoryService", () => {
       );
 
       // Abort between the archive delete and the final chat.jsonl commit
-      // (serialize call 1 is the pre-cut usage sanitization, call 2 the cut).
-      // Every archive row was a cut target, so the failure must leave every
-      // chat.jsonl row (the active window and all retained rows) in place.
+      // (the cut serializes the retained rows). Every archive row was a cut
+      // target, so the failure must leave every chat.jsonl row (the active
+      // window and all retained rows) in place.
       const internals = service as unknown as {
         serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
       };
       const realSerialize = internals.serializeHistoryEntries.bind(service);
-      let serializeCalls = 0;
       const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
         (messages: MuxMessage[], workspaceId: string) => {
-          serializeCalls += 1;
-          if (serializeCalls === 2) {
+          if (messages.some((msg) => msg.id === "assistant-active")) {
             throw new Error("injected serialize failure");
           }
           return realSerialize(messages, workspaceId);
@@ -2532,7 +2530,7 @@ describe("HistoryService", () => {
       // Normal rotated layout: the boundary is the first chat.jsonl row, so
       // every archive row is sealed pre-boundary history and deleting the
       // archive leaves the provider window unchanged. The failed chat cut
-      // must still roll back the pre-cut sanitization.
+      // must leave the original chat bytes (and their usage) untouched.
       await appendNumberedMessages(service, wsId, 2);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
       await service.appendToHistory(
@@ -2549,16 +2547,14 @@ describe("HistoryService", () => {
 
       const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
 
-      // Serialize call 1 is the pre-cut sanitization; call 2 is the chat cut.
+      // Fail the chat cut (the serialize of the retained rows).
       const internals = service as unknown as {
         serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
       };
       const realSerialize = internals.serializeHistoryEntries.bind(service);
-      let serializeCalls = 0;
       const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
         (messages: MuxMessage[], workspaceId: string) => {
-          serializeCalls += 1;
-          if (serializeCalls === 2) {
+          if (messages.some((msg) => msg.id === "assistant-active")) {
             throw new Error("injected chat cut serialize failure");
           }
           return realSerialize(messages, workspaceId);
@@ -2578,6 +2574,58 @@ describe("HistoryService", () => {
         expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
       } finally {
         serializeSpy.mockRestore();
+      }
+    });
+
+    it("never pre-sanitizes chat usage when only the chat cut changes the window", async () => {
+      // Normal rotated layout: the boundary is the first chat.jsonl row, so
+      // the archive delete is not window-changing and the final chat cut
+      // strips usage in the same atomic write. A separate sanitize write
+      // before the cut would create a crash window that strands an
+      // unchanged near-limit context with no seedable usage.
+      await appendNumberedMessages(service, wsId, 2);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
+
+      // Probe chat.jsonl at the instant the archive delete runs: this is the
+      // state a crash between any earlier write and the cut would leave.
+      const probe: { chatAtArchiveDelete: string | null } = { chatAtArchiveDelete: null };
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation(
+        async (...args: Parameters<typeof fs.rm>) => {
+          if (args[0] === archivePath(wsId)) {
+            probe.chatAtArchiveDelete = await fs.readFile(chatPath(wsId), "utf-8");
+          }
+          return realRm(...args);
+        }
+      );
+      try {
+        const truncateResult = await service.truncateHistory(wsId, 0.5);
+        expect(truncateResult.success).toBe(true);
+        if (truncateResult.success) {
+          expect(truncateResult.data.activeContextTruncated).toBe(true);
+        }
+        expect(probe.chatAtArchiveDelete).toBe(chatBefore);
+        // The committed cut still strips usage from retained rows.
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant).toBeDefined();
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(await fileExists(archivePath(wsId))).toBe(false);
+      } finally {
+        rmSpy.mockRestore();
       }
     });
 
