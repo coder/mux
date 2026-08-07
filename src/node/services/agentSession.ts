@@ -5224,7 +5224,10 @@ export class AgentSession {
 
           // Compaction collapses history to a boundary summary, so prior context-usage snapshots
           // are stale. Clear them to prevent immediate re-trigger loops on the follow-up turn.
-          this.clearUsageState();
+          // Seeding stays enabled: the boundary read starts at the just-written summary row,
+          // whose contextUsage is a fresh post-compaction estimate the follow-up needs for
+          // checkBeforeSend (a large system prompt or summary can stay near the threshold).
+          this.clearUsageState({ reenableHistorySeeding: true });
 
           if (completedCompactionRequest?.source === "auto-compaction") {
             this.emitChatEvent({

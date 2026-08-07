@@ -1056,6 +1056,108 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("compaction completion keeps seeding enabled for the fresh boundary estimate", async () => {
+    const workspaceId = "ws-compaction-completion-keeps-seeding";
+
+    // Real per-test config: compaction persists pending post-compaction state
+    // under getSessionDir, which must not leak into other tests' sessions.
+    const { historyService, config, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+
+    // Near-limit context so the real monitor converts the send into an
+    // on-send compaction (gpt-4o window 128K, default threshold 85%).
+    const appendUser = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("user-1", "user", "prompt", { timestamp: Date.now() - 2_000 })
+    );
+    expect(appendUser.success).toBe(true);
+    const appendAssistant = await historyService.appendToHistory(
+      workspaceId,
+      createMuxMessage("assistant-1", "assistant", "reply", {
+        timestamp: Date.now() - 1_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 120_000, outputTokens: 100, totalTokens: 120_100 },
+      })
+    );
+    expect(appendAssistant.success).toBe(true);
+
+    const aiEmitter = new EventEmitter();
+    let streamCallCount = 0;
+    const streamMessage = mock((_request: unknown) => {
+      streamCallCount += 1;
+      if (streamCallCount === 1) {
+        // The compaction stream: a prose summary whose post-compaction
+        // estimate is small (1_200 system + 800 summary tokens).
+        aiEmitter.emit("stream-end", {
+          type: "stream-end",
+          workspaceId,
+          messageId: "assistant-compaction-summary",
+          parts: [{ type: "text", text: "A concise prose summary of the conversation." }],
+          metadata: {
+            model: "openai:gpt-4o",
+            usage: { inputTokens: 120_000, outputTokens: 800, totalTokens: 120_800 },
+            systemMessageTokens: 1_200,
+          },
+        });
+      }
+      // The follow-up stream (call 2) reports no usage.
+      return Promise.resolve(Ok(undefined));
+    });
+
+    const aiService = Object.assign(aiEmitter, {
+      isStreaming: mock((_workspaceId: string) => false),
+      stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
+      // Post-compaction attachment building reads workspace metadata; a
+      // failure result makes it skip the plan reference and continue.
+      getWorkspaceMetadata: mock((_workspaceId: string) =>
+        Promise.resolve(Err("no metadata in test"))
+      ),
+      streamMessage: streamMessage as unknown as (
+        ...args: Parameters<AIService["streamMessage"]>
+      ) => Promise<unknown>,
+    }) as unknown as AIService;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager: new EventEmitter() as unknown as InitStateManager,
+      backgroundProcessManager: {
+        cleanup: mock((_workspaceId: string) => Promise.resolve()),
+        setMessageQueued: mock(() => undefined),
+      } as unknown as BackgroundProcessManager,
+    });
+
+    const result = await session.sendMessage("original request", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+
+    // Wait for compaction handling to collapse history and dispatch the follow-up.
+    const deadline = Date.now() + 1_500;
+    while (streamCallCount < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(streamCallCount).toBe(2);
+
+    // The follow-up reported no usage, so the next send must seed the boundary
+    // summary's fresh estimate rather than staying suppressed.
+    const seenUsages = installUsageCapturingMonitor(session);
+    const postResult = await session.sendMessage("post-compaction send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(postResult.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
+    expect(seeded?.totalTokens).toBe(2_000);
+
+    session.dispose();
+  });
+
   test("heartbeat reset rollback re-enables usage seeding for the queued turn", async () => {
     const workspaceId = "ws-heartbeat-rollback-reenables-seeding";
     const { session, historyService } = await createSessionHarness({ workspaceId });
