@@ -9666,7 +9666,16 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
-    const truncate = () => this.historyService.truncateHistory(workspaceId, effectivePercentage);
+    // Invalidate usage inside the truncate step, immediately after the rewrite
+    // commits: later wrapper steps (monitor-wake restoration) can fail after
+    // chat.jsonl has already changed, and stale usage must not survive that.
+    const truncate = async () => {
+      const result = await this.historyService.truncateHistory(workspaceId, effectivePercentage);
+      if (result.success && effectivePercentage > 0) {
+        this.sessions.get(workspaceId)?.clearUsageState();
+      }
+      return result;
+    };
     const truncateResult =
       effectivePercentage > 0
         ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate, {
@@ -9675,10 +9684,6 @@ export class WorkspaceService extends EventEmitter {
         : await truncate();
     if (!truncateResult.success) {
       return Err(truncateResult.error);
-    }
-
-    if (effectivePercentage > 0) {
-      session?.clearUsageState();
     }
 
     const deletedSequences = truncateResult.data;

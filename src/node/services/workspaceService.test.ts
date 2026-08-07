@@ -4454,6 +4454,63 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("usage is cleared when wake restoration fails after a committed truncation", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "truncate-usage-clear-before-wake-restore";
+    try {
+      await config.addWorkspace("/tmp/truncate-wake-restore-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "truncate-wake-restore-project",
+        projectPath: "/tmp/truncate-wake-restore-project",
+        runtimeConfig: { type: "local" },
+      });
+      for (let i = 0; i < 6; i++) {
+        expect(
+          (
+            await historyService.appendToHistory(
+              workspaceId,
+              createMuxMessage(`msg-${i}`, "user", `message ${i} with some padding text`, {})
+            )
+          ).success
+        ).toBe(true);
+      }
+
+      const clearUsageState = mock(() => undefined);
+      const session = {
+        isBusy: mock(() => false),
+        emitChatEvent: mock(() => undefined),
+        clearUsageState,
+        clearFileState: mock(() => undefined),
+      } as unknown as AgentSession;
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        session
+      );
+
+      const wakeStore = (
+        workspaceService as unknown as { bashMonitorWakeStore: BashMonitorWakeStore }
+      ).bashMonitorWakeStore;
+      const restoreSpy = spyOn(wakeStore, "restorePendingSnapshots").mockImplementation(() =>
+        Promise.reject(new Error("injected wake restore failure"))
+      );
+
+      // Partial truncation commits the rewrite, then wake restoration throws.
+      let thrown: unknown;
+      try {
+        await workspaceService.truncateHistory(workspaceId, 0.5);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(Error);
+      expect((thrown as Error).message).toBe("injected wake restore failure");
+      expect(clearUsageState).toHaveBeenCalledTimes(1);
+      restoreSpy.mockRestore();
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset is a no-op when repeated without provider-eligible messages", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "context-reset-noop";
