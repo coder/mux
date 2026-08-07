@@ -522,7 +522,6 @@ describe("disposableExec", () => {
   test("timeout kills a capped command's group after the leader already exited", async () => {
     if (process.platform === "win32") return;
     const pidFile = path.join(os.tmpdir(), `mux-leader-exited-${process.pid}-${Date.now()}`);
-    // The leader exits immediately, leaving only the background descendant holding the pipes.
     using proc = execFileAsync("sh", ["-c", 'sleep 30 & echo $! > "$1"', "sh", pidFile], {
       maxOutputBytes: 1024,
       timeoutMs: 100,
@@ -532,8 +531,7 @@ describe("disposableExec", () => {
     let passed = false;
 
     try {
-      // The leader exited 0 before the timeout, so the settled result is a success; what the
-      // timeout must guarantee is that settling does not wait out the descendant's lifetime.
+      // The exited leader resolves successfully; the timeout prevents delayed settlement.
       await Promise.race([
         proc.result,
         new Promise<never>((_, reject) => {

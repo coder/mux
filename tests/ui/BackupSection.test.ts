@@ -8,8 +8,12 @@ import { BackupSection } from "@/browser/features/Settings/Sections/BackupSectio
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 
 type MockOptions = Parameters<typeof createMockORPCClient>[0];
+type MockClient = ReturnType<typeof createMockORPCClient>;
 
-function renderBackupSection(overrides: Partial<NonNullable<MockOptions>> = {}) {
+function renderBackupSection(
+  overrides: Partial<NonNullable<MockOptions>> = {},
+  setupClient?: (client: MockClient) => void
+) {
   const client = createMockORPCClient({
     backupSettings: {
       repoUrl: "git@github.com:example/dotfiles.git",
@@ -36,6 +40,8 @@ function renderBackupSection(overrides: Partial<NonNullable<MockOptions>> = {}) 
     },
     ...overrides,
   });
+
+  setupClient?.(client);
 
   const view = render(
     React.createElement(
@@ -115,35 +121,57 @@ describe("BackupSection", () => {
   });
 
   test("loads settings when the config change subscription fails", async () => {
-    const client = createMockORPCClient({
-      backupSettings: {
-        repoUrl: "git@github.com:example/dotfiles.git",
-        branch: "main",
-        path: "mux/",
-      },
+    const { view } = renderBackupSection({}, (client) => {
+      jest
+        .spyOn(client.config, "onConfigChanged")
+        .mockImplementation(() => Promise.reject(new Error("ipc failure")));
     });
-    jest
-      .spyOn(client.config, "onConfigChanged")
-      .mockImplementation(() => Promise.reject(new Error("ipc failure")));
-
-    const view = render(
-      React.createElement(
-        ThemeProvider,
-        null,
-        React.createElement(
-          TooltipProvider,
-          null,
-          React.createElement(APIProvider, {
-            client,
-            children: React.createElement(BackupSection),
-          })
-        )
-      )
-    );
     const canvas = within(view.container);
 
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+  });
+
+  test("loads settings while the config change subscription is pending", async () => {
+    const { view } = renderBackupSection({}, (client) => {
+      const pendingSubscription = new Promise<
+        Awaited<ReturnType<typeof client.config.onConfigChanged>>
+      >(() => undefined);
+      jest.spyOn(client.config, "onConfigChanged").mockReturnValue(pendingSubscription);
+    });
+    const canvas = within(view.container);
+
+    const repoInput = await canvas.findByLabelText("Repository URL");
+    expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
+  });
+
+  test("refreshes after subscription setup to catch changes made during setup", async () => {
+    type ConfigSubscription = Awaited<ReturnType<MockClient["config"]["onConfigChanged"]>>;
+    let establishSubscription!: () => Promise<void>;
+    const { client, view } = renderBackupSection({}, (client) => {
+      const subscription = client.config.onConfigChanged();
+      const pendingSubscription = new Promise<ConfigSubscription>((resolve) => {
+        establishSubscription = async () => {
+          resolve(await subscription);
+        };
+      });
+      jest.spyOn(client.config, "onConfigChanged").mockReturnValue(pendingSubscription);
+    });
+    const canvas = within(view.container);
+    const repoInput = await canvas.findByLabelText("Repository URL");
+
+    await act(async () => {
+      await client.backup.saveSettings({
+        repoUrl: "git@github.com:example/during-setup.git",
+        branch: "release",
+        path: "shared/",
+      });
+      await establishSubscription();
+    });
+
+    await waitFor(() =>
+      expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/during-setup.git")
+    );
   });
 
   test("wires keyboard actions through save, validate, preview, backup, and restore", async () => {

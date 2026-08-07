@@ -324,9 +324,9 @@ export function execFileAsync(
   const child = spawn(file, args, {
     stdio: ["ignore", "pipe", "pipe"],
     env: options?.env ? { ...process.env, ...options.env } : undefined,
-    // Commands that kill descendants need a group to signal. Detaching also prevents terminal
-    // signals from reaching them, so other commands stay in this process's group. Windows uses
-    // `taskkill /T` because detached processes open a console window there.
+    // Unix tree termination needs a separate process group, but detaching also hides terminal
+    // signals, so commands that do not kill descendants stay in this process's group. Windows
+    // uses `taskkill /T` because detached children can open a console window.
     detached: killsProcessTree && process.platform !== "win32",
   });
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;

@@ -209,10 +209,7 @@ async function lstatOrNull(target: string) {
   }
 }
 
-/**
- * Filesystem identities distinguish aliases from distinct paths across case-sensitive,
- * case-insensitive, and normalization-folding volumes.
- */
+/** Filesystem identity detects aliases across hard links, case folding, and normalization. */
 async function localFilesOverwrittenByPayload(
   muxRoot: string,
   localPaths: Iterable<string>,
@@ -502,9 +499,8 @@ function restoredPermissions(
   executable: boolean,
   ownerOnly: boolean
 ): { base: number; next: number } {
-  // Git stores only whether a file is executable, so preserve local read and write permissions
-  // unless owner-only access is required. Bun's chmod strips setuid and setgid, so masking
-  // privileged bits cannot be fixture-tested under bun test.
+  // Git records only executability, so preserve local read and write permissions. Bun's chmod
+  // strips setuid and setgid, so masking privileged bits cannot be fixture-tested under bun test.
   const base = mode & 0o777;
   let next = executable ? base | ((base & 0o444) >> 2) : base & ~0o111;
   if (ownerOnly) next = 0o600;
@@ -553,8 +549,7 @@ async function writeCheckedFile(
       written += bytesWritten;
     }
     const { base, next } = restoredPermissions(stat.mode, executable, ownerOnly);
-    // Chmod is still needed when owner-only was requested above, because a creation mode does
-    // nothing when the destination already exists.
+    // Existing destinations ignore the creation mode, so owner-only restores still need chmod.
     // Compared against the permission bits alone: `stat.mode` also carries the file type, so
     // comparing whole modes never matches and chmods a file whose mode is already correct, which
     // fails with EPERM when the destination is writable but owned by someone else.
@@ -2254,8 +2249,7 @@ async function assertRestoreDestinationWritable(
     await assertDirectoryAccepts(directory, relativePath);
     const dirStat = await fs.stat(directory);
     const uid = process.getuid?.();
-    // Sticky directories reserve unlinking for privileged users or owners of the file or directory,
-    // even when the directory otherwise grants write and search access.
+    // Sticky directories let only root, the file owner, or the directory owner unlink an entry.
     if (
       (dirStat.mode & 0o1000) !== 0 &&
       uid !== undefined &&
