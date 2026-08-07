@@ -29,8 +29,9 @@ module.exports = {
     "\\.txt$": "<rootDir>/tests/__mocks__/textMock.js",
     "\\.svg$": "<rootDir>/tests/__mocks__/svgMock.js",
   },
-  // Storybook UI tests use bun:test and are run via `bun test`, so Jest must skip them.
-  testPathIgnorePatterns: ["<rootDir>/tests/ui/storybook/"],
+  // Storybook UI tests and the DOM-harness isolation guards use bun:test and
+  // are run via `bun test`, so Jest must skip them.
+  testPathIgnorePatterns: ["<rootDir>/tests/ui/storybook/", "<rootDir>/tests/ui/domIsolation\\.test\\.ts"],
   // Avoid haste module collision with vscode extension
   modulePathIgnorePatterns: ["<rootDir>/vscode/"],
   transform: {
