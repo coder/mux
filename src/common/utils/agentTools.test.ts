@@ -1,10 +1,24 @@
 import { describe, expect, it } from "@jest/globals";
 import {
   isExecLikeEditingCapableInResolvedChain,
+  isExploreLikeInResolvedChain,
   isToolEnabledByConfigs,
   isToolEnabledInResolvedChain,
   type ToolsConfig,
 } from "./agentTools";
+
+describe("isExploreLikeInResolvedChain", () => {
+  it("returns true for Explore and agents derived from Explore", () => {
+    expect(isExploreLikeInResolvedChain([{ id: "explore" }, { id: "exec" }])).toBe(true);
+    expect(
+      isExploreLikeInResolvedChain([{ id: "reviewer" }, { id: "explore" }, { id: "exec" }])
+    ).toBe(true);
+  });
+
+  it("returns false when the chain does not inherit Explore", () => {
+    expect(isExploreLikeInResolvedChain([{ id: "reviewer" }, { id: "exec" }])).toBe(false);
+  });
+});
 
 describe("isExecLikeEditingCapableInResolvedChain", () => {
   it("returns true when exec chain enables file_edit_insert", () => {

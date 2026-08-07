@@ -1178,6 +1178,100 @@ describe("task tool", () => {
     }
   });
 
+  it("allows Explore agents to spawn Explore tasks", async () => {
+    using tempDir = new TestTempDir("test-task-tool-explore-child");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
+    );
+    const taskService = { create } as unknown as TaskService;
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskExploreOnly: true,
+      taskService,
+    });
+
+    await Promise.resolve(
+      tool.execute!(
+        {
+          agentId: "explore",
+          prompt: "inspect one read-only slice",
+          title: "Inspect slice",
+          run_in_background: true,
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(create).toHaveBeenCalledTimes(1);
+    const createCall = create.mock.calls[0] as unknown[];
+    expect(createCall[0]).toMatchObject({ agentId: "explore" });
+    expect(tool.description).toContain('only spawn agentId: "explore" tasks');
+  });
+
+  it("rejects non-Explore tasks and workspace turns from Explore agents", async () => {
+    using tempDir = new TestTempDir("test-task-tool-explore-restriction");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const create = mock(() =>
+      Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
+    );
+    const createWorkspaceTurn = mock(() =>
+      Ok({
+        taskId: "wst_child-turn",
+        kind: "workspace_turn" as const,
+        status: "running" as const,
+        workspaceId: "child-workspace",
+      })
+    );
+    const taskService = { create, createWorkspaceTurn } as unknown as TaskService;
+    const tool = createTaskTool({
+      ...baseConfig,
+      taskExploreOnly: true,
+      taskService,
+    });
+
+    let taskError: unknown;
+    try {
+      await Promise.resolve(
+        tool.execute!(
+          {
+            agentId: "exec",
+            prompt: "make a change",
+            title: "Change code",
+            run_in_background: true,
+          },
+          mockToolCallOptions
+        )
+      );
+    } catch (error: unknown) {
+      taskError = error;
+    }
+    expect(taskError).toBeInstanceOf(Error);
+    expect((taskError as Error).message).toMatch(/Explore agent.*only spawn.*explore/i);
+
+    let workspaceError: unknown;
+    try {
+      await Promise.resolve(
+        tool.execute!(
+          {
+            kind: "workspace",
+            prompt: "start another workspace",
+            title: "Workspace",
+            run_in_background: true,
+          },
+          mockToolCallOptions
+        )
+      );
+    } catch (error: unknown) {
+      workspaceError = error;
+    }
+    expect(workspaceError).toBeInstanceOf(Error);
+    expect((workspaceError as Error).message).toMatch(/Explore agent.*only spawn.*explore/i);
+
+    expect(create).not.toHaveBeenCalled();
+    expect(createWorkspaceTurn).not.toHaveBeenCalled();
+  });
+
   it("should reject workspace turns while in plan agent", async () => {
     using tempDir = new TestTempDir("test-task-tool-plan-workspace");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

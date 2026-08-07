@@ -198,6 +198,8 @@ export interface ToolConfiguration {
   onConfigChanged?: () => void;
   /** Best-effort callback for recording tool-initiated model usage in session totals. */
   reportModelUsage?: (event: ToolModelUsageEvent) => void;
+  /** Restrict task delegation to read-only Explore agents and reject full workspace turns. */
+  taskExploreOnly?: boolean;
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Durable workflow lifecycle service for dynamic workflow tools. */

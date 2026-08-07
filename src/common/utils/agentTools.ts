@@ -106,6 +106,13 @@ export function isPlanLikeInResolvedChain(
   return isToolEnabledInResolvedChain("propose_plan", agents, maxDepth);
 }
 
+export function isExploreLikeInResolvedChain(
+  agents: ReadonlyArray<{ id: AgentId }>,
+  maxDepth = 10
+): boolean {
+  return agents.slice(0, maxDepth).some((agent) => agent.id === "explore");
+}
+
 export function isExecLikeEditingCapableInResolvedChain(
   agents: ReadonlyArray<ToolsConfigCarrier & { id: AgentId }>,
   maxDepth = 10

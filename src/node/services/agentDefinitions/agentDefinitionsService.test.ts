@@ -495,11 +495,35 @@ Custom planning instructions.
           "task_terminate",
           "task_workspace_lifecycle",
           "workflow_run",
+          "workflow_resume",
         ],
         toolPolicy
       )
-    ).toEqual(["task_await", "workflow_run"]);
+    ).toEqual(["task", "task_await"]);
   });
+  test("research verifier inherits research tools without orchestration tools", async () => {
+    using tempDir = new DisposableTempDir("agent-research-verifier-policy");
+    const runtime = new LocalRuntime(tempDir.path);
+
+    const verifierFrontmatter = await resolveAgentFrontmatter(
+      runtime,
+      tempDir.path,
+      "research_verifier"
+    );
+    const toolPolicy = resolveToolPolicyForAgent({
+      agents: [{ tools: verifierFrontmatter.tools }],
+      isSubagent: true,
+      disableTaskToolsForDepth: false,
+    });
+
+    expect(
+      applyToolPolicyToNames(
+        ["task", "task_await", "workflow_run", "workflow_resume", "web_search"],
+        toolPolicy
+      )
+    ).toEqual(["web_search"]);
+  });
+
   test("same-name override: project agent with base: self extends built-in/global, not itself", async () => {
     using project = new DisposableTempDir("agent-same-name");
     using global = new DisposableTempDir("agent-same-name-global");

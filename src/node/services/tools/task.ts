@@ -41,6 +41,9 @@ import { coerceNonEmptyString } from "@/node/services/taskUtils";
 const PLAN_AGENT_EXPLORE_ONLY_ERROR =
   'In the plan agent you may only spawn agentId: "explore" tasks.';
 
+const EXPLORE_AGENT_EXPLORE_ONLY_ERROR =
+  'The Explore agent may only spawn agentId: "explore" tasks.';
+
 const BUILT_IN_TASK_TOOL_MARKER = Symbol("muxBuiltInTaskTool");
 
 export function markBuiltInTaskTool<TParameters, TResult>(
@@ -80,8 +83,12 @@ function buildTaskDescription(config: ToolConfiguration): string {
   const baseDescription = buildTaskToolDescription(runtimeMode);
   const subagents = config.availableSubagents?.filter((a) => a.subagentRunnable) ?? [];
 
+  const restriction = config.taskExploreOnly
+    ? '\n\nThis agent may only spawn agentId: "explore" tasks. Full workspace turns are not allowed.'
+    : "";
+
   if (subagents.length === 0) {
-    return baseDescription;
+    return baseDescription + restriction;
   }
 
   const subagentLines = subagents.map((agent) => {
@@ -89,7 +96,7 @@ function buildTaskDescription(config: ToolConfiguration): string {
     return `- ${agent.id}${desc}`;
   });
 
-  return `${baseDescription}\n\nAvailable sub-agents (use \`agentId\` parameter):\n${subagentLines.join("\n")}`;
+  return `${baseDescription}\n\nAvailable sub-agents (use \`agentId\` parameter):\n${subagentLines.join("\n")}${restriction}`;
 }
 
 function buildParentRuntimeAiSettings(
@@ -431,6 +438,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       if (config.planFileOnly && kind === "workspace") {
         throw new Error(PLAN_AGENT_EXPLORE_ONLY_ERROR);
       }
+      if (config.taskExploreOnly && kind === "workspace") {
+        throw new Error(EXPLORE_AGENT_EXPLORE_ONLY_ERROR);
+      }
 
       if (kind === "workspace") {
         const created = await taskService.createWorkspaceTurn({
@@ -544,6 +554,9 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
       // Plan agent is explicitly non-executing. Allow only read-only exploration tasks.
       if (config.planFileOnly && requestedAgentId !== "explore") {
         throw new Error(PLAN_AGENT_EXPLORE_ONLY_ERROR);
+      }
+      if (config.taskExploreOnly && requestedAgentId !== "explore") {
+        throw new Error(EXPLORE_AGENT_EXPLORE_ONLY_ERROR);
       }
 
       // Parent runtime model and thinking are forwarded as a low-priority fallback so
