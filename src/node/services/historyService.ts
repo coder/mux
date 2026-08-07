@@ -22,6 +22,7 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   findLatestContextBoundaryIndex,
   getContextBoundaryKind,
+  hasProviderEligibleMessages,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
@@ -2012,12 +2013,13 @@ export class HistoryService {
         }
 
         // The cut changes the active provider context only when it removes a
-        // row inside the provider window. Compaction boundaries are
-        // provider-visible (the row carries the summary), so the window starts
-        // AT the boundary; reset boundaries are provider-invisible markers, so
-        // the window starts AFTER them and deleting the marker itself changes
-        // nothing the provider sees. Cuts confined before the window leave its
-        // usage snapshots valid.
+        // provider-replayable row inside the provider window. Compaction
+        // boundaries are provider-visible (the row carries the summary), so
+        // the window starts AT the boundary; reset boundaries are
+        // provider-invisible markers, so the window starts AFTER them. Rows
+        // inside the window that requests never replay (e.g. reasoning-only
+        // assistant turns) leave the request, and therefore the usage
+        // snapshots measured from it, unchanged when removed.
         const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
         const activeContextStart =
           latestBoundaryIndex < 0
@@ -2025,7 +2027,9 @@ export class HistoryService {
             : getContextBoundaryKind(messages[latestBoundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
               ? latestBoundaryIndex + 1
               : latestBoundaryIndex;
-        const activeContextTruncated = removeCount > activeContextStart;
+        const activeContextTruncated = hasProviderEligibleMessages(
+          messages.slice(Math.min(activeContextStart, removeCount), removeCount)
+        );
 
         // Keep messages after removeCount
         const remainingMessages = messages.slice(removeCount).map((msg) => {

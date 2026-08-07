@@ -2122,6 +2122,85 @@ describe("HistoryService", () => {
       }
     });
 
+    it("preserves contextUsage when the cut removes only provider-ineligible active rows", async () => {
+      // The reasoning-only assistant turn after the reset is never replayed to
+      // the provider, so removing it (plus the sealed prefix and the marker)
+      // leaves the provider request and its usage snapshot unchanged.
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("reset-boundary", "assistant", "", {
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        })
+      );
+      await service.appendToHistory(wsId, {
+        ...createMuxMessage("assistant-reasoning-only", "assistant", ""),
+        parts: [{ type: "reasoning", text: `internal deliberation ${"x".repeat(2_000)}` }],
+      });
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      // Half the token mass sits in the sealed prefix plus the large
+      // reasoning row, so a 50% cut ends inside the reasoning row.
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.activeContextTruncated).toBe(false);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        expect(remaining.data.find((msg) => msg.id === "assistant-reasoning-only")).toBeUndefined();
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    });
+
+    it("strips contextUsage when the cut removes an eligible post-reset row", async () => {
+      // Mirror of the ineligible case: a replayable user turn in the same
+      // position must still invalidate usage when removed.
+      await appendNumberedMessages(service, wsId, 12);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("reset-boundary", "assistant", "", {
+          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+        })
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("user-removed", "user", `large replayable prompt ${"x".repeat(2_000)}`)
+      );
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+      if (truncateResult.success) {
+        expect(truncateResult.data.activeContextTruncated).toBe(true);
+      }
+
+      const remaining = await service.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        expect(remaining.data.find((msg) => msg.id === "user-removed")).toBeUndefined();
+        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
+        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+      }
+    });
+
     it("strips contextUsage when the cut removes a compaction boundary", async () => {
       // Mirror of the reset case: compaction boundaries carry the summary the
       // provider sees, so deleting the boundary row changes the active context.
