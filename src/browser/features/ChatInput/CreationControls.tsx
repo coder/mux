@@ -23,6 +23,7 @@ import {
 import { GitBranch, Loader2, Wand2 } from "lucide-react";
 import type { ProjectConfig } from "@/common/types/project";
 import { formatProjectHierarchyLabel } from "@/common/utils/subProjects";
+import { CreationProjectSelect } from "./CreationProjectSelect";
 import { RuntimeConfigInput } from "@/browser/components/RuntimeConfigInput/RuntimeConfigInput";
 import { usePerfRenderMarker } from "@/browser/utils/perf/PerfRenderMarker";
 import { cn } from "@/common/lib/utils";
@@ -741,43 +742,16 @@ function CreationControlsContent(props: CreationControlsProps) {
           // selecting "gbot/bbot" would show "gbot" because props.projectPath
           // is normalized to the owning parent for runtime/config scoping.
           const selected = props.selectedProjectPath ?? props.projectPath;
-          const selectedLabel = formatProjectHierarchyLabel(selected, props.userProjects);
-          return props.userProjects.size > 1 ? (
-            <RadixSelect value={selected} onValueChange={props.onSelectedProjectPathChange}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <SelectTrigger
-                    aria-label="Select project"
-                    data-testid="project-selector"
-                    className="text-foreground hover:bg-toggle-bg/70 h-7 w-auto max-w-[280px] shrink-0 border-transparent bg-transparent px-0 text-lg font-semibold shadow-none"
-                  >
-                    {/*
-                     * Render the hierarchy label as the explicit child instead of
-                     * relying on Radix's <SelectValue/> mirror of the matched
-                     * <SelectItem/> text. This keeps the trigger label in sync
-                     * with the SelectItem labels (which also use the hierarchy
-                     * label) and avoids fallbacks to bare basenames.
-                     */}
-                    <SelectValue placeholder={selectedLabel}>{selectedLabel}</SelectValue>
-                  </SelectTrigger>
-                </TooltipTrigger>
-                <TooltipContent align="start">{selected}</TooltipContent>
-              </Tooltip>
-              <SelectContent>
-                {Array.from(props.userProjects.keys()).map((path) => (
-                  <SelectItem key={path} value={path}>
-                    {formatProjectHierarchyLabel(path, props.userProjects)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </RadixSelect>
-          ) : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <h2 className="text-foreground shrink-0 text-lg font-semibold">{selectedLabel}</h2>
-              </TooltipTrigger>
-              <TooltipContent align="start">{selected}</TooltipContent>
-            </Tooltip>
+          return (
+            <CreationProjectSelect
+              selected={selected}
+              selectedLabel={formatProjectHierarchyLabel(selected, props.userProjects)}
+              options={Array.from(props.userProjects.keys()).map((path) => ({
+                value: path,
+                label: formatProjectHierarchyLabel(path, props.userProjects),
+              }))}
+              onChange={props.onSelectedProjectPathChange}
+            />
           );
         })()}
         <span className="text-muted-foreground mx-2 text-lg">/</span>
