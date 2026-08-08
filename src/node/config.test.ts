@@ -148,6 +148,63 @@ describe("Config", () => {
     });
   });
 
+  describe("managed plugin registry (plugins section)", () => {
+    const entry = {
+      name: "demo-plugin",
+      scope: "global" as const,
+      source: {
+        type: "git" as const,
+        url: "https://github.com/foo/demo-plugin.git",
+        ref: "main",
+        refType: "branch" as const,
+      },
+      lockedSha: "a".repeat(40),
+      installedAt: "2026-08-08T00:00:00.000Z",
+    };
+
+    it("round-trips entries through editConfig and a fresh Config instance", async () => {
+      await config.editConfig((cfg) => {
+        cfg.plugins = [entry];
+        return cfg;
+      });
+
+      const reloaded = new Config(tempDir).loadConfigOrDefault();
+      expect(reloaded.plugins).toEqual([entry]);
+    });
+
+    it("drops invalid registry entries on load instead of failing (self-heal)", async () => {
+      await config.editConfig((cfg) => {
+        cfg.plugins = [entry];
+        return cfg;
+      });
+
+      const configFile = path.join(tempDir, "config.json");
+      const onDisk = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        plugins: unknown[];
+      };
+      onDisk.plugins.push({ name: "broken", source: { type: "zip" } });
+      fs.writeFileSync(configFile, JSON.stringify(onDisk));
+
+      const reloaded = new Config(tempDir).loadConfigOrDefault();
+      expect(reloaded.plugins).toEqual([entry]);
+    });
+
+    it("preserves the plugins section across unrelated config edits", async () => {
+      await config.editConfig((cfg) => {
+        cfg.plugins = [entry];
+        return cfg;
+      });
+      await config.editConfig((cfg) => {
+        cfg.defaultModel = "openai:gpt-4o";
+        return cfg;
+      });
+
+      const reloaded = new Config(tempDir).loadConfigOrDefault();
+      expect(reloaded.plugins).toEqual([entry]);
+      expect(reloaded.defaultModel).toBe("openai:gpt-4o");
+    });
+  });
+
   describe("workspace tags", () => {
     it("persists programmatic tags through save/load and metadata mapping", async () => {
       await config.editConfig((cfg) => {

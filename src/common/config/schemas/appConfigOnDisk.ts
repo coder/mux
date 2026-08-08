@@ -8,6 +8,7 @@ import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { UserPreferencesSchema } from "./userPreferences";
 import { TaskSettingsSchema } from "./taskSettings";
+import { AgentPluginInstallsSchema } from "./agentPluginInstalls";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 
@@ -17,6 +18,17 @@ export { UserPreferencesSchema } from "./userPreferences";
 export type { UserPreferences } from "./userPreferences";
 export { TaskSettingsSchema } from "./taskSettings";
 export type { TaskSettings } from "./taskSettings";
+export {
+  AgentPluginGitSourceSchema,
+  AgentPluginInstallEntrySchema,
+  AgentPluginInstallSourceSchema,
+  AgentPluginInstallsSchema,
+} from "./agentPluginInstalls";
+export type {
+  AgentPluginGitSource,
+  AgentPluginInstallEntry,
+  AgentPluginInstallSource,
+} from "./agentPluginInstalls";
 
 export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
@@ -155,6 +167,8 @@ export const AppConfigOnDiskSchema = z
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
     onePasswordAccountName: z.string().optional(),
+    /** Managed Agent Plugin installs (agent-plugins experiment). */
+    plugins: AgentPluginInstallsSchema.optional(),
   })
   .passthrough();
 

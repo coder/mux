@@ -19,12 +19,14 @@ import type {
   UpdateChannel,
 } from "@/common/types/project";
 import type {
+  AgentPluginInstallEntry,
   AppConfigMigrations,
   AppConfigOnDisk,
   BaseProviderConfig as ProviderConfig,
   ModelFallbacks,
   ProvidersConfig as CanonicalProvidersConfig,
 } from "@/common/config/schemas";
+import { AgentPluginInstallEntrySchema } from "@/common/config/schemas";
 import { DEFAULT_MODEL_FALLBACKS, sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
 import {
   DEFAULT_TASK_SETTINGS,
@@ -447,6 +449,32 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
     }
   }
   return migrations;
+}
+
+/**
+ * Lenient-on-read normalization for the managed Agent Plugin install registry:
+ * invalid entries are dropped with a warning instead of failing config load
+ * (self-healing — discovery remains the source of truth for what loads; the
+ * registry only annotates managed installs).
+ */
+function normalizeAgentPluginInstalls(value: unknown): AgentPluginInstallEntry[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries: AgentPluginInstallEntry[] = [];
+  for (const raw of value) {
+    const parsed = AgentPluginInstallEntrySchema.safeParse(raw);
+    if (parsed.success) {
+      entries.push(parsed.data);
+    } else {
+      log.warn("Dropping invalid managed plugin registry entry from config.json", {
+        entry: raw,
+        error: parsed.error.message,
+      });
+    }
+  }
+  return entries.length > 0 ? entries : undefined;
 }
 
 function extractAgentDefaultsFromLegacySubagents(
@@ -1205,6 +1233,7 @@ export class Config {
           defaultRuntime,
           runtimeEnablement,
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
+          plugins: normalizeAgentPluginInstalls(parsed.plugins),
         };
       }
     } catch (error) {
@@ -1494,6 +1523,11 @@ export class Config {
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
       if (onePasswordAccountName) {
         data.onePasswordAccountName = onePasswordAccountName;
+      }
+
+      const plugins = normalizeAgentPluginInstalls(config.plugins);
+      if (plugins !== undefined) {
+        data.plugins = plugins;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
