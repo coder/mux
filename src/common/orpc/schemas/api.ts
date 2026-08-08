@@ -117,6 +117,13 @@ import {
   MCPTestResultSchema,
   WorkspaceMCPOverridesSchema,
 } from "./mcp";
+import {
+  AgentPluginGitSourceSchema,
+  AgentPluginInstallEntrySchema,
+  AgentPluginInstallPreviewSchema,
+  AgentPluginListItemSchema,
+  AgentPluginUpdateCheckSchema,
+} from "./agentPlugins";
 import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
@@ -913,6 +920,55 @@ export const mcp = {
   setToolAllowlist: {
     input: MCPSetToolAllowlistGlobalParamsSchema,
     output: ResultSchema(z.void(), z.string()),
+  },
+};
+
+/**
+ * Managed Agent Plugin installs (agent-plugins experiment; global scope only).
+ *
+ * Human-driven surfaces only (Settings + palette) — there is deliberately no
+ * agent-facing installer tool in v1. All endpoints return Result values; the
+ * backend service gates on the experiment flag.
+ */
+export const agentPlugins = {
+  /** Temp shallow clone + validation of the staged tree; writes nothing permanent. */
+  preview: {
+    input: z.object({
+      input: z.string(),
+      ref: z.string().nullish(),
+      subpath: z.string().nullish(),
+    }),
+    output: ResultSchema(AgentPluginInstallPreviewSchema, z.string()),
+  },
+  /** Fetch the consented SHA, promote into ~/.mux/plugins, write the registry entry. */
+  install: {
+    input: z.object({
+      source: AgentPluginGitSourceSchema,
+      /** SHA from the preview the user consented to. */
+      expectedSha: z.string(),
+    }),
+    output: ResultSchema(AgentPluginInstallEntrySchema, z.string()),
+  },
+  list: {
+    input: z.void(),
+    output: ResultSchema(z.array(AgentPluginListItemSchema), z.string()),
+  },
+  uninstall: {
+    input: z.object({
+      name: z.string(),
+      /** Also delete ~/.mux/plugin-data/<instanceId> (default off — preserve data). */
+      deletePluginData: z.boolean(),
+    }),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  /** git ls-remote per managed entry vs lockedSha; no fetch, no timers. */
+  checkUpdates: {
+    input: z.void(),
+    output: ResultSchema(z.array(AgentPluginUpdateCheckSchema), z.string()),
+  },
+  update: {
+    input: z.object({ name: z.string() }),
+    output: ResultSchema(AgentPluginInstallEntrySchema, z.string()),
   },
 };
 

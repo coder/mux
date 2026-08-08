@@ -1409,6 +1409,29 @@ export class MCPServerManager {
     };
   }
 
+  /**
+   * Recycle every workspace's server set that includes a running server whose
+   * config key starts with `prefix` (e.g. `plugin:<instanceId>:`).
+   *
+   * Used by the Agent Plugin installer on update/uninstall: plugin content
+   * can change behind an unchanged stdio command line, which the config
+   * signature (command/args/env/cwd) cannot detect — so recycling must be
+   * explicit. Stopped servers restart on the workspace's next MCP use.
+   */
+  async stopServersWithKeyPrefix(prefix: string): Promise<void> {
+    assert(prefix.length > 0, "stopServersWithKeyPrefix: prefix must be non-empty");
+    const workspaceIds: string[] = [];
+    for (const [workspaceId, entry] of this.workspaceServers) {
+      for (const serverKey of entry.instances.keys()) {
+        if (serverKey.startsWith(prefix)) {
+          workspaceIds.push(workspaceId);
+          break;
+        }
+      }
+    }
+    await Promise.all(workspaceIds.map((workspaceId) => this.stopServers(workspaceId)));
+  }
+
   async stopServers(workspaceId: string): Promise<void> {
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry) return;
