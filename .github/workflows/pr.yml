@@ -228,9 +228,6 @@ jobs:
               ! -path 'src/browser/features/RightSidebar/Memory/MemoryTab.test.tsx' \
               -print0
           )
-          # Bun-only DOM isolation guards live outside src/ and are excluded
-          # from Jest, so include them here explicitly.
-          unit_files+=("tests/ui/domIsolation.test.ts")
           bun test --max-concurrency=1 --coverage --coverage-reporter=lcov "${unit_files[@]}"
       - uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
