@@ -208,10 +208,8 @@ export function BackupSection() {
     refreshRef.current = refresh;
 
     void (async () => {
-      // Display settings without waiting on subscription setup, but do not mark them
-      // fresh: another window can change the repository before the subscription is
-      // armed, and enabling destructive actions on that snapshot would let a restore
-      // run against a stale tuple. Freshness comes from the post-arm refresh below.
+      // Show the initial snapshot, but keep actions stale until a post-arm refresh covers
+      // config changes made while the subscription was starting.
       const initialRefresh = refresh({ markFresh: false });
       let subscribed: AsyncIterator<unknown>;
       let nextEvent: Promise<IteratorResult<unknown>>;
@@ -225,9 +223,8 @@ export function BackupSection() {
         nextEvent = subscribed.next();
         streamLiveRef.current = true;
       } catch {
-        // No listener exists, so another window's later change would go unseen.
-        // Show the latest readable settings but never grant freshness: destructive
-        // actions must not trust a snapshot this window cannot keep current.
+        // Without a listener, future changes go unseen, so show the snapshot but keep
+        // destructive actions stale.
         await initialRefresh;
         if (signal.aborted) return;
         await refresh();
@@ -305,9 +302,8 @@ export function BackupSection() {
       setOverrideSecretScan(false);
       setSecretScanBlocked(false);
       setStatusMessage("Backup settings saved.");
-      // The save response is a snapshot from before this response was handled: another
-      // window can have saved a different repository meanwhile, and no config event may
-      // follow. Freshness must come from re-reading the configuration, not the snapshot.
+      // The save response may already be stale, and no config event is guaranteed to follow.
+      // Re-read configuration before granting freshness.
       await refreshRef.current?.();
     } catch (error) {
       setSaveError(getErrorMessage(error));

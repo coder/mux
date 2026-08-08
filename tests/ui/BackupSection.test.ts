@@ -131,8 +131,6 @@ describe("BackupSection", () => {
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
 
-    // Without a listener this window cannot see another window's later change,
-    // so the fallback read renders but never enables destructive actions.
     await waitFor(() =>
       expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true)
     );
@@ -150,8 +148,6 @@ describe("BackupSection", () => {
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
 
-    // The snapshot read before the subscription armed could be stale, so destructive
-    // actions must stay disabled until a post-arm refresh confirms freshness.
     expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -192,17 +188,12 @@ describe("BackupSection", () => {
       await Promise.resolve();
     });
 
-    // Settings stay visible, but a dead stream cannot report another window's
-    // changes, so destructive actions must stop trusting the loaded tuple.
     await waitFor(() =>
       expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true)
     );
   });
 
   test("re-reads config after a save instead of trusting the save response", async () => {
-    // The subscription never arms and getSettings always reports another window's
-    // tuple, so the only way this window can see it after a save is the post-save
-    // config re-read; the save response itself claims the tuple this window typed.
     const { view } = renderBackupSection({}, (client) => {
       const pendingSubscription = new Promise<
         Awaited<ReturnType<typeof client.config.onConfigChanged>>
@@ -229,8 +220,6 @@ describe("BackupSection", () => {
       expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/other-window.git")
     );
 
-    // The subscription never armed, so even after the post-save re-read the
-    // tuple is unwatchable and destructive actions must stay disabled.
     expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
   });
 
@@ -249,8 +238,6 @@ describe("BackupSection", () => {
     });
 
     await canvas.findByText("Backup settings saved.");
-    // The save succeeded, but this window still cannot observe another window's
-    // later change, so the post-save refresh must not re-enable Restore.
     expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
   });
 
