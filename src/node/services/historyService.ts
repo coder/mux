@@ -22,11 +22,9 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   findLatestContextBoundaryIndex,
   getContextBoundaryKind,
-  hasProviderEligibleMessages,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
-import { filterWorkflowDisplayOnlyMessages } from "@/common/utils/workflowRunMessages";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -45,44 +43,26 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
   return isPositiveInteger(metadata.compactionEpoch);
 }
 
-// Compaction boundaries are provider-visible (the row carries the summary),
-// so the active window starts AT the boundary; reset boundaries are
-// provider-invisible markers, so the window starts AFTER them.
-function activeProviderWindowStart(messages: MuxMessage[]): number {
-  const latestBoundaryIndex = findLatestContextBoundaryIndex(messages);
-  if (latestBoundaryIndex < 0) {
-    return 0;
+function prefixCutChangesActiveContext(messages: MuxMessage[], removeCount: number): boolean {
+  const boundaryIndex = findLatestContextBoundaryIndex(messages);
+  if (boundaryIndex < 0) {
+    return removeCount > 0;
   }
-  return getContextBoundaryKind(messages[latestBoundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
-    ? latestBoundaryIndex + 1
-    : latestBoundaryIndex;
+  const activeStart =
+    getContextBoundaryKind(messages[boundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
+      ? boundaryIndex + 1
+      : boundaryIndex;
+  return removeCount > activeStart;
 }
 
-// A prefix cut changes the active provider context only when it removes a
-// provider-replayable row inside the provider window. Rows inside the window
-// that requests never replay (workflow display-only rows, reasoning-only
-// assistant turns) leave the request, and therefore the usage snapshots
-// measured from it, unchanged when removed. Deliberate asymmetry: Anthropic
-// with thinking enabled replays reasoning-only rows (preserveReasoningOnly),
-// but the next send's provider is unknowable here, so we preserve usage.
-// That can only overestimate (compact early); flagging truncated would strip
-// valid usage for every other provider and bypass required on-send
-// compaction, the failure this feature exists to prevent.
-function cutChangesActiveWindow(messages: MuxMessage[], cutEnd: number): boolean {
-  const start = activeProviderWindowStart(messages);
-  return hasProviderEligibleMessages(
-    filterWorkflowDisplayOnlyMessages(messages.slice(Math.min(start, cutEnd), cutEnd))
-  );
-}
-
-function stripContextUsage(msg: MuxMessage): MuxMessage {
-  if (msg.metadata?.contextUsage === undefined) {
-    return msg;
+function stripContextUsage(message: MuxMessage): MuxMessage {
+  if (!message.metadata) {
+    return message;
   }
   return {
-    ...msg,
+    ...message,
     metadata: {
-      ...msg.metadata,
+      ...message.metadata,
       contextUsage: undefined,
       contextProviderMetadata: undefined,
     },
@@ -1811,34 +1791,12 @@ export class HistoryService {
    *
    * By default this removes the target message and all subsequent messages. Callers can retain the
    * target message when branching a new workspace from a specific reply.
-   *
-   * options.onContextRewritten fires the moment the chat.jsonl rewrite
-   * commits, even when a later step fails, so callers can invalidate cached
-   * usage for mutations an Err result leaves on disk. retainedUsageValid is
-   * true when the committed rewrite leaves the retained rows' persisted
-   * usage snapshots valid (an active-file suffix cut); it is false for the
-   * archived branch, whose copied prefix duplicates archive rows until the
-   * archive removal commits.
    */
   async truncateAfterMessage(
     workspaceId: string,
     messageId: string,
-    options?: {
-      keepTargetMessage?: boolean;
-      onContextRewritten?: (info: { retainedUsageValid: boolean }) => void;
-    }
+    options?: { keepTargetMessage?: boolean }
   ): Promise<Result<void>> {
-    const notifyContextRewritten = (info: { retainedUsageValid: boolean }) => {
-      try {
-        options?.onContextRewritten?.(info);
-      } catch (error) {
-        // A notification failure must not turn a committed rewrite into Err.
-        log.error("truncateAfterMessage context-rewritten callback failed", {
-          workspaceId,
-          error,
-        });
-      }
-    };
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         // Structural rewrite requires full file content
@@ -1855,8 +1813,7 @@ export class HistoryService {
           return this.truncateAfterArchivedMessageUnlocked(
             workspaceId,
             messageId,
-            keepTargetMessage,
-            notifyContextRewritten
+            keepTargetMessage
           );
         }
 
@@ -1871,11 +1828,10 @@ export class HistoryService {
         const historyPath = this.getChatHistoryPath(workspaceId);
         const historyEntries = this.serializeHistoryEntries(truncatedMessages, workspaceId);
 
+        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+
         // Atomic write prevents corruption if app crashes mid-write
         await writeFileAtomic(historyPath, historyEntries);
-        // The archive read below can still fail after this commit, but the
-        // suffix cut leaves the retained rows' persisted usage valid.
-        notifyContextRewritten({ retainedUsageValid: true });
 
         // Update sequence counter to continue from where we truncated.
         // Self-healing read path: skip malformed persisted historySequence values.
@@ -1903,7 +1859,6 @@ export class HistoryService {
         // truncation. When the truncation empties the active file, floor the
         // counter with the archive max so new appends can never reuse archived
         // sequence numbers.
-        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
         const nextSeq = Math.max(maxTruncatedSeq, archiveMaxSeq) + 1;
         assert(
           isNonNegativeInteger(nextSeq),
@@ -1928,8 +1883,7 @@ export class HistoryService {
   private async truncateAfterArchivedMessageUnlocked(
     workspaceId: string,
     messageId: string,
-    keepTargetMessage: boolean,
-    notifyContextRewritten: (info: { retainedUsageValid: boolean }) => void
+    keepTargetMessage: boolean
   ): Promise<Result<void>> {
     try {
       const archiveMessages = await this.readArchivedHistory(workspaceId);
@@ -1943,44 +1897,25 @@ export class HistoryService {
         0,
         keepTargetMessage ? messageIndex + 1 : messageIndex
       );
-      const historyPath = this.getChatHistoryPath(workspaceId);
-      const copiedPrefixHasUsage = truncatedMessages.some(
-        (msg) => msg.metadata?.contextUsage !== undefined
-      );
 
-      // Write the copied prefix with usage snapshots stripped while the
-      // archive still exists: if the removal below fails or the process dies
-      // first, the duplicated-prefix state persists across restarts, where a
-      // fresh session would seed the copied assistant's old contextUsage and
-      // understate the archive-plus-prefix payload. Once the removal
-      // commits, the hazard is gone and the restore write below brings the
-      // usage back, because it is exact for the restored prefix context and
-      // an edited near-limit prefix must stay monitored on the next send.
+      const historyPath = this.getChatHistoryPath(workspaceId);
+      const archivePath = this.getChatArchivePath(workspaceId);
+      await fs.rm(historyPath, { force: true });
       await writeFileAtomic(
-        historyPath,
-        this.serializeHistoryEntries(
-          copiedPrefixHasUsage ? truncatedMessages.map(stripContextUsage) : truncatedMessages,
-          workspaceId
-        )
+        archivePath,
+        this.serializeHistoryEntries(truncatedMessages.map(stripContextUsage), workspaceId)
       );
-      // The archive removal below can still fail after this commit, leaving
-      // the duplicated-prefix hazard the stripped write above guards.
-      notifyContextRewritten({ retainedUsageValid: false });
-      await fs.rm(this.getChatArchivePath(workspaceId), { force: true });
-      if (copiedPrefixHasUsage) {
-        try {
-          await writeFileAtomic(
-            historyPath,
-            this.serializeHistoryEntries(truncatedMessages, workspaceId)
-          );
-        } catch (error) {
-          // Safe-but-blind state: one unmonitored send, reseeded by the next
-          // provider response. Not worth failing the committed truncation.
-          log.warn("Failed to restore copied-prefix usage after archived edit", {
-            workspaceId,
-            error,
-          });
-        }
+      await fs.rename(archivePath, historyPath);
+      try {
+        await writeFileAtomic(
+          historyPath,
+          this.serializeHistoryEntries(truncatedMessages, workspaceId)
+        );
+      } catch (error) {
+        log.warn("Failed to restore usage after archived history truncation", {
+          workspaceId,
+          error,
+        });
       }
       // chat.jsonl may contain sealed epochs again — allow the lazy check to re-run.
       this.sealedRotationChecked.delete(workspaceId);
@@ -2025,56 +1960,13 @@ export class HistoryService {
    * Truncate history by removing approximately the given percentage of tokens from the beginning
    * @param workspaceId The workspace ID
    * @param percentage Percentage to truncate (0.0 to 1.0). 1.0 = delete all
-   * @param onActiveContextTruncated Invoked at most once, the moment a
-   *        committed step first removes provider-eligible rows from the
-   *        active window. Fires even when a later step fails, so callers can
-   *        invalidate cached usage for mutations an Err result leaves on disk.
-   * @param onRowsDeleted Invoked with each committed step's deleted
-   *        historySequence numbers the moment that step commits. Fires even
-   *        when a later step fails, so callers can emit renderer deletions
-   *        for rows an Err result leaves removed from disk.
-   * @returns Result with deleted historySequence numbers plus whether the cut
-   *          reached the active provider-context window (at or past the latest
-   *          durable boundary). Callers use that flag to decide whether cached
-   *          context usage is stale.
+   * @returns Result containing array of deleted historySequence numbers
    */
   async truncateHistory(
     workspaceId: string,
-    percentage: number,
-    onActiveContextTruncated?: () => void,
-    onRowsDeleted?: (historySequences: number[]) => void
-  ): Promise<Result<{ deletedSequences: number[]; activeContextTruncated: boolean }, string>> {
+    percentage: number
+  ): Promise<Result<number[], string>> {
     return this.fileLocks.withLock(workspaceId, async () => {
-      let contextChangeNotified = false;
-      const notifyActiveContextTruncated = () => {
-        if (contextChangeNotified) {
-          return;
-        }
-        contextChangeNotified = true;
-        try {
-          onActiveContextTruncated?.();
-        } catch (error) {
-          // A notification failure must not corrupt an already-committed
-          // rewrite (the catch below would roll back a successful cut).
-          log.error("truncateHistory context-change callback failed", { workspaceId, error });
-        }
-      };
-      const sequencesOf = (msgs: MuxMessage[]): number[] =>
-        msgs
-          .map((msg) => msg.metadata?.historySequence)
-          .filter((s): s is number => isNonNegativeInteger(s));
-      const notifyRowsDeleted = (msgs: MuxMessage[]) => {
-        const historySequences = sequencesOf(msgs);
-        if (historySequences.length === 0) {
-          return;
-        }
-        try {
-          onRowsDeleted?.(historySequences);
-        } catch (error) {
-          // Same invariant as above: committed deletions must stand.
-          log.error("truncateHistory rows-deleted callback failed", { workspaceId, error });
-        }
-      };
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
         const archivePath = this.getChatArchivePath(workspaceId);
@@ -2082,27 +1974,20 @@ export class HistoryService {
         // Fast path: 100% truncation = delete entire history (active + sealed archive)
         if (percentage >= 1.0) {
           // Need sequence numbers for return value before deleting
-          const archivedMessages = await this.readArchivedHistory(workspaceId);
-          const chatMessages = await this.readChatHistory(workspaceId);
-          const messages = [...archivedMessages, ...chatMessages];
-          const deletedSequences = sequencesOf(messages);
+          const messages = [
+            ...(await this.readArchivedHistory(workspaceId)),
+            ...(await this.readChatHistory(workspaceId)),
+          ];
+          const deletedSequences = messages
+            .map((msg) => msg.metadata?.historySequence)
+            .filter((s): s is number => isNonNegativeInteger(s));
 
-          // Archive first: normally it holds only sealed pre-boundary rows,
-          // so if the second rm fails the active provider window is still
-          // intact. A malformed boundary-less archive IS window content, so
-          // notify at commit; the caller must not trust a later Err.
-          await fs.rm(archivePath, { force: true });
-          notifyRowsDeleted(archivedMessages);
-          if (cutChangesActiveWindow(messages, archivedMessages.length)) {
-            notifyActiveContextTruncated();
-          }
           await fs.rm(historyPath, { force: true });
-          notifyRowsDeleted(chatMessages);
-          notifyActiveContextTruncated();
+          await fs.rm(archivePath, { force: true });
 
           // Reset sequence counter when clearing history
           this.sequenceCounters.set(workspaceId, 0);
-          return Ok({ deletedSequences, activeContextTruncated: true });
+          return Ok(deletedSequences);
         }
 
         // Structural rewrite requires full history content (oldest rows live in
@@ -2112,7 +1997,7 @@ export class HistoryService {
         const chatMessages = await this.readChatHistory(workspaceId);
         const messages = [...archivedMessages, ...chatMessages];
         if (messages.length === 0) {
-          return Ok({ deletedSequences: [], activeContextTruncated: false }); // Nothing to truncate
+          return Ok([]); // Nothing to truncate
         }
 
         // Get tokenizer for counting (use a default model)
@@ -2146,128 +2031,51 @@ export class HistoryService {
         // rewrite anything — collapsing the archive back into chat.jsonl would
         // undo rotation and put lifetime history back on the hot path.
         if (removeCount === 0) {
-          return Ok({ deletedSequences: [], activeContextTruncated: false });
+          return Ok([]);
         }
 
-        // If we're removing all messages, use fast path. Archive first for
-        // the same failure-ordering reason as the full-clear branch above,
-        // with the same commit-time notifications.
+        // If we're removing all messages, use fast path
         if (removeCount >= messages.length) {
-          await fs.rm(archivePath, { force: true });
-          notifyRowsDeleted(archivedMessages);
-          if (cutChangesActiveWindow(messages, archivedMessages.length)) {
-            notifyActiveContextTruncated();
-          }
           await fs.rm(historyPath, { force: true });
-          notifyRowsDeleted(chatMessages);
-          notifyActiveContextTruncated();
+          await fs.rm(archivePath, { force: true });
           this.sequenceCounters.set(workspaceId, 0);
-          return Ok({ deletedSequences: sequencesOf(messages), activeContextTruncated: true });
+          const deletedSequences = messages
+            .map((msg) => msg.metadata?.historySequence)
+            .filter((s): s is number => isNonNegativeInteger(s));
+          return Ok(deletedSequences);
         }
 
-        const activeContextTruncated = cutChangesActiveWindow(messages, removeCount);
-
-        // Retained rows' contextUsage measured the pre-truncation context
-        // (including the removed prefix). Persisting it would reseed stale
-        // auto-compaction pressure, even across app restarts. Strip it; the
-        // next provider response reports fresh usage.
-        const sanitizeRetained = (msg: MuxMessage): MuxMessage =>
-          activeContextTruncated ? stripContextUsage(msg) : msg;
-        const remainingMessages = messages.slice(removeCount).map(sanitizeRetained);
+        const activeContextChanged = prefixCutChangesActiveContext(messages, removeCount);
+        const sanitize = activeContextChanged
+          ? stripContextUsage
+          : (message: MuxMessage) => message;
+        const remainingMessages = messages.slice(removeCount).map(sanitize);
         const deletedMessages = messages.slice(0, removeCount);
-        const deletedSequences = sequencesOf(deletedMessages);
+        const deletedSequences = deletedMessages
+          .map((msg) => msg.metadata?.historySequence)
+          .filter((s): s is number => isNonNegativeInteger(s));
+        const remainingArchiveCount = Math.max(0, archivedMessages.length - removeCount);
+        const remainingArchive = remainingMessages.slice(0, remainingArchiveCount);
+        const remainingChat = remainingMessages.slice(remainingArchiveCount);
 
-        // Rewrite each file in place instead of collapsing the archive into
-        // chat.jsonl: every step is either an atomic single-file write or a
-        // deletion of rows the cut removes anyway, so no failure or crash can
-        // lose retained rows or leave duplicates behind.
-        //
-        // Deleting the whole archive commits a window change only when the
-        // window extends into it (boundary inside the archive, or none at
-        // all). A normally rotated archive holds only sealed pre-boundary
-        // rows, so its deletion leaves the provider context unchanged and
-        // must not block the usage rollback in the catch below.
-        const archiveDeleteChangesWindow = cutChangesActiveWindow(
-          messages,
-          archivedMessages.length
-        );
-        // Sanitize chat.jsonl BEFORE the cut only when the archive step that
-        // runs first is itself window-changing (an archive-confined cut
-        // removing window rows, or a whole-archive delete of window rows;
-        // both need a boundary-less or boundary-in-archive layout). Then a
-        // crash between sanitize and cut leaves the window unchanged with
-        // usage stripped: one unmonitored send, either repaired by the next
-        // provider response or surfaced as a provider context-length error,
-        // the same states as histories predating usage snapshots. The
-        // inverse ordering's crash window pairs a changed window with stale
-        // usage, which a restart reseeds into a spurious auto-compaction
-        // that nothing repairs. In normal rotated layouts the only
-        // window-changing step is the final chat cut, which strips usage in
-        // the same atomic write, so no separate sanitize write exists for a
-        // crash to strand. Runtime failures before any window-changing
-        // commit roll the sanitize back byte-exactly, returning Err with
-        // both files as they were.
-        const needsPreSanitize =
-          removeCount < archivedMessages.length
-            ? activeContextTruncated
-            : archiveDeleteChangesWindow;
-        let originalChat: string | null = null;
-        if (needsPreSanitize) {
-          originalChat = await fs.readFile(historyPath, "utf-8").catch(() => null);
+        if (activeContextChanged && archivedMessages.length > 0) {
           await writeFileAtomic(
             historyPath,
-            this.serializeHistoryEntries(chatMessages.map(sanitizeRetained), workspaceId)
+            this.serializeHistoryEntries(chatMessages.map(stripContextUsage), workspaceId)
           );
         }
-        let windowChanged = false;
-        try {
-          if (removeCount < archivedMessages.length) {
-            // Cut confined to the archive: one atomic rewrite applies it.
-            const retainedArchive = archivedMessages.slice(removeCount).map(sanitizeRetained);
-            await writeFileAtomic(
-              archivePath,
-              this.serializeHistoryEntries(retainedArchive, workspaceId)
-            );
-            notifyRowsDeleted(deletedMessages);
-          } else {
-            // Cut consumes the whole archive: every archive row is a cut
-            // target, so deleting the archive before committing the chat cut
-            // can only remove rows the cut targets.
-            if (archivedMessages.length > 0) {
-              await fs.rm(archivePath, { force: true });
-              notifyRowsDeleted(archivedMessages);
-              windowChanged = archiveDeleteChangesWindow;
-              if (archiveDeleteChangesWindow) {
-                notifyActiveContextTruncated();
-              }
-            }
-            const retainedChat = chatMessages
-              .slice(removeCount - archivedMessages.length)
-              .map(sanitizeRetained);
-            await writeFileAtomic(
-              historyPath,
-              this.serializeHistoryEntries(retainedChat, workspaceId)
-            );
-            notifyRowsDeleted(chatMessages.slice(0, removeCount - archivedMessages.length));
-          }
-        } catch (error) {
-          if (needsPreSanitize && !windowChanged && originalChat !== null) {
-            try {
-              await writeFileAtomic(historyPath, originalChat);
-            } catch (rollbackError) {
-              // Window unchanged with usage stripped: over-strips until the
-              // next provider response, never bypasses required compaction.
-              log.error("Failed to restore chat usage after truncation cut failure", {
-                workspaceId,
-                error: rollbackError,
-              });
-            }
-          }
-          throw error;
+        if (remainingArchive.length > 0) {
+          await writeFileAtomic(
+            archivePath,
+            this.serializeHistoryEntries(remainingArchive, workspaceId)
+          );
+        } else {
+          await fs.rm(archivePath, { force: true });
         }
-        if (activeContextTruncated) {
-          notifyActiveContextTruncated();
-        }
+        await writeFileAtomic(
+          historyPath,
+          this.serializeHistoryEntries(remainingChat, workspaceId)
+        );
         this.sealedRotationChecked.delete(workspaceId);
 
         // Update sequence counter to continue from where we are.
@@ -2299,7 +2107,7 @@ export class HistoryService {
         );
         this.sequenceCounters.set(workspaceId, nextSeq);
 
-        return Ok({ deletedSequences, activeContextTruncated });
+        return Ok(deletedSequences);
       } catch (error) {
         const message = getErrorMessage(error);
         return Err(`Failed to truncate history: ${message}`);
@@ -2307,21 +2115,12 @@ export class HistoryService {
     });
   }
 
-  async clearHistory(
-    workspaceId: string,
-    onActiveContextTruncated?: () => void,
-    onRowsDeleted?: (historySequences: number[]) => void
-  ): Promise<Result<number[], string>> {
-    const result = await this.truncateHistory(
-      workspaceId,
-      1.0,
-      onActiveContextTruncated,
-      onRowsDeleted
-    );
+  async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
+    const result = await this.truncateHistory(workspaceId, 1.0);
     if (!result.success) {
       return Err(result.error);
     }
-    return Ok(result.data.deletedSequences);
+    return Ok(result.data);
   }
 
   /**

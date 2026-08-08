@@ -42,7 +42,7 @@ import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessi
 import type { WorktreeArchiveSnapshot } from "@/common/schemas/project";
 import type { BashToolResult } from "@/common/types/tools";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createMuxMessage } from "@/common/types/message";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import {
   WORKFLOW_RUN_CARD_DISPLAY_METADATA_TYPE,
@@ -3905,9 +3905,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       bashMonitorRecoveryPromise: Promise<void>;
     };
     internal.bashMonitorRecoveryPromise = recovery.promise;
-    const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(
-      Ok({ deletedSequences: [], activeContextTruncated: true })
-    );
+    const truncateSpy = spyOn(historyService, "truncateHistory").mockResolvedValue(Ok([]));
 
     try {
       const clearPromise = workspaceService.truncateHistory(workspaceId, 1.0);
@@ -4278,7 +4276,7 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
-  test("start-here replacement clears stale usage so the next send does not auto-compact", async () => {
+  test("start-here replacement does not auto-compact the next send from stale usage", async () => {
     const { config, historyService, workspaceService, cleanup } = await createServices();
     const workspaceId = "start-here-clears-usage-state";
     const streamMessage = mock((..._args: unknown[]) => Promise.resolve(Ok(undefined)));
@@ -4298,32 +4296,22 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         projectPath: "/tmp/start-here-usage-project",
         runtimeConfig: { type: "local" },
       });
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("pre-start-here-user", "user", "long conversation", {})
-          )
-        ).success
-      ).toBe(true);
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("pre-start-here-assistant", "assistant", "long reply", {
-              model: "openai:gpt-4o",
-              contextUsage: { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
-            })
-          )
-        ).success
-      ).toBe(true);
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-start-here-user", "user", "long conversation", {})
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-start-here-assistant", "assistant", "long reply", {
+          model: "openai:gpt-4o",
+          contextUsage: { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+        })
+      );
 
       (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
         workspaceId,
         harness.session
       );
-      // In-memory snapshot the previous stream left behind: 95k exceeds 70% of
-      // gpt-4o's 128k window, so a send with this state would auto-compact.
       (harness.session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState =
         {
           lastContextUsage: createDisplayUsage(
@@ -4332,20 +4320,25 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
           ),
         };
 
-      const replaceResult = await workspaceService.replaceHistory(
-        workspaceId,
-        createMuxMessage("start-here-summary", "assistant", "Start Here summary", {
-          compacted: "user",
-        }),
-        { mode: "append-compaction-boundary" }
-      );
-      expect(replaceResult.success).toBe(true);
-
-      const sendResult = await harness.session.sendMessage("follow-up after start here", {
-        model: "openai:gpt-4o",
-        agentId: "exec",
-      });
-      expect(sendResult.success).toBe(true);
+      expect(
+        (
+          await workspaceService.replaceHistory(
+            workspaceId,
+            createMuxMessage("start-here-summary", "assistant", "Start Here summary", {
+              compacted: "user",
+            }),
+            { mode: "append-compaction-boundary" }
+          )
+        ).success
+      ).toBe(true);
+      expect(
+        (
+          await harness.session.sendMessage("follow-up after start here", {
+            model: "openai:gpt-4o",
+            agentId: "exec",
+          })
+        ).success
+      ).toBe(true);
 
       const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
       expect(activeWindow.success).toBe(true);
@@ -4355,270 +4348,13 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
           (message) => message.metadata?.muxMetadata?.type === "compaction-request"
         )
       ).toHaveLength(0);
-      const followUp = activeMessages.find((message) => message.role === "user");
-      expect(followUp?.parts[0]).toMatchObject({
+      expect(activeMessages.find((message) => message.role === "user")?.parts[0]).toMatchObject({
         type: "text",
         text: "follow-up after start here",
       });
       expect(streamMessage).toHaveBeenCalledTimes(1);
     } finally {
       harness.session.dispose();
-      await cleanup();
-    }
-  });
-
-  test("context reset clears stale session usage state", async () => {
-    const { config, historyService, workspaceService, cleanup } = await createServices();
-    const workspaceId = "context-reset-clears-usage-state";
-    try {
-      await config.addWorkspace("/tmp/context-reset-usage-project", {
-        id: workspaceId,
-        name: workspaceId,
-        projectName: "context-reset-usage-project",
-        projectPath: "/tmp/context-reset-usage-project",
-        runtimeConfig: { type: "local" },
-      });
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("pre-reset-user", "user", "before reset", {})
-          )
-        ).success
-      ).toBe(true);
-
-      const clearUsageState = mock(() => undefined);
-      const session = {
-        isBusy: mock(() => false),
-        hasQueuedMessages: mock(() => false),
-        isPreparingTurn: mock(() => false),
-        hasPendingAutoRetry: mock(() => false),
-        emitChatEvent: mock(() => undefined),
-        clearUsageState,
-        clearFileState: mock(() => undefined),
-      } as unknown as AgentSession;
-      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
-        workspaceId,
-        session
-      );
-
-      expect(await workspaceService.resetContext(workspaceId)).toEqual({
-        success: true,
-        data: "reset",
-      });
-
-      expect(clearUsageState).toHaveBeenCalledTimes(1);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("full history clear clears stale session usage state", async () => {
-    const { config, historyService, workspaceService, cleanup } = await createServices();
-    const workspaceId = "full-clear-clears-usage-state";
-    try {
-      await config.addWorkspace("/tmp/full-clear-usage-project", {
-        id: workspaceId,
-        name: workspaceId,
-        projectName: "full-clear-usage-project",
-        projectPath: "/tmp/full-clear-usage-project",
-        runtimeConfig: { type: "local" },
-      });
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("pre-clear-user", "user", "before clear", {})
-          )
-        ).success
-      ).toBe(true);
-
-      const clearUsageState = mock(() => undefined);
-      const session = {
-        isBusy: mock(() => false),
-        emitChatEvent: mock(() => undefined),
-        clearUsageState,
-        clearFileState: mock(() => undefined),
-      } as unknown as AgentSession;
-      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
-        workspaceId,
-        session
-      );
-
-      // A zero-percentage truncation rewrites nothing, so usage must survive.
-      expect((await workspaceService.truncateHistory(workspaceId, 0)).success).toBe(true);
-      expect(clearUsageState).toHaveBeenCalledTimes(0);
-
-      expect((await workspaceService.truncateHistory(workspaceId, 1.0)).success).toBe(true);
-      expect(clearUsageState).toHaveBeenCalledTimes(1);
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("usage is cleared when wake restoration fails after a committed truncation", async () => {
-    const { config, historyService, workspaceService, cleanup } = await createServices();
-    const workspaceId = "truncate-usage-clear-before-wake-restore";
-    try {
-      await config.addWorkspace("/tmp/truncate-wake-restore-project", {
-        id: workspaceId,
-        name: workspaceId,
-        projectName: "truncate-wake-restore-project",
-        projectPath: "/tmp/truncate-wake-restore-project",
-        runtimeConfig: { type: "local" },
-      });
-      for (let i = 0; i < 6; i++) {
-        expect(
-          (
-            await historyService.appendToHistory(
-              workspaceId,
-              createMuxMessage(`msg-${i}`, "user", `message ${i} with some padding text`, {})
-            )
-          ).success
-        ).toBe(true);
-      }
-
-      const clearUsageState = mock(() => undefined);
-      const session = {
-        isBusy: mock(() => false),
-        emitChatEvent: mock(() => undefined),
-        clearUsageState,
-        clearFileState: mock(() => undefined),
-      } as unknown as AgentSession;
-      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
-        workspaceId,
-        session
-      );
-
-      const wakeStore = (
-        workspaceService as unknown as { bashMonitorWakeStore: BashMonitorWakeStore }
-      ).bashMonitorWakeStore;
-      const restoreSpy = spyOn(wakeStore, "restorePendingSnapshots").mockImplementation(() =>
-        Promise.reject(new Error("injected wake restore failure"))
-      );
-
-      // Partial truncation commits the rewrite, then wake restoration throws.
-      let thrown: unknown;
-      try {
-        await workspaceService.truncateHistory(workspaceId, 0.5);
-      } catch (error) {
-        thrown = error;
-      }
-      expect(thrown).toBeInstanceOf(Error);
-      expect((thrown as Error).message).toBe("injected wake restore failure");
-      expect(clearUsageState).toHaveBeenCalledTimes(1);
-      restoreSpy.mockRestore();
-    } finally {
-      await cleanup();
-    }
-  });
-
-  test("session usage is cleared when the cut fails after deleting window content", async () => {
-    const { config, historyService, workspaceService, cleanup } = await createServices();
-    const workspaceId = "truncate-usage-clear-on-partial-commit";
-    try {
-      await config.addWorkspace("/tmp/truncate-partial-commit-project", {
-        id: workspaceId,
-        name: workspaceId,
-        projectName: "truncate-partial-commit-project",
-        projectPath: "/tmp/truncate-partial-commit-project",
-        runtimeConfig: { type: "local" },
-      });
-      // Boundary-less rotated layout: the boundary append seals a prefix into
-      // the archive, then deleting the boundary row makes the archive rows
-      // active-window content.
-      for (let i = 0; i < 2; i++) {
-        expect(
-          (
-            await historyService.appendToHistory(
-              workspaceId,
-              createMuxMessage(`msg-${i}`, "user", `message ${i}`)
-            )
-          ).success
-        ).toBe(true);
-      }
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("boundary-1", "assistant", "Summary 1", {
-              compactionBoundary: true,
-              compacted: "user",
-              compactionEpoch: 1,
-            })
-          )
-        ).success
-      ).toBe(true);
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-          )
-        ).success
-      ).toBe(true);
-      expect(
-        (
-          await historyService.appendToHistory(
-            workspaceId,
-            createMuxMessage("assistant-active", "assistant", "active reply", {
-              contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-              model: "openai:gpt-4o",
-            })
-          )
-        ).success
-      ).toBe(true);
-      expect((await historyService.deleteMessage(workspaceId, "boundary-1")).success).toBe(true);
-
-      const clearUsageState = mock(() => undefined);
-      const emittedChatEvents: unknown[] = [];
-      const session = {
-        isBusy: mock(() => false),
-        emitChatEvent: mock((event: unknown) => {
-          emittedChatEvents.push(event);
-        }),
-        clearUsageState,
-        clearFileState: mock(() => undefined),
-      } as unknown as AgentSession;
-      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
-        workspaceId,
-        session
-      );
-
-      // Fail the chat cut (serialize call 2) after the whole-archive delete
-      // commits: truncation returns Err, but window content is already gone,
-      // so the session's usage must still be invalidated and the committed
-      // archive deletions must reach the renderer (no ghost rows).
-      const internals = historyService as unknown as {
-        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
-      };
-      const realSerialize = internals.serializeHistoryEntries.bind(historyService);
-      let serializeCalls = 0;
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
-        (messages: MuxMessage[], wsId: string) => {
-          serializeCalls += 1;
-          if (serializeCalls === 2) {
-            throw new Error("injected chat cut serialize failure");
-          }
-          return realSerialize(messages, wsId);
-        }
-      );
-      try {
-        const result = await workspaceService.truncateHistory(workspaceId, 0.5);
-        expect(result.success).toBe(false);
-        expect(clearUsageState).toHaveBeenCalledTimes(1);
-        const deleteEvents = emittedChatEvents.filter(
-          (event): event is { type: string; historySequences: number[] } =>
-            typeof event === "object" &&
-            event !== null &&
-            (event as { type?: string }).type === "delete"
-        );
-        expect(deleteEvents).toHaveLength(1);
-        expect(deleteEvents[0].historySequences).toEqual([0, 1]);
-      } finally {
-        serializeSpy.mockRestore();
-      }
-    } finally {
       await cleanup();
     }
   });

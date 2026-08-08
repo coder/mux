@@ -1,12 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { HistoryService } from "./historyService";
-import { Config } from "@/node/config";
+import type { Config } from "@/node/config";
+import { createTestHistoryService } from "./testHistoryService";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import assert from "node:assert";
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
 
 /** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
@@ -48,25 +48,17 @@ async function appendNumberedMessages(
 describe("HistoryService", () => {
   let service: HistoryService;
   let config: Config;
-  let tempDir: string;
+  let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    // Create a temporary directory for test files
-    tempDir = path.join(os.tmpdir(), `mux-test-${Date.now()}-${Math.random()}`);
-    await fs.mkdir(tempDir, { recursive: true });
-
-    // Create a Config with the temp directory
-    config = new Config(tempDir);
-    service = new HistoryService(config);
+    const testService = await createTestHistoryService();
+    service = testService.historyService;
+    config = testService.config;
+    cleanup = testService.cleanup;
   });
 
   afterEach(async () => {
-    // Clean up temp directory
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await cleanup();
   });
 
   describe("getHistory", () => {
@@ -1763,15 +1755,6 @@ describe("HistoryService", () => {
       return path.join(config.getSessionDir(workspaceId), "chat-archive.jsonl");
     }
 
-    async function fileExists(filePath: string): Promise<boolean> {
-      try {
-        await fs.access(filePath);
-        return true;
-      } catch {
-        return false;
-      }
-    }
-
     it("rotates the sealed prefix into the archive when a boundary is appended", async () => {
       await appendNumberedMessages(service, wsId, 3); // seq 0..2
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
@@ -1945,163 +1928,6 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(2);
     });
 
-    it("notifies context rewrite when the archived-edit cut fails after committing chat.jsonl", async () => {
-      // Pre-boundary edit: chat.jsonl is rewritten first, then the archive is
-      // removed. An archive-removal failure returns Err with the provider
-      // context already changed, so the caller must still hear about it.
-      await appendNumberedMessages(service, wsId, 3);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
-
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === archivePath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        let notified = 0;
-        const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
-          keepTargetMessage: true,
-          onContextRewritten: () => {
-            notified += 1;
-          },
-        });
-        expect(truncateResult.success).toBe(false);
-        expect(notified).toBe(1);
-        // The committed rewrite stands: chat.jsonl holds the collapsed prefix.
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        expect(chatRows.map((msg) => msg.id)).toEqual(["msg-0", "msg-1"]);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("restores copied-prefix usage once the archived edit fully commits", async () => {
-      // Success path: the archive is gone, so the duplicated-prefix hazard
-      // no longer exists and the restored prefix's usage (exact for that
-      // context) must survive so the next send stays monitored.
-      await service.appendToHistory(wsId, createMuxMessage("msg-0", "user", "first prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-archived", "assistant", "archived reply", {
-          model: "openai:gpt-4o",
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-        })
-      );
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
-
-      const truncateResult = await service.truncateAfterMessage(wsId, "assistant-archived", {
-        keepTargetMessage: true,
-      });
-      expect(truncateResult.success).toBe(true);
-      expect(await fileExists(archivePath(wsId))).toBe(false);
-      const chatRows = await readJsonlFile(chatPath(wsId));
-      const copiedAssistant = chatRows.find((msg) => msg.id === "assistant-archived");
-      expect(copiedAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
-    });
-
-    it("strips usage from the copied prefix so a failed archived edit is restart-safe", async () => {
-      // If archive removal fails after the chat.jsonl commit, the duplicated
-      // prefix persists across restarts; a fresh session must find no usage
-      // to seed on the copied rows.
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("msg-0", "user", "first prompt", { timestamp: Date.now() - 6_000 })
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-archived", "assistant", "archived reply", {
-          timestamp: Date.now() - 5_000,
-          model: "openai:gpt-4o",
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          contextProviderMetadata: { anthropic: {} },
-        })
-      );
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
-
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === archivePath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        const truncateResult = await service.truncateAfterMessage(wsId, "assistant-archived", {
-          keepTargetMessage: true,
-        });
-        expect(truncateResult.success).toBe(false);
-        // Archive retained (removal failed), copied prefix committed with
-        // usage stripped and other metadata intact.
-        expect(await fileExists(archivePath(wsId))).toBe(true);
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        const copiedAssistant = chatRows.find((msg) => msg.id === "assistant-archived");
-        expect(copiedAssistant).toBeDefined();
-        expect(copiedAssistant?.metadata?.contextUsage).toBeUndefined();
-        expect(copiedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
-        expect(copiedAssistant?.metadata?.model).toBe("openai:gpt-4o");
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("does not notify context rewrite when the edit target is missing", async () => {
-      await appendNumberedMessages(service, wsId, 2);
-
-      let notified = 0;
-      const truncateResult = await service.truncateAfterMessage(wsId, "nonexistent", {
-        onContextRewritten: () => {
-          notified += 1;
-        },
-      });
-      expect(truncateResult.success).toBe(false);
-      expect(notified).toBe(0);
-    });
-
-    it("notifies context rewrite when the active-edit cut fails after committing chat.jsonl", async () => {
-      // The sequence-floor read of the archive tail runs after the atomic
-      // rewrite; its failure returns Err with the cut already committed.
-      await appendNumberedMessages(service, wsId, 3);
-
-      const internals = service as unknown as {
-        getArchiveTailMaxSequence: (workspaceId: string) => Promise<number>;
-      };
-      const realSeq = internals.getArchiveTailMaxSequence.bind(service);
-      // Earlier reads also consult the sequence floor, so reject only the
-      // call made after the rewrite committed (msg-1 gone from chat.jsonl).
-      const seqSpy = spyOn(internals, "getArchiveTailMaxSequence").mockImplementation(
-        async (workspaceId: string) => {
-          const chat = await fs.readFile(chatPath(wsId), "utf-8").catch(() => "");
-          if (!chat.includes('"msg-1"')) {
-            throw new Error("injected sequence-floor read failure");
-          }
-          return realSeq(workspaceId);
-        }
-      );
-      try {
-        let notified = 0;
-        const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
-          onContextRewritten: () => {
-            notified += 1;
-          },
-        });
-        expect(truncateResult.success).toBe(false);
-        expect(notified).toBe(1);
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        expect(chatRows.map((msg) => msg.id)).toEqual(["msg-0"]);
-      } finally {
-        seqSpy.mockRestore();
-      }
-    });
-
     it("never reuses archived sequences after truncating the whole active epoch", async () => {
       await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2 → archived
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3
@@ -2185,693 +2011,6 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(3);
     });
 
-    it("strips stale contextUsage from rows retained by partial truncation", async () => {
-      // Filler prefix makes the newest assistant row survive a 50% cut.
-      await appendNumberedMessages(service, wsId, 8);
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-usage", "assistant", "reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          contextProviderMetadata: { anthropic: {} },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      let notified = 0;
-      const reportedDeletions: number[] = [];
-      const truncateResult = await service.truncateHistory(
-        wsId,
-        0.5,
-        () => {
-          notified += 1;
-        },
-        (historySequences) => reportedDeletions.push(...historySequences)
-      );
-      expect(truncateResult.success).toBe(true);
-      expect(notified).toBe(1);
-      if (truncateResult.success) {
-        expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
-        expect(truncateResult.data.activeContextTruncated).toBe(true);
-        // Commit-time reports cover exactly the sequences the result returns.
-        expect(reportedDeletions).toEqual(truncateResult.data.deletedSequences);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        const retainedAssistant = remaining.data.find((msg) => msg.id === "assistant-usage");
-        expect(retainedAssistant).toBeDefined();
-        expect(retainedAssistant?.metadata?.contextUsage).toBeUndefined();
-        expect(retainedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
-        // Only usage snapshots are sanitized; the rest of the row survives.
-        expect(retainedAssistant?.metadata?.model).toBe("openai:gpt-4o");
-      }
-    });
-
-    it("preserves contextUsage when the cut stays before the latest boundary", async () => {
-      // Heavy sealed prefix, then a boundary, then a light active epoch whose
-      // usage snapshot must survive a cut confined to pre-boundary rows.
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      let notified = 0;
-      const truncateResult = await service.truncateHistory(wsId, 0.25, () => {
-        notified += 1;
-      });
-      expect(truncateResult.success).toBe(true);
-      expect(notified).toBe(0);
-      if (truncateResult.success) {
-        expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
-        expect(truncateResult.data.activeContextTruncated).toBe(false);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
-      }
-    });
-
-    it("preserves contextUsage when the cut ends at a reset boundary", async () => {
-      // Reset boundaries are provider-invisible: the provider window starts
-      // after them, so deleting the marker (and nothing later) leaves the
-      // active context and its usage snapshots unchanged.
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("reset-boundary", "assistant", "", {
-          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
-        })
-      );
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "active prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const truncateResult = await service.truncateHistory(wsId, 0.1);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.deletedSequences.length).toBe(1);
-        expect(truncateResult.data.activeContextTruncated).toBe(false);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        expect(remaining.data.find((msg) => msg.id === "reset-boundary")).toBeUndefined();
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
-      }
-    });
-
-    it("preserves contextUsage when the cut removes only provider-ineligible active rows", async () => {
-      // The reasoning-only assistant turn after the reset is never replayed to
-      // the provider, so removing it (plus the sealed prefix and the marker)
-      // leaves the provider request and its usage snapshot unchanged.
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("reset-boundary", "assistant", "", {
-          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
-        })
-      );
-      await service.appendToHistory(wsId, {
-        ...createMuxMessage("assistant-reasoning-only", "assistant", ""),
-        parts: [{ type: "reasoning", text: `internal deliberation ${"x".repeat(2_000)}` }],
-      });
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      // Half the token mass sits in the sealed prefix plus the large
-      // reasoning row, so a 50% cut ends inside the reasoning row.
-      const truncateResult = await service.truncateHistory(wsId, 0.5);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.activeContextTruncated).toBe(false);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        expect(remaining.data.find((msg) => msg.id === "assistant-reasoning-only")).toBeUndefined();
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
-      }
-    });
-
-    it("preserves contextUsage when the cut removes only workflow display rows", async () => {
-      // Workflow trigger/run-card rows are filtered out before request
-      // assembly, so removing them leaves the provider context unchanged.
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("reset-boundary", "assistant", "", {
-          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
-        })
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage(
-          "workflow-display",
-          "user",
-          `workflow trigger display ${"x".repeat(2_000)}`,
-          { muxMetadata: { type: "workflow-trigger-display", rawCommand: "/wf", runId: "run-1" } }
-        )
-      );
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const truncateResult = await service.truncateHistory(wsId, 0.5);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.activeContextTruncated).toBe(false);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        expect(remaining.data.find((msg) => msg.id === "workflow-display")).toBeUndefined();
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
-      }
-    });
-
-    it("strips contextUsage when the cut removes an eligible post-reset row", async () => {
-      // Mirror of the ineligible case: a replayable user turn in the same
-      // position must still invalidate usage when removed.
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("reset-boundary", "assistant", "", {
-          contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
-        })
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-removed", "user", `large replayable prompt ${"x".repeat(2_000)}`)
-      );
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const truncateResult = await service.truncateHistory(wsId, 0.5);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.activeContextTruncated).toBe(true);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        expect(remaining.data.find((msg) => msg.id === "user-removed")).toBeUndefined();
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
-      }
-    });
-
-    it("strips contextUsage when the cut removes a compaction boundary", async () => {
-      // Mirror of the reset case: compaction boundaries carry the summary the
-      // provider sees, so deleting the boundary row changes the active context.
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "active prompt"));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const truncateResult = await service.truncateHistory(wsId, 0.1);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.deletedSequences.length).toBe(1);
-        expect(truncateResult.data.activeContextTruncated).toBe(true);
-      }
-
-      const remaining = await service.getHistoryFromLatestBoundary(wsId);
-      expect(remaining.success).toBe(true);
-      if (remaining.success) {
-        const activeAssistant = remaining.data.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant).toBeDefined();
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
-      }
-    });
-
-    it("rewrites the archive in place when the cut stays inside it", async () => {
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply")
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-      const archiveRowsBefore = (await readJsonlFile(archivePath(wsId))).length;
-
-      const truncateResult = await service.truncateHistory(wsId, 0.25);
-      expect(truncateResult.success).toBe(true);
-      if (truncateResult.success) {
-        expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
-
-        // The archive shrinks by exactly the cut rows; chat.jsonl (the active
-        // window) is untouched, so no crash between steps can lose rows.
-        const archiveRows = await readJsonlFile(archivePath(wsId));
-        expect(archiveRows.length).toBe(
-          archiveRowsBefore - truncateResult.data.deletedSequences.length
-        );
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-      }
-    });
-
-    it("leaves history untouched when deleting a fully-cut archive fails", async () => {
-      // Small archive + heavy chat prefix so the cut consumes the whole
-      // archive and reaches into chat.jsonl.
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply")
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
-
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === archivePath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
-        expect(truncateResult.success).toBe(false);
-        // A failed truncation must not have mutated either history file, so
-        // the caller's success-only usage invalidation stays correct.
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("only deletes fully-cut archive rows when the chat commit fails", async () => {
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply")
-      );
-
-      // Abort between the archive delete and the final chat.jsonl commit
-      // (the cut serializes the retained rows). Every archive row was a cut
-      // target, so the failure must leave every chat.jsonl row (the active
-      // window and all retained rows) in place.
-      const internals = service as unknown as {
-        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
-      };
-      const realSerialize = internals.serializeHistoryEntries.bind(service);
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
-        (messages: MuxMessage[], workspaceId: string) => {
-          if (messages.some((msg) => msg.id === "assistant-active")) {
-            throw new Error("injected serialize failure");
-          }
-          return realSerialize(messages, workspaceId);
-        }
-      );
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
-        expect(truncateResult.success).toBe(false);
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        const chatIds = new Set(chatRows.map((msg) => msg.id));
-        expect(chatIds.has("boundary-1")).toBe(true);
-        expect(chatIds.has("user-heavy")).toBe(true);
-        expect(chatIds.has("assistant-active")).toBe(true);
-        expect(await fileExists(archivePath(wsId))).toBe(false);
-      } finally {
-        serializeSpy.mockRestore();
-      }
-    });
-
-    it("restores chat usage when an archive-confined cut fails before committing", async () => {
-      // Malformed boundary-less state: rotation created the archive, then the
-      // boundary row was deleted, so the whole file pair is one active window.
-      await appendNumberedMessages(service, wsId, 12);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
-      expect(deleteResult.success).toBe(true);
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
-
-      // Fail the archive rewrite (the only serialize whose rows are archive
-      // rows). No window-changing step committed, so the pre-cut sanitization
-      // must be rolled back and the retained usage stays seedable.
-      const internals = service as unknown as {
-        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
-      };
-      const realSerialize = internals.serializeHistoryEntries.bind(service);
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
-        (messages: MuxMessage[], workspaceId: string) => {
-          if (messages.some((msg) => msg.id === "msg-5")) {
-            throw new Error("injected archive serialize failure");
-          }
-          return realSerialize(messages, workspaceId);
-        }
-      );
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.25);
-        expect(truncateResult.success).toBe(false);
-        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-      } finally {
-        serializeSpy.mockRestore();
-      }
-    });
-
-    it("restores chat usage when a whole-archive cut fails before committing", async () => {
-      // Same malformed boundary-less state, but the cut consumes the archive.
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
-      expect(deleteResult.success).toBe(true);
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-      const archiveBefore = await fs.readFile(archivePath(wsId), "utf-8");
-
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === archivePath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
-        expect(truncateResult.success).toBe(false);
-        expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("keeps usage stripped when the chat cut fails after the archive delete", async () => {
-      // The window already changed (archive rows deleted), so the failure
-      // must NOT restore usage: a restart pairing the shrunken window with
-      // pre-cut usage would reseed a spurious auto-compaction.
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-      const deleteResult = await service.deleteMessage(wsId, "boundary-1");
-      expect(deleteResult.success).toBe(true);
-
-      // Serialize call 1 is the pre-cut sanitization; call 2 is the chat cut.
-      const internals = service as unknown as {
-        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
-      };
-      const realSerialize = internals.serializeHistoryEntries.bind(service);
-      let serializeCalls = 0;
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
-        (messages: MuxMessage[], workspaceId: string) => {
-          serializeCalls += 1;
-          if (serializeCalls === 2) {
-            throw new Error("injected chat cut serialize failure");
-          }
-          return realSerialize(messages, workspaceId);
-        }
-      );
-      try {
-        // The archive delete removed window content, so the caller must be
-        // notified at commit time despite the Err result, and the committed
-        // archive deletions must be reported so the renderer can drop them.
-        let notified = 0;
-        const reportedDeletions: number[] = [];
-        const truncateResult = await service.truncateHistory(
-          wsId,
-          0.5,
-          () => {
-            notified += 1;
-          },
-          (historySequences) => reportedDeletions.push(...historySequences)
-        );
-        expect(truncateResult.success).toBe(false);
-        expect(notified).toBe(1);
-        expect(await fileExists(archivePath(wsId))).toBe(false);
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        // Chat cut not applied: rows survive, but usage stays stripped.
-        expect(chatRows.some((msg) => msg.id === "user-heavy")).toBe(true);
-        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant).toBeDefined();
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
-        // Exactly the deleted archive rows (msg-0, msg-1), not the retained
-        // chat rows whose cut never committed.
-        expect(reportedDeletions).toEqual([0, 1]);
-      } finally {
-        serializeSpy.mockRestore();
-      }
-    });
-
-    it("restores chat usage when the chat cut fails after deleting a fully sealed archive", async () => {
-      // Normal rotated layout: the boundary is the first chat.jsonl row, so
-      // every archive row is sealed pre-boundary history and deleting the
-      // archive leaves the provider window unchanged. The failed chat cut
-      // must leave the original chat bytes (and their usage) untouched.
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-
-      // Fail the chat cut (the serialize of the retained rows).
-      const internals = service as unknown as {
-        serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
-      };
-      const realSerialize = internals.serializeHistoryEntries.bind(service);
-      const serializeSpy = spyOn(internals, "serializeHistoryEntries").mockImplementation(
-        (messages: MuxMessage[], workspaceId: string) => {
-          if (messages.some((msg) => msg.id === "assistant-active")) {
-            throw new Error("injected chat cut serialize failure");
-          }
-          return realSerialize(messages, workspaceId);
-        }
-      );
-      try {
-        // Sealed rows leaving cannot change the window, and the chat cut
-        // rolled back, so the caller must NOT be told to drop usage.
-        let notified = 0;
-        const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
-          notified += 1;
-        });
-        expect(truncateResult.success).toBe(false);
-        expect(notified).toBe(0);
-        // Every archive row was a cut target, so its deletion stands.
-        expect(await fileExists(archivePath(wsId))).toBe(false);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-      } finally {
-        serializeSpy.mockRestore();
-      }
-    });
-
-    it("never pre-sanitizes chat usage when only the chat cut changes the window", async () => {
-      // Normal rotated layout: the boundary is the first chat.jsonl row, so
-      // the archive delete is not window-changing and the final chat cut
-      // strips usage in the same atomic write. A separate sanitize write
-      // before the cut would create a crash window that strands an
-      // unchanged near-limit context with no seedable usage.
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("user-heavy", "user", `heavy prompt ${"x".repeat(3_000)}`)
-      );
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply", {
-          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
-          model: "openai:gpt-4o",
-        })
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-
-      // Probe chat.jsonl at the instant the archive delete runs: this is the
-      // state a crash between any earlier write and the cut would leave.
-      const probe: { chatAtArchiveDelete: string | null } = { chatAtArchiveDelete: null };
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation(
-        async (...args: Parameters<typeof fs.rm>) => {
-          if (args[0] === archivePath(wsId)) {
-            probe.chatAtArchiveDelete = await fs.readFile(chatPath(wsId), "utf-8");
-          }
-          return realRm(...args);
-        }
-      );
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.5);
-        expect(truncateResult.success).toBe(true);
-        if (truncateResult.success) {
-          expect(truncateResult.data.activeContextTruncated).toBe(true);
-        }
-        expect(probe.chatAtArchiveDelete).toBe(chatBefore);
-        // The committed cut still strips usage from retained rows.
-        const chatRows = await readJsonlFile(chatPath(wsId));
-        const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
-        expect(activeAssistant).toBeDefined();
-        expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
-        expect(await fileExists(archivePath(wsId))).toBe(false);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("keeps the active file intact when a remove-all cut fails on the archive delete", async () => {
-      await appendNumberedMessages(service, wsId, 2);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply")
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-
-      // A 99% cut with similar-sized rows removes every row without taking the
-      // percentage >= 1.0 fast path; the remove-all branch must also delete
-      // archive-first so this failure cannot orphan the active window.
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === archivePath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        const truncateResult = await service.truncateHistory(wsId, 0.99);
-        expect(truncateResult.success).toBe(false);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
-    it("keeps the active file intact when full clear fails on the second delete", async () => {
-      await appendNumberedMessages(service, wsId, 3);
-      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
-      await service.appendToHistory(
-        wsId,
-        createMuxMessage("assistant-active", "assistant", "active reply")
-      );
-
-      const chatBefore = await fs.readFile(chatPath(wsId), "utf-8");
-
-      // Full clear removes the archive first: if deleting chat.jsonl then
-      // fails, the active provider window is still intact and Err is correct.
-      const realRm = fs.rm;
-      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
-        if (args[0] === chatPath(wsId)) {
-          return Promise.reject(
-            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
-          );
-        }
-        return realRm(...args);
-      });
-      try {
-        // Committed archive deletions must still be reported despite the Err
-        // (clearHistory forwards this callback for the destructive callers).
-        const reportedDeletions: number[] = [];
-        const truncateResult = await service.truncateHistory(wsId, 1.0, undefined, (seqs) =>
-          reportedDeletions.push(...seqs)
-        );
-        expect(truncateResult.success).toBe(false);
-        expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
-        expect(await fileExists(archivePath(wsId))).toBe(false);
-        expect(reportedDeletions).toEqual([0, 1, 2]);
-      } finally {
-        rmSpy.mockRestore();
-      }
-    });
-
     it("keeps the archive intact on a no-op percentage truncation", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
@@ -2882,15 +2021,73 @@ describe("HistoryService", () => {
       const truncateResult = await service.truncateHistory(wsId, 0);
       expect(truncateResult.success).toBe(true);
       if (truncateResult.success) {
-        expect(truncateResult.data).toEqual({
-          deletedSequences: [],
-          activeContextTruncated: false,
-        });
+        expect(truncateResult.data).toEqual([]);
       }
 
       // No-op truncation must not collapse the archive back into chat.jsonl.
       expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
       expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+    });
+
+    it("does not reseed usage from before a partial prefix truncation", async () => {
+      await appendNumberedMessages(service, wsId, 8);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-usage", "assistant", "reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          contextProviderMetadata: { openai: {} },
+          model: "openai:gpt-4o",
+        })
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-provider-metadata", "assistant", "reply", {
+          contextProviderMetadata: { openai: {} },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+
+      const restarted = new HistoryService(config);
+      const remaining = await restarted.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        const retainedAssistant = remaining.data.find(
+          (message) => message.id === "assistant-usage"
+        );
+        expect(retainedAssistant).toBeDefined();
+        expect(retainedAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(retainedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
+        const providerMetadataOnly = remaining.data.find(
+          (message) => message.id === "assistant-provider-metadata"
+        );
+        expect(providerMetadataOnly).toBeDefined();
+        expect(providerMetadataOnly?.metadata?.contextProviderMetadata).toBeUndefined();
+      }
+    });
+
+    it("preserves active usage when truncation removes only sealed rows", async () => {
+      await appendNumberedMessages(service, wsId, 8);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("active-usage", "assistant", "reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      expect((await service.truncateHistory(wsId, 0.2)).success).toBe(true);
+
+      const active = await service.getHistoryFromLatestBoundary(wsId);
+      expect(active.success).toBe(true);
+      if (active.success) {
+        expect(
+          active.data.find((message) => message.id === "active-usage")?.metadata?.contextUsage
+        ).toBeDefined();
+      }
     });
 
     it("hasHistory sees archive-only workspaces", async () => {

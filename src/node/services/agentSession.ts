@@ -388,7 +388,6 @@ interface AgentSessionOptions {
   /** Destructive clear coordinator used by exec hard restart. */
   clearHistoryForHardRestart?: (options: {
     monitorHistoryLockHeld: boolean;
-    onRowsDeleted?: (historySequences: number[]) => void;
   }) => Promise<Result<number[]>>;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
@@ -424,7 +423,6 @@ export class AgentSession {
   private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly clearHistoryForHardRestart?: (options: {
     monitorHistoryLockHeld: boolean;
-    onRowsDeleted?: (historySequences: number[]) => void;
   }) => Promise<Result<number[]>>;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onPostCompactionStateChange?: () => void;
@@ -474,7 +472,6 @@ export class AgentSession {
 
   /** Latest context-usage snapshot used for on-send compaction checks. */
   private lastUsageState?: AutoCompactionUsageState;
-  private usageSeedingSuppressed = false;
 
   /** Prevent duplicate mid-stream compaction interrupts while we are already transitioning. */
   private midStreamCompactionPending = false;
@@ -2736,29 +2733,12 @@ export class AgentSession {
       // when the edit target is outside the active context window.
       const truncateTargetId = await this.getEditTruncateTargetId(editMessageId);
 
-      // Invalidate usage the moment the rewrite commits, not on success: the
-      // truncation can fail after chat.jsonl changed (archive removal or the
-      // sequence-floor read), and stale usage from the removed suffix must
-      // not survive that. Seeding re-enables at the commit point only when
-      // the retained rows' persisted usage stays valid (active-file suffix
-      // cut); the archived branch's partial failure can leave the archive
-      // alongside a duplicated prefix, where retained-row snapshots no
-      // longer measure the real payload, so it stays suppressed until full
-      // success.
+      this.clearUsageState();
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
-        truncateTargetId,
-        {
-          onContextRewritten: (info) =>
-            this.clearUsageState({ reenableHistorySeeding: info.retainedUsageValid }),
-        }
+        truncateTargetId
       );
-      if (truncateResult.success) {
-        // Fully committed edits cut a suffix and leave both files
-        // consistent; the retained prefix's persisted usage is valid, so
-        // re-enable history seeding even if a prior rewrite suppressed it.
-        this.clearUsageState({ reenableHistorySeeding: true });
-      } else {
+      if (!truncateResult.success) {
         const isMissingEditTarget =
           truncateResult.error.includes("Message with ID") &&
           truncateResult.error.includes("not found in history");
@@ -3410,8 +3390,6 @@ export class AgentSession {
       return;
     }
 
-    this.usageSeedingSuppressed = false;
-
     const totalTokens = params.usage.totalTokens ?? this.lastUsageState?.totalTokens;
     if (params.live) {
       this.lastUsageState = {
@@ -3441,23 +3419,9 @@ export class AgentSession {
     };
   }
 
-  /**
-   * Invalidate cached context usage after the active provider context is
-   * rewritten (boundary append, truncation, history replacement): stale usage
-   * would make the next send auto-compact the already-rewritten context.
-   * History seeding is also suppressed until the provider reports fresh usage,
-   * because boundary-less rewrites (partial /clear) retain rows whose persisted
-   * contextUsage still counts removed tokens; re-seeding those would restore
-   * the same stale value.
-   *
-   * Pass reenableHistorySeeding for suffix-only rewrites (message edits): the
-   * retained prefix becomes the active context and its persisted contextUsage
-   * is valid, so seeding is re-enabled even when an earlier rewrite (e.g. a
-   * context reset whose boundary the edit just truncated away) suppressed it.
-   */
-  clearUsageState(options?: { reenableHistorySeeding?: boolean }): void {
+  /** Prevent cached usage from auto-compacting a rewritten context. */
+  clearUsageState(): void {
     this.lastUsageState = undefined;
-    this.usageSeedingSuppressed = options?.reenableHistorySeeding !== true;
   }
 
   /**
@@ -3544,7 +3508,7 @@ export class AgentSession {
    * `lastUsageState` is still undefined.
    */
   private async seedUsageStateFromHistory(): Promise<void> {
-    if (this.lastUsageState !== undefined || this.usageSeedingSuppressed) {
+    if (this.lastUsageState !== undefined) {
       return;
     }
 
@@ -4625,43 +4589,19 @@ export class AgentSession {
       });
     }
 
-    // Same ghost-row invariant as WorkspaceService.truncateHistory: emit
-    // deletions for every committed clear step even when a later step fails.
-    const committedDeletedSequences: number[] = [];
-    const onRowsDeleted = (historySequences: number[]) => {
-      committedDeletedSequences.push(...historySequences);
-    };
-    const emitCommittedDeletions = () => {
-      if (committedDeletedSequences.length === 0) {
-        return;
-      }
-      const deleteMessage: DeleteMessage = {
-        type: "delete",
-        historySequences: [...committedDeletedSequences],
-      };
-      committedDeletedSequences.length = 0;
-      this.emitChatEvent(deleteMessage);
-    };
+    this.clearUsageState();
     const clearResult = this.clearHistoryForHardRestart
       ? await this.clearHistoryForHardRestart({
           monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
-          onRowsDeleted,
         })
-      : await this.historyService.clearHistory(
-          this.workspaceId,
-          () => this.clearUsageState(),
-          onRowsDeleted
-        );
+      : await this.historyService.clearHistory(this.workspaceId);
     if (!clearResult.success) {
-      emitCommittedDeletions();
       log.warn("Failed to clear history for exec subagent hard restart", {
         workspaceId: this.workspaceId,
         error: clearResult.error,
       });
       return false;
     }
-
-    this.clearUsageState();
 
     // This clear bypasses WorkspaceService.replaceHistory, so announce it on the chat funnel the
     // timeline already consumes: a log that cannot explain missing history defeats its purpose.
@@ -4671,7 +4611,14 @@ export class AgentSession {
       reason: "exec sub-agent hard restart",
     });
 
-    emitCommittedDeletions();
+    const deletedSequences = clearResult.data;
+    if (deletedSequences.length > 0) {
+      const deleteMessage: DeleteMessage = {
+        type: "delete",
+        historySequences: deletedSequences,
+      };
+      this.emitChatEvent(deleteMessage);
+    }
 
     const cloneForAppend = (msg: MuxMessage): MuxMessage => {
       const metadataCopy = msg.metadata ? { ...msg.metadata } : undefined;
@@ -5256,10 +5203,7 @@ export class AgentSession {
 
           // Compaction collapses history to a boundary summary, so prior context-usage snapshots
           // are stale. Clear them to prevent immediate re-trigger loops on the follow-up turn.
-          // Seeding stays enabled: the boundary read starts at the just-written summary row,
-          // whose contextUsage is a fresh post-compaction estimate the follow-up needs for
-          // checkBeforeSend (a large system prompt or summary can stay near the threshold).
-          this.clearUsageState({ reenableHistorySeeding: true });
+          this.clearUsageState();
 
           if (completedCompactionRequest?.source === "auto-compaction") {
             this.emitChatEvent({
@@ -6052,11 +5996,6 @@ export class AgentSession {
         if (!rollbackResult.success) {
           throw new Error(`Failed to rollback heartbeat reset boundary: ${rollbackResult.error}`);
         }
-        // Rollback restored the pre-reset provider context, so the invalidation
-        // from appendHeartbeatContextResetBoundary no longer applies. Re-enable
-        // seeding so the queued turn recovers the restored history's usage and
-        // on-send compaction still fires for a near-limit context.
-        this.usageSeedingSuppressed = false;
         this.onPostCompactionStateChange?.();
       } else {
         await this.clearPendingFollowUpFromSummary(lastMessage);
