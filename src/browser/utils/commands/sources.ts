@@ -25,6 +25,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
+import { publishPluginsSectionIntent } from "@/browser/features/Settings/Sections/pluginsSectionIntents";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
   getOrderedBaseTabIds,
@@ -112,6 +113,8 @@ export interface BuildSourcesParams {
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
+  /** agent-plugins experiment: gates the Settings → Plugins palette entry. */
+  agentPluginsEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -1568,6 +1571,165 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         keywords: ["model", "custom", "add"],
         run: () => openSettings("models"),
       },
+      ...(p.agentPluginsEnabled
+        ? ([
+            {
+              id: CommandIds.settingsOpenSection("plugins"),
+              title: "Settings: Plugins",
+              subtitle: "Install and manage Agent Plugins",
+              section: section.settings,
+              keywords: ["plugin", "install", "agent", "skill", "mcp", "update"],
+              run: () => openSettings("plugins"),
+            },
+            {
+              id: CommandIds.pluginsInstall(),
+              title: "Install Agent Plugin…",
+              subtitle: "Paste a git URL or owner/repo",
+              section: section.settings,
+              keywords: ["plugin", "install", "add", "git", "clone"],
+              run: () => {
+                // Open the section with the add-plugin form already expanded.
+                publishPluginsSectionIntent({ type: "open-add-panel" });
+                openSettings("plugins");
+              },
+            },
+            {
+              id: CommandIds.pluginsUninstall(),
+              title: "Uninstall Agent Plugin…",
+              section: section.settings,
+              keywords: ["plugin", "uninstall", "remove", "delete"],
+              run: () => undefined,
+              prompt: {
+                title: "Uninstall Agent Plugin",
+                fields: [
+                  {
+                    type: "select",
+                    name: "pluginName",
+                    label: "Managed plugin",
+                    placeholder: "Search installed plugins…",
+                    getOptions: async () => {
+                      const result = await p.api?.agentPlugins.list();
+                      if (!result?.success) {
+                        return [];
+                      }
+                      return result.data
+                        .filter((item) => item.managed)
+                        .map((item) => ({
+                          id: item.name,
+                          label: item.version ? `${item.name} (v${item.version})` : item.name,
+                          keywords: [item.name, item.location],
+                        }));
+                    },
+                  },
+                ],
+                onSubmit: (values) => {
+                  // Route through the section's confirmation flow (plugin-data
+                  // checkbox, explicit destructive button) — the palette never
+                  // uninstalls directly.
+                  publishPluginsSectionIntent({
+                    type: "confirm-uninstall",
+                    name: values.pluginName,
+                  });
+                  openSettings("plugins");
+                },
+              },
+            },
+            {
+              id: CommandIds.pluginsCheckUpdates(),
+              title: "Check for Plugin Updates",
+              section: section.settings,
+              keywords: ["plugin", "update", "check", "outdated"],
+              run: async () => {
+                const result = await p.api?.agentPlugins.checkUpdates();
+                if (!result) return;
+                if (!result.success) {
+                  showCommandFeedbackToast({ type: "error", message: result.error });
+                  return;
+                }
+                const updatable = result.data.filter(
+                  (check) => check.status === "update-available" || check.status === "tag-moved"
+                );
+                // Per-plugin failures ride inside a successful result; an
+                // unreachable remote is an unknown state, not "up to date".
+                const failed = result.data.filter((check) => check.status === "error");
+                if (updatable.length > 0) {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: `Updates available: ${updatable.map((check) => check.name).join(", ")}`,
+                  });
+                  openSettings("plugins");
+                } else if (failed.length > 0) {
+                  showCommandFeedbackToast({
+                    type: "error",
+                    message: `Update check failed for ${failed.map((check) => check.name).join(", ")}`,
+                  });
+                  openSettings("plugins");
+                } else {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: "All plugins are up to date.",
+                  });
+                }
+              },
+            },
+            {
+              id: CommandIds.pluginsUpdateAll(),
+              title: "Update All Plugins",
+              subtitle: "Apply pending plugin updates",
+              section: section.settings,
+              keywords: ["plugin", "update", "upgrade", "all"],
+              run: async () => {
+                const api = p.api;
+                if (!api) return;
+                const checks = await api.agentPlugins.checkUpdates();
+                if (!checks.success) {
+                  showCommandFeedbackToast({ type: "error", message: checks.error });
+                  return;
+                }
+                // Moved tags are excluded: tags are supposed to be immutable, so
+                // a moved tag warrants the section's per-plugin warning, not a
+                // bulk apply.
+                const updatable = checks.data.filter(
+                  (check) => check.status === "update-available"
+                );
+                if (updatable.length === 0) {
+                  const failed = checks.data.filter((check) => check.status === "error");
+                  if (failed.length > 0) {
+                    // An unreachable remote is an unknown state, not "up to date".
+                    showCommandFeedbackToast({
+                      type: "error",
+                      message: `Update check failed for ${failed.map((check) => check.name).join(", ")}`,
+                    });
+                  } else {
+                    showCommandFeedbackToast({
+                      type: "success",
+                      message: "All plugins are up to date.",
+                    });
+                  }
+                  return;
+                }
+                const failures: string[] = [];
+                for (const check of updatable) {
+                  const result = await api.agentPlugins.update({ name: check.name });
+                  if (!result.success) {
+                    failures.push(`${check.name}: ${result.error}`);
+                  }
+                }
+                // A mounted section only re-queries from its own handlers, so
+                // tell it the backend state changed under it.
+                publishPluginsSectionIntent({ type: "refresh" });
+                if (failures.length > 0) {
+                  showCommandFeedbackToast({ type: "error", message: failures.join("; ") });
+                } else {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: `Updated ${updatable.map((check) => check.name).join(", ")}`,
+                  });
+                }
+              },
+            },
+          ] satisfies CommandAction[])
+        : []),
     ]);
   }
 

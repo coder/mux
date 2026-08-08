@@ -3134,6 +3134,81 @@ export const router = (authToken?: string) => {
           return result;
         }),
     },
+    // Managed Agent Plugin installs (agent-plugins experiment). The service
+    // gates every method on the experiment flag and throws user-facing
+    // errors; handlers translate them into Result values.
+    agentPlugins: {
+      preview: t
+        .input(schemas.agentPlugins.preview.input)
+        .output(schemas.agentPlugins.preview.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const data = await context.agentPluginInstallService.preview({
+              input: input.input,
+              ref: input.ref ?? undefined,
+              subpath: input.subpath ?? undefined,
+            });
+            return { success: true, data };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+      install: t
+        .input(schemas.agentPlugins.install.input)
+        .output(schemas.agentPlugins.install.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const data = await context.agentPluginInstallService.install(input);
+            return { success: true, data };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+      list: t
+        .input(schemas.agentPlugins.list.input)
+        .output(schemas.agentPlugins.list.output)
+        .handler(async ({ context }) => {
+          try {
+            const data = await context.agentPluginInstallService.list();
+            return { success: true, data };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+      uninstall: t
+        .input(schemas.agentPlugins.uninstall.input)
+        .output(schemas.agentPlugins.uninstall.output)
+        .handler(async ({ context, input }) => {
+          try {
+            await context.agentPluginInstallService.uninstall(input);
+            return { success: true, data: undefined };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+      checkUpdates: t
+        .input(schemas.agentPlugins.checkUpdates.input)
+        .output(schemas.agentPlugins.checkUpdates.output)
+        .handler(async ({ context }) => {
+          try {
+            const data = await context.agentPluginInstallService.checkUpdates();
+            return { success: true, data };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+      update: t
+        .input(schemas.agentPlugins.update.input)
+        .output(schemas.agentPlugins.update.output)
+        .handler(async ({ context, input }) => {
+          try {
+            const data = await context.agentPluginInstallService.update(input);
+            return { success: true, data };
+          } catch (error) {
+            return { success: false, error: getErrorMessage(error) };
+          }
+        }),
+    },
     mcpOauth: {
       startDesktopFlow: t
         .input(schemas.mcpOauth.startDesktopFlow.input)

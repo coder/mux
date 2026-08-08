@@ -247,6 +247,34 @@ async function discoverPluginAt(args: {
 }
 
 /**
+ * Discover a single Agent Plugin at an arbitrary root directory.
+ *
+ * Public wrapper around the per-entry discovery used by container scans, so
+ * callers (e.g. the install service validating a staged temp clone) can run
+ * the exact same manifest + component validation against a directory that is
+ * not (yet) inside a configured container. Returns `plugin: null` when the
+ * directory is not a valid plugin; diagnostics carry the reasons.
+ */
+export async function discoverAgentPluginAt(args: {
+  pluginDir: string;
+  scope: AgentPluginScope;
+}): Promise<{ plugin: AgentPluginInfo | null; diagnostics: AgentPluginDiagnostic[] }> {
+  if (!path.isAbsolute(args.pluginDir)) {
+    throw new Error(`discoverAgentPluginAt: pluginDir must be absolute: ${args.pluginDir}`);
+  }
+
+  const diagnostics: AgentPluginDiagnostic[] = [];
+  const plugin = await discoverPluginAt({
+    pluginDir: args.pluginDir,
+    containerPath: path.dirname(args.pluginDir),
+    dirName: path.basename(args.pluginDir),
+    scope: args.scope,
+    diagnostics,
+  });
+  return { plugin, diagnostics };
+}
+
+/**
  * Discover Agent Plugins in the given container directories.
  *
  * Containers are scanned in the given order; plugins within a container are

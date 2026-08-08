@@ -17,6 +17,20 @@ export { UserPreferencesSchema } from "./userPreferences";
 export type { UserPreferences } from "./userPreferences";
 export { TaskSettingsSchema } from "./taskSettings";
 export type { TaskSettings } from "./taskSettings";
+// Managed Agent Plugin installs live in ~/.mux/plugins.json (see
+// ./agentPluginInstalls.ts for why they are NOT a config.json section).
+export {
+  AgentPluginGitSourceSchema,
+  AgentPluginInstallEntrySchema,
+  AgentPluginInstallSourceSchema,
+  AgentPluginInstallsSchema,
+  AgentPluginRegistryFileSchema,
+} from "./agentPluginInstalls";
+export type {
+  AgentPluginGitSource,
+  AgentPluginInstallEntry,
+  AgentPluginInstallSource,
+} from "./agentPluginInstalls";
 
 export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
