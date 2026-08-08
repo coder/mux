@@ -75,6 +75,13 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   TOGGLE_DRIFT_MODE: "Toggle git drift lines/commits",
   SHOW_WORKSPACE_DETAILS: "Show workspace details",
   SHOW_LAST_PROMPT: "Show last prompt",
+  SETTINGS_BACKUP_SAVE: "Save backup settings",
+  SETTINGS_BACKUP_VALIDATE: "Validate backup repository",
+  SETTINGS_BACKUP_PREVIEW: "Preview settings backup",
+  SETTINGS_BACKUP_PUSH: "Back up settings",
+  SETTINGS_BACKUP_RESTORE: "Restore settings backup",
+  SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN: "Toggle secret scan override",
+  SETTINGS_BACKUP_APPROVE_COMMANDS: "Toggle MCP command approval",
   // Modal-only keybinds; intentionally omitted from KEYBIND_GROUPS.
   CONFIRM_DIALOG_YES: "Confirm dialog action",
   CONFIRM_DIALOG_NO: "Cancel dialog action",
@@ -97,7 +104,10 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
 };
 
 /** Groups for organizing keybinds in the UI */
-const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> }> = [
+const KEYBIND_GROUPS: Array<{
+  label: string;
+  keys: Array<keyof typeof KEYBINDS>;
+}> = [
   {
     label: "General",
     keys: [
@@ -201,6 +211,18 @@ const KEYBIND_GROUPS: Array<{ label: string; keys: Array<keyof typeof KEYBINDS> 
     ],
   },
   {
+    label: "Settings backup",
+    keys: [
+      "SETTINGS_BACKUP_SAVE",
+      "SETTINGS_BACKUP_VALIDATE",
+      "SETTINGS_BACKUP_PREVIEW",
+      "SETTINGS_BACKUP_PUSH",
+      "SETTINGS_BACKUP_RESTORE",
+      "SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN",
+      "SETTINGS_BACKUP_APPROVE_COMMANDS",
+    ],
+  },
+  {
     label: "External",
     keys: ["OPEN_TERMINAL", "OPEN_IN_EDITOR"],
   },
@@ -217,7 +239,6 @@ export function KeybindsSection() {
   const workspaceHeartbeatsEnabled = useExperimentValue(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS);
   const visibleKeybindGroups = KEYBIND_GROUPS.map((group) => ({
     ...group,
-    // Hide deprecated keybinds from the generated reference, plus experiment-gated rows.
     keys: group.keys.filter(
       (key) =>
         !isKeybindDeprecated(KEYBINDS[key]) &&

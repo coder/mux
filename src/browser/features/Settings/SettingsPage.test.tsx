@@ -28,7 +28,15 @@ describe("SettingsPage", () => {
   });
 
   test("redirects the memory route away while the memory experiment is disabled", () => {
-    expect(getSettingsSectionRedirect("memory", false, false)).toEqual({ section: "general" });
+    expect(getSettingsSectionRedirect("memory", false, false)).toEqual({
+      section: "general",
+    });
     expect(getSettingsSectionRedirect("memory", false, true)).toBeNull();
+  });
+
+  test("always shows the Backup section", () => {
+    expect(getSettingsSections(false, false).map((section) => section.id)).toContain("backup");
+    expect(getSettingsSections(true, true).map((section) => section.id)).toContain("backup");
+    expect(getSettingsSectionRedirect("backup", false, false)).toBeNull();
   });
 });

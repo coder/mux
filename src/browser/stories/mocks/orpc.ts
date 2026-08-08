@@ -114,6 +114,16 @@ export interface MockTerminalSession {
   outputChunks?: string[];
 }
 
+type MockBackupRoute = keyof APIClient["backup"];
+type MockBackupRouteOutput<Route extends MockBackupRoute> = Awaited<
+  ReturnType<APIClient["backup"][Route]>
+>;
+type MockBackupData<Route extends Exclude<MockBackupRoute, "getSettings">> = Extract<
+  MockBackupRouteOutput<Route>,
+  { success: true }
+>["data"];
+type MockBackupSettings = NonNullable<MockBackupRouteOutput<"getSettings">>;
+
 type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 
 export interface MockORPCClientOptions {
@@ -303,6 +313,11 @@ export interface MockORPCClientOptions {
     success: boolean;
     error?: string | null;
   };
+  backupSettings?: MockBackupSettings | null;
+  backupValidation?: MockBackupData<"validate">;
+  backupPreview?: MockBackupData<"preview">;
+  backupPush?: MockBackupData<"push">;
+  backupRestore?: MockBackupData<"restore">;
   /** Per-workspace runtime statuses for RuntimeStatusStore stories */
   runtimeStatuses?: Map<string, "running" | "stopped" | "unknown" | "unsupported">;
 }
@@ -415,6 +430,11 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       policy: null,
     },
     logEntries = [],
+    backupSettings: initialBackupSettings,
+    backupValidation,
+    backupPreview,
+    backupPush,
+    backupRestore,
     clearLogsResult = { success: true, error: null },
     runtimeStatuses = new Map<string, "running" | "stopped" | "unknown" | "unsupported">(),
   } = options;
@@ -596,6 +616,32 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     return normalizeSubagentAiDefaults(raw);
   };
 
+  let backupSettings: MockBackupSettings | null = initialBackupSettings ?? null;
+  const backupValidationResult: MockBackupData<"validate"> = backupValidation ?? {
+    reachable: true,
+    empty: false,
+    credential: "gh",
+  };
+  const backupPreviewResult: MockBackupData<"preview"> = backupPreview ?? {
+    pushChanges: [],
+    restoreChanges: [],
+    localOnlyFiles: [],
+    redactions: [],
+    commandApprovals: [],
+  };
+  const backupPushResult: MockBackupData<"push"> = backupPush ?? {
+    commit: "abc1234",
+    changed: true,
+    credential: backupValidationResult.credential,
+    redactions: [],
+  };
+  const backupRestoreResult: MockBackupData<"restore"> = backupRestore ?? {
+    commit: "def5678",
+    snapshotPath: "/tmp/mux-backup-snapshot",
+    changedFiles: [],
+    localOnlyFiles: [],
+  };
+
   let layoutPresets = initialLayoutPresets ?? DEFAULT_LAYOUT_PRESETS_CONFIG;
   let subagentAiDefaults = deriveSubagentAiDefaults();
 
@@ -690,6 +736,22 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         return Promise.resolve({ revokedCount: beforeCount - serverAuthSessionsState.length });
       },
+    },
+    backup: {
+      getSettings: () => Promise.resolve(backupSettings),
+      saveSettings: (input: Parameters<APIClient["backup"]["saveSettings"]>[0]) => {
+        backupSettings = { ...input };
+        notifyConfigChanged();
+        return Promise.resolve({ success: true as const, data: backupSettings });
+      },
+      validate: (_input: Parameters<APIClient["backup"]["validate"]>[0]) =>
+        Promise.resolve({ success: true as const, data: backupValidationResult }),
+      preview: (_input: Parameters<APIClient["backup"]["preview"]>[0]) =>
+        Promise.resolve({ success: true as const, data: backupPreviewResult }),
+      push: (_input: Parameters<APIClient["backup"]["push"]>[0]) =>
+        Promise.resolve({ success: true as const, data: backupPushResult }),
+      restore: (_input: Parameters<APIClient["backup"]["restore"]>[0]) =>
+        Promise.resolve({ success: true as const, data: backupRestoreResult }),
     },
     // Settings → Layouts (layout presets)
     // Stored in-memory for Storybook only.

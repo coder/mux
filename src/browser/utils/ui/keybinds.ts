@@ -516,6 +516,14 @@ export const KEYBINDS = {
 
   SHOW_LAST_PROMPT: { key: "L", ctrl: true, shift: true },
 
+  SETTINGS_BACKUP_SAVE: { key: "s", code: "KeyS", ctrl: true, alt: true },
+  SETTINGS_BACKUP_VALIDATE: { key: "v", code: "KeyV", ctrl: true, alt: true },
+  SETTINGS_BACKUP_PREVIEW: { key: "e", code: "KeyE", ctrl: true, alt: true },
+  SETTINGS_BACKUP_PUSH: { key: "b", code: "KeyB", ctrl: true, alt: true },
+  SETTINGS_BACKUP_RESTORE: { key: "r", code: "KeyR", ctrl: true, alt: true },
+  SETTINGS_BACKUP_OVERRIDE_SECRET_SCAN: { key: "o", code: "KeyO", ctrl: true, alt: true },
+  SETTINGS_BACKUP_APPROVE_COMMANDS: { key: "a", code: "KeyA", ctrl: true, alt: true },
+
   /** Confirm action in confirmation dialogs */
   CONFIRM_DIALOG_YES: { key: "y", allowShift: true },
 

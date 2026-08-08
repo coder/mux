@@ -12,6 +12,8 @@ import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
+import { BackupService } from "@/node/services/backup/backupService";
+import { createBackupGitRepo, createBackupPayloadStore } from "@/node/services/backup/adapters";
 import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
@@ -106,6 +108,7 @@ export class ServiceContainer {
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
+  public readonly backupService: BackupService;
   private _onePasswordService: OnePasswordService | null | undefined = undefined;
   private _onePasswordServiceAccountName: string | undefined;
   public readonly terminalService: TerminalService;
@@ -153,6 +156,12 @@ export class ServiceContainer {
     this.experimentsService = new ExperimentsService({
       telemetryService: this.telemetryService,
       muxHome: config.rootDir,
+    });
+    this.backupService = new BackupService(config, {
+      gitRepo: createBackupGitRepo({
+        cacheRoot: path.join(config.rootDir, "backup-cache"),
+      }),
+      payload: createBackupPayloadStore({ config }),
     });
     this.sessionTimingService = new SessionTimingService(config, this.telemetryService);
     this.analyticsService = new AnalyticsService(config);
@@ -599,6 +608,7 @@ export class ServiceContainer {
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
+      backupService: this.backupService,
       get onePasswordService() {
         return resolveOnePasswordService();
       },

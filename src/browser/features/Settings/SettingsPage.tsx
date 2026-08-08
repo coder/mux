@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Server,
   Lock,
+  ArchiveRestore,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -37,6 +38,7 @@ import { ExperimentsSection } from "./Sections/ExperimentsSection";
 import { ServerAccessSection } from "./Sections/ServerAccessSection";
 import { KeybindsSection } from "./Sections/KeybindsSection";
 import { SecuritySection } from "./Sections/SecuritySection";
+import { BackupSection } from "./Sections/BackupSection";
 import type { SettingsSection } from "./types";
 
 const LEGACY_EXPERIMENT_SETTINGS_SECTION_IDS = new Set(["goals", "heartbeat"]);
@@ -134,6 +136,12 @@ export function getSettingsSections(
       component: MemorySection,
     });
   }
+  sections.push({
+    id: "backup",
+    label: "Backup",
+    icon: <ArchiveRestore className="h-4 w-4" />,
+    component: BackupSection,
+  });
   if (governorEnabled) {
     sections.push({
       id: "governor",

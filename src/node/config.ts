@@ -34,6 +34,7 @@ import {
   shouldMirrorAgentDefaultToLegacySubagent,
 } from "@/common/types/tasks";
 import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
+import { SettingsBackupSchema } from "@/common/config/schemas/settingsBackup";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
@@ -1204,6 +1205,12 @@ export class Config {
           updateChannel,
           defaultRuntime,
           runtimeEnablement,
+          // Validated here rather than trusted: a hand-edited or older-build value that fails the
+          // schema would otherwise reach the IPC output validator and fail the whole settings
+          // read, so one bad field would report a load failure for every setting on the screen.
+          settingsBackup: SettingsBackupSchema.optional()
+            .catch(undefined)
+            .parse(parsed.settingsBackup),
           onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
@@ -1489,6 +1496,10 @@ export class Config {
       const defaultRuntime = normalizeRuntimeEnablementId(config.defaultRuntime);
       if (defaultRuntime !== undefined) {
         data.defaultRuntime = defaultRuntime;
+      }
+
+      if (config.settingsBackup) {
+        data.settingsBackup = config.settingsBackup;
       }
 
       const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);

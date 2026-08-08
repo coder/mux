@@ -8,6 +8,7 @@ import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { UserPreferencesSchema } from "./userPreferences";
 import { TaskSettingsSchema } from "./taskSettings";
+import { SettingsBackupSchema } from "./settingsBackup";
 import { HEARTBEAT_MAX_INTERVAL_MS, HEARTBEAT_MIN_INTERVAL_MS } from "@/constants/heartbeat";
 import { DEFAULT_GOAL_DEFAULTS } from "@/constants/goals";
 
@@ -154,6 +155,9 @@ export const AppConfigOnDiskSchema = z
     updateChannel: UpdateChannelSchema.optional(),
     runtimeEnablement: RuntimeEnablementOverridesSchema.optional(),
     defaultRuntime: RuntimeEnablementIdSchema.optional(),
+    // `.catch`: an unusable stored value must not fail the whole config parse. Degrading to
+    // "not configured" keeps every other setting loadable and lets the user re-enter this one.
+    settingsBackup: SettingsBackupSchema.optional().catch(undefined),
     onePasswordAccountName: z.string().optional(),
   })
   .passthrough();

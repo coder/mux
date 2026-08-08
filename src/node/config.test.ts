@@ -38,6 +38,44 @@ describe("Config", () => {
     await config.editConfig((cfg) => cfg);
   }
 
+  describe("loadConfigOrDefault settingsBackup sanitizing", () => {
+    it("degrades a malformed settingsBackup instead of returning it", () => {
+      // Reaching the IPC output validator would fail the whole settings read, so one bad field
+      // would report a load failure for every unrelated setting on the screen.
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          settingsBackup: { repoUrl: "https://oauth2:hunter2@example.com/repo.git", branch: "" },
+          defaultModel: "openai:gpt-4o",
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.settingsBackup).toBeUndefined();
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+    });
+
+    it("keeps a valid settingsBackup", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          settingsBackup: {
+            repoUrl: "https://github.com/me/dotfiles.git",
+            branch: "main",
+            path: "mux",
+          },
+        })
+      );
+
+      expect(config.loadConfigOrDefault().settingsBackup).toMatchObject({
+        repoUrl: "https://github.com/me/dotfiles.git",
+        branch: "main",
+        path: "mux",
+      });
+    });
+  });
+
   describe("loadConfigOrDefault with trailing slash migration", () => {
     it("should strip trailing slashes from project paths on load", () => {
       // Create config file with trailing slashes in project paths

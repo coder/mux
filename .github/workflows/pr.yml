@@ -214,7 +214,13 @@ jobs:
             # order-dependent on origin/main; only reliable in its own process.
             src/browser/features/RightSidebar/Memory/MemoryTab.test.tsx
           )
-          bun test --max-concurrency=1 "${isolated_unit_tests[@]}"
+          # One process per file rather than one shared isolated process. Sharing it still
+          # segfaults Bun on the runner (exit 132, "Bun has crashed", zero failing assertions)
+          # while leaving the file transition as the only suspect, and these files are already
+          # here because they do not survive sharing a process.
+          for isolated_unit_test in "${isolated_unit_tests[@]}"; do
+            bun test --max-concurrency=1 "$isolated_unit_test"
+          done
 
           mapfile -d '' unit_files < <(
             find src -type f \( -name '*.test.ts' -o -name '*.test.tsx' \) \
