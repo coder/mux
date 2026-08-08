@@ -23,12 +23,18 @@ describe("SettingsPage", () => {
   });
 
   test("shows the Memory section only while the memory experiment is enabled", () => {
-    expect(getSettingsSections(false, true, false).map((section) => section.id)).toContain("memory");
-    expect(getSettingsSections(false, false, false).map((section) => section.id)).not.toContain("memory");
+    expect(getSettingsSections(false, true, false).map((section) => section.id)).toContain(
+      "memory"
+    );
+    expect(getSettingsSections(false, false, false).map((section) => section.id)).not.toContain(
+      "memory"
+    );
   });
 
   test("redirects the memory route away while the memory experiment is disabled", () => {
-    expect(getSettingsSectionRedirect("memory", false, false, false)).toEqual({ section: "general" });
+    expect(getSettingsSectionRedirect("memory", false, false, false)).toEqual({
+      section: "general",
+    });
     expect(getSettingsSectionRedirect("memory", false, true, false)).toBeNull();
   });
 

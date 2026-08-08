@@ -463,7 +463,7 @@ function normalizeAgentPluginInstalls(value: unknown): AgentPluginInstallEntry[]
   }
 
   const entries: AgentPluginInstallEntry[] = [];
-  for (const raw of value) {
+  for (const raw of value as unknown[]) {
     const parsed = AgentPluginInstallEntrySchema.safeParse(raw);
     if (parsed.success) {
       entries.push(parsed.data);
