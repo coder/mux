@@ -5,6 +5,7 @@ import type { Config } from "@/node/config";
 import { createTestHistoryService } from "./testHistoryService";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 
@@ -1279,18 +1280,15 @@ describe("HistoryService", () => {
       const scanStarted = new Promise<void>((resolve) => {
         markScanStarted = resolve;
       });
-      const originalIterateFullHistory: HistoryService["iterateFullHistory"] =
-        service.iterateFullHistory.bind(service);
-      const blockingIterateFullHistory: HistoryService["iterateFullHistory"] = async (
-        workspaceIdArg,
-        direction,
-        visitor
-      ) => {
+      const internal = service as unknown as {
+        iterateFullHistoryUnlocked: HistoryService["iterateFullHistory"];
+      };
+      const originalIterateFullHistory = internal.iterateFullHistoryUnlocked.bind(service);
+      internal.iterateFullHistoryUnlocked = async (workspaceIdArg, direction, visitor) => {
         markScanStarted();
         await scanReleased;
         return originalIterateFullHistory(workspaceIdArg, direction, visitor);
       };
-      service.iterateFullHistory = blockingIterateFullHistory;
 
       const scan = service.getMessagesForCompactionEpoch(workspaceId, {
         workspaceId,
@@ -2134,6 +2132,70 @@ describe("HistoryService", () => {
           active.data.find((message) => message.id === "active-usage")?.metadata?.contextUsage
         ).toBeDefined();
       }
+    });
+
+    it("restores a markerless archive tombstone left by an older truncation", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const restarted = new HistoryService(config);
+      const full = await collectFullHistory(restarted, wsId);
+      expect(full.map((message) => message.id)).toEqual([
+        "msg-0",
+        "msg-1",
+        "msg-2",
+        "boundary-1",
+        "post-0",
+      ]);
+    });
+
+    it("restores an interrupted archive tombstone when only the final chat matches", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
+      const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({
+          phase: "prepared",
+          finalArchiveHash: hash("replacement archive\n"),
+          finalChatHash: hash(chatContents),
+        })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const restarted = new HistoryService(config);
+      const full = await collectFullHistory(restarted, wsId);
+      expect(full.map((message) => message.id)).toEqual([
+        "msg-0",
+        "msg-1",
+        "msg-2",
+        "boundary-1",
+        "post-0",
+      ]);
+    });
+
+    it("does not restore a committed archive tombstone before appending", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({ finalArchiveHash: null, finalChatHash: null })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+      await fs.rm(chatPath(wsId));
+
+      const restarted = new HistoryService(config);
+      const message = createMuxMessage("new-msg", "user", "fresh");
+      expect((await restarted.appendToHistory(wsId, message)).success).toBe(true);
+      expect(message.metadata?.historySequence).toBe(0);
+      expect((await collectFullHistory(restarted, wsId)).map((item) => item.id)).toEqual([
+        "new-msg",
+      ]);
     });
 
     it("hasHistory sees archive-only workspaces", async () => {
