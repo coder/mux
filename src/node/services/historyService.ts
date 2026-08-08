@@ -22,9 +22,11 @@ import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
   findLatestContextBoundaryIndex,
   getContextBoundaryKind,
+  hasProviderEligibleMessages,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
+import { filterWorkflowDisplayOnlyMessages } from "@/common/utils/workflowRunMessages";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -45,14 +47,15 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
 
 function prefixCutChangesActiveContext(messages: MuxMessage[], removeCount: number): boolean {
   const boundaryIndex = findLatestContextBoundaryIndex(messages);
-  if (boundaryIndex < 0) {
-    return removeCount > 0;
-  }
   const activeStart =
-    getContextBoundaryKind(messages[boundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
-      ? boundaryIndex + 1
-      : boundaryIndex;
-  return removeCount > activeStart;
+    boundaryIndex < 0
+      ? 0
+      : getContextBoundaryKind(messages[boundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
+        ? boundaryIndex + 1
+        : boundaryIndex;
+  return hasProviderEligibleMessages(
+    filterWorkflowDisplayOnlyMessages(messages.slice(activeStart, removeCount))
+  );
 }
 
 function stripContextUsage(message: MuxMessage): MuxMessage {
@@ -1082,18 +1085,18 @@ export class HistoryService {
     if (this.sealedRotationChecked.has(workspaceId)) {
       return;
     }
-    this.sealedRotationChecked.add(workspaceId);
 
     try {
-      // Cheap unlocked probe first so the common no-op case takes no lock.
-      const offset = await this.findLastBoundaryByteOffset(this.getChatHistoryPath(workspaceId));
-      if (offset === null || offset === 0) {
-        return;
-      }
-      await this.fileLocks.withLock(workspaceId, () =>
-        this.rotateSealedHistoryUnlocked(workspaceId)
-      );
+      await this.fileLocks.withLock(workspaceId, async () => {
+        await fs.rm(`${this.getChatArchivePath(workspaceId)}.truncate`, { force: true });
+        const offset = await this.findLastBoundaryByteOffset(this.getChatHistoryPath(workspaceId));
+        if (offset !== null && offset !== 0) {
+          await this.rotateSealedHistoryUnlocked(workspaceId);
+        }
+      });
+      this.sealedRotationChecked.add(workspaceId);
     } catch (error) {
+      this.sealedRotationChecked.delete(workspaceId);
       // Rotation is an optimization — reads remain correct on unrotated files.
       log.warn("Failed to rotate sealed chat history", {
         workspaceId,
@@ -1900,15 +1903,30 @@ export class HistoryService {
 
       const historyPath = this.getChatHistoryPath(workspaceId);
       const archivePath = this.getChatArchivePath(workspaceId);
-      await fs.rm(historyPath, { force: true });
+      const originalArchive = await fs.readFile(archivePath, "utf-8");
       await writeFileAtomic(
         archivePath,
         this.serializeHistoryEntries(truncatedMessages.map(stripContextUsage), workspaceId)
       );
-      await fs.rename(archivePath, historyPath);
+      try {
+        await fs.rm(historyPath, { force: true });
+      } catch (error) {
+        await writeFileAtomic(archivePath, originalArchive);
+        throw error;
+      }
+      let retainedPath = historyPath;
+      try {
+        await fs.rename(archivePath, historyPath);
+      } catch (error) {
+        retainedPath = archivePath;
+        log.warn("Keeping archived truncation result in the archive file", {
+          workspaceId,
+          error,
+        });
+      }
       try {
         await writeFileAtomic(
-          historyPath,
+          retainedPath,
           this.serializeHistoryEntries(truncatedMessages, workspaceId)
         );
       } catch (error) {
@@ -1971,23 +1989,95 @@ export class HistoryService {
         const historyPath = this.getChatHistoryPath(workspaceId);
         const archivePath = this.getChatArchivePath(workspaceId);
 
-        // Fast path: 100% truncation = delete entire history (active + sealed archive)
-        if (percentage >= 1.0) {
-          // Need sequence numbers for return value before deleting
-          const messages = [
-            ...(await this.readArchivedHistory(workspaceId)),
-            ...(await this.readChatHistory(workspaceId)),
-          ];
+        const readExistingFile = async (filePath: string): Promise<string | null> => {
+          try {
+            return await fs.readFile(filePath, "utf-8");
+          } catch (error) {
+            if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+              return null;
+            }
+            throw error;
+          }
+        };
+        const archiveTombstonePath = `${archivePath}.truncate`;
+        const moveArchiveAside = async (): Promise<boolean> => {
+          await fs.rm(archiveTombstonePath, { force: true });
+          try {
+            await fs.rename(archivePath, archiveTombstonePath);
+            return true;
+          } catch (error) {
+            if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+              return false;
+            }
+            throw error;
+          }
+        };
+        const restoreArchive = async (moved: boolean): Promise<void> => {
+          if (moved) {
+            await fs.rename(archiveTombstonePath, archivePath);
+          }
+        };
+        const discardArchiveTombstone = async (moved: boolean): Promise<void> => {
+          if (!moved) {
+            return;
+          }
+          try {
+            await fs.rm(archiveTombstonePath, { force: true });
+          } catch (error) {
+            this.sealedRotationChecked.delete(workspaceId);
+            log.warn("Failed to remove truncated history archive", { workspaceId, error });
+          }
+        };
+
+        const removeAllMessages = async (
+          archivedMessages: MuxMessage[],
+          chatMessages: MuxMessage[]
+        ): Promise<number[]> => {
+          const messages = [...archivedMessages, ...chatMessages];
           const deletedSequences = messages
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
+          const archiveRemovalChangesContext = prefixCutChangesActiveContext(
+            messages,
+            archivedMessages.length
+          );
+          const originalChat = archiveRemovalChangesContext
+            ? await readExistingFile(historyPath)
+            : null;
+          if (archiveRemovalChangesContext) {
+            await writeFileAtomic(
+              historyPath,
+              this.serializeHistoryEntries(chatMessages.map(stripContextUsage), workspaceId)
+            );
+          }
 
-          await fs.rm(historyPath, { force: true });
-          await fs.rm(archivePath, { force: true });
-
-          // Reset sequence counter when clearing history
+          let archiveMoved = false;
+          try {
+            archiveMoved = await moveArchiveAside();
+            await fs.rm(historyPath, { force: true });
+          } catch (error) {
+            try {
+              await restoreArchive(archiveMoved);
+              if (originalChat !== null) {
+                await writeFileAtomic(historyPath, originalChat);
+              }
+            } catch (rollbackError) {
+              log.error("Failed to roll back history clear", { workspaceId, error: rollbackError });
+            }
+            throw error;
+          }
+          await discardArchiveTombstone(archiveMoved);
           this.sequenceCounters.set(workspaceId, 0);
-          return Ok(deletedSequences);
+          return deletedSequences;
+        };
+
+        if (percentage >= 1.0) {
+          return Ok(
+            await removeAllMessages(
+              await this.readArchivedHistory(workspaceId),
+              await this.readChatHistory(workspaceId)
+            )
+          );
         }
 
         // Structural rewrite requires full history content (oldest rows live in
@@ -2036,13 +2126,7 @@ export class HistoryService {
 
         // If we're removing all messages, use fast path
         if (removeCount >= messages.length) {
-          await fs.rm(historyPath, { force: true });
-          await fs.rm(archivePath, { force: true });
-          this.sequenceCounters.set(workspaceId, 0);
-          const deletedSequences = messages
-            .map((msg) => msg.metadata?.historySequence)
-            .filter((s): s is number => isNonNegativeInteger(s));
-          return Ok(deletedSequences);
+          return Ok(await removeAllMessages(archivedMessages, chatMessages));
         }
 
         const activeContextChanged = prefixCutChangesActiveContext(messages, removeCount);
@@ -2058,24 +2142,54 @@ export class HistoryService {
         const remainingArchive = remainingMessages.slice(0, remainingArchiveCount);
         const remainingChat = remainingMessages.slice(remainingArchiveCount);
 
-        if (activeContextChanged && archivedMessages.length > 0) {
+        const archiveCutChangesContext = prefixCutChangesActiveContext(
+          messages,
+          Math.min(removeCount, archivedMessages.length)
+        );
+        const originalChat = archiveCutChangesContext ? await readExistingFile(historyPath) : null;
+        if (archiveCutChangesContext) {
           await writeFileAtomic(
             historyPath,
             this.serializeHistoryEntries(chatMessages.map(stripContextUsage), workspaceId)
           );
         }
+
         if (remainingArchive.length > 0) {
-          await writeFileAtomic(
-            archivePath,
-            this.serializeHistoryEntries(remainingArchive, workspaceId)
-          );
+          try {
+            await writeFileAtomic(
+              archivePath,
+              this.serializeHistoryEntries(remainingArchive, workspaceId)
+            );
+          } catch (error) {
+            if (originalChat !== null) {
+              await writeFileAtomic(historyPath, originalChat);
+            }
+            throw error;
+          }
         } else {
-          await fs.rm(archivePath, { force: true });
+          let archiveMoved = false;
+          try {
+            archiveMoved = await moveArchiveAside();
+            await writeFileAtomic(
+              historyPath,
+              this.serializeHistoryEntries(remainingChat, workspaceId)
+            );
+          } catch (error) {
+            try {
+              await restoreArchive(archiveMoved);
+              if (originalChat !== null) {
+                await writeFileAtomic(historyPath, originalChat);
+              }
+            } catch (rollbackError) {
+              log.error("Failed to roll back history truncation", {
+                workspaceId,
+                error: rollbackError,
+              });
+            }
+            throw error;
+          }
+          await discardArchiveTombstone(archiveMoved);
         }
-        await writeFileAtomic(
-          historyPath,
-          this.serializeHistoryEntries(remainingChat, workspaceId)
-        );
         this.sealedRotationChecked.delete(workspaceId);
 
         // Update sequence counter to continue from where we are.

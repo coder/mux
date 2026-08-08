@@ -2068,6 +2068,52 @@ describe("HistoryService", () => {
       }
     });
 
+    async function expectWorkflowDisplayTruncationPreservesUsage(withResetBoundary: boolean) {
+      if (withResetBoundary) {
+        await appendNumberedMessages(service, wsId, 12);
+        await service.appendToHistory(
+          wsId,
+          createMuxMessage("reset-boundary", "assistant", "", {
+            contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+          })
+        );
+      }
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage(
+          "workflow-display",
+          "user",
+          `workflow trigger display ${"x".repeat(2_000)}`,
+          { muxMetadata: { type: "workflow-trigger-display", rawCommand: "/wf", runId: "run-1" } }
+        )
+      );
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      expect((await service.truncateHistory(wsId, 0.5)).success).toBe(true);
+
+      const active = await service.getHistoryFromLatestBoundary(wsId);
+      expect(active.success).toBe(true);
+      if (active.success) {
+        expect(active.data.find((message) => message.id === "workflow-display")).toBeUndefined();
+        const retainedAssistant = active.data.find((message) => message.id === "assistant-active");
+        expect(retainedAssistant).toBeDefined();
+        expect(retainedAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    }
+
+    it("preserves active usage when uncompacted truncation removes only workflow display rows", () =>
+      expectWorkflowDisplayTruncationPreservesUsage(false));
+
+    it("preserves active usage when truncation removes only workflow display rows", () =>
+      expectWorkflowDisplayTruncationPreservesUsage(true));
+
     it("preserves active usage when truncation removes only sealed rows", async () => {
       await appendNumberedMessages(service, wsId, 8);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
