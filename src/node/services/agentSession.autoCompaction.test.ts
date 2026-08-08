@@ -1016,6 +1016,7 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       createMuxMessage("assistant-1", "assistant", "first reply", {
         timestamp: Date.now() - 4_000,
         model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
       }),
       createMuxMessage("user-2", "user", "second prompt", { timestamp: Date.now() - 3_000 }),
     ];
@@ -1054,6 +1055,19 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     } finally {
       seqSpy.mockRestore();
     }
+
+    // The committed suffix cut created no duplicated prefix, so the retained
+    // assistant-1 usage stays valid and the next send must seed from it: a
+    // near-limit prefix stays monitored despite the Err.
+    const seenUsages = installUsageCapturingMonitor(session);
+    const result = await session.sendMessage("follow-up send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
+    expect(seeded?.lastContextUsage).toBeDefined();
 
     session.dispose();
   });

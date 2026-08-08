@@ -1814,16 +1814,23 @@ export class HistoryService {
    *
    * options.onContextRewritten fires the moment the chat.jsonl rewrite
    * commits, even when a later step fails, so callers can invalidate cached
-   * usage for mutations an Err result leaves on disk.
+   * usage for mutations an Err result leaves on disk. retainedUsageValid is
+   * true when the committed rewrite leaves the retained rows' persisted
+   * usage snapshots valid (an active-file suffix cut); it is false for the
+   * archived branch, whose copied prefix duplicates archive rows until the
+   * archive removal commits.
    */
   async truncateAfterMessage(
     workspaceId: string,
     messageId: string,
-    options?: { keepTargetMessage?: boolean; onContextRewritten?: () => void }
+    options?: {
+      keepTargetMessage?: boolean;
+      onContextRewritten?: (info: { retainedUsageValid: boolean }) => void;
+    }
   ): Promise<Result<void>> {
-    const notifyContextRewritten = () => {
+    const notifyContextRewritten = (info: { retainedUsageValid: boolean }) => {
       try {
-        options?.onContextRewritten?.();
+        options?.onContextRewritten?.(info);
       } catch (error) {
         // A notification failure must not turn a committed rewrite into Err.
         log.error("truncateAfterMessage context-rewritten callback failed", {
@@ -1866,8 +1873,9 @@ export class HistoryService {
 
         // Atomic write prevents corruption if app crashes mid-write
         await writeFileAtomic(historyPath, historyEntries);
-        // The archive read below can still fail after this commit.
-        notifyContextRewritten();
+        // The archive read below can still fail after this commit, but the
+        // suffix cut leaves the retained rows' persisted usage valid.
+        notifyContextRewritten({ retainedUsageValid: true });
 
         // Update sequence counter to continue from where we truncated.
         // Self-healing read path: skip malformed persisted historySequence values.
@@ -1921,7 +1929,7 @@ export class HistoryService {
     workspaceId: string,
     messageId: string,
     keepTargetMessage: boolean,
-    notifyContextRewritten: () => void
+    notifyContextRewritten: (info: { retainedUsageValid: boolean }) => void
   ): Promise<Result<void>> {
     try {
       const archiveMessages = await this.readArchivedHistory(workspaceId);
@@ -1955,8 +1963,9 @@ export class HistoryService {
           workspaceId
         )
       );
-      // The archive removal below can still fail after this commit.
-      notifyContextRewritten();
+      // The archive removal below can still fail after this commit, leaving
+      // the duplicated-prefix hazard the stripped write above guards.
+      notifyContextRewritten({ retainedUsageValid: false });
       await fs.rm(this.getChatArchivePath(workspaceId), { force: true });
       if (copiedPrefixHasUsage) {
         try {

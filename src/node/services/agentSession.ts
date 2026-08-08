@@ -2739,14 +2739,19 @@ export class AgentSession {
       // Invalidate usage the moment the rewrite commits, not on success: the
       // truncation can fail after chat.jsonl changed (archive removal or the
       // sequence-floor read), and stale usage from the removed suffix must
-      // not survive that. Seeding stays suppressed at the commit point
-      // because a partial failure can leave the archive alongside a
-      // duplicated prefix, where retained-row snapshots no longer measure
-      // the real payload.
+      // not survive that. Seeding re-enables at the commit point only when
+      // the retained rows' persisted usage stays valid (active-file suffix
+      // cut); the archived branch's partial failure can leave the archive
+      // alongside a duplicated prefix, where retained-row snapshots no
+      // longer measure the real payload, so it stays suppressed until full
+      // success.
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         truncateTargetId,
-        { onContextRewritten: () => this.clearUsageState() }
+        {
+          onContextRewritten: (info) =>
+            this.clearUsageState({ reenableHistorySeeding: info.retainedUsageValid }),
+        }
       );
       if (truncateResult.success) {
         // Fully committed edits cut a suffix and leave both files
