@@ -1,3 +1,6 @@
+import * as os from "node:os";
+import * as path from "node:path";
+
 import { GITHUB_SHORTHAND_PATTERN, normalizeRepoUrlForClone } from "@/node/utils/gitUrls";
 
 /**
@@ -55,6 +58,11 @@ export function parseAgentPluginSourceInput(rawInput: string): ParsedAgentPlugin
   }
 
   if (isUrlLike(input)) {
+    // Git is spawned without a shell, so `~` never expands on its own —
+    // resolve home-relative local paths here.
+    if (input === "~" || input.startsWith("~/")) {
+      return { url: path.join(os.homedir(), input.slice(1)) };
+    }
     // normalizeRepoUrlForClone strips query strings/fragments from URL-like inputs.
     return { url: normalizeRepoUrlForClone(input) };
   }

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import { isFullCommitSha, parseAgentPluginSourceInput } from "./sourceInput";
 
@@ -69,6 +71,12 @@ describe("parseAgentPluginSourceInput", () => {
 
   test("passes through absolute local paths (git handles local remotes)", () => {
     expect(parseAgentPluginSourceInput("/tmp/some-repo").url).toBe("/tmp/some-repo");
+  });
+
+  test("expands home-relative paths (git is spawned without a shell)", () => {
+    expect(parseAgentPluginSourceInput("~/plugins/demo").url).toBe(
+      path.join(os.homedir(), "plugins/demo")
+    );
   });
 
   test("rejects unusable inputs with actionable messages", () => {

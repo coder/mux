@@ -1,33 +1,50 @@
 /**
- * One-shot navigation intents for the Settings → Plugins section.
+ * Intents for the Settings → Plugins section, published by command-palette
+ * actions that run outside the section's React tree.
  *
- * The command palette's "Install Agent Plugin…" may run before the section
- * mounts (intent consumed in the state initializer) or while it is already
- * mounted (navigating to the same route preserves the component, so mounted
- * sections subscribe and are notified immediately). Module-level (not
- * persisted) on purpose: the intent is meaningful only for the invocation
- * that just happened.
+ * Two delivery paths cover both palette contexts:
+ * - section not mounted yet: the intent is buffered and consumed by the
+ *   section's mount effect after palette navigation;
+ * - section already mounted: same-route navigation preserves the component,
+ *   so the mounted section's subscription receives the intent directly.
+ *
+ * Module-level (not persisted) on purpose: intents are meaningful only for
+ * the palette invocation that just happened.
  */
 
-let addPluginPanelRequested = false;
-const listeners = new Set<() => void>();
+export type PluginsSectionIntent =
+  /** Expand the Add Plugin form. */
+  | { type: "open-add-panel" }
+  /** Open the uninstall confirmation for a managed plugin. */
+  | { type: "confirm-uninstall"; name: string }
+  /** Backend plugin state changed outside the section (e.g. palette Update All); re-query. */
+  | { type: "refresh" };
 
-export function requestAddPluginPanel(): void {
-  addPluginPanelRequested = true;
-  for (const listener of listeners) {
-    listener();
+let pendingIntent: PluginsSectionIntent | null = null;
+const listeners = new Set<(intent: PluginsSectionIntent) => void>();
+
+export function publishPluginsSectionIntent(intent: PluginsSectionIntent): void {
+  if (listeners.size > 0) {
+    for (const listener of listeners) {
+      listener(intent);
+    }
+    return;
   }
+  // No mounted section: buffer the latest intent for the upcoming mount.
+  pendingIntent = intent;
 }
 
-/** Returns whether the add panel was requested, clearing the intent. */
-export function consumeAddPluginPanelRequest(): boolean {
-  const requested = addPluginPanelRequested;
-  addPluginPanelRequested = false;
-  return requested;
+/** Consume the buffered intent (mount path); returns null when none is pending. */
+export function consumePendingPluginsSectionIntent(): PluginsSectionIntent | null {
+  const intent = pendingIntent;
+  pendingIntent = null;
+  return intent;
 }
 
-/** Notifies an already-mounted section of new requests; returns an unsubscribe. */
-export function subscribeAddPluginPanelRequests(listener: () => void): () => void {
+/** Subscribe a mounted section; returns an unsubscribe. */
+export function subscribePluginsSectionIntents(
+  listener: (intent: PluginsSectionIntent) => void
+): () => void {
   listeners.add(listener);
   return () => {
     listeners.delete(listener);

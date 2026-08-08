@@ -25,7 +25,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
-import { requestAddPluginPanel } from "@/browser/features/Settings/Sections/pluginsSectionIntents";
+import { publishPluginsSectionIntent } from "@/browser/features/Settings/Sections/pluginsSectionIntents";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
   getOrderedBaseTabIds,
@@ -1572,7 +1572,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         run: () => openSettings("models"),
       },
       ...(p.agentPluginsEnabled
-        ? [
+        ? ([
             {
               id: CommandIds.settingsOpenSection("plugins"),
               title: "Settings: Plugins",
@@ -1589,8 +1589,49 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               keywords: ["plugin", "install", "add", "git", "clone"],
               run: () => {
                 // Open the section with the add-plugin form already expanded.
-                requestAddPluginPanel();
+                publishPluginsSectionIntent({ type: "open-add-panel" });
                 openSettings("plugins");
+              },
+            },
+            {
+              id: CommandIds.pluginsUninstall(),
+              title: "Uninstall Agent Plugin…",
+              section: section.settings,
+              keywords: ["plugin", "uninstall", "remove", "delete"],
+              run: () => undefined,
+              prompt: {
+                title: "Uninstall Agent Plugin",
+                fields: [
+                  {
+                    type: "select",
+                    name: "pluginName",
+                    label: "Managed plugin",
+                    placeholder: "Search installed plugins…",
+                    getOptions: async () => {
+                      const result = await p.api?.agentPlugins.list();
+                      if (!result?.success) {
+                        return [];
+                      }
+                      return result.data
+                        .filter((item) => item.managed)
+                        .map((item) => ({
+                          id: item.name,
+                          label: item.version ? `${item.name} (v${item.version})` : item.name,
+                          keywords: [item.name, item.location],
+                        }));
+                    },
+                  },
+                ],
+                onSubmit: (values) => {
+                  // Route through the section's confirmation flow (plugin-data
+                  // checkbox, explicit destructive button) — the palette never
+                  // uninstalls directly.
+                  publishPluginsSectionIntent({
+                    type: "confirm-uninstall",
+                    name: values.pluginName,
+                  });
+                  openSettings("plugins");
+                },
               },
             },
             {
@@ -1674,6 +1715,9 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                     failures.push(`${check.name}: ${result.error}`);
                   }
                 }
+                // A mounted section only re-queries from its own handlers, so
+                // tell it the backend state changed under it.
+                publishPluginsSectionIntent({ type: "refresh" });
                 if (failures.length > 0) {
                   showCommandFeedbackToast({ type: "error", message: failures.join("; ") });
                 } else {
@@ -1684,7 +1728,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 }
               },
             },
-          ]
+          ] satisfies CommandAction[])
         : []),
     ]);
   }

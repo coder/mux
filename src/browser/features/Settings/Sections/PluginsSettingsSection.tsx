@@ -21,8 +21,9 @@ import type {
 } from "@/common/orpc/schemas/agentPlugins";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
-  consumeAddPluginPanelRequest,
-  subscribeAddPluginPanelRequests,
+  consumePendingPluginsSectionIntent,
+  subscribePluginsSectionIntents,
+  type PluginsSectionIntent,
 } from "./pluginsSectionIntents";
 
 /**
@@ -336,20 +337,16 @@ export const PluginsSettingsSection: React.FC = () => {
     () => new Map()
   );
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  // The palette's "Install Agent Plugin…" opens this section with the add
-  // panel already expanded (keyboard rule: operations need a keyboard path).
-  // The initializer covers palette → fresh mount; the subscription covers
-  // invoking the command while this section is already on screen (same-route
-  // navigation preserves the mounted component, so no re-init happens).
-  const [addOpen, setAddOpen] = useState(() => consumeAddPluginPanelRequest());
-  useEffect(() => {
-    return subscribeAddPluginPanelRequests(() => {
-      if (consumeAddPluginPanelRequest()) {
-        setAddOpen(true);
-      }
-    });
-  }, []);
-  const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
+  // Palette intents (keyboard rule: install/uninstall/update need keyboard
+  // paths). The initializer covers palette → fresh mount; the subscription
+  // below covers commands invoked while this section is already on screen
+  // (same-route navigation preserves the mounted component, so no re-init
+  // happens).
+  const [initialIntent] = useState(() => consumePendingPluginsSectionIntent());
+  const [addOpen, setAddOpen] = useState(initialIntent?.type === "open-add-panel");
+  const [uninstallTarget, setUninstallTarget] = useState<string | null>(
+    initialIntent?.type === "confirm-uninstall" ? initialIntent.name : null
+  );
   /** Name of the plugin with an update/uninstall in flight. */
   const [busyPlugin, setBusyPlugin] = useState<string | null>(null);
 
@@ -391,6 +388,24 @@ export const PluginsSettingsSection: React.FC = () => {
   useEffect(() => {
     void refresh();
     void checkForUpdates();
+  }, [refresh, checkForUpdates]);
+
+  // Live palette intents while mounted (see pluginsSectionIntents).
+  useEffect(() => {
+    return subscribePluginsSectionIntents((intent: PluginsSectionIntent) => {
+      switch (intent.type) {
+        case "open-add-panel":
+          setAddOpen(true);
+          break;
+        case "confirm-uninstall":
+          setUninstallTarget(intent.name);
+          break;
+        case "refresh":
+          void refresh();
+          void checkForUpdates();
+          break;
+      }
+    });
   }, [refresh, checkForUpdates]);
 
   const handleUpdate = useCallback(
