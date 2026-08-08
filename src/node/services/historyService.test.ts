@@ -1945,6 +1945,90 @@ describe("HistoryService", () => {
       expect(msg.metadata?.historySequence).toBe(2);
     });
 
+    it("notifies context rewrite when the archived-edit cut fails after committing chat.jsonl", async () => {
+      // Pre-boundary edit: chat.jsonl is rewritten first, then the archive is
+      // removed. An archive-removal failure returns Err with the provider
+      // context already changed, so the caller must still hear about it.
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+        if (args[0] === archivePath(wsId)) {
+          return Promise.reject(
+            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+          );
+        }
+        return realRm(...args);
+      });
+      try {
+        let notified = 0;
+        const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
+          keepTargetMessage: true,
+          onContextRewritten: () => {
+            notified += 1;
+          },
+        });
+        expect(truncateResult.success).toBe(false);
+        expect(notified).toBe(1);
+        // The committed rewrite stands: chat.jsonl holds the collapsed prefix.
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        expect(chatRows.map((msg) => msg.id)).toEqual(["msg-0", "msg-1"]);
+      } finally {
+        rmSpy.mockRestore();
+      }
+    });
+
+    it("does not notify context rewrite when the edit target is missing", async () => {
+      await appendNumberedMessages(service, wsId, 2);
+
+      let notified = 0;
+      const truncateResult = await service.truncateAfterMessage(wsId, "nonexistent", {
+        onContextRewritten: () => {
+          notified += 1;
+        },
+      });
+      expect(truncateResult.success).toBe(false);
+      expect(notified).toBe(0);
+    });
+
+    it("notifies context rewrite when the active-edit cut fails after committing chat.jsonl", async () => {
+      // The sequence-floor read of the archive tail runs after the atomic
+      // rewrite; its failure returns Err with the cut already committed.
+      await appendNumberedMessages(service, wsId, 3);
+
+      const internals = service as unknown as {
+        getArchiveTailMaxSequence: (workspaceId: string) => Promise<number>;
+      };
+      const realSeq = internals.getArchiveTailMaxSequence.bind(service);
+      // Earlier reads also consult the sequence floor, so reject only the
+      // call made after the rewrite committed (msg-1 gone from chat.jsonl).
+      const seqSpy = spyOn(internals, "getArchiveTailMaxSequence").mockImplementation(
+        async (workspaceId: string) => {
+          const chat = await fs.readFile(chatPath(wsId), "utf-8").catch(() => "");
+          if (!chat.includes('"msg-1"')) {
+            throw new Error("injected sequence-floor read failure");
+          }
+          return realSeq(workspaceId);
+        }
+      );
+      try {
+        let notified = 0;
+        const truncateResult = await service.truncateAfterMessage(wsId, "msg-1", {
+          onContextRewritten: () => {
+            notified += 1;
+          },
+        });
+        expect(truncateResult.success).toBe(false);
+        expect(notified).toBe(1);
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        expect(chatRows.map((msg) => msg.id)).toEqual(["msg-0"]);
+      } finally {
+        seqSpy.mockRestore();
+      }
+    });
+
     it("never reuses archived sequences after truncating the whole active epoch", async () => {
       await appendNumberedMessages(service, wsId, 3); // msg-0..2, seq 0..2 → archived
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1)); // seq 3

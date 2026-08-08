@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "events";
 
 import type {
@@ -1002,6 +1002,57 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     expect(seenUsages).toHaveLength(1);
     const seeded = seenUsages[0] as AutoCompactionUsageState | undefined;
     expect(seeded?.lastContextUsage).toBeDefined();
+
+    session.dispose();
+  });
+
+  test("edit truncation clears usage even when the cut fails after committing", async () => {
+    const workspaceId = "ws-edit-truncation-partial-commit";
+    const { session, historyService } = await createSessionHarness({ workspaceId });
+
+    const rows = [
+      createMuxMessage("user-1", "user", "first prompt", { timestamp: Date.now() - 5_000 }),
+      createMuxMessage("assistant-1", "assistant", "first reply", {
+        timestamp: Date.now() - 4_000,
+        model: "openai:gpt-4o",
+      }),
+      createMuxMessage("user-2", "user", "second prompt", { timestamp: Date.now() - 3_000 }),
+    ];
+    for (const row of rows) {
+      expect((await historyService.appendToHistory(workspaceId, row)).success).toBe(true);
+    }
+
+    // Live pre-edit usage that the removed suffix produced.
+    const sessionState = session as unknown as { lastUsageState?: AutoCompactionUsageState };
+    sessionState.lastUsageState = { totalTokens: 95_000 };
+
+    // Fail the sequence-floor read that runs after the rewrite commits, so
+    // truncation returns Err with chat.jsonl already cut.
+    const internals = historyService as unknown as {
+      getArchiveTailMaxSequence: (workspaceId: string) => Promise<number>;
+    };
+    const realSeq = internals.getArchiveTailMaxSequence.bind(historyService);
+    const seqSpy = spyOn(internals, "getArchiveTailMaxSequence").mockImplementation(
+      async (wsId: string) => {
+        const window = await historyService.getHistoryFromLatestBoundary(workspaceId);
+        const stillHasTarget = window.success && window.data.some((msg) => msg.id === "user-2");
+        if (!stillHasTarget) {
+          throw new Error("injected sequence-floor read failure");
+        }
+        return realSeq(wsId);
+      }
+    );
+    try {
+      const editResult = await session.sendMessage("second prompt, edited", {
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        editMessageId: "user-2",
+      });
+      expect(editResult.success).toBe(false);
+      expect(sessionState.lastUsageState).toBeUndefined();
+    } finally {
+      seqSpy.mockRestore();
+    }
 
     session.dispose();
   });

@@ -1797,12 +1797,27 @@ export class HistoryService {
    *
    * By default this removes the target message and all subsequent messages. Callers can retain the
    * target message when branching a new workspace from a specific reply.
+   *
+   * options.onContextRewritten fires the moment the chat.jsonl rewrite
+   * commits, even when a later step fails, so callers can invalidate cached
+   * usage for mutations an Err result leaves on disk.
    */
   async truncateAfterMessage(
     workspaceId: string,
     messageId: string,
-    options?: { keepTargetMessage?: boolean }
+    options?: { keepTargetMessage?: boolean; onContextRewritten?: () => void }
   ): Promise<Result<void>> {
+    const notifyContextRewritten = () => {
+      try {
+        options?.onContextRewritten?.();
+      } catch (error) {
+        // A notification failure must not turn a committed rewrite into Err.
+        log.error("truncateAfterMessage context-rewritten callback failed", {
+          workspaceId,
+          error,
+        });
+      }
+    };
     return this.fileLocks.withLock(workspaceId, async () => {
       try {
         // Structural rewrite requires full file content
@@ -1819,7 +1834,8 @@ export class HistoryService {
           return this.truncateAfterArchivedMessageUnlocked(
             workspaceId,
             messageId,
-            keepTargetMessage
+            keepTargetMessage,
+            notifyContextRewritten
           );
         }
 
@@ -1836,6 +1852,8 @@ export class HistoryService {
 
         // Atomic write prevents corruption if app crashes mid-write
         await writeFileAtomic(historyPath, historyEntries);
+        // The archive read below can still fail after this commit.
+        notifyContextRewritten();
 
         // Update sequence counter to continue from where we truncated.
         // Self-healing read path: skip malformed persisted historySequence values.
@@ -1888,7 +1906,8 @@ export class HistoryService {
   private async truncateAfterArchivedMessageUnlocked(
     workspaceId: string,
     messageId: string,
-    keepTargetMessage: boolean
+    keepTargetMessage: boolean,
+    notifyContextRewritten: () => void
   ): Promise<Result<void>> {
     try {
       const archiveMessages = await this.readArchivedHistory(workspaceId);
@@ -1907,6 +1926,8 @@ export class HistoryService {
         this.getChatHistoryPath(workspaceId),
         this.serializeHistoryEntries(truncatedMessages, workspaceId)
       );
+      // The archive removal below can still fail after this commit.
+      notifyContextRewritten();
       await fs.rm(this.getChatArchivePath(workspaceId), { force: true });
       // chat.jsonl may contain sealed epochs again — allow the lazy check to re-run.
       this.sealedRotationChecked.delete(workspaceId);

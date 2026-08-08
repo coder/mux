@@ -2734,15 +2734,18 @@ export class AgentSession {
       // when the edit target is outside the active context window.
       const truncateTargetId = await this.getEditTruncateTargetId(editMessageId);
 
+      // Invalidate usage the moment the rewrite commits, not on success: the
+      // truncation can fail after chat.jsonl changed (archive removal or the
+      // sequence-floor read), and stale usage from the removed suffix must
+      // not survive that. Edits cut a suffix; the retained prefix's persisted
+      // usage is valid, so re-enable history seeding even if a prior rewrite
+      // suppressed it.
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
-        truncateTargetId
+        truncateTargetId,
+        { onContextRewritten: () => this.clearUsageState({ reenableHistorySeeding: true }) }
       );
-      if (truncateResult.success) {
-        // Edits cut a suffix; the retained prefix's persisted usage is valid,
-        // so re-enable history seeding even if a prior rewrite suppressed it.
-        this.clearUsageState({ reenableHistorySeeding: true });
-      } else {
+      if (!truncateResult.success) {
         const isMissingEditTarget =
           truncateResult.error.includes("Message with ID") &&
           truncateResult.error.includes("not found in history");
