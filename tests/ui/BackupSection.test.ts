@@ -203,7 +203,7 @@ describe("BackupSection", () => {
     // The subscription never arms and getSettings always reports another window's
     // tuple, so the only way this window can see it after a save is the post-save
     // config re-read; the save response itself claims the tuple this window typed.
-    const { client, view } = renderBackupSection({}, (client) => {
+    const { view } = renderBackupSection({}, (client) => {
       const pendingSubscription = new Promise<
         Awaited<ReturnType<typeof client.config.onConfigChanged>>
       >(() => undefined);
@@ -229,13 +229,29 @@ describe("BackupSection", () => {
       expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/other-window.git")
     );
 
-    const preview = jest.spyOn(client.backup, "preview");
-    fireEvent.click(canvas.getByRole("button", { name: "Preview changes" }));
-    await waitFor(() =>
-      expect(preview).toHaveBeenCalledWith(
-        expect.objectContaining({ repoUrl: "git@github.com:example/other-window.git" })
-      )
-    );
+    // The subscription never armed, so even after the post-save re-read the
+    // tuple is unwatchable and destructive actions must stay disabled.
+    expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("keeps actions disabled when saving without a live subscription", async () => {
+    const { view } = renderBackupSection({}, (client) => {
+      jest
+        .spyOn(client.config, "onConfigChanged")
+        .mockImplementation(() => Promise.reject(new Error("ipc failure")));
+    });
+    const canvas = within(view.container);
+    const repoInput = await canvas.findByLabelText("Repository URL");
+
+    fireEvent.change(repoInput, { target: { value: "git@github.com:example/mine.git" } });
+    await act(async () => {
+      fireEvent.click(canvas.getByRole("button", { name: "Save settings" }));
+    });
+
+    await canvas.findByText("Backup settings saved.");
+    // The save succeeded, but this window still cannot observe another window's
+    // later change, so the post-save refresh must not re-enable Restore.
+    expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
   });
 
   test("refreshes after subscription setup to catch changes made during setup", async () => {

@@ -137,6 +137,9 @@ export function BackupSection() {
   const draftRef = useRef(draft);
   const savedDraftRef = useRef(savedDraft);
   const refreshRef = useRef<((options?: { markFresh?: boolean }) => Promise<void>) | null>(null);
+  // Freshness is only meaningful while the config stream can report another window's
+  // changes, so every refresh consults liveness instead of each caller re-deciding.
+  const streamLiveRef = useRef(false);
   draftRef.current = draft;
   savedDraftRef.current = savedDraft;
 
@@ -176,7 +179,7 @@ export function BackupSection() {
         }
         savedDraftRef.current = nextDraft;
         setSavedDraft(nextDraft);
-        if (options?.markFresh !== false) setSettingsFresh(true);
+        if (options?.markFresh !== false && streamLiveRef.current) setSettingsFresh(true);
         setSaveError(null);
 
         if (!draftsEqual(previousSavedDraft, nextDraft)) {
@@ -220,13 +223,14 @@ export function BackupSection() {
         }
         iterator = subscribed;
         nextEvent = subscribed.next();
+        streamLiveRef.current = true;
       } catch {
         // No listener exists, so another window's later change would go unseen.
         // Show the latest readable settings but never grant freshness: destructive
         // actions must not trust a snapshot this window cannot keep current.
         await initialRefresh;
         if (signal.aborted) return;
-        await refresh({ markFresh: false });
+        await refresh();
         return;
       }
 
@@ -239,10 +243,12 @@ export function BackupSection() {
           nextEvent = subscribed.next();
           await refresh();
         }
+        streamLiveRef.current = false;
         if (!signal.aborted) setSettingsFresh(false);
       } catch {
         // A dead stream can no longer report another window's changes, so the loaded
         // settings stay visible but are no longer fresh enough for destructive actions.
+        streamLiveRef.current = false;
         if (!signal.aborted) setSettingsFresh(false);
       }
     })();

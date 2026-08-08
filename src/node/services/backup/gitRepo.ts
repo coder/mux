@@ -1286,14 +1286,17 @@ export class BackupRepoCache {
   private async materializeFromRemote(): Promise<string | null> {
     await this.fetch();
     const remoteCommit = await this.resetHardToRemote();
-    await this.cleanManagedPath();
+    await this.cleanWorktree();
     return remoteCommit;
   }
 
-  async cleanManagedPath(): Promise<void> {
+  async cleanWorktree(): Promise<void> {
     // -x so an ignored leftover from a preview or a blocked push cannot survive the
-    // reset and be read back as if it were the remote's backup. Mux owns this path.
-    await this.localGit(["clean", "-fdx", "--", safeRelativePath(this.options.managedPath)]);
+    // reset and be read back as if it were the remote's backup. The whole worktree,
+    // not just the current managed path: the cache identity is repository and branch,
+    // so exports written under a previously configured subdirectory would otherwise
+    // accumulate outside every later sparse checkout. Mux owns this worktree.
+    await this.localGit(["clean", "-fdx"]);
   }
 
   async stageAndCommit(message: string): Promise<string | null> {

@@ -1081,7 +1081,7 @@ exec "$REAL_GIT" "$@"
     await repo.ensureCache();
     await repo.fetch();
     await repo.resetHardToRemote();
-    await repo.cleanManagedPath();
+    await repo.cleanWorktree();
 
     expect(await pathExists(path.join(repo.cachePath, ".git", "config.worktree"))).toBe(false);
     expect(await fs.readFile(path.join(outside, "mux", "victim.txt"), "utf-8")).toBe("keep\n");
@@ -1129,7 +1129,7 @@ exec "$REAL_GIT" "$@"
     await repo.ensureCache();
     await repo.fetch();
     await repo.resetHardToRemote();
-    await repo.cleanManagedPath();
+    await repo.cleanWorktree();
 
     expect(await fs.readFile(path.join(repo.cachePath, "mux/AGENTS.md"), "utf-8")).toBe(
       "managed\n"
@@ -1414,11 +1414,13 @@ exec "$REAL_GIT" "$@"
     expect(await pathExists(path.join(repo.cachePath, "mux[1]/AGENTS.md"))).toBe(true);
     expect(await pathExists(path.join(repo.cachePath, "mux1"))).toBe(false);
 
+    // The worktree-wide clean removes strays anywhere, including glob-confusable
+    // siblings; what stays literal is the sparse pattern and the staging pathspec.
     const stray = path.join(repo.cachePath, "mux1", "stray.txt");
     await fs.mkdir(path.dirname(stray), { recursive: true });
     await fs.writeFile(stray, "untracked\n", "utf-8");
-    await repo.cleanManagedPath();
-    expect(await pathExists(stray)).toBe(true);
+    await repo.cleanWorktree();
+    expect(await pathExists(stray)).toBe(false);
 
     await fs.writeFile(path.join(repo.cachePath, "mux[1]", "AGENTS.md"), "updated\n", "utf-8");
     const commit = await repo.stageAndCommit("Back up settings");
@@ -1584,6 +1586,24 @@ exec "$REAL_GIT" "$@"
     expect(await repo.porcelainStatus()).toContain("mux/AGENTS.md");
   });
 
+  it("reclaims exports left under a previously configured managed path", async () => {
+    await seedManagedFiles({ "AGENTS.md": "seed\n" });
+    const oldPathRepo = createRepo("old-mux");
+    await oldPathRepo.materialize();
+    const leftover = path.join(oldPathRepo.cachePath, "old-mux", "stale-export.md");
+    await fs.mkdir(path.dirname(leftover), { recursive: true });
+    await fs.writeFile(leftover, "abandoned preview export\n", "utf-8");
+
+    const marker = path.join(oldPathRepo.cachePath, ".git", "reuse-marker");
+    await fs.writeFile(marker, "x", "utf-8");
+
+    // Same repository and branch, so the cache is reused under the new subdirectory.
+    await createRepo("mux").materialize();
+
+    expect(await pathExists(marker)).toBe(true);
+    expect(await pathExists(leftover)).toBe(false);
+  });
+
   it("refuses managed paths that are not a real subdirectory", async () => {
     const repo = createRepo();
     await repo.ensureCache();
@@ -1592,7 +1612,7 @@ exec "$REAL_GIT" "$@"
 
     for (const unsafe of [".", "./", "..", "mux/../..", "/mux", "mux\\..\\.."]) {
       try {
-        await createRepo(unsafe).cleanManagedPath();
+        await createRepo(unsafe).stageAndCommit("unsafe");
         throw new Error(`Expected '${unsafe}' to be rejected`);
       } catch (error) {
         if (!(error instanceof Error)) throw error;
