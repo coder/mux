@@ -8080,13 +8080,15 @@ export class WorkspaceService extends EventEmitter {
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
 
       try {
-        await ensurePrivateDir(newSessionDir);
+        const historyCopyResult = await this.historyService.copyHistorySnapshotToNewWorkspace(
+          sourceWorkspaceId,
+          newWorkspaceId
+        );
+        if (!historyCopyResult.success) {
+          throw new Error(historyCopyResult.error);
+        }
 
         const sessionFiles = [
-          CHAT_FILE_NAME,
-          // Sealed pre-boundary history must travel with chat.jsonl so the fork
-          // keeps full Load More/paging access to older epochs.
-          CHAT_ARCHIVE_FILE_NAME,
           "session-timing.json",
           ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
           // Preserve the enabled/disabled toggle when forking so the fork
@@ -9666,6 +9668,9 @@ export class WorkspaceService extends EventEmitter {
 
     const effectivePercentage = percentage ?? 1.0;
     const isFullClear = effectivePercentage >= 1.0;
+    if (effectivePercentage > 0) {
+      session?.clearUsageState();
+    }
     const truncate = () => this.historyService.truncateHistory(workspaceId, effectivePercentage);
     const truncateResult =
       effectivePercentage > 0
@@ -9757,6 +9762,8 @@ export class WorkspaceService extends EventEmitter {
       if (!appendResult.success) {
         return Err(`Failed to append context reset boundary: ${appendResult.error}`);
       }
+
+      session?.clearUsageState();
 
       const typedBoundaryMessage = { ...boundaryMessage, type: "message" as const };
       if (session) {
@@ -9860,6 +9867,7 @@ export class WorkspaceService extends EventEmitter {
           `replaceHistory received unsupported replace mode: ${String(replaceMode)}`
         );
 
+        this.sessions.get(workspaceId)?.clearUsageState();
         const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
           workspaceId,
           () => this.historyService.clearHistory(workspaceId),
@@ -9880,6 +9888,8 @@ export class WorkspaceService extends EventEmitter {
       if (!appendResult.success) {
         return Err(`Failed to append summary message: ${appendResult.error}`);
       }
+
+      this.sessions.get(workspaceId)?.clearUsageState();
 
       // Emit through the session so ORPC subscriptions receive the events
       const session = this.sessions.get(workspaceId);

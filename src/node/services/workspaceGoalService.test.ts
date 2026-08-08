@@ -1600,23 +1600,22 @@ describe("WorkspaceGoalService", () => {
     expect(maxActiveContinuations).toBe(1);
   });
 
-  test("does not dispatch stale continuation candidates after the goal changes", async () => {
+  test("does not build stale continuation payloads after the goal changes", async () => {
     await setGoalOk(service, { workspaceId, objective: "Original" });
-    // Give the replacement write time to commit before the idle dispatch builds
-    // its payload; this test is about rejecting an already-stale candidate, not racing setGoal.
-    const dispatcher = new IdleDispatcher({ debounceMs: 250 });
-    const execute = mock(() => Promise.resolve(true));
-    service.registerGoalContinuationConsumer(dispatcher, continuationBridge(execute));
+    const dispatcher = new IdleDispatcher();
+    const requestDispatch = spyOn(dispatcher, "requestDispatch").mockResolvedValue();
+    service.registerGoalContinuationConsumer(dispatcher, continuationBridge());
 
-    const request = service.requestContinuationAfterStreamEnd({
+    await service.requestContinuationAfterStreamEnd({
       workspaceId,
       sendOptions: { model: "openai:gpt-4o", agentId: "exec" },
       streamEndedAtMs: 10_000,
     });
+    expect(requestDispatch).toHaveBeenCalled();
+    expect(await service.buildGoalContinuationPayload(workspaceId)).not.toBeNull();
     await setGoalOk(service, { workspaceId, objective: "Replacement" });
-    await request;
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(await service.buildGoalContinuationPayload(workspaceId)).toBeNull();
   });
 
   test("preserves goal id and accounting for same-objective set", async () => {

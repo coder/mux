@@ -2,6 +2,9 @@ import { describe, expect, test, mock, beforeEach, afterEach, spyOn, type Mock }
 import { WorkspaceService, generateForkBranchName, generateForkTitle } from "./workspaceService";
 import type { IdleCompactionOutcome } from "./idleCompactionService";
 import type { AgentSession } from "./agentSession";
+import { createAgentSessionHarness } from "./agentSession.testHarness";
+import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
+import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { askUserQuestionManager } from "./askUserQuestionManager";
 import { WorkspaceLifecycleHooks } from "./workspaceLifecycleHooks";
 import { EventEmitter } from "events";
@@ -4269,6 +4272,89 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       expect(allMessages[0]).toBe("pre-reset-user");
       expect(allMessages[1]?.startsWith("context-reset-")).toBe(true);
     } finally {
+      await cleanup();
+    }
+  });
+
+  test("start-here replacement does not auto-compact the next send from stale usage", async () => {
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "start-here-clears-usage-state";
+    const streamMessage = mock((..._args: unknown[]) => Promise.resolve(Ok(undefined)));
+    const harness = await createAgentSessionHarness({
+      workspaceId,
+      config,
+      historyService,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    try {
+      await config.addWorkspace("/tmp/start-here-usage-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "start-here-usage-project",
+        projectPath: "/tmp/start-here-usage-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-start-here-user", "user", "long conversation", {})
+      );
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-start-here-assistant", "assistant", "long reply", {
+          model: "openai:gpt-4o",
+          contextUsage: { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+        })
+      );
+
+      (workspaceService as unknown as { sessions: Map<string, AgentSession> }).sessions.set(
+        workspaceId,
+        harness.session
+      );
+      (harness.session as unknown as { lastUsageState?: AutoCompactionUsageState }).lastUsageState =
+        {
+          lastContextUsage: createDisplayUsage(
+            { inputTokens: 95_000, outputTokens: 200, totalTokens: 95_200 },
+            "openai:gpt-4o"
+          ),
+        };
+
+      expect(
+        (
+          await workspaceService.replaceHistory(
+            workspaceId,
+            createMuxMessage("start-here-summary", "assistant", "Start Here summary", {
+              compacted: "user",
+            }),
+            { mode: "append-compaction-boundary" }
+          )
+        ).success
+      ).toBe(true);
+      expect(
+        (
+          await harness.session.sendMessage("follow-up after start here", {
+            model: "openai:gpt-4o",
+            agentId: "exec",
+          })
+        ).success
+      ).toBe(true);
+
+      const activeWindow = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(activeWindow.success).toBe(true);
+      const activeMessages = activeWindow.success ? activeWindow.data : [];
+      expect(
+        activeMessages.filter(
+          (message) => message.metadata?.muxMetadata?.type === "compaction-request"
+        )
+      ).toHaveLength(0);
+      expect(activeMessages.find((message) => message.role === "user")?.parts[0]).toMatchObject({
+        type: "text",
+        text: "follow-up after start here",
+      });
+      expect(streamMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      harness.session.dispose();
       await cleanup();
     }
   });

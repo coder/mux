@@ -116,15 +116,16 @@ export class SessionUsageService {
     this.historyService = historyService;
     this.getProvidersConfig = getProvidersConfig ?? (() => null);
   }
-  /**
-   * Collect all messages from iterateFullHistory into an array.
-   * Usage rebuild needs every epoch for accurate totals.
-   */
+  /** Usage rebuild needs every epoch for accurate totals. */
   private async collectFullHistory(workspaceId: string): Promise<MuxMessage[]> {
     const messages: MuxMessage[] = [];
-    const result = await this.historyService.iterateFullHistory(workspaceId, "forward", (chunk) => {
-      messages.push(...chunk);
-    });
+    const result = await this.historyService.iterateFullHistoryUnderLock(
+      workspaceId,
+      "forward",
+      (chunk) => {
+        messages.push(...chunk);
+      }
+    );
     if (!result.success) {
       log.warn(`Failed to iterate history for ${workspaceId}: ${result.error}`);
       return [];

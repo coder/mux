@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import { HistoryService } from "./historyService";
-import { Config } from "@/node/config";
+import type { Config } from "@/node/config";
+import { createTestHistoryService } from "./testHistoryService";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
-import * as os from "os";
 
 /** Collect all messages via iterateFullHistory (replaces removed getFullHistory). */
 async function collectFullHistory(service: HistoryService, workspaceId: string) {
@@ -48,25 +49,17 @@ async function appendNumberedMessages(
 describe("HistoryService", () => {
   let service: HistoryService;
   let config: Config;
-  let tempDir: string;
+  let cleanup: () => Promise<void>;
 
   beforeEach(async () => {
-    // Create a temporary directory for test files
-    tempDir = path.join(os.tmpdir(), `mux-test-${Date.now()}-${Math.random()}`);
-    await fs.mkdir(tempDir, { recursive: true });
-
-    // Create a Config with the temp directory
-    config = new Config(tempDir);
-    service = new HistoryService(config);
+    const testService = await createTestHistoryService();
+    service = testService.historyService;
+    config = testService.config;
+    cleanup = testService.cleanup;
   });
 
   afterEach(async () => {
-    // Clean up temp directory
-    try {
-      await fs.rm(tempDir, { recursive: true, force: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    await cleanup();
   });
 
   describe("getHistory", () => {
@@ -1287,18 +1280,15 @@ describe("HistoryService", () => {
       const scanStarted = new Promise<void>((resolve) => {
         markScanStarted = resolve;
       });
-      const originalIterateFullHistory: HistoryService["iterateFullHistory"] =
-        service.iterateFullHistory.bind(service);
-      const blockingIterateFullHistory: HistoryService["iterateFullHistory"] = async (
-        workspaceIdArg,
-        direction,
-        visitor
-      ) => {
+      const internal = service as unknown as {
+        iterateFullHistoryUnlocked: HistoryService["iterateFullHistory"];
+      };
+      const originalIterateFullHistory = internal.iterateFullHistoryUnlocked.bind(service);
+      internal.iterateFullHistoryUnlocked = async (workspaceIdArg, direction, visitor) => {
         markScanStarted();
         await scanReleased;
         return originalIterateFullHistory(workspaceIdArg, direction, visitor);
       };
-      service.iterateFullHistory = blockingIterateFullHistory;
 
       const scan = service.getMessagesForCompactionEpoch(workspaceId, {
         workspaceId,
@@ -2035,6 +2025,200 @@ describe("HistoryService", () => {
       // No-op truncation must not collapse the archive back into chat.jsonl.
       expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
       expect(await fs.readFile(archivePath(wsId), "utf-8")).toBe(archiveBefore);
+    });
+
+    it("does not reseed usage from before a partial prefix truncation", async () => {
+      await appendNumberedMessages(service, wsId, 8);
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-usage", "assistant", "reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          contextProviderMetadata: { openai: {} },
+          model: "openai:gpt-4o",
+        })
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-provider-metadata", "assistant", "reply", {
+          contextProviderMetadata: { openai: {} },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      const truncateResult = await service.truncateHistory(wsId, 0.5);
+      expect(truncateResult.success).toBe(true);
+
+      const restarted = new HistoryService(config);
+      const remaining = await restarted.getHistoryFromLatestBoundary(wsId);
+      expect(remaining.success).toBe(true);
+      if (remaining.success) {
+        const retainedAssistant = remaining.data.find(
+          (message) => message.id === "assistant-usage"
+        );
+        expect(retainedAssistant).toBeDefined();
+        expect(retainedAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(retainedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
+        const providerMetadataOnly = remaining.data.find(
+          (message) => message.id === "assistant-provider-metadata"
+        );
+        expect(providerMetadataOnly).toBeDefined();
+        expect(providerMetadataOnly?.metadata?.contextProviderMetadata).toBeUndefined();
+      }
+    });
+
+    async function expectWorkflowDisplayTruncationPreservesUsage(withResetBoundary: boolean) {
+      if (withResetBoundary) {
+        await appendNumberedMessages(service, wsId, 12);
+        await service.appendToHistory(
+          wsId,
+          createMuxMessage("reset-boundary", "assistant", "", {
+            contextBoundaryKind: CONTEXT_BOUNDARY_KINDS.RESET,
+          })
+        );
+      }
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage(
+          "workflow-display",
+          "user",
+          `workflow trigger display ${"x".repeat(2_000)}`,
+          { muxMetadata: { type: "workflow-trigger-display", rawCommand: "/wf", runId: "run-1" } }
+        )
+      );
+      await service.appendToHistory(wsId, createMuxMessage("user-active", "user", "prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-active", "assistant", "active reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      expect((await service.truncateHistory(wsId, 0.5)).success).toBe(true);
+
+      const active = await service.getHistoryFromLatestBoundary(wsId);
+      expect(active.success).toBe(true);
+      if (active.success) {
+        expect(active.data.find((message) => message.id === "workflow-display")).toBeUndefined();
+        const retainedAssistant = active.data.find((message) => message.id === "assistant-active");
+        expect(retainedAssistant).toBeDefined();
+        expect(retainedAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+      }
+    }
+
+    it("preserves active usage when uncompacted truncation removes only workflow display rows", () =>
+      expectWorkflowDisplayTruncationPreservesUsage(false));
+
+    it("preserves active usage when truncation removes only workflow display rows", () =>
+      expectWorkflowDisplayTruncationPreservesUsage(true));
+
+    it("preserves active usage when truncation removes only sealed rows", async () => {
+      await appendNumberedMessages(service, wsId, 8);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("active-usage", "assistant", "reply", {
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          model: "openai:gpt-4o",
+        })
+      );
+
+      expect((await service.truncateHistory(wsId, 0.2)).success).toBe(true);
+
+      const active = await service.getHistoryFromLatestBoundary(wsId);
+      expect(active.success).toBe(true);
+      if (active.success) {
+        expect(
+          active.data.find((message) => message.id === "active-usage")?.metadata?.contextUsage
+        ).toBeDefined();
+      }
+    });
+
+    it("restores a markerless archive tombstone left by an older truncation", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const restarted = new HistoryService(config);
+      const full = await collectFullHistory(restarted, wsId);
+      expect(full.map((message) => message.id)).toEqual([
+        "msg-0",
+        "msg-1",
+        "msg-2",
+        "boundary-1",
+        "post-0",
+      ]);
+    });
+
+    it("restores an interrupted archive tombstone when only the final chat matches", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
+      const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({
+          phase: "prepared",
+          finalArchiveHash: hash("replacement archive\n"),
+          finalChatHash: hash(chatContents),
+        })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const restarted = new HistoryService(config);
+      const full = await collectFullHistory(restarted, wsId);
+      expect(full.map((message) => message.id)).toEqual([
+        "msg-0",
+        "msg-1",
+        "msg-2",
+        "boundary-1",
+        "post-0",
+      ]);
+    });
+
+    it("recovers the source transaction before copying a fork snapshot", async () => {
+      const targetWorkspaceId = "forked-workspace";
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
+      const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({
+          finalArchiveHash: hash("replacement archive\n"),
+          finalChatHash: hash(chatContents),
+        })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const result = await service.copyHistorySnapshotToNewWorkspace(wsId, targetWorkspaceId);
+      expect(result.success).toBe(true);
+      expect(
+        (await collectFullHistory(service, targetWorkspaceId)).map((message) => message.id)
+      ).toEqual(["msg-0", "msg-1", "msg-2", "boundary-1", "post-0"]);
+    });
+
+    it("does not restore a committed archive tombstone before appending", async () => {
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({ finalArchiveHash: null, finalChatHash: null })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+      await fs.rm(chatPath(wsId));
+
+      const restarted = new HistoryService(config);
+      const message = createMuxMessage("new-msg", "user", "fresh");
+      expect((await restarted.appendToHistory(wsId, message)).success).toBe(true);
+      expect(message.metadata?.historySequence).toBe(0);
+      expect((await collectFullHistory(restarted, wsId)).map((item) => item.id)).toEqual([
+        "new-msg",
+      ]);
     });
 
     it("hasHistory sees archive-only workspaces", async () => {

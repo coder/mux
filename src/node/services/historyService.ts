@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
 import writeFileAtomic from "write-file-atomic";
@@ -20,9 +21,13 @@ import { safeStringifyForCounting } from "@/common/utils/tokens/safeStringifyFor
 import { normalizeLegacyMuxMetadata } from "@/node/utils/messages/legacy";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
 import {
+  findLatestContextBoundaryIndex,
+  getContextBoundaryKind,
+  hasProviderEligibleMessages,
   isDurableCompactedMarker,
   isDurableContextBoundaryMarker,
 } from "@/common/utils/messages/compactionBoundary";
+import { filterWorkflowDisplayOnlyMessages } from "@/common/utils/workflowRunMessages";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -39,6 +44,33 @@ function hasDurableCompactionBoundary(metadata: MuxMetadata | undefined): boolea
   }
 
   return isPositiveInteger(metadata.compactionEpoch);
+}
+
+function prefixCutChangesActiveContext(messages: MuxMessage[], removeCount: number): boolean {
+  const boundaryIndex = findLatestContextBoundaryIndex(messages);
+  const activeStart =
+    boundaryIndex < 0
+      ? 0
+      : getContextBoundaryKind(messages[boundaryIndex]) === CONTEXT_BOUNDARY_KINDS.RESET
+        ? boundaryIndex + 1
+        : boundaryIndex;
+  return hasProviderEligibleMessages(
+    filterWorkflowDisplayOnlyMessages(messages.slice(activeStart, removeCount))
+  );
+}
+
+function stripContextUsage(message: MuxMessage): MuxMessage {
+  if (!message.metadata) {
+    return message;
+  }
+  return {
+    ...message,
+    metadata: {
+      ...message.metadata,
+      contextUsage: undefined,
+      contextProviderMetadata: undefined,
+    },
+  };
 }
 
 function getCompactionMetadataToPreserve(
@@ -169,6 +201,217 @@ export class HistoryService {
 
   private getChatArchivePath(workspaceId: string): string {
     return path.join(this.config.getSessionDir(workspaceId), this.CHAT_ARCHIVE_FILE);
+  }
+
+  private getTruncateTransactionPath(workspaceId: string): string {
+    return `${this.getChatArchivePath(workspaceId)}.truncate.json`;
+  }
+
+  private async readExistingFile(filePath: string): Promise<string | null> {
+    try {
+      return await fs.readFile(filePath, "utf-8");
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  private historyContentsHash(contents: string): string {
+    return createHash("sha256").update(contents).digest("hex");
+  }
+
+  private parseTruncateTransaction(contents: string): {
+    finalArchiveHash: string | null;
+    finalChatHash: string | null;
+  } | null {
+    try {
+      const parsed: unknown = JSON.parse(contents);
+      if (parsed === null || typeof parsed !== "object") {
+        return null;
+      }
+      const marker = parsed as Record<string, unknown>;
+      const finalArchiveHash = marker.finalArchiveHash;
+      const finalChatHash = marker.finalChatHash;
+      if (
+        (finalArchiveHash !== null && typeof finalArchiveHash !== "string") ||
+        (finalChatHash !== null && typeof finalChatHash !== "string")
+      ) {
+        return null;
+      }
+      return { finalArchiveHash, finalChatHash };
+    } catch {
+      return null;
+    }
+  }
+
+  private historyContentsMatch(contents: string | null, hash: string | null): boolean {
+    return hash === null
+      ? contents === null
+      : contents !== null && this.historyContentsHash(contents) === hash;
+  }
+
+  private async recoverTruncateTransactionUnlocked(workspaceId: string): Promise<boolean> {
+    const archivePath = this.getChatArchivePath(workspaceId);
+    const archiveTombstonePath = `${archivePath}.truncate`;
+    const tombstoneExists = await fs.stat(archiveTombstonePath).then(
+      () => true,
+      (error: unknown) => {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          return false;
+        }
+        throw error;
+      }
+    );
+    const markerPath = this.getTruncateTransactionPath(workspaceId);
+    const markerContents = await this.readExistingFile(markerPath);
+    if (markerContents === null) {
+      if (!tombstoneExists) {
+        return false;
+      }
+      const archiveExists = (await this.readExistingFile(archivePath)) !== null;
+      if (archiveExists) {
+        await fs.rm(archiveTombstonePath);
+      } else {
+        await fs.rename(archiveTombstonePath, archivePath);
+      }
+      return false;
+    }
+
+    const marker = this.parseTruncateTransaction(markerContents);
+    if (!tombstoneExists) {
+      await fs.rm(markerPath, { force: true });
+      if (marker === null) {
+        return false;
+      }
+      const archiveContents = await this.readExistingFile(archivePath);
+      const chatContents = await this.readExistingFile(this.getChatHistoryPath(workspaceId));
+      return (
+        this.historyContentsMatch(archiveContents, marker.finalArchiveHash) &&
+        this.historyContentsMatch(chatContents, marker.finalChatHash)
+      );
+    }
+
+    if (marker !== null) {
+      const archiveContents = await this.readExistingFile(archivePath);
+      const chatContents = await this.readExistingFile(this.getChatHistoryPath(workspaceId));
+      const committed =
+        this.historyContentsMatch(archiveContents, marker.finalArchiveHash) &&
+        this.historyContentsMatch(chatContents, marker.finalChatHash);
+      if (committed) {
+        await fs.rm(archiveTombstonePath);
+        await fs.rm(markerPath, { force: true });
+        return true;
+      }
+    }
+
+    await fs.rm(archivePath, { force: true });
+    await fs.rename(archiveTombstonePath, archivePath);
+    await fs.rm(markerPath, { force: true });
+    return false;
+  }
+
+  private async withRecoveredHistoryLock<T>(
+    workspaceId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return this.fileLocks.withLock(workspaceId, async () => {
+      await this.recoverTruncateTransactionUnlocked(workspaceId);
+      return operation();
+    });
+  }
+
+  private async withRecoveredHistoryResultLock<T>(
+    workspaceId: string,
+    errorPrefix: string,
+    operation: () => Promise<Result<T>>
+  ): Promise<Result<T>> {
+    try {
+      return await this.withRecoveredHistoryLock(workspaceId, operation);
+    } catch (error) {
+      return Err(`${errorPrefix}: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async rewriteHistoryFilesUnlocked(
+    workspaceId: string,
+    finalArchiveContents: string | null,
+    finalChatContents: string | null
+  ): Promise<void> {
+    const archivePath = this.getChatArchivePath(workspaceId);
+    const archiveTombstonePath = `${archivePath}.truncate`;
+    const markerPath = this.getTruncateTransactionPath(workspaceId);
+    const archiveExists = await fs.stat(archivePath).then(
+      () => true,
+      (error: unknown) => {
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+          return false;
+        }
+        throw error;
+      }
+    );
+    if (!archiveExists) {
+      assert(finalArchiveContents === null, "cannot replace a missing history archive");
+      if (finalChatContents === null) {
+        await fs.rm(this.getChatHistoryPath(workspaceId), { force: true });
+      } else {
+        await writeFileAtomic(this.getChatHistoryPath(workspaceId), finalChatContents);
+      }
+      return;
+    }
+
+    await writeFileAtomic(
+      markerPath,
+      JSON.stringify({
+        finalArchiveHash:
+          finalArchiveContents === null ? null : this.historyContentsHash(finalArchiveContents),
+        finalChatHash:
+          finalChatContents === null ? null : this.historyContentsHash(finalChatContents),
+      })
+    );
+    try {
+      await fs.rename(archivePath, archiveTombstonePath);
+    } catch (error) {
+      await fs.rm(markerPath, { force: true });
+      throw error;
+    }
+
+    try {
+      if (finalArchiveContents !== null) {
+        await writeFileAtomic(archivePath, finalArchiveContents);
+      }
+      if (finalChatContents === null) {
+        await fs.rm(this.getChatHistoryPath(workspaceId), { force: true });
+      } else {
+        await writeFileAtomic(this.getChatHistoryPath(workspaceId), finalChatContents);
+      }
+    } catch (error) {
+      let committed = false;
+      try {
+        committed = await this.recoverTruncateTransactionUnlocked(workspaceId);
+      } catch (recoveryError) {
+        log.error("Failed to recover history truncation after write failure", {
+          workspaceId,
+          error: recoveryError,
+        });
+      }
+      if (!committed) {
+        throw error;
+      }
+      return;
+    }
+
+    try {
+      await fs.rm(archiveTombstonePath);
+      await fs.rm(markerPath, { force: true });
+    } catch (error) {
+      this.sealedRotationChecked.delete(workspaceId);
+      log.warn("History truncation cleanup deferred to the next operation", {
+        workspaceId,
+        error,
+      });
+    }
   }
 
   private getPartialPath(workspaceId: string): string {
@@ -696,6 +939,69 @@ export class HistoryService {
     direction: "forward" | "backward",
     visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
   ): Promise<Result<void>> {
+    return this.withRecoveredHistoryResultLock(workspaceId, "Failed to iterate history", () =>
+      this.iterateFullHistoryUnlocked(workspaceId, direction, visitor)
+    );
+  }
+
+  /** Call only while holding workspaceFileLocks for this workspace. */
+  async iterateFullHistoryUnderLock(
+    workspaceId: string,
+    direction: "forward" | "backward",
+    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+  ): Promise<Result<void>> {
+    try {
+      await this.recoverTruncateTransactionUnlocked(workspaceId);
+      return await this.iterateFullHistoryUnlocked(workspaceId, direction, visitor);
+    } catch (error) {
+      return Err(`Failed to iterate history: ${getErrorMessage(error)}`);
+    }
+  }
+
+  async copyHistorySnapshotToNewWorkspace(
+    sourceWorkspaceId: string,
+    targetWorkspaceId: string
+  ): Promise<Result<void>> {
+    assert(
+      sourceWorkspaceId !== targetWorkspaceId,
+      "history snapshot target must be a new workspace"
+    );
+    const snapshot = await this.withRecoveredHistoryResultLock(
+      sourceWorkspaceId,
+      "Failed to read history snapshot",
+      async () =>
+        Ok({
+          archive: await this.readExistingFile(this.getChatArchivePath(sourceWorkspaceId)),
+          chat: await this.readExistingFile(this.getChatHistoryPath(sourceWorkspaceId)),
+        })
+    );
+    if (!snapshot.success) {
+      return snapshot;
+    }
+
+    try {
+      await ensurePrivateDir(this.config.getSessionDir(targetWorkspaceId));
+      for (const [targetPath, contents] of [
+        [this.getChatArchivePath(targetWorkspaceId), snapshot.data.archive],
+        [this.getChatHistoryPath(targetWorkspaceId), snapshot.data.chat],
+      ] as const) {
+        if (contents === null) {
+          await fs.rm(targetPath, { force: true });
+        } else {
+          await writeFileAtomic(targetPath, contents);
+        }
+      }
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to copy history snapshot: ${getErrorMessage(error)}`);
+    }
+  }
+
+  private async iterateFullHistoryUnlocked(
+    workspaceId: string,
+    direction: "forward" | "backward",
+    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+  ): Promise<Result<void>> {
     const chatPath = this.getChatHistoryPath(workspaceId);
     const archivePath = this.getChatArchivePath(workspaceId);
     try {
@@ -801,6 +1107,15 @@ export class HistoryService {
       "hasHistoryBeforeSequence requires a non-negative integer"
     );
 
+    return this.withRecoveredHistoryLock(workspaceId, () =>
+      this.hasHistoryBeforeSequenceUnlocked(workspaceId, beforeHistorySequence)
+    );
+  }
+
+  private async hasHistoryBeforeSequenceUnlocked(
+    workspaceId: string,
+    beforeHistorySequence: number
+  ): Promise<boolean> {
     let hasOlder = false;
     const visitor = (messages: MuxMessage[]): boolean | void => {
       for (const message of messages) {
@@ -816,8 +1131,6 @@ export class HistoryService {
       }
     };
 
-    // Newest rows live in chat.jsonl; continue into the sealed archive only
-    // when the active file has no older rows.
     const completed = await this.iterateBackward(this.getChatHistoryPath(workspaceId), visitor);
     if (completed && !hasOlder) {
       await this.iterateBackward(this.getChatArchivePath(workspaceId), visitor);
@@ -845,7 +1158,7 @@ export class HistoryService {
       "getHistoryBoundaryWindow requires beforeHistorySequence to be a non-negative integer"
     );
 
-    try {
+    const operation = async (): Promise<Result<{ messages: MuxMessage[]; hasOlder: boolean }>> => {
       // Scan boundaries newest→oldest and pick the first window that has rows older
       // than the cursor. Boundaries newer than the rotation point live in chat.jsonl;
       // older ones live in the sealed archive.
@@ -875,7 +1188,10 @@ export class HistoryService {
             "window messages filtered by historySequence must include a sequence"
           );
 
-          const hasOlder = await this.hasHistoryBeforeSequence(workspaceId, oldestWindowSequence);
+          const hasOlder = await this.hasHistoryBeforeSequenceUnlocked(
+            workspaceId,
+            oldestWindowSequence
+          );
           return Ok({ messages: windowMessages, hasOlder });
         }
       }
@@ -900,8 +1216,15 @@ export class HistoryService {
         "pre-boundary messages filtered by historySequence must include a sequence"
       );
 
-      const hasOlder = await this.hasHistoryBeforeSequence(workspaceId, oldestWindowSequence);
+      const hasOlder = await this.hasHistoryBeforeSequenceUnlocked(
+        workspaceId,
+        oldestWindowSequence
+      );
       return Ok({ messages: preBoundaryMessages, hasOlder });
+    };
+
+    try {
+      return await this.withRecoveredHistoryLock(workspaceId, operation);
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to read history boundary window: ${message}`);
@@ -934,8 +1257,8 @@ export class HistoryService {
       // The just-compacted epoch can straddle chat-archive.jsonl and chat.jsonl after
       // sealed-history rotation, so scan the full logical history under the workspace
       // lock; otherwise a concurrent boundary rotation can move rows between files mid-scan.
-      const iteration = await this.fileLocks.withLock(workspaceId, () =>
-        this.iterateFullHistory(workspaceId, "forward", (chunk) => {
+      const iteration = await this.withRecoveredHistoryLock(workspaceId, () =>
+        this.iterateFullHistoryUnlocked(workspaceId, "forward", (chunk) => {
           for (const message of chunk) {
             const sequence = message.metadata?.historySequence;
             if (!isNonNegativeInteger(sequence)) continue;
@@ -986,10 +1309,10 @@ export class HistoryService {
    * that only needs the active compaction epoch.
    */
   async getHistoryFromLatestBoundary(workspaceId: string, skip = 0): Promise<Result<MuxMessage[]>> {
-    try {
+    const operation = async (): Promise<Result<MuxMessage[]>> => {
       // One-time lazy migration: seal any pre-boundary prefix left in chat.jsonl
       // by older builds so this read (and every later one) stays O(active epoch).
-      await this.ensureSealedHistoryRotated(workspaceId);
+      await this.ensureSealedHistoryRotatedUnlocked(workspaceId);
 
       const chatPath = this.getChatHistoryPath(workspaceId);
       const archivePath = this.getChatArchivePath(workspaceId);
@@ -1030,6 +1353,10 @@ export class HistoryService {
       const archived = await this.readArchivedHistory(workspaceId);
       const active = await this.readChatHistory(workspaceId);
       return Ok([...archived, ...active]);
+    };
+
+    try {
+      return await this.withRecoveredHistoryLock(workspaceId, operation);
     } catch (error) {
       const message = getErrorMessage(error);
       return Err(`Failed to read history from boundary: ${message}`);
@@ -1050,22 +1377,19 @@ export class HistoryService {
    * lazily migrates files produced before rotation existed (or by crashes
    * between boundary write and rotation).
    */
-  private async ensureSealedHistoryRotated(workspaceId: string): Promise<void> {
+  private async ensureSealedHistoryRotatedUnlocked(workspaceId: string): Promise<void> {
     if (this.sealedRotationChecked.has(workspaceId)) {
       return;
     }
-    this.sealedRotationChecked.add(workspaceId);
 
     try {
-      // Cheap unlocked probe first so the common no-op case takes no lock.
       const offset = await this.findLastBoundaryByteOffset(this.getChatHistoryPath(workspaceId));
-      if (offset === null || offset === 0) {
-        return;
+      if (offset !== null && offset !== 0) {
+        await this.rotateSealedHistoryUnlocked(workspaceId);
       }
-      await this.fileLocks.withLock(workspaceId, () =>
-        this.rotateSealedHistoryUnlocked(workspaceId)
-      );
+      this.sealedRotationChecked.add(workspaceId);
     } catch (error) {
+      this.sealedRotationChecked.delete(workspaceId);
       // Rotation is an optimization — reads remain correct on unrotated files.
       log.warn("Failed to rotate sealed chat history", {
         workspaceId,
@@ -1145,20 +1469,29 @@ export class HistoryService {
    * Continues into the sealed archive when the active epoch has fewer than N rows.
    */
   async getLastMessages(workspaceId: string, n: number): Promise<Result<MuxMessage[]>> {
-    try {
-      const messages = await this.readLastMessagesFromFile(this.getChatHistoryPath(workspaceId), n);
-      if (messages.length < n) {
-        const archived = await this.readLastMessagesFromFile(
-          this.getChatArchivePath(workspaceId),
-          n - messages.length
-        );
-        return Ok([...archived, ...messages]);
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      `Failed to read last ${n} messages`,
+      async () => {
+        try {
+          const messages = await this.readLastMessagesFromFile(
+            this.getChatHistoryPath(workspaceId),
+            n
+          );
+          if (messages.length < n) {
+            const archived = await this.readLastMessagesFromFile(
+              this.getChatArchivePath(workspaceId),
+              n - messages.length
+            );
+            return Ok([...archived, ...messages]);
+          }
+          return Ok(messages);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to read last ${n} messages: ${message}`);
+        }
       }
-      return Ok(messages);
-    } catch (error) {
-      const message = getErrorMessage(error);
-      return Err(`Failed to read last ${n} messages: ${message}`);
-    }
+    );
   }
 
   /**
@@ -1166,20 +1499,22 @@ export class HistoryService {
    * Much cheaper than iterateFullHistory() when only an emptiness check is needed.
    */
   async hasHistory(workspaceId: string): Promise<boolean> {
-    for (const filePath of [
-      this.getChatHistoryPath(workspaceId),
-      this.getChatArchivePath(workspaceId),
-    ]) {
-      try {
-        const stat = await fs.stat(filePath);
-        if (stat.size > 0) {
-          return true;
+    return this.withRecoveredHistoryLock(workspaceId, async () => {
+      for (const filePath of [
+        this.getChatHistoryPath(workspaceId),
+        this.getChatArchivePath(workspaceId),
+      ]) {
+        try {
+          const stat = await fs.stat(filePath);
+          if (stat.size > 0) {
+            return true;
+          }
+        } catch {
+          // Missing file — keep checking.
         }
-      } catch {
-        // Missing file — keep checking.
       }
-    }
-    return false;
+      return false;
+    });
   }
 
   /**
@@ -1524,15 +1859,19 @@ export class HistoryService {
   }
 
   async appendToHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      const result = await this._appendToHistoryUnlocked(workspaceId, message);
-      if (result.success) {
-        // A new durable boundary seals the previous epoch — rotate it out of
-        // chat.jsonl so subsequent reads/rewrites stay O(active epoch).
-        await this.rotateAfterBoundaryWriteUnlocked(workspaceId, message);
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to append history",
+      async () => {
+        const result = await this._appendToHistoryUnlocked(workspaceId, message);
+        if (result.success) {
+          // A new durable boundary seals the previous epoch — rotate it out of
+          // chat.jsonl so subsequent reads/rewrites stay O(active epoch).
+          await this.rotateAfterBoundaryWriteUnlocked(workspaceId, message);
+        }
+        return result;
       }
-      return result;
-    });
+    );
   }
 
   /**
@@ -1544,76 +1883,80 @@ export class HistoryService {
    * never in the sealed archive.
    */
   async updateHistory(workspaceId: string, message: MuxMessage): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      try {
-        const historyPath = this.getChatHistoryPath(workspaceId);
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to update history",
+      async () => {
+        try {
+          const historyPath = this.getChatHistoryPath(workspaceId);
 
-        // Read the active epoch — structural rewrite requires full file content
-        const messages = await this.readChatHistory(workspaceId);
-        const targetSequence = message.metadata?.historySequence;
+          // Read the active epoch — structural rewrite requires full file content
+          const messages = await this.readChatHistory(workspaceId);
+          const targetSequence = message.metadata?.historySequence;
 
-        if (targetSequence === undefined) {
-          return Err("Cannot update message without historySequence");
-        }
-
-        assert(
-          isNonNegativeInteger(targetSequence),
-          "updateHistory requires historySequence to be a non-negative integer"
-        );
-
-        // Find and replace the message with matching historySequence
-        let found = false;
-        let persistedMessage: MuxMessage | undefined;
-        for (let i = 0; i < messages.length; i++) {
-          if (messages[i].metadata?.historySequence === targetSequence) {
-            const existingMessage = messages[i];
-            assert(existingMessage, "updateHistory matched message must exist");
-
-            // Preserve compaction boundary metadata during late in-place rewrites.
-            // Compaction may update an assistant row first, then a late stream rewrite can
-            // update that same historySequence and accidentally drop compaction markers.
-            const preservedCompactionMetadata = getCompactionMetadataToPreserve(
-              workspaceId,
-              existingMessage,
-              message
-            );
-
-            // Preserve the historySequence, update everything else.
-            messages[i] = {
-              ...message,
-              metadata: {
-                ...message.metadata,
-                ...(preservedCompactionMetadata ?? {}),
-                historySequence: targetSequence,
-              },
-            };
-            persistedMessage = messages[i];
-            found = true;
-            break;
+          if (targetSequence === undefined) {
+            return Err("Cannot update message without historySequence");
           }
+
+          assert(
+            isNonNegativeInteger(targetSequence),
+            "updateHistory requires historySequence to be a non-negative integer"
+          );
+
+          // Find and replace the message with matching historySequence
+          let found = false;
+          let persistedMessage: MuxMessage | undefined;
+          for (let i = 0; i < messages.length; i++) {
+            if (messages[i].metadata?.historySequence === targetSequence) {
+              const existingMessage = messages[i];
+              assert(existingMessage, "updateHistory matched message must exist");
+
+              // Preserve compaction boundary metadata during late in-place rewrites.
+              // Compaction may update an assistant row first, then a late stream rewrite can
+              // update that same historySequence and accidentally drop compaction markers.
+              const preservedCompactionMetadata = getCompactionMetadataToPreserve(
+                workspaceId,
+                existingMessage,
+                message
+              );
+
+              // Preserve the historySequence, update everything else.
+              messages[i] = {
+                ...message,
+                metadata: {
+                  ...message.metadata,
+                  ...(preservedCompactionMetadata ?? {}),
+                  historySequence: targetSequence,
+                },
+              };
+              persistedMessage = messages[i];
+              found = true;
+              break;
+            }
+          }
+
+          if (!found || !persistedMessage) {
+            return Err(`No message found with historySequence ${targetSequence}`);
+          }
+
+          // Rewrite entire file
+          const historyEntries = this.serializeHistoryEntries(messages, workspaceId);
+
+          // Atomic write prevents corruption if app crashes mid-write
+          await writeFileAtomic(historyPath, historyEntries);
+
+          // Compaction updates the streamed summary row in-place with boundary
+          // metadata — seal the previous epoch once that lands. Check the persisted
+          // row (not the incoming message) so preserved boundary metadata counts.
+          await this.rotateAfterBoundaryWriteUnlocked(workspaceId, persistedMessage);
+
+          return Ok(undefined);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to update history: ${message}`);
         }
-
-        if (!found || !persistedMessage) {
-          return Err(`No message found with historySequence ${targetSequence}`);
-        }
-
-        // Rewrite entire file
-        const historyEntries = this.serializeHistoryEntries(messages, workspaceId);
-
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(historyPath, historyEntries);
-
-        // Compaction updates the streamed summary row in-place with boundary
-        // metadata — seal the previous epoch once that lands. Check the persisted
-        // row (not the incoming message) so preserved boundary metadata counts.
-        await this.rotateAfterBoundaryWriteUnlocked(workspaceId, persistedMessage);
-
-        return Ok(undefined);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to update history: ${message}`);
       }
-    });
+    );
   }
 
   /**
@@ -1625,55 +1968,59 @@ export class HistoryService {
     const ids = new Set(messageIds);
     assert(ids.size === messageIds.length, "deleteMessages requires unique message IDs");
 
-    return this.fileLocks.withLock(workspaceId, async () => {
-      try {
-        const messages = await this.readChatHistory(workspaceId);
-        const foundIds = new Set(
-          messages.filter((message) => ids.has(message.id)).map((message) => message.id)
-        );
-        const missingIds = messageIds.filter((messageId) => !foundIds.has(messageId));
-        if (missingIds.length > 0) {
-          return Err(`Messages not found in active history: ${missingIds.join(", ")}`);
-        }
-
-        const filteredMessages = messages.filter((message) => !ids.has(message.id));
-        await writeFileAtomic(
-          this.getChatHistoryPath(workspaceId),
-          this.serializeHistoryEntries(filteredMessages, workspaceId)
-        );
-
-        const maxSeq = filteredMessages.reduce((max, message) => {
-          const sequence = message.metadata?.historySequence;
-          if (sequence === undefined) return max;
-          if (!isNonNegativeInteger(sequence)) {
-            log.warn(
-              "Ignoring malformed persisted historySequence while updating sequence counter after batch delete",
-              {
-                workspaceId,
-                messageId: message.id,
-                historySequence: sequence,
-              }
-            );
-            return max;
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to delete messages",
+      async () => {
+        try {
+          const messages = await this.readChatHistory(workspaceId);
+          const foundIds = new Set(
+            messages.filter((message) => ids.has(message.id)).map((message) => message.id)
+          );
+          const missingIds = messageIds.filter((messageId) => !foundIds.has(messageId));
+          if (missingIds.length > 0) {
+            return Err(`Messages not found in active history: ${missingIds.join(", ")}`);
           }
-          return sequence > max ? sequence : max;
-        }, -1);
-        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
-        const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
-        assert(
-          isNonNegativeInteger(nextSeq),
-          "next history sequence counter after batch delete must be a non-negative integer"
-        );
-        const currentCounter = this.sequenceCounters.get(workspaceId);
-        if (currentCounter === undefined || currentCounter < nextSeq) {
-          this.sequenceCounters.set(workspaceId, nextSeq);
-        }
 
-        return Ok(undefined);
-      } catch (error) {
-        return Err(`Failed to delete messages: ${getErrorMessage(error)}`);
+          const filteredMessages = messages.filter((message) => !ids.has(message.id));
+          await writeFileAtomic(
+            this.getChatHistoryPath(workspaceId),
+            this.serializeHistoryEntries(filteredMessages, workspaceId)
+          );
+
+          const maxSeq = filteredMessages.reduce((max, message) => {
+            const sequence = message.metadata?.historySequence;
+            if (sequence === undefined) return max;
+            if (!isNonNegativeInteger(sequence)) {
+              log.warn(
+                "Ignoring malformed persisted historySequence while updating sequence counter after batch delete",
+                {
+                  workspaceId,
+                  messageId: message.id,
+                  historySequence: sequence,
+                }
+              );
+              return max;
+            }
+            return sequence > max ? sequence : max;
+          }, -1);
+          const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+          const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
+          assert(
+            isNonNegativeInteger(nextSeq),
+            "next history sequence counter after batch delete must be a non-negative integer"
+          );
+          const currentCounter = this.sequenceCounters.get(workspaceId);
+          if (currentCounter === undefined || currentCounter < nextSeq) {
+            this.sequenceCounters.set(workspaceId, nextSeq);
+          }
+
+          return Ok(undefined);
+        } catch (error) {
+          return Err(`Failed to delete messages: ${getErrorMessage(error)}`);
+        }
       }
-    });
+    );
   }
 
   /**
@@ -1683,79 +2030,83 @@ export class HistoryService {
    * messages may already have been appended.
    */
   async deleteMessage(workspaceId: string, messageId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      try {
-        // Structural rewrite requires full file content
-        const messages = await this.readChatHistory(workspaceId);
-        const filteredMessages = messages.filter((msg) => msg.id !== messageId);
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to delete message",
+      async () => {
+        try {
+          // Structural rewrite requires full file content
+          const messages = await this.readChatHistory(workspaceId);
+          const filteredMessages = messages.filter((msg) => msg.id !== messageId);
 
-        if (filteredMessages.length === messages.length) {
-          // Not in the active epoch — the row may live in the sealed archive
-          // (rare: cleanup paths almost always target recent rows).
-          const archiveMessages = await this.readArchivedHistory(workspaceId);
-          const filteredArchive = archiveMessages.filter((msg) => msg.id !== messageId);
-          if (filteredArchive.length === archiveMessages.length) {
-            return Err(`Message with ID ${messageId} not found in history`);
-          }
+          if (filteredMessages.length === messages.length) {
+            // Not in the active epoch — the row may live in the sealed archive
+            // (rare: cleanup paths almost always target recent rows).
+            const archiveMessages = await this.readArchivedHistory(workspaceId);
+            const filteredArchive = archiveMessages.filter((msg) => msg.id !== messageId);
+            if (filteredArchive.length === archiveMessages.length) {
+              return Err(`Message with ID ${messageId} not found in history`);
+            }
 
-          // Archived rows are strictly older than active rows, so deleting one
-          // can never affect the sequence counter.
-          await writeFileAtomic(
-            this.getChatArchivePath(workspaceId),
-            this.serializeHistoryEntries(filteredArchive, workspaceId)
-          );
-          return Ok(undefined);
-        }
-
-        const historyPath = this.getChatHistoryPath(workspaceId);
-        const historyEntries = this.serializeHistoryEntries(filteredMessages, workspaceId);
-
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(historyPath, historyEntries);
-
-        // Keep the in-memory sequence counter monotonic. It's okay to reuse deleted sequence
-        // numbers on restart, but we must not regress within a running process.
-        const maxSeq = filteredMessages.reduce((max, msg) => {
-          const seq = msg.metadata?.historySequence;
-          if (seq === undefined) {
-            return max;
-          }
-
-          if (!isNonNegativeInteger(seq)) {
-            log.warn(
-              "Ignoring malformed persisted historySequence while updating sequence counter after delete",
-              {
-                workspaceId,
-                messageId: msg.id,
-                historySequence: seq,
-              }
+            // Archived rows are strictly older than active rows, so deleting one
+            // can never affect the sequence counter.
+            await writeFileAtomic(
+              this.getChatArchivePath(workspaceId),
+              this.serializeHistoryEntries(filteredArchive, workspaceId)
             );
-            return max;
+            return Ok(undefined);
           }
 
-          return seq > max ? seq : max;
-        }, -1);
-        // Sealed archive rows keep their sequences across active-file deletes.
-        // Without this floor, deleting the last sequenced active row in a fresh
-        // process would cache a counter below archived rows and reuse their
-        // historySequence values on the next append.
-        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
-        const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
-        assert(
-          isNonNegativeInteger(nextSeq),
-          "next history sequence counter after delete must be a non-negative integer"
-        );
-        const currentCounter = this.sequenceCounters.get(workspaceId);
-        if (currentCounter === undefined || currentCounter < nextSeq) {
-          this.sequenceCounters.set(workspaceId, nextSeq);
-        }
+          const historyPath = this.getChatHistoryPath(workspaceId);
+          const historyEntries = this.serializeHistoryEntries(filteredMessages, workspaceId);
 
-        return Ok(undefined);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to delete message: ${message}`);
+          // Atomic write prevents corruption if app crashes mid-write
+          await writeFileAtomic(historyPath, historyEntries);
+
+          // Keep the in-memory sequence counter monotonic. It's okay to reuse deleted sequence
+          // numbers on restart, but we must not regress within a running process.
+          const maxSeq = filteredMessages.reduce((max, msg) => {
+            const seq = msg.metadata?.historySequence;
+            if (seq === undefined) {
+              return max;
+            }
+
+            if (!isNonNegativeInteger(seq)) {
+              log.warn(
+                "Ignoring malformed persisted historySequence while updating sequence counter after delete",
+                {
+                  workspaceId,
+                  messageId: msg.id,
+                  historySequence: seq,
+                }
+              );
+              return max;
+            }
+
+            return seq > max ? seq : max;
+          }, -1);
+          // Sealed archive rows keep their sequences across active-file deletes.
+          // Without this floor, deleting the last sequenced active row in a fresh
+          // process would cache a counter below archived rows and reuse their
+          // historySequence values on the next append.
+          const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+          const nextSeq = Math.max(maxSeq, archiveMaxSeq) + 1;
+          assert(
+            isNonNegativeInteger(nextSeq),
+            "next history sequence counter after delete must be a non-negative integer"
+          );
+          const currentCounter = this.sequenceCounters.get(workspaceId);
+          if (currentCounter === undefined || currentCounter < nextSeq) {
+            this.sequenceCounters.set(workspaceId, nextSeq);
+          }
+
+          return Ok(undefined);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to delete message: ${message}`);
+        }
       }
-    });
+    );
   }
 
   /**
@@ -1769,80 +2120,85 @@ export class HistoryService {
     messageId: string,
     options?: { keepTargetMessage?: boolean }
   ): Promise<Result<void>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      try {
-        // Structural rewrite requires full file content
-        const messages = await this.readChatHistory(workspaceId);
-        const messageIndex = messages.findIndex((msg) => msg.id === messageId);
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to truncate history",
+      async () => {
+        try {
+          // Structural rewrite requires full file content
+          const messages = await this.readChatHistory(workspaceId);
+          const messageIndex = messages.findIndex((msg) => msg.id === messageId);
 
-        const keepTargetMessage = options?.keepTargetMessage === true;
+          const keepTargetMessage = options?.keepTargetMessage === true;
 
-        if (messageIndex === -1) {
-          // Editing/forking from a pre-boundary message: the target lives in the
-          // sealed archive. Everything after the cut (the archive tail AND the
-          // entire active epoch) is discarded, so collapse the remainder back
-          // into chat.jsonl and drop the archive.
-          return this.truncateAfterArchivedMessageUnlocked(
-            workspaceId,
-            messageId,
-            keepTargetMessage
-          );
-        }
-
-        // Response-level forks branch from the selected assistant turn, so they retain the target
-        // message while discarding anything that came after it.
-        const truncatedMessages = messages.slice(
-          0,
-          keepTargetMessage ? messageIndex + 1 : messageIndex
-        );
-
-        // Rewrite the history file with truncated messages
-        const historyPath = this.getChatHistoryPath(workspaceId);
-        const historyEntries = this.serializeHistoryEntries(truncatedMessages, workspaceId);
-
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(historyPath, historyEntries);
-
-        // Update sequence counter to continue from where we truncated.
-        // Self-healing read path: skip malformed persisted historySequence values.
-        const maxTruncatedSeq = truncatedMessages.reduce((max, msg) => {
-          const seq = msg.metadata?.historySequence;
-          if (seq === undefined) {
-            return max;
-          }
-
-          if (!isNonNegativeInteger(seq)) {
-            log.warn(
-              "Ignoring malformed persisted historySequence while updating sequence counter after truncation",
-              {
-                workspaceId,
-                messageId: msg.id,
-                historySequence: seq,
-              }
+          if (messageIndex === -1) {
+            // Editing/forking from a pre-boundary message: the target lives in the
+            // sealed archive. Everything after the cut (the archive tail AND the
+            // entire active epoch) is discarded, so collapse the remainder back
+            // into chat.jsonl and drop the archive.
+            return this.truncateAfterArchivedMessageUnlocked(
+              workspaceId,
+              messageId,
+              keepTargetMessage
             );
-            return max;
           }
 
-          return seq > max ? seq : max;
-        }, -1);
-        // Sealed archive rows keep their sequences across an active-epoch
-        // truncation. When the truncation empties the active file, floor the
-        // counter with the archive max so new appends can never reuse archived
-        // sequence numbers.
-        const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
-        const nextSeq = Math.max(maxTruncatedSeq, archiveMaxSeq) + 1;
-        assert(
-          isNonNegativeInteger(nextSeq),
-          "next history sequence counter after truncation must be a non-negative integer"
-        );
-        this.sequenceCounters.set(workspaceId, nextSeq);
+          // Response-level forks branch from the selected assistant turn, so they retain the target
+          // message while discarding anything that came after it.
+          const truncatedMessages = messages.slice(
+            0,
+            keepTargetMessage ? messageIndex + 1 : messageIndex
+          );
 
-        return Ok(undefined);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to truncate history: ${message}`);
+          // Rewrite the history file with truncated messages
+          const historyPath = this.getChatHistoryPath(workspaceId);
+          const historyEntries = this.serializeHistoryEntries(truncatedMessages, workspaceId);
+
+          const archiveMaxSeq = await this.getArchiveTailMaxSequence(workspaceId);
+
+          // Atomic write prevents corruption if app crashes mid-write
+          await writeFileAtomic(historyPath, historyEntries);
+
+          // Update sequence counter to continue from where we truncated.
+          // Self-healing read path: skip malformed persisted historySequence values.
+          const maxTruncatedSeq = truncatedMessages.reduce((max, msg) => {
+            const seq = msg.metadata?.historySequence;
+            if (seq === undefined) {
+              return max;
+            }
+
+            if (!isNonNegativeInteger(seq)) {
+              log.warn(
+                "Ignoring malformed persisted historySequence while updating sequence counter after truncation",
+                {
+                  workspaceId,
+                  messageId: msg.id,
+                  historySequence: seq,
+                }
+              );
+              return max;
+            }
+
+            return seq > max ? seq : max;
+          }, -1);
+          // Sealed archive rows keep their sequences across an active-epoch
+          // truncation. When the truncation empties the active file, floor the
+          // counter with the archive max so new appends can never reuse archived
+          // sequence numbers.
+          const nextSeq = Math.max(maxTruncatedSeq, archiveMaxSeq) + 1;
+          assert(
+            isNonNegativeInteger(nextSeq),
+            "next history sequence counter after truncation must be a non-negative integer"
+          );
+          this.sequenceCounters.set(workspaceId, nextSeq);
+
+          return Ok(undefined);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to truncate history: ${message}`);
+        }
       }
-    });
+    );
   }
 
   /**
@@ -1869,11 +2225,11 @@ export class HistoryService {
         keepTargetMessage ? messageIndex + 1 : messageIndex
       );
 
-      await writeFileAtomic(
-        this.getChatHistoryPath(workspaceId),
+      await this.rewriteHistoryFilesUnlocked(
+        workspaceId,
+        null,
         this.serializeHistoryEntries(truncatedMessages, workspaceId)
       );
-      await fs.rm(this.getChatArchivePath(workspaceId), { force: true });
       // chat.jsonl may contain sealed epochs again — allow the lazy check to re-run.
       this.sealedRotationChecked.delete(workspaceId);
 
@@ -1923,138 +2279,130 @@ export class HistoryService {
     workspaceId: string,
     percentage: number
   ): Promise<Result<number[], string>> {
-    return this.fileLocks.withLock(workspaceId, async () => {
-      try {
-        const historyPath = this.getChatHistoryPath(workspaceId);
-        const archivePath = this.getChatArchivePath(workspaceId);
-
-        // Fast path: 100% truncation = delete entire history (active + sealed archive)
-        if (percentage >= 1.0) {
-          // Need sequence numbers for return value before deleting
-          const messages = [
-            ...(await this.readArchivedHistory(workspaceId)),
-            ...(await this.readChatHistory(workspaceId)),
-          ];
-          const deletedSequences = messages
+    return this.withRecoveredHistoryResultLock(
+      workspaceId,
+      "Failed to truncate history",
+      async () => {
+        try {
+          const archivedMessages = await this.readArchivedHistory(workspaceId);
+          const chatMessages = await this.readChatHistory(workspaceId);
+          const messages = [...archivedMessages, ...chatMessages];
+          const allSequences = messages
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
 
-          await fs.rm(historyPath, { force: true });
-          await fs.rm(archivePath, { force: true });
-
-          // Reset sequence counter when clearing history
-          this.sequenceCounters.set(workspaceId, 0);
-          return Ok(deletedSequences);
-        }
-
-        // Structural rewrite requires full history content (oldest rows live in
-        // the sealed archive). Percentage truncation is a rare recovery path
-        // (compaction-failure retry), so the O(total-history) read is acceptable.
-        const messages = [
-          ...(await this.readArchivedHistory(workspaceId)),
-          ...(await this.readChatHistory(workspaceId)),
-        ];
-        if (messages.length === 0) {
-          return Ok([]); // Nothing to truncate
-        }
-
-        // Get tokenizer for counting (use a default model)
-        const tokenizer = await getTokenizerForModel(KNOWN_MODELS.SONNET.id);
-
-        // Count tokens for each message
-        // We stringify the entire message for simplicity - only relative weights matter
-        const messageTokens: Array<{ message: MuxMessage; tokens: number }> = await Promise.all(
-          messages.map(async (msg) => {
-            const tokens = await tokenizer.countTokens(safeStringifyForCounting(msg));
-            return { message: msg, tokens };
-          })
-        );
-
-        // Calculate total tokens and target to remove
-        const totalTokens = messageTokens.reduce((sum, mt) => sum + mt.tokens, 0);
-        const tokensToRemove = Math.floor(totalTokens * percentage);
-
-        // Remove messages from beginning until we've removed enough tokens
-        let tokensRemoved = 0;
-        let removeCount = 0;
-        for (const mt of messageTokens) {
-          if (tokensRemoved >= tokensToRemove) {
-            break;
+          if (percentage >= 1.0) {
+            await this.rewriteHistoryFilesUnlocked(workspaceId, null, null);
+            this.sequenceCounters.set(workspaceId, 0);
+            return Ok(allSequences);
           }
-          tokensRemoved += mt.tokens;
-          removeCount++;
-        }
 
-        // No-op truncation (percentage 0 or rounding to zero tokens) must not
-        // rewrite anything — collapsing the archive back into chat.jsonl would
-        // undo rotation and put lifetime history back on the hot path.
-        if (removeCount === 0) {
-          return Ok([]);
-        }
+          // Structural rewrite requires full history content (oldest rows live in
+          // the sealed archive). Percentage truncation is a rare recovery path
+          // (compaction-failure retry), so the O(total-history) read is acceptable.
+          if (messages.length === 0) {
+            return Ok([]); // Nothing to truncate
+          }
 
-        // If we're removing all messages, use fast path
-        if (removeCount >= messages.length) {
-          await fs.rm(historyPath, { force: true });
-          await fs.rm(archivePath, { force: true });
-          this.sequenceCounters.set(workspaceId, 0);
-          const deletedSequences = messages
+          // Get tokenizer for counting (use a default model)
+          const tokenizer = await getTokenizerForModel(KNOWN_MODELS.SONNET.id);
+
+          // Count tokens for each message
+          // We stringify the entire message for simplicity - only relative weights matter
+          const messageTokens: Array<{ message: MuxMessage; tokens: number }> = await Promise.all(
+            messages.map(async (msg) => {
+              const tokens = await tokenizer.countTokens(safeStringifyForCounting(msg));
+              return { message: msg, tokens };
+            })
+          );
+
+          // Calculate total tokens and target to remove
+          const totalTokens = messageTokens.reduce((sum, mt) => sum + mt.tokens, 0);
+          const tokensToRemove = Math.floor(totalTokens * percentage);
+
+          // Remove messages from beginning until we've removed enough tokens
+          let tokensRemoved = 0;
+          let removeCount = 0;
+          for (const mt of messageTokens) {
+            if (tokensRemoved >= tokensToRemove) {
+              break;
+            }
+            tokensRemoved += mt.tokens;
+            removeCount++;
+          }
+
+          // No-op truncation (percentage 0 or rounding to zero tokens) must not
+          // rewrite anything — collapsing the archive back into chat.jsonl would
+          // undo rotation and put lifetime history back on the hot path.
+          if (removeCount === 0) {
+            return Ok([]);
+          }
+
+          // If we're removing all messages, use fast path
+          if (removeCount >= messages.length) {
+            await this.rewriteHistoryFilesUnlocked(workspaceId, null, null);
+            this.sequenceCounters.set(workspaceId, 0);
+            return Ok(allSequences);
+          }
+
+          const activeContextChanged = prefixCutChangesActiveContext(messages, removeCount);
+          const sanitize = activeContextChanged
+            ? stripContextUsage
+            : (message: MuxMessage) => message;
+          const remainingMessages = messages.slice(removeCount).map(sanitize);
+          const deletedMessages = messages.slice(0, removeCount);
+          const deletedSequences = deletedMessages
             .map((msg) => msg.metadata?.historySequence)
             .filter((s): s is number => isNonNegativeInteger(s));
+          const remainingArchiveCount = Math.max(0, archivedMessages.length - removeCount);
+          const remainingArchive = remainingMessages.slice(0, remainingArchiveCount);
+          const remainingChat = remainingMessages.slice(remainingArchiveCount);
+
+          await this.rewriteHistoryFilesUnlocked(
+            workspaceId,
+            remainingArchive.length > 0
+              ? this.serializeHistoryEntries(remainingArchive, workspaceId)
+              : null,
+            this.serializeHistoryEntries(remainingChat, workspaceId)
+          );
+          this.sealedRotationChecked.delete(workspaceId);
+
+          // Update sequence counter to continue from where we are.
+          // Self-healing read path: skip malformed persisted historySequence values.
+          const maxRemainingSeq = remainingMessages.reduce((max, msg) => {
+            const seq = msg.metadata?.historySequence;
+            if (seq === undefined) {
+              return max;
+            }
+
+            if (!isNonNegativeInteger(seq)) {
+              log.warn(
+                "Ignoring malformed persisted historySequence while updating sequence counter after truncateHistory",
+                {
+                  workspaceId,
+                  messageId: msg.id,
+                  historySequence: seq,
+                }
+              );
+              return max;
+            }
+
+            return seq > max ? seq : max;
+          }, -1);
+          const nextSeq = maxRemainingSeq + 1;
+          assert(
+            isNonNegativeInteger(nextSeq),
+            "next history sequence counter after truncateHistory must be a non-negative integer"
+          );
+          this.sequenceCounters.set(workspaceId, nextSeq);
+
           return Ok(deletedSequences);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to truncate history: ${message}`);
         }
-
-        // Keep messages after removeCount
-        const remainingMessages = messages.slice(removeCount);
-        const deletedMessages = messages.slice(0, removeCount);
-        const deletedSequences = deletedMessages
-          .map((msg) => msg.metadata?.historySequence)
-          .filter((s): s is number => isNonNegativeInteger(s));
-
-        // Collapse the remainder into chat.jsonl and drop the archive (the cut
-        // may fall anywhere inside it). It may contain old boundaries; a later
-        // boundary write re-seals it.
-        const historyEntries = this.serializeHistoryEntries(remainingMessages, workspaceId);
-
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(historyPath, historyEntries);
-        await fs.rm(archivePath, { force: true });
-        this.sealedRotationChecked.delete(workspaceId);
-
-        // Update sequence counter to continue from where we are.
-        // Self-healing read path: skip malformed persisted historySequence values.
-        const maxRemainingSeq = remainingMessages.reduce((max, msg) => {
-          const seq = msg.metadata?.historySequence;
-          if (seq === undefined) {
-            return max;
-          }
-
-          if (!isNonNegativeInteger(seq)) {
-            log.warn(
-              "Ignoring malformed persisted historySequence while updating sequence counter after truncateHistory",
-              {
-                workspaceId,
-                messageId: msg.id,
-                historySequence: seq,
-              }
-            );
-            return max;
-          }
-
-          return seq > max ? seq : max;
-        }, -1);
-        const nextSeq = maxRemainingSeq + 1;
-        assert(
-          isNonNegativeInteger(nextSeq),
-          "next history sequence counter after truncateHistory must be a non-negative integer"
-        );
-        this.sequenceCounters.set(workspaceId, nextSeq);
-
-        return Ok(deletedSequences);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to truncate history: ${message}`);
       }
-    });
+    );
   }
 
   async clearHistory(workspaceId: string): Promise<Result<number[], string>> {
@@ -2071,54 +2419,58 @@ export class HistoryService {
    * IMPORTANT: Should be called AFTER the session directory has been renamed
    */
   async migrateWorkspaceId(oldWorkspaceId: string, newWorkspaceId: string): Promise<Result<void>> {
-    return this.fileLocks.withLock(newWorkspaceId, async () => {
-      try {
-        // Migrate the sealed archive first so a crash mid-migration never leaves
-        // the active file pointing at a stale-ID archive.
-        const archiveMessages = await this.readArchivedHistory(newWorkspaceId);
-        if (archiveMessages.length > 0) {
-          await writeFileAtomic(
-            this.getChatArchivePath(newWorkspaceId),
-            this.serializeHistoryEntries(archiveMessages, newWorkspaceId)
-          );
-        }
+    return this.withRecoveredHistoryResultLock(
+      newWorkspaceId,
+      "Failed to migrate workspace history",
+      async () => {
+        try {
+          // Migrate the sealed archive first so a crash mid-migration never leaves
+          // the active file pointing at a stale-ID archive.
+          const archiveMessages = await this.readArchivedHistory(newWorkspaceId);
+          if (archiveMessages.length > 0) {
+            await writeFileAtomic(
+              this.getChatArchivePath(newWorkspaceId),
+              this.serializeHistoryEntries(archiveMessages, newWorkspaceId)
+            );
+          }
 
-        // Read messages from the NEW workspace location (directory was already renamed).
-        // Structural rewrite requires full file content.
-        const messages = await this.readChatHistory(newWorkspaceId);
-        if (messages.length === 0) {
-          // No active messages to migrate, just transfer the sequence counter.
-          // Floor it with the archive max: an archive-only session (active file
-          // deleted/truncated) renamed in a fresh process has no cached counter,
-          // and seeding 0 would reuse archived historySequence values.
+          // Read messages from the NEW workspace location (directory was already renamed).
+          // Structural rewrite requires full file content.
+          const messages = await this.readChatHistory(newWorkspaceId);
+          if (messages.length === 0) {
+            // No active messages to migrate, just transfer the sequence counter.
+            // Floor it with the archive max: an archive-only session (active file
+            // deleted/truncated) renamed in a fresh process has no cached counter,
+            // and seeding 0 would reuse archived historySequence values.
+            const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;
+            const archiveFloor = (await this.getArchiveTailMaxSequence(newWorkspaceId)) + 1;
+            this.sequenceCounters.set(newWorkspaceId, Math.max(oldCounter, archiveFloor));
+            this.sequenceCounters.delete(oldWorkspaceId);
+            return Ok(undefined);
+          }
+
+          // Rewrite all messages with new workspace ID
+          const newHistoryPath = this.getChatHistoryPath(newWorkspaceId);
+          const historyEntries = this.serializeHistoryEntries(messages, newWorkspaceId);
+
+          // Atomic write prevents corruption if app crashes mid-write
+          await writeFileAtomic(newHistoryPath, historyEntries);
+
+          // Transfer sequence counter to new workspace ID
           const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;
-          const archiveFloor = (await this.getArchiveTailMaxSequence(newWorkspaceId)) + 1;
-          this.sequenceCounters.set(newWorkspaceId, Math.max(oldCounter, archiveFloor));
+          this.sequenceCounters.set(newWorkspaceId, oldCounter);
           this.sequenceCounters.delete(oldWorkspaceId);
+
+          log.debug(
+            `Migrated ${messages.length} messages from ${oldWorkspaceId} to ${newWorkspaceId}`
+          );
+
           return Ok(undefined);
+        } catch (error) {
+          const message = getErrorMessage(error);
+          return Err(`Failed to migrate workspace ID: ${message}`);
         }
-
-        // Rewrite all messages with new workspace ID
-        const newHistoryPath = this.getChatHistoryPath(newWorkspaceId);
-        const historyEntries = this.serializeHistoryEntries(messages, newWorkspaceId);
-
-        // Atomic write prevents corruption if app crashes mid-write
-        await writeFileAtomic(newHistoryPath, historyEntries);
-
-        // Transfer sequence counter to new workspace ID
-        const oldCounter = this.sequenceCounters.get(oldWorkspaceId) ?? 0;
-        this.sequenceCounters.set(newWorkspaceId, oldCounter);
-        this.sequenceCounters.delete(oldWorkspaceId);
-
-        log.debug(
-          `Migrated ${messages.length} messages from ${oldWorkspaceId} to ${newWorkspaceId}`
-        );
-
-        return Ok(undefined);
-      } catch (error) {
-        const message = getErrorMessage(error);
-        return Err(`Failed to migrate workspace ID: ${message}`);
       }
-    });
+    );
   }
 }

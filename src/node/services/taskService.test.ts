@@ -13710,6 +13710,8 @@ describe("TaskService", () => {
       parts: childPartial.parts as StreamEndEvent["parts"],
     });
 
+    await flushTerminalAttentionDrains(taskService);
+
     const updatedChildPartial = await partialService.readPartial(childId);
     expect(updatedChildPartial).toBeNull();
 
@@ -15188,6 +15190,8 @@ describe("TaskService", () => {
       metadata: { model: "test-model", finishReason: "stop" },
       parts: childPartial.parts as StreamEndEvent["parts"],
     });
+
+    await flushTerminalAttentionDrains(taskService);
 
     const parentMessages = await collectFullHistory(historyService, parentId);
     // Original task tool call remains immutable ("running"), and a synthetic report message is appended.

@@ -2733,6 +2733,7 @@ export class AgentSession {
       // when the edit target is outside the active context window.
       const truncateTargetId = await this.getEditTruncateTargetId(editMessageId);
 
+      this.clearUsageState();
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         truncateTargetId
@@ -3416,6 +3417,11 @@ export class AgentSession {
       ...this.lastUsageState,
       liveUsage: undefined,
     };
+  }
+
+  /** Prevent cached usage from auto-compacting a rewritten context. */
+  clearUsageState(): void {
+    this.lastUsageState = undefined;
   }
 
   /**
@@ -4583,6 +4589,7 @@ export class AgentSession {
       });
     }
 
+    this.clearUsageState();
     const clearResult = this.clearHistoryForHardRestart
       ? await this.clearHistoryForHardRestart({
           monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
@@ -5196,7 +5203,7 @@ export class AgentSession {
 
           // Compaction collapses history to a boundary summary, so prior context-usage snapshots
           // are stale. Clear them to prevent immediate re-trigger loops on the follow-up turn.
-          this.lastUsageState = undefined;
+          this.clearUsageState();
 
           if (completedCompactionRequest?.source === "auto-compaction") {
             this.emitChatEvent({
@@ -6724,6 +6731,7 @@ export class AgentSession {
       pendingFollowUp: params.pendingFollowUp,
     });
     if (result.success) {
+      this.clearUsageState();
       this.onPostCompactionStateChange?.();
     }
     return result;
