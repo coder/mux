@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { SettingsBackupInput } from "@/common/orpc/schemas/backup";
-import { BackupNonFastForwardError } from "./gitRepo";
+import { BackupNonFastForwardError, backupCachePath, isBackupCacheName } from "./gitRepo";
 import { BackupRemoteUnreachableError } from "./credentials";
 import { BackupCommandApprovalRequiredError } from "./payload";
 import {
@@ -21,11 +21,35 @@ const SETTINGS: SettingsBackupInput = {
   path: "mux",
 };
 
+async function pathExists(target: string): Promise<boolean> {
+  return fs.stat(target).then(
+    () => true,
+    () => false
+  );
+}
+
 async function snapshotDirectories(cacheRoot: string): Promise<string[]> {
   const entries = await fs.readdir(cacheRoot, { withFileTypes: true });
   return entries
     .filter((entry) => entry.isDirectory() && entry.name.startsWith("restore-"))
     .map((entry) => entry.name);
+}
+
+async function cacheDirectories(cacheRoot: string): Promise<string[]> {
+  const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((entry) => entry.isDirectory() && isBackupCacheName(entry.name))
+    .map((entry) => entry.name)
+    .sort();
+}
+
+async function createCacheDirectory(
+  cacheRoot: string,
+  settings: SettingsBackupInput
+): Promise<string> {
+  const cachePath = backupCachePath(cacheRoot, settings.repoUrl, settings.branch);
+  await fs.mkdir(path.join(cachePath, ".git"), { recursive: true });
+  return cachePath;
 }
 
 function createRepository(
@@ -177,6 +201,109 @@ describe("BackupService", () => {
         "before restore"
       );
     }
+  });
+
+  test("keeps only the two most recently used inactive repository caches", async () => {
+    const cacheRoot = path.join(tempDir, "backup-cache");
+    const gitRepo = createGitRepo({
+      prepare: async (settings) =>
+        createRepository({ rootDir: await createCacheDirectory(cacheRoot, settings) }),
+    });
+    const service = createService(tempDir, { gitRepo });
+    const settings: [
+      SettingsBackupInput,
+      SettingsBackupInput,
+      SettingsBackupInput,
+      SettingsBackupInput,
+    ] = [
+      { ...SETTINGS, branch: "a" },
+      { ...SETTINGS, branch: "b" },
+      { ...SETTINGS, branch: "c" },
+      { ...SETTINGS, branch: "d" },
+    ];
+
+    for (const current of settings.slice(0, 3)) {
+      expect((await service.preview(current)).success).toBe(true);
+    }
+    for (const [index, current] of settings.slice(0, 3).entries()) {
+      const usedAt = new Date((index + 1) * 1_000);
+      await fs.utimes(backupCachePath(cacheRoot, current.repoUrl, current.branch), usedAt, usedAt);
+    }
+
+    const snapshot = path.join(cacheRoot, "restore-in-progress");
+    const tombstone = path.join(cacheRoot, "000000000000.discarded-1234-test");
+    await fs.mkdir(snapshot, { recursive: true });
+    await fs.mkdir(tombstone, { recursive: true });
+
+    expect((await service.preview(settings[3])).success).toBe(true);
+
+    const surviving = await cacheDirectories(cacheRoot);
+    expect(surviving).toEqual(
+      settings
+        .slice(1)
+        .map((current) =>
+          path.basename(backupCachePath(cacheRoot, current.repoUrl, current.branch))
+        )
+        .sort()
+    );
+    expect(
+      await pathExists(backupCachePath(cacheRoot, settings[0].repoUrl, settings[0].branch))
+    ).toBe(false);
+    expect(await pathExists(snapshot)).toBe(true);
+    expect(await pathExists(tombstone)).toBe(false);
+  });
+
+  test("never reaps a repository cache while another operation is using it", async () => {
+    const cacheRoot = path.join(tempDir, "backup-cache");
+    const settings = Object.fromEntries(
+      ["a", "b", "c", "d", "e"].map((branch) => [branch, { ...SETTINGS, branch }])
+    ) as Record<"a" | "b" | "c" | "d" | "e", SettingsBackupInput>;
+    const gitRepo = createGitRepo({
+      prepare: async (current) =>
+        createRepository({ rootDir: await createCacheDirectory(cacheRoot, current) }),
+    });
+    for (const [index, current] of [settings.b, settings.c, settings.d].entries()) {
+      const cachePath = await createCacheDirectory(cacheRoot, current);
+      const usedAt = new Date((index + 1) * 1_000);
+      await fs.utimes(cachePath, usedAt, usedAt);
+    }
+
+    let releaseActive: (() => void) | undefined;
+    const activeHeld = new Promise<void>((resolve) => {
+      releaseActive = resolve;
+    });
+    let activeEntered: (() => void) | undefined;
+    const activeInPayload = new Promise<void>((resolve) => {
+      activeEntered = resolve;
+    });
+    const activeService = createService(tempDir, {
+      gitRepo,
+      payload: createPayload({
+        previewRestore: async () => {
+          activeEntered?.();
+          await activeHeld;
+          return { changes: [], localOnlyFiles: [], commandApprovals: [] };
+        },
+      }),
+    });
+    const otherService = createService(tempDir, { gitRepo });
+
+    const active = activeService.preview(settings.a);
+    await activeInPayload;
+    const activeCache = backupCachePath(cacheRoot, settings.a.repoUrl, settings.a.branch);
+    const old = new Date(500);
+    await fs.utimes(activeCache, old, old);
+
+    try {
+      expect((await otherService.preview(settings.e)).success).toBe(true);
+      expect(await pathExists(activeCache)).toBe(true);
+      expect(
+        await pathExists(backupCachePath(cacheRoot, settings.b.repoUrl, settings.b.branch))
+      ).toBe(false);
+    } finally {
+      releaseActive?.();
+    }
+    expect((await active).success).toBe(true);
   });
 
   test("holds a push out of a Mux root a restore is still writing", async () => {

@@ -16,7 +16,13 @@ import {
   type SettingsBackup,
   type SettingsBackupInput,
 } from "@/common/config/schemas/settingsBackup";
-import { assertNotSymlink } from "./gitRepo";
+import {
+  assertNotSymlink,
+  backupCacheName,
+  discardBackupCache,
+  isBackupCacheName,
+  reapDiscardedBackupCaches,
+} from "./gitRepo";
 import { BackupCommandApprovalRequiredError } from "./payload";
 
 export interface PreparedBackupRepository {
@@ -161,6 +167,51 @@ function repoLockKey(settings: SettingsBackupInput): string {
   return `${settings.repoUrl}\0${settings.branch}`;
 }
 
+const activeCacheUses = new Map<string, number>();
+const cacheReapClaims = new Map<string, Promise<void>>();
+
+type ReleaseActiveCache = () => void;
+
+function registerActiveCache(cacheName: string): ReleaseActiveCache | Promise<ReleaseActiveCache> {
+  const pendingReap = cacheReapClaims.get(cacheName);
+  if (pendingReap !== undefined) {
+    return pendingReap.then(() => registerActiveCache(cacheName));
+  }
+
+  activeCacheUses.set(cacheName, (activeCacheUses.get(cacheName) ?? 0) + 1);
+  return () => {
+    const remaining = (activeCacheUses.get(cacheName) ?? 1) - 1;
+    if (remaining === 0) activeCacheUses.delete(cacheName);
+    else activeCacheUses.set(cacheName, remaining);
+  };
+}
+
+function isCacheActive(cacheName: string): boolean {
+  return activeCacheUses.has(cacheName);
+}
+
+async function discardInactiveCache(cachePath: string): Promise<void> {
+  const cacheName = path.basename(cachePath);
+  if (isCacheActive(cacheName)) return;
+  const existingClaim = cacheReapClaims.get(cacheName);
+  if (existingClaim !== undefined) {
+    await existingClaim;
+    return;
+  }
+
+  let releaseClaim: () => void;
+  const claim = new Promise<void>((resolve) => {
+    releaseClaim = resolve;
+  });
+  cacheReapClaims.set(cacheName, claim);
+  try {
+    await discardBackupCache(cachePath);
+  } finally {
+    cacheReapClaims.delete(cacheName);
+    releaseClaim!();
+  }
+}
+
 /** Service-level validation prevents direct callers from bypassing schema invariants. */
 function normalizeBackupSettings(settings: SettingsBackupInput): SettingsBackupInput {
   const parsed = SettingsBackupInputSchema.safeParse(settings);
@@ -174,6 +225,9 @@ function normalizeBackupSettings(settings: SettingsBackupInput): SettingsBackupI
 }
 
 export class BackupService {
+  /** Keeps quick switches among recent repository settings from forcing a fresh clone. */
+  static readonly RETAINED_INACTIVE_CACHES = 2;
+
   private readonly locks = new MutexMap<string>();
 
   /**
@@ -241,7 +295,7 @@ export class BackupService {
     >
   > {
     return this.withRepoLock(settings, async (normalized) => {
-      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      const repository = await this.prepareRepository(normalized);
       // One critical section: the reported restore plan and the exported payload must describe
       // the same local state, or the two halves of the preview disagree.
       const { restorePreview, exported } = await this.withLocalPayload(async () => ({
@@ -281,7 +335,7 @@ export class BackupService {
   > {
     const approvedSecretDigest = options.approvedSecretDigest;
     return this.withRepoLock(settings, async (normalized) => {
-      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      const repository = await this.prepareRepository(normalized);
       const exported = await this.withLocalPayload(() =>
         this.dependencies.payload.exportTo({
           repositoryRoot: repository.rootDir,
@@ -325,7 +379,7 @@ export class BackupService {
     const approvedCommandTokens =
       options.approvedCommandTokens == null ? undefined : [...options.approvedCommandTokens];
     return this.withRepoLock(settings, async (normalized) => {
-      const repository = await this.dependencies.gitRepo.prepare(normalized);
+      const repository = await this.prepareRepository(normalized);
       const remoteCommit = repository.remoteCommit;
       if (remoteCommit == null) {
         throw new BackupServiceError("INVALID_BACKUP", "The backup repository is empty");
@@ -377,6 +431,44 @@ export class BackupService {
         }
       });
     });
+  }
+
+  private async prepareRepository(
+    settings: SettingsBackupInput
+  ): Promise<PreparedBackupRepository> {
+    const repository = await this.dependencies.gitRepo.prepare(settings);
+    await this.reapInactiveCaches(repository.rootDir);
+    return repository;
+  }
+
+  private async reapInactiveCaches(repositoryRoot: string): Promise<void> {
+    const currentCache = path.resolve(repositoryRoot);
+    const currentName = path.basename(currentCache);
+    if (!isBackupCacheName(currentName)) return;
+
+    const cacheRoot = path.dirname(currentCache);
+    await assertNotSymlink(cacheRoot);
+    const now = new Date();
+    await fs.utimes(currentCache, now, now).catch(() => undefined);
+
+    const entries = await fs.readdir(cacheRoot, { withFileTypes: true }).catch(() => []);
+    const inactive: Array<{ cachePath: string; mtimeMs: number; name: string }> = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isBackupCacheName(entry.name)) continue;
+      if (entry.name === currentName || isCacheActive(entry.name)) continue;
+      const cachePath = path.join(cacheRoot, entry.name);
+      const stat = await fs.lstat(cachePath).catch(() => null);
+      if (stat?.isDirectory() === true) {
+        inactive.push({ cachePath, mtimeMs: stat.mtimeMs, name: entry.name });
+      }
+    }
+    inactive.sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
+
+    const stale = inactive.slice(BackupService.RETAINED_INACTIVE_CACHES);
+    for (const cache of stale) {
+      await discardInactiveCache(cache.cachePath).catch(() => undefined);
+    }
+    if (stale.length > 0) await reapDiscardedBackupCaches(cacheRoot);
   }
 
   private async persistSettings(
@@ -499,11 +591,16 @@ export class BackupService {
     } catch (error) {
       return Promise.resolve(Err(toOperationError(error)));
     }
+    const cacheName = backupCacheName(normalized.repoUrl, normalized.branch);
     return this.locks.withLock(repoLockKey(normalized), async () => {
+      const registration = registerActiveCache(cacheName);
+      const releaseCache = typeof registration === "function" ? registration : await registration;
       try {
         return await operation(normalized);
       } catch (error) {
         return Err(toOperationError(error));
+      } finally {
+        releaseCache();
       }
     });
   }

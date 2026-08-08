@@ -131,10 +131,10 @@ describe("BackupSection", () => {
     const repoInput = await canvas.findByLabelText("Repository URL");
     expect((repoInput as HTMLInputElement).value).toBe("git@github.com:example/dotfiles.git");
 
-    // Live updates are known to be unavailable, so the fallback read is the best
-    // freshness this mount gets and actions must not stay disabled forever.
+    // Without a listener this window cannot see another window's later change,
+    // so the fallback read renders but never enables destructive actions.
     await waitFor(() =>
-      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(false)
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true)
     );
   });
 

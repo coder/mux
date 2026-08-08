@@ -587,13 +587,86 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function backupCachePath(cacheRoot: string, repoUrl: string, branch: string): string {
-  const key = createHash("sha256").update(`${repoUrl}\n${branch}`).digest("hex").slice(0, 12);
-  return path.join(cacheRoot, key);
+const BACKUP_CACHE_KEY_HEX_LENGTH = 12;
+
+export function backupCacheName(repoUrl: string, branch: string): string {
+  return createHash("sha256")
+    .update(`${repoUrl}\n${branch}`)
+    .digest("hex")
+    .slice(0, BACKUP_CACHE_KEY_HEX_LENGTH);
 }
 
+export function backupCachePath(cacheRoot: string, repoUrl: string, branch: string): string {
+  return path.join(cacheRoot, backupCacheName(repoUrl, branch));
+}
+
+const CACHE_NAME = new RegExp(`^[0-9a-f]{${BACKUP_CACHE_KEY_HEX_LENGTH}}$`);
 const CACHE_SUFFIX_DISCARDED = ".discarded-";
-const DISCARDED_CACHE_NAME = new RegExp(`^[0-9a-f]{12}\\${CACHE_SUFFIX_DISCARDED}`);
+const DISCARDED_CACHE_NAME = new RegExp(
+  `^[0-9a-f]{${BACKUP_CACHE_KEY_HEX_LENGTH}}\\${CACHE_SUFFIX_DISCARDED}`
+);
+
+export function isBackupCacheName(name: string): boolean {
+  return CACHE_NAME.test(name);
+}
+
+/**
+ * A crash after a cache rename can leave a tombstone holding a whole repository. Reaping is best
+ * effort, so one that cannot be deleted keeps its disk rather than failing every later backup.
+ */
+export async function reapDiscardedBackupCaches(cacheRoot: string): Promise<void> {
+  const entries = await fs.readdir(cacheRoot).catch(() => []);
+  for (const entry of entries) {
+    if (!DISCARDED_CACHE_NAME.test(entry)) continue;
+    // `fs.rm` unlinks a symlink rather than following it, so a planted tombstone link cannot
+    // reach the directory it names.
+    await fs
+      .rm(path.join(cacheRoot, entry), {
+        recursive: true,
+        force: true,
+      })
+      .catch(() => undefined);
+  }
+}
+
+/**
+ * The last check before deletion requires a real directory holding local `.git` metadata.
+ * It proves the shape at this path, not that it is the same clone previously validated.
+ */
+async function assertDiscardableBackupCache(cachePath: string): Promise<void> {
+  await assertNotSymlink(cachePath);
+  const stat = await fs.lstat(cachePath).catch(() => null);
+  if (stat === null) return;
+  if (!stat.isDirectory()) {
+    throw new BackupCacheSafetyError(`Refusing to discard '${cachePath}': it is not a directory`);
+  }
+  await assertOwnGitDirectory(cachePath);
+  if (!(await exists(path.join(cachePath, ".git")))) {
+    throw new BackupCacheSafetyError(
+      `Refusing to discard '${cachePath}': it holds no git repository`
+    );
+  }
+}
+
+async function renameAndDeleteBackupCache(cachePath: string): Promise<void> {
+  const tombstone = `${cachePath}${CACHE_SUFFIX_DISCARDED}${process.pid}-${randomUUID()}`;
+  try {
+    await fs.rename(cachePath, tombstone);
+  } catch (error) {
+    if (isErrnoWithCode(error, "ENOENT")) return;
+    throw error;
+  }
+  await fs.rm(tombstone, { recursive: true, force: true });
+}
+
+/**
+ * Renaming first keeps an interrupted recursive delete from leaving a cache path populated but
+ * without its `.git`, a shape indistinguishable from content this feature must never delete.
+ */
+export async function discardBackupCache(cachePath: string): Promise<void> {
+  await assertDiscardableBackupCache(cachePath);
+  await renameAndDeleteBackupCache(cachePath);
+}
 
 export class BackupRepoCache {
   readonly cachePath: string;
@@ -761,68 +834,13 @@ export class BackupRepoCache {
     await this.initEmptyCache(objectFormat);
   }
 
-  /**
-   * A crash after `discardCache` renames a cache leaves a tombstone holding a whole repository.
-   * Reaping is best effort, so one that cannot be deleted keeps its disk rather than failing
-   * every later backup.
-   */
-  private async reapDiscardedCaches(): Promise<void> {
-    const entries = await fs.readdir(this.options.cacheRoot).catch(() => []);
-    for (const entry of entries) {
-      if (!DISCARDED_CACHE_NAME.test(entry)) continue;
-      // `fs.rm` unlinks a symlink rather than following it, so a planted tombstone link cannot
-      // reach the directory it names.
-      await fs
-        .rm(path.join(this.options.cacheRoot, entry), {
-          recursive: true,
-          force: true,
-        })
-        .catch(() => undefined);
-    }
-  }
-
-  /**
-   * The last check before anything is deleted. Only a directory holding its own `.git` is
-   * discardable, so a directory of user files put here instead is never removed. This proves the
-   * shape of what is at the path, not that it is the same clone `ensureCache` validated.
-   */
-  private async assertDiscardableCache(): Promise<void> {
-    await assertNotSymlink(this.cachePath);
-    const stat = await fs.lstat(this.cachePath).catch(() => null);
-    if (stat === null) return;
-    if (!stat.isDirectory()) {
-      throw new BackupCacheSafetyError(
-        `Refusing to discard '${this.cachePath}': it is not a directory`
-      );
-    }
-    await assertOwnGitDirectory(this.cachePath);
-    if (!(await exists(path.join(this.cachePath, ".git")))) {
-      throw new BackupCacheSafetyError(
-        `Refusing to discard '${this.cachePath}': it holds no git repository`
-      );
-    }
-  }
-
-  /**
-   * Renames before deleting, because a recursive delete is not atomic: a kill partway through
-   * would leave the cache directory populated but without a `.git`, which is indistinguishable
-   * from content this cache must never delete. The rename is a single operation inside one
-   * directory, so an interrupted discard leaves either the whole cache or nothing at its path.
-   */
   private async discardCache(): Promise<void> {
-    // Rechecked here rather than trusted from the caller: a discard can follow a whole remote
-    // round-trip, and this deletes whatever is at the path by then, not what was validated.
-    await this.assertDiscardableCache();
-    const tombstone = `${this.cachePath}${CACHE_SUFFIX_DISCARDED}${process.pid}-${randomUUID()}`;
+    await assertDiscardableBackupCache(this.cachePath);
     try {
-      await fs.rename(this.cachePath, tombstone);
-    } catch (error) {
-      if (isErrnoWithCode(error, "ENOENT")) return;
-      throw error;
+      await renameAndDeleteBackupCache(this.cachePath);
     } finally {
       this.baseRemoteCommit = undefined;
     }
-    await fs.rm(tombstone, { recursive: true, force: true });
   }
 
   async ensureCache(): Promise<void> {
@@ -833,7 +851,7 @@ export class BackupRepoCache {
     // that assume nobody else can traverse this far. Owner-only at the top is the boundary
     // that keeps every file below private, including caches made before this rule.
     await fs.chmod(this.options.cacheRoot, 0o700);
-    await this.reapDiscardedCaches();
+    await reapDiscardedBackupCaches(this.options.cacheRoot);
     await assertNotSymlink(this.cachePath);
     const gitDir = path.join(this.cachePath, ".git");
     // Before any branch below, because each one writes: a `.git` that resolves to another

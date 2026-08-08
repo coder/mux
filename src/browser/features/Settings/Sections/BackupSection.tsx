@@ -221,11 +221,12 @@ export function BackupSection() {
         iterator = subscribed;
         nextEvent = subscribed.next();
       } catch {
-        // No live updates will ever arrive, so a fresh read is the best this mount
-        // can do; without it every action would stay disabled.
+        // No listener exists, so another window's later change would go unseen.
+        // Show the latest readable settings but never grant freshness: destructive
+        // actions must not trust a snapshot this window cannot keep current.
         await initialRefresh;
         if (signal.aborted) return;
-        await refresh();
+        await refresh({ markFresh: false });
         return;
       }
 
