@@ -165,6 +165,40 @@ describe("BackupSection", () => {
     );
   });
 
+  test("disables destructive actions once the config stream dies", async () => {
+    let failStream!: (error: Error) => void;
+    const { view } = renderBackupSection({}, (client) => {
+      const real = client.config.onConfigChanged.bind(client.config);
+      jest.spyOn(client.config, "onConfigChanged").mockImplementation(async (input, options) => {
+        const iterator = await real(input, options);
+        const failure = new Promise<never>((_, reject) => {
+          failStream = reject;
+        });
+        return {
+          next: () => Promise.race([failure, iterator.next()]),
+          return: iterator.return?.bind(iterator),
+        } as typeof iterator;
+      });
+    });
+    const canvas = within(view.container);
+
+    await canvas.findByLabelText("Repository URL");
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(false)
+    );
+
+    await act(async () => {
+      failStream(new Error("stream torn down"));
+      await Promise.resolve();
+    });
+
+    // Settings stay visible, but a dead stream cannot report another window's
+    // changes, so destructive actions must stop trusting the loaded tuple.
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true)
+    );
+  });
+
   test("re-reads config after a save instead of trusting the save response", async () => {
     // The subscription never arms and getSettings always reports another window's
     // tuple, so the only way this window can see it after a save is the post-save

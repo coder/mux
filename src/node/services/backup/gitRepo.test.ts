@@ -184,7 +184,7 @@ describe("BackupRepoCache", () => {
     expect(await runGit(["-C", repo.cachePath, "rev-list", "--count", "origin/main"])).toBe("1");
   });
 
-  it("refuses a clone whose object store exceeds the cache budget", async () => {
+  it("discards a clone whose object store exceeds the cache budget", async () => {
     const seed = path.join(tempDir, "large-tree-seed");
     await runGit(["clone", originPath, seed]);
     await fs.mkdir(path.join(seed, "mux"), { recursive: true });
@@ -198,9 +198,10 @@ describe("BackupRepoCache", () => {
 
     expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
     expect((caught as Error).message).toContain("object data");
+    expect(await pathExists(repo.cachePath)).toBe(false);
   });
 
-  it("does not rebuild the cache when a fetch exceeds the object-store budget", async () => {
+  it("discards an oversized fetched cache before the next materialization", async () => {
     const seed = await seedManagedFiles({ "AGENTS.md": "managed\n" });
     const repo = createRepoWithObjectBudget(1);
     await repo.ensureCache();
@@ -214,7 +215,10 @@ describe("BackupRepoCache", () => {
 
     expect(caught).toBeInstanceOf(BackupInvalidPayloadError);
     expect((caught as Error).message).toContain("object data");
-    expect(await fs.readFile(marker, "utf-8")).toBe("original\n");
+    expect(await pathExists(repo.cachePath)).toBe(false);
+
+    expect(await createRepo().materialize()).not.toBeNull();
+    expect(await pathExists(marker)).toBe(false);
   });
 
   it("pushes after shallow materialization and a later depth-one fetch", async () => {

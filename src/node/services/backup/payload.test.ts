@@ -13,6 +13,9 @@ import {
   MAX_BACKUP_DIRECTORY_COUNT,
   MAX_BACKUP_FILE_BYTES,
   MAX_BACKUP_FILE_COUNT,
+  MAX_BACKUP_MCP_REDACTIONS,
+  MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS,
+  MAX_BACKUP_MCP_REDACTION_SEGMENTS,
   MAX_BACKUP_PATH_DEPTH,
   MAX_BACKUP_TOTAL_BYTES,
   REDACTED_BACKUP_VALUE,
@@ -267,6 +270,28 @@ describe("backup payload", () => {
     expect(payload.redactions).toEqual(["servers.api.headers.Authorization"]);
   });
 
+  it("does not create manifests above the MCP redaction limit", async () => {
+    const redactedValues = Object.fromEntries(
+      Array.from({ length: MAX_BACKUP_MCP_REDACTIONS + 1 }, (_, index) => [
+        `secret-${index}`,
+        "local",
+      ])
+    );
+    await writeFixtureFile(muxRoot, "mcp.jsonc", JSON.stringify(redactedValues));
+
+    const rejected = await captureRejection(
+      createBackupPayload({
+        muxRoot,
+        muxVersion: "1.2.3",
+        sourceLabel: "test-host",
+        reportSecrets: true,
+      })
+    );
+    expect((rejected as Error).message).toBe(
+      `Backup has more than ${MAX_BACKUP_MCP_REDACTIONS} MCP redactions`
+    );
+  });
+
   it("never exports through a symlink, a nested .git, or an open provider record", async () => {
     await writeFixtureFile(tempDir, "outside-secret.txt", "company secret\n");
     await fs.symlink(path.join(tempDir, "outside-secret.txt"), path.join(muxRoot, "AGENTS.md"));
@@ -466,6 +491,128 @@ describe("backup payload", () => {
     const boundary = await captureRejection(readBackupPayload(destination));
     expect((boundary as Error).message).toContain("Backup is missing");
     expect((boundary as Error).message).not.toContain("more than");
+  });
+
+  it("rejects too many MCP redactions before serializing paths", async () => {
+    const destination = path.join(tempDir, "too-many-mcp-redactions");
+    await fs.mkdir(destination);
+    const manifest = {
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      exportedAt: "2026-08-07T00:00:00.000Z",
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      mcpRedactions: Array.from({ length: MAX_BACKUP_MCP_REDACTIONS + 1 }, (_, index) => [index]),
+      files: [],
+    };
+    const manifestPath = path.join(destination, "manifest.json");
+    await fs.writeFile(manifestPath, JSON.stringify(manifest), "utf-8");
+
+    const stringify = spyOn(JSON, "stringify");
+    try {
+      const rejected = await captureRejection(readBackupPayload(destination));
+      expect((rejected as { code?: string }).code).toBe("INVALID_BACKUP");
+      expect((rejected as Error).message).toBe(
+        `Backup has more than ${MAX_BACKUP_MCP_REDACTIONS} MCP redactions`
+      );
+      expect(stringify.mock.calls).toHaveLength(0);
+    } finally {
+      stringify.mockRestore();
+    }
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...manifest,
+        mcpRedactions: manifest.mcpRedactions.slice(0, MAX_BACKUP_MCP_REDACTIONS),
+      }),
+      "utf-8"
+    );
+    const boundary = await captureRejection(readBackupPayload(destination));
+    expect((boundary as Error).message).toBe(
+      "Backup manifest lists MCP redactions without mcp.jsonc"
+    );
+  });
+
+  it("bounds individual and cumulative MCP redaction path segments", async () => {
+    const destination = path.join(tempDir, "too-many-mcp-redaction-segments");
+    await fs.mkdir(destination);
+    const manifestPath = path.join(destination, "manifest.json");
+    const manifest = {
+      schemaVersion: BACKUP_SCHEMA_VERSION,
+      exportedAt: "2026-08-07T00:00:00.000Z",
+      muxVersion: "1.2.3",
+      sourceLabel: "test-host",
+      files: [],
+    };
+    const boundaryPaths = Array.from({ length: MAX_BACKUP_MCP_REDACTIONS }, (_, index) => [
+      index,
+      "servers",
+      "entry",
+      "headers",
+      "authorization",
+      "secret",
+      "value",
+      "leaf",
+    ]);
+    const overCumulativeLimit = boundaryPaths.map((redactionPath, index) =>
+      index === 0 ? [...redactionPath, "overflow"] : redactionPath
+    );
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, mcpRedactions: overCumulativeLimit }),
+      "utf-8"
+    );
+
+    const stringify = spyOn(JSON, "stringify");
+    try {
+      const cumulative = await captureRejection(readBackupPayload(destination));
+      expect((cumulative as Error).message).toBe(
+        `Backup MCP redaction paths have more than ${MAX_BACKUP_MCP_REDACTION_SEGMENTS} total segments`
+      );
+      expect(stringify.mock.calls).toHaveLength(0);
+    } finally {
+      stringify.mockRestore();
+    }
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...manifest,
+        mcpRedactions: [
+          Array.from({ length: MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS + 1 }, (_, index) => index),
+        ],
+      }),
+      "utf-8"
+    );
+    const individual = await captureRejection(readBackupPayload(destination));
+    expect((individual as Error).message).toBe(
+      `Backup MCP redaction path has more than ${MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS} segments`
+    );
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({
+        ...manifest,
+        mcpRedactions: [
+          Array.from({ length: MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS }, (_, index) => index),
+        ],
+      }),
+      "utf-8"
+    );
+    const individualBoundary = await captureRejection(readBackupPayload(destination));
+    expect((individualBoundary as Error).message).toBe(
+      "Backup manifest lists MCP redactions without mcp.jsonc"
+    );
+
+    await fs.writeFile(
+      manifestPath,
+      JSON.stringify({ ...manifest, mcpRedactions: boundaryPaths }),
+      "utf-8"
+    );
+    const boundary = await captureRejection(readBackupPayload(destination));
+    expect((boundary as Error).message).toBe(
+      "Backup manifest lists MCP redactions without mcp.jsonc"
+    );
   });
 
   it("rejects a manifest path above the depth limit before reading the entry", async () => {

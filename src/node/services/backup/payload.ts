@@ -27,6 +27,10 @@ const BACKUP_MANIFEST_FILE = "manifest.json";
 export const MAX_BACKUP_FILE_BYTES = 8 * 1024 * 1024;
 export const MAX_BACKUP_TOTAL_BYTES = 64 * 1024 * 1024;
 export const MAX_BACKUP_FILE_COUNT = 4096;
+/** The manifest byte cap bounds parsing; these limits bound derived MCP redaction work. */
+export const MAX_BACKUP_MCP_REDACTIONS = 256;
+export const MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS = 64;
+export const MAX_BACKUP_MCP_REDACTION_SEGMENTS = 2048;
 /** Bounds traversal work and the directory tree Preview or Restore may inspect or create. */
 export const MAX_BACKUP_PATH_DEPTH = 24;
 export const MAX_BACKUP_DIRECTORY_COUNT = 4096;
@@ -1109,11 +1113,13 @@ function redactMcpConfig(content: Buffer): {
 
   function finish(): { content: Buffer; redactionPaths: BackupRedactionPath[] } {
     const projected = serializeProjectedMcp(applyJsoncEdits(text, edits));
+    const retainedRedactionPaths = redactionPaths.filter((jsonPath) =>
+      valueHasRedactionAtPath(projected.parsed, jsonPath)
+    );
+    assertBackupMcpRedactions(retainedRedactionPaths);
     return {
       content: projected.content,
-      redactionPaths: redactionPaths.filter((jsonPath) =>
-        valueHasRedactionAtPath(projected.parsed, jsonPath)
-      ),
+      redactionPaths: retainedRedactionPaths,
     };
   }
 
@@ -1515,16 +1521,49 @@ export async function writeBackupPayload(
   });
 }
 
-function isBackupRedactionPath(value: unknown): value is BackupRedactionPath {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.every(
-      (segment) =>
-        typeof segment === "string" ||
-        (typeof segment === "number" && Number.isInteger(segment) && segment >= 0)
-    )
-  );
+function assertBackupMcpRedactionCount(redactionCount: number): void {
+  if (redactionCount > MAX_BACKUP_MCP_REDACTIONS) {
+    throw new Error(`Backup has more than ${MAX_BACKUP_MCP_REDACTIONS} MCP redactions`);
+  }
+}
+
+function assertBackupMcpRedactionSegments(
+  pathSegmentCount: number,
+  totalSegmentCount: number
+): void {
+  if (pathSegmentCount > MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS) {
+    throw new Error(
+      `Backup MCP redaction path has more than ${MAX_BACKUP_MCP_REDACTION_PATH_SEGMENTS} segments`
+    );
+  }
+  if (totalSegmentCount > MAX_BACKUP_MCP_REDACTION_SEGMENTS) {
+    throw new Error(
+      `Backup MCP redaction paths have more than ${MAX_BACKUP_MCP_REDACTION_SEGMENTS} total segments`
+    );
+  }
+}
+
+function assertBackupMcpRedactions(
+  redactions: unknown[]
+): asserts redactions is BackupRedactionPath[] {
+  assertBackupMcpRedactionCount(redactions.length);
+  let segmentCount = 0;
+  for (const jsonPath of redactions) {
+    if (!Array.isArray(jsonPath) || jsonPath.length === 0) {
+      throw new Error("Invalid backup manifest");
+    }
+    segmentCount += jsonPath.length;
+    assertBackupMcpRedactionSegments(jsonPath.length, segmentCount);
+    if (
+      !jsonPath.every(
+        (segment) =>
+          typeof segment === "string" ||
+          (typeof segment === "number" && Number.isInteger(segment) && segment >= 0)
+      )
+    ) {
+      throw new Error("Invalid backup manifest");
+    }
+  }
 }
 
 function parseManifest(raw: string, portable: boolean): BackupManifest {
@@ -1538,18 +1577,20 @@ function parseManifest(raw: string, portable: boolean): BackupManifest {
     manifest.schemaVersion !== BACKUP_SCHEMA_VERSION ||
     typeof manifest.exportedAt !== "string" ||
     typeof manifest.muxVersion !== "string" ||
-    typeof manifest.sourceLabel !== "string" ||
-    (manifest.mcpRedactions !== undefined &&
-      (!Array.isArray(manifest.mcpRedactions) ||
-        !manifest.mcpRedactions.every(isBackupRedactionPath))) ||
-    !Array.isArray(manifest.files)
+    typeof manifest.sourceLabel !== "string"
   ) {
     throw new Error("Invalid backup manifest");
   }
+  const mcpRedactions: unknown = manifest.mcpRedactions;
+  if (mcpRedactions !== undefined) {
+    if (!Array.isArray(mcpRedactions)) throw new Error("Invalid backup manifest");
+    assertBackupMcpRedactions(mcpRedactions);
+  }
+  if (!Array.isArray(manifest.files)) throw new Error("Invalid backup manifest");
   assertBackupFileCount(manifest.files.length);
-  if (manifest.mcpRedactions !== undefined) {
+  if (mcpRedactions !== undefined) {
     const paths = new Set<string>();
-    for (const jsonPath of manifest.mcpRedactions) {
+    for (const jsonPath of mcpRedactions) {
       const key = redactionPathKey(jsonPath);
       if (paths.has(key)) throw new Error("Invalid backup manifest: duplicate MCP redaction path");
       paths.add(key);

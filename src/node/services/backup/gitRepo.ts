@@ -673,9 +673,11 @@ export class BackupRepoCache {
   private async assertObjectStoreWithinBudget(): Promise<void> {
     const objectKib = parseObjectStoreKib((await this.localGit(["count-objects", "-v"])).stdout);
     if (objectKib > this.maxCacheObjectKib) {
-      throw new BackupInvalidPayloadError(
+      const error = new BackupInvalidPayloadError(
         new Error(`Backup cache object data exceeds the ${this.maxCacheObjectKib} KiB limit`)
       );
+      await this.discardCache();
+      throw error;
     }
   }
 

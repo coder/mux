@@ -238,8 +238,11 @@ export function BackupSection() {
           nextEvent = subscribed.next();
           await refresh();
         }
+        if (!signal.aborted) setSettingsFresh(false);
       } catch {
-        // Keep the last loaded settings when live updates fail.
+        // A dead stream can no longer report another window's changes, so the loaded
+        // settings stay visible but are no longer fresh enough for destructive actions.
+        if (!signal.aborted) setSettingsFresh(false);
       }
     })();
 
