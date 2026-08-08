@@ -92,6 +92,11 @@ export const CommandIds = {
   settingsOpen: () => "settings:open" as const,
   settingsOpenSection: (section: string) => `settings:open:${section}` as const,
 
+  // Agent Plugin commands (agent-plugins experiment)
+  pluginsInstall: () => "plugins:install" as const,
+  pluginsCheckUpdates: () => "plugins:check-updates" as const,
+  pluginsUpdateAll: () => "plugins:update-all" as const,
+
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,
 } as const;

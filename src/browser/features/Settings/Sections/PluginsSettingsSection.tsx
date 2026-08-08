@@ -20,6 +20,7 @@ import type {
   AgentPluginUpdateCheck,
 } from "@/common/orpc/schemas/agentPlugins";
 import { getErrorMessage } from "@/common/utils/errors";
+import { consumeAddPluginPanelRequest } from "./pluginsSectionIntents";
 
 /**
  * Settings → Plugins (agent-plugins experiment; global scope only).
@@ -332,7 +333,9 @@ export const PluginsSettingsSection: React.FC = () => {
     () => new Map()
   );
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [addOpen, setAddOpen] = useState(false);
+  // The palette's "Install Agent Plugin…" opens this section with the add
+  // panel already expanded (keyboard rule: operations need a keyboard path).
+  const [addOpen, setAddOpen] = useState(() => consumeAddPluginPanelRequest());
   const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
   /** Name of the plugin with an update/uninstall in flight. */
   const [busyPlugin, setBusyPlugin] = useState<string | null>(null);

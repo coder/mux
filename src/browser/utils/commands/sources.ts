@@ -25,6 +25,7 @@ import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
+import { requestAddPluginPanel } from "@/browser/features/Settings/Sections/pluginsSectionIntents";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
   getOrderedBaseTabIds,
@@ -1579,6 +1580,89 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
               section: section.settings,
               keywords: ["plugin", "install", "agent", "skill", "mcp", "update"],
               run: () => openSettings("plugins"),
+            },
+            {
+              id: CommandIds.pluginsInstall(),
+              title: "Install Agent Plugin…",
+              subtitle: "Paste a git URL or owner/repo",
+              section: section.settings,
+              keywords: ["plugin", "install", "add", "git", "clone"],
+              run: () => {
+                // Open the section with the add-plugin form already expanded.
+                requestAddPluginPanel();
+                openSettings("plugins");
+              },
+            },
+            {
+              id: CommandIds.pluginsCheckUpdates(),
+              title: "Check for Plugin Updates",
+              section: section.settings,
+              keywords: ["plugin", "update", "check", "outdated"],
+              run: async () => {
+                const result = await p.api?.agentPlugins.checkUpdates();
+                if (!result) return;
+                if (!result.success) {
+                  showCommandFeedbackToast({ type: "error", message: result.error });
+                  return;
+                }
+                const updatable = result.data.filter(
+                  (check) => check.status === "update-available" || check.status === "tag-moved"
+                );
+                showCommandFeedbackToast({
+                  type: "success",
+                  message:
+                    updatable.length === 0
+                      ? "All plugins are up to date."
+                      : `Updates available: ${updatable.map((check) => check.name).join(", ")}`,
+                });
+                if (updatable.length > 0) {
+                  openSettings("plugins");
+                }
+              },
+            },
+            {
+              id: CommandIds.pluginsUpdateAll(),
+              title: "Update All Plugins",
+              subtitle: "Apply pending plugin updates",
+              section: section.settings,
+              keywords: ["plugin", "update", "upgrade", "all"],
+              run: async () => {
+                const api = p.api;
+                if (!api) return;
+                const checks = await api.agentPlugins.checkUpdates();
+                if (!checks.success) {
+                  showCommandFeedbackToast({ type: "error", message: checks.error });
+                  return;
+                }
+                // Moved tags are excluded: tags are supposed to be immutable, so
+                // a moved tag warrants the section's per-plugin warning, not a
+                // bulk apply.
+                const updatable = checks.data.filter(
+                  (check) => check.status === "update-available"
+                );
+                if (updatable.length === 0) {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: "All plugins are up to date.",
+                  });
+                  return;
+                }
+                const failures: string[] = [];
+                for (const check of updatable) {
+                  const result = await api.agentPlugins.update({ name: check.name });
+                  if (!result.success) {
+                    failures.push(`${check.name}: ${result.error}`);
+                  }
+                }
+                if (failures.length > 0) {
+                  showCommandFeedbackToast({ type: "error", message: failures.join("; ") });
+                } else {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: `Updated ${updatable.map((check) => check.name).join(", ")}`,
+                  });
+                }
+              },
             },
           ]
         : []),

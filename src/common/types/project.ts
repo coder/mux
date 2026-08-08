@@ -6,7 +6,6 @@
 import type { CoderWorkspaceArchiveBehavior } from "@/common/config/coderArchiveBehavior";
 import type { WorktreeArchiveBehavior } from "@/common/config/worktreeArchiveBehavior";
 import type {
-  AgentPluginInstallEntry,
   AppConfigMigrations,
   ModelFallbacks,
   UpdateChannel,
@@ -204,10 +203,4 @@ export interface ProjectsConfig {
 
   /** Optional 1Password account name used for desktop SDK account selection. */
   onePasswordAccountName?: string;
-
-  /**
-   * Managed Agent Plugin installs (agent-plugins experiment).
-   * See src/common/config/schemas/agentPluginInstalls.ts for semantics.
-   */
-  plugins?: AgentPluginInstallEntry[];
 }

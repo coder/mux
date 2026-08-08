@@ -2,10 +2,14 @@ import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
-import type {
-  AgentPluginGitSource,
-  AgentPluginInstallEntry,
+import writeFileAtomic from "write-file-atomic";
+
+import {
+  AgentPluginRegistryFileSchema,
+  type AgentPluginGitSource,
+  type AgentPluginInstallEntry,
 } from "@/common/config/schemas/agentPluginInstalls";
+import { isValidAgentPluginName } from "@/common/utils/agentPluginName";
 import type {
   AgentPluginInstallPreview,
   AgentPluginListItem,
@@ -44,7 +48,13 @@ import { isFullCommitSha, parseAgentPluginSourceInput } from "./sourceInput";
  * validate the STAGED clone with the same manifest/component discovery used
  * at runtime → return a consent preview → on confirm, re-clone the exact SHA,
  * promote into ~/.mux/plugins/<name>, and record a registry entry
- * ({source, ref, lockedSha}) in ~/.mux/config.json.
+ * ({source, ref, lockedSha}) in ~/.mux/plugins.json.
+ *
+ * The registry is a standalone file (NOT a config.json section): older builds
+ * rebuild config.json from known fields on save, so a downgrade would drop an
+ * embedded registry — and owning the file lets writes THROW on failure so
+ * install/update/uninstall can roll back instead of silently succeeding with
+ * an unpersisted registry.
  *
  * Invariants:
  * - The installer NEVER writes into a project checkout (v1 is global-only).
@@ -59,6 +69,9 @@ import { isFullCommitSha, parseAgentPluginSourceInput } from "./sourceInput";
  * - Failure paths must leave no partial state: staging dirs are cleaned up,
  *   and promote + registry-write failures roll back.
  */
+
+/** Registry file name under the mux home dir. */
+const REGISTRY_FILE_NAME = "plugins.json";
 
 /** Preview/staging clones live here — NOT under ~/.mux/plugins, which discovery scans. */
 const STAGING_DIR_NAME = "plugin-staging";
@@ -129,6 +142,7 @@ function manifestSummary(manifest: AgentPluginManifest): AgentPluginManifestSumm
 export class AgentPluginInstallService {
   private readonly containerDir: string;
   private readonly stagingRoot: string;
+  private readonly registryFile: string;
   /** Serializes mutations (install/update/uninstall) so directory swaps and registry writes cannot interleave. */
   private mutationQueue: Promise<unknown> = Promise.resolve();
 
@@ -145,6 +159,77 @@ export class AgentPluginInstallService {
     assert(path.isAbsolute(config.rootDir), "AgentPluginInstallService: rootDir must be absolute");
     this.containerDir = path.join(config.rootDir, "plugins");
     this.stagingRoot = path.join(config.rootDir, STAGING_DIR_NAME);
+    this.registryFile = path.join(config.rootDir, REGISTRY_FILE_NAME);
+  }
+
+  // ---------------------------------------------------------------------
+  // Registry persistence (~/.mux/plugins.json)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Lenient-on-read: a missing/corrupt file or invalid entries degrade to
+   * "unmanaged dirs" rather than an error (discovery stays the source of
+   * truth for what loads; the registry only annotates). Name validation in
+   * the schema doubles as a filesystem-safety gate — a traversal name like
+   * `..` must never reach targetPathFor.
+   */
+  private async readRegistry(): Promise<AgentPluginInstallEntry[]> {
+    let raw: string;
+    try {
+      raw = await fsPromises.readFile(this.registryFile, "utf8");
+    } catch {
+      return [];
+    }
+
+    let parsedJson: unknown;
+    try {
+      parsedJson = JSON.parse(raw);
+    } catch (error) {
+      log.warn("Ignoring unparseable plugin registry file", {
+        file: this.registryFile,
+        error: getErrorMessage(error),
+      });
+      return [];
+    }
+
+    const wrapper = AgentPluginRegistryFileSchema.safeParse(parsedJson);
+    if (wrapper.success) {
+      return wrapper.data.plugins;
+    }
+
+    // Salvage valid entries individually so one bad entry cannot hide the rest.
+    const rawEntries =
+      typeof parsedJson === "object" &&
+      parsedJson !== null &&
+      Array.isArray((parsedJson as { plugins?: unknown }).plugins)
+        ? (parsedJson as { plugins: unknown[] }).plugins
+        : [];
+    const entries: AgentPluginInstallEntry[] = [];
+    for (const rawEntry of rawEntries) {
+      const parsed = AgentPluginRegistryFileSchema.shape.plugins.element.safeParse(rawEntry);
+      if (parsed.success) {
+        entries.push(parsed.data);
+      } else {
+        log.warn("Dropping invalid managed plugin registry entry", {
+          entry: rawEntry,
+          error: parsed.error.message,
+        });
+      }
+    }
+    return entries;
+  }
+
+  /**
+   * Atomic write that THROWS on failure (unlike Config.saveConfig's
+   * log-and-swallow) so callers can roll back filesystem changes instead of
+   * reporting success with an unpersisted registry.
+   */
+  private async writeRegistry(entries: AgentPluginInstallEntry[]): Promise<void> {
+    await writeFileAtomic(
+      this.registryFile,
+      JSON.stringify({ plugins: entries }, null, 2),
+      "utf-8"
+    );
   }
 
   private assertEnabled(): void {
@@ -159,10 +244,20 @@ export class AgentPluginInstallService {
     return run;
   }
 
-  /** Lexical install location — the identity `computePluginInstanceId` hashes for global plugins. */
+  /**
+   * Lexical install location — the identity `computePluginInstanceId` hashes
+   * for global plugins. The name grammar excludes `.`/`..`/separators, so a
+   * malformed registry entry can never resolve outside the container (this
+   * path is deleted recursively on uninstall).
+   */
   private targetPathFor(name: string): string {
-    assert(name.length > 0 && !name.includes("/") && !name.includes("\\"), "invalid plugin name");
-    return path.join(this.containerDir, name);
+    assert(isValidAgentPluginName(name), `invalid plugin name: ${JSON.stringify(name)}`);
+    const target = path.join(this.containerDir, name);
+    assert(
+      path.dirname(target) === this.containerDir,
+      "targetPathFor: resolved path must be an immediate child of the container"
+    );
+    return target;
   }
 
   private instanceIdFor(name: string): string {
@@ -325,6 +420,10 @@ export class AgentPluginInstallService {
         if (source.refType === "commit") {
           throw new Error(`Could not fetch commit ${sha} from ${source.url}.`);
         }
+        // fetchExactSha left an initialized repo behind; git clone refuses a
+        // non-empty destination, so reset the staging dir before falling back.
+        await this.removeDir(dir);
+        await fsPromises.mkdir(dir, { recursive: true });
         await runGit([
           "clone",
           "--depth",
@@ -571,7 +670,7 @@ export class AgentPluginInstallService {
   }
 
   private async assertNoCollision(name: string): Promise<void> {
-    const registry = this.config.loadConfigOrDefault().plugins ?? [];
+    const registry = await this.readRegistry();
     if (registry.some((entry) => entry.name === name)) {
       throw new Error(`A managed plugin named '${name}' is already installed. Uninstall it first.`);
     }
@@ -624,15 +723,13 @@ export class AgentPluginInstallService {
           },
         };
         try {
-          await this.config.editConfig((cfg) => {
-            cfg.plugins = [...(cfg.plugins ?? []).filter((e) => e.name !== name), entry];
-            return cfg;
-          });
+          const registry = await this.readRegistry();
+          await this.writeRegistry([...registry.filter((e) => e.name !== name), entry]);
         } catch (error) {
           // No partial state: a promote without a registry entry would look
           // like an unmanaged dir and block reinstall.
           await this.removeDir(targetPath);
-          throw error;
+          throw new Error(`Failed to persist the plugin registry: ${getErrorMessage(error)}`);
         }
         log.info(`Installed agent plugin '${name}' at ${args.expectedSha.slice(0, 12)}`);
         return entry;
@@ -646,7 +743,7 @@ export class AgentPluginInstallService {
   async list(): Promise<AgentPluginListItem[]> {
     this.assertEnabled();
 
-    const registry = this.config.loadConfigOrDefault().plugins ?? [];
+    const registry = await this.readRegistry();
     const containers: AgentPluginContainer[] = [
       { path: this.containerDir, scope: "global" },
       { path: path.join(os.homedir(), ".agents", "plugins"), scope: "global" },
@@ -734,7 +831,7 @@ export class AgentPluginInstallService {
     this.assertEnabled();
 
     return this.runExclusive(async () => {
-      const registry = this.config.loadConfigOrDefault().plugins ?? [];
+      const registry = await this.readRegistry();
       const entry = registry.find((e) => e.name === args.name);
       if (!entry) {
         throw new Error(`'${args.name}' is not a managed plugin install.`);
@@ -747,14 +844,10 @@ export class AgentPluginInstallService {
       // Stop running servers before deleting the tree out from under them.
       await this.deps.mcpServerManager?.stopServersWithKeyPrefix(serverKeyPrefix);
 
+      // Registry first: if the write fails, the plugin stays fully installed
+      // and the API reports the error (no half-removed state).
+      await this.writeRegistry(registry.filter((e) => e.name !== entry.name));
       await this.removeDir(targetPath);
-      await this.config.editConfig((cfg) => {
-        cfg.plugins = (cfg.plugins ?? []).filter((e) => e.name !== entry.name);
-        if (cfg.plugins.length === 0) {
-          delete cfg.plugins;
-        }
-        return cfg;
-      });
 
       await this.pruneWorkspaceOverrides(serverKeyPrefix);
 
@@ -823,7 +916,7 @@ export class AgentPluginInstallService {
   async checkUpdates(): Promise<AgentPluginUpdateCheck[]> {
     this.assertEnabled();
 
-    const registry = this.config.loadConfigOrDefault().plugins ?? [];
+    const registry = await this.readRegistry();
     return Promise.all(
       registry.map(async (entry): Promise<AgentPluginUpdateCheck> => {
         if (entry.source.refType === "commit") {
@@ -865,7 +958,7 @@ export class AgentPluginInstallService {
     this.assertEnabled();
 
     return this.runExclusive(async () => {
-      const registry = this.config.loadConfigOrDefault().plugins ?? [];
+      const registry = await this.readRegistry();
       const entry = registry.find((e) => e.name === args.name);
       if (!entry) {
         throw new Error(`'${args.name}' is not a managed plugin install.`);
@@ -929,10 +1022,10 @@ export class AgentPluginInstallService {
               : {}),
           },
         };
-        await this.config.editConfig((cfg) => {
-          cfg.plugins = (cfg.plugins ?? []).map((e) => (e.name === entry.name ? updated : e));
-          return cfg;
-        });
+        // The new tree is already promoted; a failed write surfaces as an
+        // error and the stale lockedSha keeps the update badge visible, so
+        // retrying the update self-heals the mismatch.
+        await this.writeRegistry(registry.map((e) => (e.name === entry.name ? updated : e)));
 
         // Content changed behind a stable path (and possibly an unchanged
         // stdio command line) — the signature check cannot see it, so recycle

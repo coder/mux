@@ -1,8 +1,17 @@
 import { z } from "zod";
 
+import {
+  AGENT_PLUGIN_NAME_MAX_LENGTH,
+  AGENT_PLUGIN_NAME_PATTERN,
+} from "@/common/utils/agentPluginName";
+
 /**
- * Managed Agent Plugin install registry — the `plugins` section of
- * `~/.mux/config.json`.
+ * Managed Agent Plugin install registry — persisted as `~/.mux/plugins.json`.
+ *
+ * A standalone file (not a `~/.mux/config.json` section) on purpose: older
+ * builds rebuild config.json from known fields on every save, so a downgrade
+ * would silently drop an embedded registry. A file older builds never touch
+ * survives upgrade↔downgrade round-trips.
  *
  * Semantics (mirroring lazy.nvim / Claude Code): `source.ref` is the tracking
  * channel and `lockedSha` is what is actually on disk and runs. Install
@@ -44,8 +53,12 @@ export const AgentPluginInstallSourceSchema = z.discriminatedUnion("type", [
 ]);
 
 export const AgentPluginInstallEntrySchema = z.object({
-  /** plugin.json `name`; also the directory name under `~/.mux/plugins`. */
-  name: z.string().min(1),
+  /**
+   * plugin.json `name`; also the directory name under `~/.mux/plugins`.
+   * Pattern-enforced because it is joined into filesystem paths that
+   * uninstall deletes recursively — `.`/`..`/separators must never validate.
+   */
+  name: z.string().max(AGENT_PLUGIN_NAME_MAX_LENGTH).regex(AGENT_PLUGIN_NAME_PATTERN),
   /** v1 installs are global-only; the installer never writes into project checkouts. */
   scope: z.literal("global"),
   source: AgentPluginInstallSourceSchema,
@@ -67,6 +80,11 @@ export const AgentPluginInstallEntrySchema = z.object({
 });
 
 export const AgentPluginInstallsSchema = z.array(AgentPluginInstallEntrySchema);
+
+/** On-disk shape of `~/.mux/plugins.json` (object wrapper leaves room for future fields). */
+export const AgentPluginRegistryFileSchema = z.object({
+  plugins: AgentPluginInstallsSchema,
+});
 
 export type AgentPluginGitSource = z.infer<typeof AgentPluginGitSourceSchema>;
 export type AgentPluginInstallSource = z.infer<typeof AgentPluginInstallSourceSchema>;

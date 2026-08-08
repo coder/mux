@@ -73,7 +73,15 @@ describe("AgentPluginInstallService", () => {
 
   const pluginsDir = () => path.join(muxRoot, "plugins");
   const stagingDir = () => path.join(muxRoot, "plugin-staging");
-  const registry = () => config.loadConfigOrDefault().plugins ?? [];
+  const registryFile = () => path.join(muxRoot, "plugins.json");
+  const registry = async (): Promise<unknown[]> => {
+    try {
+      const raw = await fsPromises.readFile(registryFile(), "utf8");
+      return (JSON.parse(raw) as { plugins: unknown[] }).plugins;
+    } catch {
+      return [];
+    }
+  };
   const pathExists = async (p: string) =>
     fsPromises.access(p).then(
       () => true,
@@ -121,7 +129,7 @@ describe("AgentPluginInstallService", () => {
 
     // Cancelling after preview = nothing written anywhere.
     expect(await pathExists(path.join(pluginsDir(), "demo-plugin"))).toBe(false);
-    expect(registry()).toEqual([]);
+    expect(await registry()).toEqual([]);
     expect(await stagingLeftovers()).toEqual([]);
 
     const entry = await service.install({ source: preview.source, expectedSha: preview.lockedSha });
@@ -132,8 +140,12 @@ describe("AgentPluginInstallService", () => {
     expect(await pathExists(path.join(installedDir, "plugin.json"))).toBe(true);
     // Plain content snapshot: provenance lives in the registry, not .git.
     expect(await pathExists(path.join(installedDir, ".git"))).toBe(false);
-    expect(registry()).toHaveLength(1);
-    expect(registry()[0]).toMatchObject({ name: "demo-plugin", lockedSha: head, scope: "global" });
+    expect(await registry()).toHaveLength(1);
+    expect((await registry())[0]).toMatchObject({
+      name: "demo-plugin",
+      lockedSha: head,
+      scope: "global",
+    });
     expect(await stagingLeftovers()).toEqual([]);
 
     const items = await service.list();
@@ -159,10 +171,7 @@ describe("AgentPluginInstallService", () => {
     ).rejects.toThrow(/already installed/);
 
     // Unmanaged directory at the target path (registry entry removed, dir kept).
-    await config.editConfig((cfg) => {
-      delete cfg.plugins;
-      return cfg;
-    });
+    await fsPromises.rm(registryFile(), { force: true });
     await expect(service.preview({ input: remoteDir })).rejects.toThrow(/already exists/);
   });
 
@@ -188,7 +197,7 @@ describe("AgentPluginInstallService", () => {
     expect(updated.updatedAt).toBeDefined();
     expect(updated.manifest?.version).toBe("2.0.0");
     expect(await pathExists(path.join(installedDir, "local-edit.txt"))).toBe(false);
-    expect(registry()[0].lockedSha).toBe(newHead);
+    expect(((await registry())[0] as { lockedSha: string }).lockedSha).toBe(newHead);
     expect(await stagingLeftovers()).toEqual([]);
   });
 
@@ -209,7 +218,7 @@ describe("AgentPluginInstallService", () => {
     expect(checks[0].status).toBe("tag-moved");
 
     await service.uninstall({ name: "demo-plugin", deletePluginData: false });
-    expect(registry()).toEqual([]);
+    expect(await registry()).toEqual([]);
     expect(await pathExists(path.join(pluginsDir(), "demo-plugin"))).toBe(false);
 
     // Full-SHA install pins hard: no update checks apply.
@@ -271,7 +280,7 @@ describe("AgentPluginInstallService", () => {
 
     // Nothing was written by any of the failures above.
     expect(await pathExists(path.join(pluginsDir(), "demo-plugin"))).toBe(false);
-    expect(registry()).toEqual([]);
+    expect(await registry()).toEqual([]);
     expect(await stagingLeftovers()).toEqual([]);
 
     // Disabled experiment gates every method.
@@ -296,6 +305,70 @@ describe("AgentPluginInstallService", () => {
       await fsPromises.readFile(path.join(pluginsDir(), "demo-plugin", "plugin.json"), "utf8")
     ) as { version: string };
     expect(installedManifest.version).toBe("1.0.0");
+  });
+
+  test("registry survives config.json rewrites and drops traversal names on read", async () => {
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    // Registry is a standalone file: rebuilding config.json (what older
+    // builds do on every save) cannot drop it.
+    await config.editConfig((cfg) => {
+      cfg.defaultModel = "openai:gpt-4o";
+      return cfg;
+    });
+    expect(await registry()).toHaveLength(1);
+    expect((await service.list())[0]).toMatchObject({ name: "demo-plugin", managed: true });
+
+    // Malicious/corrupt entries with traversal names must never reach the
+    // filesystem layer: uninstall of ".." would delete the entire mux root.
+    const onDisk = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+      plugins: unknown[];
+    };
+    const template = onDisk.plugins[0] as Record<string, unknown>;
+    onDisk.plugins.push({ ...template, name: ".." }, { ...template, name: "a/../b" });
+    await fsPromises.writeFile(registryFile(), JSON.stringify(onDisk));
+
+    const items = await service.list();
+    expect(items.map((item) => item.name)).toEqual(["demo-plugin"]);
+    await expect(service.uninstall({ name: "..", deletePluginData: false })).rejects.toThrow(
+      /not a managed plugin/
+    );
+  });
+
+  test("install rolls back the promoted dir when the registry write fails", async () => {
+    const preview = await service.preview({ input: remoteDir });
+
+    // Occupy the registry path with a directory so the atomic write's rename fails.
+    await fsPromises.mkdir(registryFile(), { recursive: true });
+    await expect(
+      service.install({ source: preview.source, expectedSha: preview.lockedSha })
+    ).rejects.toThrow(/persist the plugin registry/);
+
+    // No partial state: the promoted dir was rolled back.
+    expect(await pathExists(path.join(pluginsDir(), "demo-plugin"))).toBe(false);
+    expect(await stagingLeftovers()).toEqual([]);
+
+    // Clearing the obstruction lets the same consented install succeed.
+    await fsPromises.rmdir(registryFile());
+    const entry = await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+    expect(entry.name).toBe("demo-plugin");
+    expect(await registry()).toHaveLength(1);
+  });
+
+  test("falls back to a branch clone when the remote refuses direct SHA fetches", async () => {
+    // GitHub-style servers can reject fetching unadvertised objects; simulate
+    // by pointing the exact-SHA fetch at a file:// remote with SHA-in-want
+    // disabled, so only the advertised branch tip is fetchable.
+    await git(remoteDir, "config", "uploadpack.allowAnySHA1InWant", "false");
+    await git(remoteDir, "config", "uploadpack.allowReachableSHA1InWant", "false");
+    const fileUrl = `file://${remoteDir}`;
+
+    const preview = await service.preview({ input: fileUrl });
+    const entry = await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+    expect(entry.lockedSha).toBe(preview.lockedSha);
+    expect(await pathExists(path.join(pluginsDir(), "demo-plugin", "plugin.json"))).toBe(true);
+    expect(await stagingLeftovers()).toEqual([]);
   });
 
   test("list surfaces unmanaged plugin dirs read-only and missing managed installs", async () => {
