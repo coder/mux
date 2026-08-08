@@ -25,6 +25,7 @@ import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdo
 import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
+import { hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import {
   discoverAgentPluginAt,
@@ -844,10 +845,41 @@ export class AgentPluginInstallService {
       // Stop running servers before deleting the tree out from under them.
       await this.deps.mcpServerManager?.stopServersWithKeyPrefix(serverKeyPrefix);
 
-      // Registry first: if the write fails, the plugin stays fully installed
-      // and the API reports the error (no half-removed state).
-      await this.writeRegistry(registry.filter((e) => e.name !== entry.name));
-      await this.removeDir(targetPath);
+      // Stage the tree out of the container BEFORE touching the registry so
+      // either step can fail without partial state: a failed rename (e.g. a
+      // locked file on Windows) leaves the install fully intact, and a failed
+      // registry write renames the tree back. Deleting the staged tree is
+      // best-effort — it sits under the staging root, where stale-dir
+      // reclamation cleans up leftovers.
+      await fsPromises.mkdir(this.stagingRoot, { recursive: true });
+      const trashDir = path.join(this.stagingRoot, `trash-${Date.now()}-${entry.name}`);
+      let stagedTree = false;
+      try {
+        await fsPromises.rename(targetPath, trashDir);
+        stagedTree = true;
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT")) {
+          throw new Error(`Failed to remove the plugin directory: ${getErrorMessage(error)}`);
+        }
+        // Missing tree (present:false row): registry-only uninstall.
+      }
+
+      try {
+        await this.writeRegistry(registry.filter((e) => e.name !== entry.name));
+      } catch (error) {
+        if (stagedTree) {
+          await fsPromises.rename(trashDir, targetPath).catch((rollbackError: unknown) => {
+            log.error("Failed to restore plugin dir after failed registry write", {
+              targetPath,
+              rollbackError,
+            });
+          });
+        }
+        throw new Error(`Failed to persist the plugin registry: ${getErrorMessage(error)}`);
+      }
+      if (stagedTree) {
+        await this.removeDir(trashDir);
+      }
 
       await this.pruneWorkspaceOverrides(serverKeyPrefix);
 

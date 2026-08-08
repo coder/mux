@@ -20,7 +20,10 @@ import type {
   AgentPluginUpdateCheck,
 } from "@/common/orpc/schemas/agentPlugins";
 import { getErrorMessage } from "@/common/utils/errors";
-import { consumeAddPluginPanelRequest } from "./pluginsSectionIntents";
+import {
+  consumeAddPluginPanelRequest,
+  subscribeAddPluginPanelRequests,
+} from "./pluginsSectionIntents";
 
 /**
  * Settings → Plugins (agent-plugins experiment; global scope only).
@@ -335,7 +338,17 @@ export const PluginsSettingsSection: React.FC = () => {
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   // The palette's "Install Agent Plugin…" opens this section with the add
   // panel already expanded (keyboard rule: operations need a keyboard path).
+  // The initializer covers palette → fresh mount; the subscription covers
+  // invoking the command while this section is already on screen (same-route
+  // navigation preserves the mounted component, so no re-init happens).
   const [addOpen, setAddOpen] = useState(() => consumeAddPluginPanelRequest());
+  useEffect(() => {
+    return subscribeAddPluginPanelRequests(() => {
+      if (consumeAddPluginPanelRequest()) {
+        setAddOpen(true);
+      }
+    });
+  }, []);
   const [uninstallTarget, setUninstallTarget] = useState<string | null>(null);
   /** Name of the plugin with an update/uninstall in flight. */
   const [busyPlugin, setBusyPlugin] = useState<string | null>(null);
@@ -387,11 +400,15 @@ export const PluginsSettingsSection: React.FC = () => {
       setError(null);
       try {
         const result = await api.agentPlugins.update({ name });
+        // Refresh regardless of outcome (the swap may be partially visible),
+        // but re-assert the mutation error AFTER the refresh: refresh's
+        // success path clears the error state, which would silently swallow
+        // the failure the user needs to see.
+        await refresh();
+        await checkForUpdates();
         if (!result.success) {
           setError(result.error);
         }
-        await refresh();
-        await checkForUpdates();
       } catch (err) {
         setError(getErrorMessage(err));
       } finally {
@@ -408,11 +425,15 @@ export const PluginsSettingsSection: React.FC = () => {
       setError(null);
       try {
         const result = await api.agentPlugins.uninstall({ name, deletePluginData });
-        if (!result.success) {
+        if (result.success) {
+          setUninstallTarget(null);
+          await refresh();
+        } else {
+          // Keep the confirmation open and surface the error after the list
+          // refresh (whose success path clears error state).
+          await refresh();
           setError(result.error);
         }
-        setUninstallTarget(null);
-        await refresh();
       } catch (err) {
         setError(getErrorMessage(err));
       } finally {

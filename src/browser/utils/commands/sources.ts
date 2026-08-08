@@ -1608,15 +1608,26 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                 const updatable = result.data.filter(
                   (check) => check.status === "update-available" || check.status === "tag-moved"
                 );
-                showCommandFeedbackToast({
-                  type: "success",
-                  message:
-                    updatable.length === 0
-                      ? "All plugins are up to date."
-                      : `Updates available: ${updatable.map((check) => check.name).join(", ")}`,
-                });
+                // Per-plugin failures ride inside a successful result; an
+                // unreachable remote is an unknown state, not "up to date".
+                const failed = result.data.filter((check) => check.status === "error");
                 if (updatable.length > 0) {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: `Updates available: ${updatable.map((check) => check.name).join(", ")}`,
+                  });
                   openSettings("plugins");
+                } else if (failed.length > 0) {
+                  showCommandFeedbackToast({
+                    type: "error",
+                    message: `Update check failed for ${failed.map((check) => check.name).join(", ")}`,
+                  });
+                  openSettings("plugins");
+                } else {
+                  showCommandFeedbackToast({
+                    type: "success",
+                    message: "All plugins are up to date.",
+                  });
                 }
               },
             },
@@ -1641,10 +1652,19 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
                   (check) => check.status === "update-available"
                 );
                 if (updatable.length === 0) {
-                  showCommandFeedbackToast({
-                    type: "success",
-                    message: "All plugins are up to date.",
-                  });
+                  const failed = checks.data.filter((check) => check.status === "error");
+                  if (failed.length > 0) {
+                    // An unreachable remote is an unknown state, not "up to date".
+                    showCommandFeedbackToast({
+                      type: "error",
+                      message: `Update check failed for ${failed.map((check) => check.name).join(", ")}`,
+                    });
+                  } else {
+                    showCommandFeedbackToast({
+                      type: "success",
+                      message: "All plugins are up to date.",
+                    });
+                  }
                   return;
                 }
                 const failures: string[] = [];

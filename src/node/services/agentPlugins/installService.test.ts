@@ -336,6 +336,31 @@ describe("AgentPluginInstallService", () => {
     );
   });
 
+  test("uninstall restores the registry entry when the tree cannot be staged out", async () => {
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    // Force the stage-out rename to fail by making the container read-only
+    // (rename mutates the parent directory).
+    await fsPromises.chmod(pluginsDir(), 0o555);
+    try {
+      await expect(
+        service.uninstall({ name: "demo-plugin", deletePluginData: false })
+      ).rejects.toThrow(/Failed to remove the plugin directory/);
+    } finally {
+      await fsPromises.chmod(pluginsDir(), 0o755);
+    }
+
+    // No partial state: the install is fully intact and still managed.
+    expect(await registry()).toHaveLength(1);
+    expect(await pathExists(path.join(pluginsDir(), "demo-plugin", "plugin.json"))).toBe(true);
+    expect((await service.list())[0]).toMatchObject({ name: "demo-plugin", managed: true });
+
+    // And the retry succeeds once the obstruction is gone.
+    await service.uninstall({ name: "demo-plugin", deletePluginData: false });
+    expect(await registry()).toEqual([]);
+  });
+
   test("install rolls back the promoted dir when the registry write fails", async () => {
     const preview = await service.preview({ input: remoteDir });
 
