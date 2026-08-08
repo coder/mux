@@ -84,7 +84,7 @@ import {
 import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
 import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
 import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
-import { MessageQueue } from "./messageQueue";
+import { isBashMonitorWakeMetadata, MessageQueue } from "./messageQueue";
 import {
   copyStreamLifecycleSnapshot,
   type RuntimeStatusEvent,
@@ -149,7 +149,7 @@ import { execBuffered } from "@/node/utils/runtime/helpers";
 import { renderAgentSkillSnapshotText } from "@/common/utils/agentSkills/skillSnapshot";
 import type { MemorySessionContext } from "@/node/services/memoryService";
 import { materializeFileAtMentions } from "@/node/services/fileAtMentions";
-import { parseSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import { parseSubagentReportFromMessage } from "@/common/utils/subagentReportEnvelope";
 import { getErrorMessage } from "@/common/utils/errors";
 import { CompactionMonitor, type CompactionStatusEvent } from "./compactionMonitor";
 
@@ -1430,11 +1430,7 @@ export class AgentSession {
     ) {
       return false;
     }
-    const text = message.parts
-      .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-      .map((part) => part.text)
-      .join("\n");
-    return parseSubagentReportEnvelope(text)?.status === "completed";
+    return parseSubagentReportFromMessage(message)?.status === "completed";
   }
 
   private shouldUseUserMessageForRetry(message: MuxMessage): boolean {
@@ -5628,8 +5624,7 @@ export class AgentSession {
     if (this.messageQueue.isNextEntryBashMonitorWake()) {
       return true;
     }
-    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
-    return dispatching?.type === "bash-monitor-wake";
+    return isBashMonitorWakeMetadata(this.dispatchingQueuedEntryMuxMetadata);
   }
 
   /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */

@@ -65,6 +65,12 @@ export function getSupportedAttachmentMediaType(args: {
   return isSupportedAttachmentMediaType(normalized) ? normalized : null;
 }
 
+// Membership check against the accepted ZIP media types, isolating the
+// `as const` tuple cast that both staged-attachment paths would otherwise repeat.
+function isZipMediaType(normalized: string): boolean {
+  return ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number]);
+}
+
 function sanitizeStagedAttachmentMediaType(mediaType: string): string | null {
   const normalized = normalizeAttachmentMediaType(mediaType);
   if (
@@ -79,10 +85,7 @@ function sanitizeStagedAttachmentMediaType(mediaType: string): string | null {
 
 export function isSupportedStagedAttachmentMediaType(mediaType: string): boolean {
   const normalized = normalizeAttachmentMediaType(mediaType);
-  return (
-    ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number]) ||
-    sanitizeStagedAttachmentMediaType(normalized) != null
-  );
+  return isZipMediaType(normalized) || sanitizeStagedAttachmentMediaType(normalized) != null;
 }
 
 export function getSupportedStagedAttachmentMediaType(args: {
@@ -92,7 +95,7 @@ export function getSupportedStagedAttachmentMediaType(args: {
   const trimmedMediaType = args.mediaType?.trim();
   if (trimmedMediaType != null && trimmedMediaType.length > 0) {
     const normalized = normalizeAttachmentMediaType(trimmedMediaType);
-    if (ZIP_MEDIA_TYPES.includes(normalized as (typeof ZIP_MEDIA_TYPES)[number])) {
+    if (isZipMediaType(normalized)) {
       return ZIP_MEDIA_TYPE;
     }
     return sanitizeStagedAttachmentMediaType(normalized) ?? DEFAULT_STAGED_MEDIA_TYPE;

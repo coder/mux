@@ -41,6 +41,7 @@ import {
   mergeConsecutiveStreamErrors,
   computeBashOutputGroupInfos,
   shouldBypassDeferredMessages,
+  isBashMonitorWakeMessage,
 } from "@/browser/utils/messages/messageUtils";
 import { computeTaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import { BashCollapsedSummaryModeProvider } from "@/browser/features/Tools/BashCollapsedSummaryModeContext";
@@ -104,6 +105,7 @@ import {
   useBackgroundBashError,
 } from "@/browser/contexts/BackgroundBashContext";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
+import { isPrimaryMouseButton } from "@/browser/utils/events";
 import {
   buildEditingStateFromDisplayed,
   canEditDisplayedUserMessage,
@@ -728,7 +730,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
   );
 
   const handleComposerDockMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.defaultPrevented || event.button !== 0) {
+    if (event.defaultPrevented || !isPrimaryMouseButton(event)) {
       return;
     }
     const control = resolveComposerControlFocusTarget(event.target, composerDockRef.current);
@@ -779,7 +781,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
     const userHistoryIds: string[] = [];
     for (const message of deferredMessages) {
       // Monitor wake events should not interrupt navigation between human prompts.
-      if (message.type === "user" && message.bashMonitorWake == null) {
+      if (message.type === "user" && !isBashMonitorWakeMessage(message)) {
         userHistoryIds.push(message.historyId);
       }
     }

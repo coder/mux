@@ -48,7 +48,10 @@ import { forkWorkspace } from "@/browser/utils/chatCommands";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
-import { WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX } from "@/constants/layout";
+import {
+  MOBILE_TOUCH_MEDIA_QUERY,
+  WORKSPACE_MENU_BAR_LEFT_SIDEBAR_COLLAPSED_PADDING_PX,
+} from "@/constants/layout";
 import type { AgentSkillDescriptor, AgentSkillIssue } from "@/common/types/agentSkill";
 
 interface WorkspaceMenuBarProps {
@@ -163,7 +166,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const handleOpenTerminal = useCallback(() => {
     // On mobile touch devices, always use popout since the right sidebar is hidden
-    const isMobileTouch = window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    const isMobileTouch = window.matchMedia(MOBILE_TOUCH_MEDIA_QUERY).matches;
     if (onOpenTerminal && !isMobileTouch) {
       onOpenTerminal();
     } else {
@@ -173,8 +176,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   }, [workspaceId, openTerminalPopout, runtimeConfig, onOpenTerminal]);
 
   const isTouchMobileScreen =
-    typeof window !== "undefined" &&
-    window.matchMedia("(max-width: 768px) and (pointer: coarse)").matches;
+    typeof window !== "undefined" && window.matchMedia(MOBILE_TOUCH_MEDIA_QUERY).matches;
 
   const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";

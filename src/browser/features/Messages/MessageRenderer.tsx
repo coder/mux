@@ -1,6 +1,9 @@
 import React from "react";
 import type { DisplayedMessage } from "@/common/types/message";
-import type { BashOutputGroupInfo } from "@/browser/utils/messages/messageUtils";
+import {
+  isBashMonitorWakeMessage,
+  type BashOutputGroupInfo,
+} from "@/browser/utils/messages/messageUtils";
 import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinking";
 import type { ReviewNoteData } from "@/common/types/review";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
@@ -88,18 +91,17 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
     // Route based on message type
     switch (message.type) {
       case "user":
-        renderedMessage =
-          message.bashMonitorWake != null ? (
-            <BashMonitorWakeMessage message={message} className={className} />
-          ) : (
-            <UserMessage
-              message={message}
-              className={className}
-              onEdit={onEditUserMessage}
-              isCompacting={isCompacting}
-              navigation={userMessageNavigation}
-            />
-          );
+        renderedMessage = isBashMonitorWakeMessage(message) ? (
+          <BashMonitorWakeMessage message={message} className={className} />
+        ) : (
+          <UserMessage
+            message={message}
+            className={className}
+            onEdit={onEditUserMessage}
+            isCompacting={isCompacting}
+            navigation={userMessageNavigation}
+          />
+        );
         break;
       case "assistant":
         renderedMessage = (

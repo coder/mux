@@ -21,6 +21,7 @@ import {
   SUBAGENT_FAILURE_ENVELOPE_TAG,
   formatSubagentReportEnvelope,
   parseSubagentReportEnvelope,
+  parseSubagentReportFromMessage,
 } from "@/common/utils/subagentReportEnvelope";
 import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
@@ -310,6 +311,8 @@ function formatSubagentReportUserMessage(params: {
     reportMarkdown: params.reportMarkdown,
     ...(params.model != null ? { model: params.model } : {}),
     ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
+    // Omit structuredOutput entirely when absent so callers can forward the value directly
+    // without re-implementing the undefined guard at each call site.
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
   });
 }
@@ -319,6 +322,17 @@ function parseTerminalSubagentTaskId(content: string): string | null {
   if (report?.status === "completed") return report.taskId;
   if (!content.startsWith(SUBAGENT_FAILURE_ENVELOPE_TAG)) return null;
   return /<task_id>([^\n<]+)<\/task_id>/.exec(content)?.[1] ?? null;
+}
+
+// Flattens a history message to the text payload that the sub-agent report/failure envelope
+// parsers expect. Both terminal-attention history scans below classify rows this way, so keeping
+// the part filter and separator in one place stops them from drifting apart and silently
+// disagreeing about which messages already carry a terminal report.
+function joinMessageText(message: MuxMessage): string {
+  return message.parts
+    .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
 }
 
 // Failure twin of formatSubagentReportUserMessage: terminal child failures are
@@ -702,6 +716,23 @@ function isSelfHealEligibleSettledWorkspaceTurn(
     return true;
   }
   return record.status === "interrupted" && record.error === WORKSPACE_TURN_STALE_RESTART_ERROR;
+}
+
+/**
+ * Under the settlement lock, confirm a reloaded handle is still the exact record a read-time
+ * reconciliation resolved against before mutating it. Comparing updatedAt as well as status
+ * matters: a concurrent settlement can produce a NEWER record with the same status, and a
+ * stale read must not clobber it. Callers pass a `null` / non-matching `current` straight
+ * through so the concurrent winner is reported. Typed as a guard so the matched branch narrows
+ * `current` to a non-null record.
+ */
+function isReconciledWorkspaceTurnUnchanged(
+  current: WorkspaceTurnTaskHandleRecord | null,
+  record: WorkspaceTurnTaskHandleRecord
+): current is WorkspaceTurnTaskHandleRecord {
+  return (
+    current != null && current.status === record.status && current.updatedAt === record.updatedAt
+  );
 }
 
 /**
@@ -5330,12 +5361,7 @@ export class TaskService {
     const existingTaskIds = new Set<string>();
     for (const message of historyResult.data) {
       if (message.role !== "user" || message.metadata?.synthetic !== true) continue;
-      const taskId = parseTerminalSubagentTaskId(
-        message.parts
-          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-          .map((part) => part.text)
-          .join("\n")
-      );
+      const taskId = parseTerminalSubagentTaskId(joinMessageText(message));
       if (taskId != null) existingTaskIds.add(taskId);
     }
 
@@ -5422,11 +5448,7 @@ export class TaskService {
 
     for (const message of historyResult.data) {
       if (message.role === "user" && message.metadata?.synthetic === true) {
-        const text = message.parts
-          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-          .map((part) => part.text)
-          .join("\n");
-        const taskId = parseTerminalSubagentTaskId(text);
+        const taskId = parseTerminalSubagentTaskId(joinMessageText(message));
         const historySequence = message.metadata?.historySequence;
         if (taskId != null && pendingIds.has(taskId) && typeof historySequence === "number") {
           terminalSequenceByTaskId.set(taskId, historySequence);
@@ -6067,9 +6089,7 @@ export class TaskService {
         ...(childEntry.workspace.taskThinkingLevel != null
           ? { thinkingLevel: childEntry.workspace.taskThinkingLevel }
           : {}),
-        ...(report.structuredOutput !== undefined
-          ? { structuredOutput: report.structuredOutput }
-          : {}),
+        structuredOutput: report.structuredOutput,
       });
       const resumeOptions = await this.resolveParentAutoResumeOptions(
         parentWorkspaceId,
@@ -6736,28 +6756,39 @@ export class TaskService {
     return this.hasActiveDescendantAgentTasks(cfg, workspaceId);
   }
 
-  hasStickyDescendants(workspaceId: string): boolean {
-    assert(workspaceId.length > 0, "hasStickyDescendants: workspaceId must be non-empty");
-
+  /**
+   * Shared boilerplate for the sticky-descendant queries: build the agent-task index and return
+   * whether any descendant agent-task workspace of `workspaceId` satisfies `predicate`. Threading a
+   * predicate keeps `.some()` short-circuiting so the scan stops at the first match.
+   */
+  private someDescendantAgentTaskWorkspace(
+    workspaceId: string,
+    predicate: (descendant: AgentTaskWorkspaceEntry) => boolean
+  ): boolean {
     const cfg = this.config.loadConfigOrDefault();
     const index = this.buildAgentTaskIndex(cfg);
-    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some(
-      (descendantId) => index.byId.get(descendantId)?.taskSticky === true
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some((descendantId) => {
+      const descendant = index.byId.get(descendantId);
+      return descendant != null && predicate(descendant);
+    });
+  }
+
+  hasStickyDescendants(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasStickyDescendants: workspaceId must be non-empty");
+    return this.someDescendantAgentTaskWorkspace(
+      workspaceId,
+      (descendant) => descendant.taskSticky === true
     );
   }
 
   hasUnarchivedStickyDescendants(workspaceId: string): boolean {
     assert(workspaceId.length > 0, "hasUnarchivedStickyDescendants: workspaceId must be non-empty");
-
-    const cfg = this.config.loadConfigOrDefault();
-    const index = this.buildAgentTaskIndex(cfg);
-    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).some((descendantId) => {
-      const descendant = index.byId.get(descendantId);
-      return (
-        descendant?.taskSticky === true &&
+    return this.someDescendantAgentTaskWorkspace(
+      workspaceId,
+      (descendant) =>
+        descendant.taskSticky === true &&
         !isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt)
-      );
-    });
+    );
   }
 
   hasPreservedCompletedDescendants(workspaceId: string): boolean {
@@ -7007,13 +7038,7 @@ export class TaskService {
         record.handleId
       );
       // A concurrent settlement/repair wins; only replace the exact record we reconciled.
-      // Comparing updatedAt (not just status) matters: a concurrent settlement can produce
-      // a NEWER record with the same status that must not be clobbered by our stale read.
-      if (
-        current == null ||
-        current.status !== record.status ||
-        current.updatedAt !== record.updatedAt
-      ) {
+      if (!isReconciledWorkspaceTurnUnchanged(current, record)) {
         return current;
       }
       log.debug("Workspace turn repaired from self-healed child history", {
@@ -7047,15 +7072,10 @@ export class TaskService {
         record.ownerWorkspaceId,
         record.handleId
       );
-      // A concurrent transition wins; only revive the exact record we reconciled against.
-      // Comparing updatedAt (not just status) matters: the live retry itself can fail and
-      // settle a NEWER record with the same status (e.g. error → error) between our read
-      // and this lock — reviving that fresh terminal failure would strand task_await.
-      if (
-        current == null ||
-        current.status !== record.status ||
-        current.updatedAt !== record.updatedAt
-      ) {
+      // A concurrent transition wins; only revive the exact record we reconciled against — the
+      // live retry can itself fail into a NEWER error record between our read and this lock, and
+      // reviving that fresh terminal failure would strand task_await.
+      if (!isReconciledWorkspaceTurnUnchanged(current, record)) {
         return current;
       }
       // Another turn already owns the child workspace; the activity is not this turn's retry.
@@ -9883,11 +9903,12 @@ export class TaskService {
     // Explicit in-session recovery cases (aborted, context_exceeded) may
     // continue through queued/preparing turns; auto-retryable errors require a
     // pending auto-retry of the same turn.
+    const errorType = event.errorType;
     const explicitRecovery =
-      event.errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(event.errorType);
+      errorType != null && WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS.has(errorType);
     if (
-      event.errorType != null &&
-      isWorkspaceTurnRecoverableStreamError(event.errorType) &&
+      errorType != null &&
+      isWorkspaceTurnRecoverableStreamError(errorType) &&
       (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
         requireAutoRetry: !explicitRecovery,
       }))
@@ -10750,11 +10771,7 @@ export class TaskService {
           if (message.role !== "user" || message.metadata?.synthetic !== true) {
             continue;
           }
-          const text = message.parts
-            .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
-            .map((part) => part.text)
-            .join("\n");
-          const reportEnvelope = parseSubagentReportEnvelope(text);
+          const reportEnvelope = parseSubagentReportFromMessage(message);
           if (reportEnvelope == null || reportEnvelope.status === "in_progress") {
             continue;
           }
@@ -11787,9 +11804,7 @@ export class TaskService {
       status: "completed",
       ...(childModelString != null ? { model: childModelString } : {}),
       ...(childThinkingLevel != null ? { thinkingLevel: childThinkingLevel } : {}),
-      ...(report.structuredOutput !== undefined
-        ? { structuredOutput: report.structuredOutput }
-        : {}),
+      structuredOutput: report.structuredOutput,
     });
 
     const messageId = createTaskReportMessageId();
