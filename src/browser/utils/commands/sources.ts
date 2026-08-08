@@ -112,6 +112,8 @@ export interface BuildSourcesParams {
   onStartWorkspaceCreation: (projectPath: string) => void;
   onStartMultiProjectWorkspaceCreation: () => void;
   multiProjectWorkspacesEnabled: boolean;
+  /** agent-plugins experiment: gates the Settings → Plugins palette entry. */
+  agentPluginsEnabled: boolean;
   onArchiveMergedWorkspacesInProject: (projectPath: string) => Promise<void>;
   getBranchesForProject: (projectPath: string) => Promise<BranchListResult>;
   onSelectWorkspace: (sel: {
@@ -1568,6 +1570,18 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         keywords: ["model", "custom", "add"],
         run: () => openSettings("models"),
       },
+      ...(p.agentPluginsEnabled
+        ? [
+            {
+              id: CommandIds.settingsOpenSection("plugins"),
+              title: "Settings: Plugins",
+              subtitle: "Install and manage Agent Plugins",
+              section: section.settings,
+              keywords: ["plugin", "install", "agent", "skill", "mcp", "update"],
+              run: () => openSettings("plugins"),
+            },
+          ]
+        : []),
     ]);
   }
 

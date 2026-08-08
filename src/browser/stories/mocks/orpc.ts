@@ -39,6 +39,11 @@ import type { DebugLlmRequestSnapshot } from "@/common/types/debugLlmRequest";
 import type { NameGenerationError } from "@/common/types/errors";
 import type { Secret } from "@/common/types/secrets";
 import type { MCPHttpServerInfo, MCPServerInfo } from "@/common/types/mcp";
+import type {
+  AgentPluginInstallPreview,
+  AgentPluginListItem,
+  AgentPluginUpdateCheck,
+} from "@/common/orpc/schemas/agentPlugins";
 import type { MCPOAuthAuthStatus } from "@/common/types/mcpOauth";
 import type { ChatStats } from "@/common/types/chatStats";
 import {
@@ -119,6 +124,13 @@ type ProjectRemoveError = z.infer<typeof ProjectRemoveErrorSchema>;
 export interface MockORPCClientOptions {
   /** Layout presets config for Settings → Layouts stories */
   layoutPresets?: LayoutPresetsConfig;
+  /** Agent Plugin installer mock data (Settings → Plugins). */
+  agentPlugins?: {
+    items?: AgentPluginListItem[];
+    updateChecks?: AgentPluginUpdateCheck[];
+    /** Returned by agentPlugins.preview; omit to make preview fail. */
+    preview?: AgentPluginInstallPreview;
+  };
   projects?: Map<string, ProjectConfig>;
   workspaces?: FrontendWorkspaceMetadata[];
   /** Pre-seeded multi-project git status rows keyed by workspace ID. */
@@ -370,6 +382,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     projectSecrets = new Map<string, Secret[]>(),
     terminalSessions: initialTerminalSessions = [],
     globalMcpServers = {},
+    agentPlugins: agentPluginsMock,
     mcpServers = new Map<string, MockMcpServers>(),
     mcpOverrides = new Map<string, MockMcpOverrides>(),
     mcpTestResults = new Map<string, MockMcpTestResult>(),
@@ -1082,6 +1095,29 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
 
         return Promise.resolve({ success: true, data: undefined });
       },
+    },
+    agentPlugins: {
+      list: () => Promise.resolve({ success: true, data: agentPluginsMock?.items ?? [] }),
+      checkUpdates: () =>
+        Promise.resolve({ success: true, data: agentPluginsMock?.updateChecks ?? [] }),
+      preview: () =>
+        agentPluginsMock?.preview
+          ? Promise.resolve({ success: true, data: agentPluginsMock.preview })
+          : Promise.resolve({ success: false, error: "No preview configured in this story" }),
+      install: (input: { source: AgentPluginInstallPreview["source"]; expectedSha: string }) =>
+        Promise.resolve({
+          success: true,
+          data: {
+            name: agentPluginsMock?.preview?.manifest.name ?? "plugin",
+            scope: "global" as const,
+            source: input.source,
+            lockedSha: input.expectedSha,
+            installedAt: new Date().toISOString(),
+          },
+        }),
+      uninstall: () => Promise.resolve({ success: true, data: undefined }),
+      update: (input: { name: string }) =>
+        Promise.resolve({ success: false, error: `No update mock for '${input.name}'` }),
     },
     mcp: {
       list: (input?: { projectPath?: string }) => {
