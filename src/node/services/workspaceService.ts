@@ -8080,13 +8080,15 @@ export class WorkspaceService extends EventEmitter {
       const newSessionDir = this.config.getSessionDir(newWorkspaceId);
 
       try {
-        await ensurePrivateDir(newSessionDir);
+        const historyCopyResult = await this.historyService.copyHistorySnapshotToNewWorkspace(
+          sourceWorkspaceId,
+          newWorkspaceId
+        );
+        if (!historyCopyResult.success) {
+          throw new Error(historyCopyResult.error);
+        }
 
         const sessionFiles = [
-          CHAT_FILE_NAME,
-          // Sealed pre-boundary history must travel with chat.jsonl so the fork
-          // keeps full Load More/paging access to older epochs.
-          CHAT_ARCHIVE_FILE_NAME,
           "session-timing.json",
           ADDITIONAL_SYSTEM_CONTEXT_FILENAME,
           // Preserve the enabled/disabled toggle when forking so the fork

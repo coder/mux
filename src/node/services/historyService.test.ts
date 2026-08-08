@@ -2178,6 +2178,29 @@ describe("HistoryService", () => {
       ]);
     });
 
+    it("recovers the source transaction before copying a fork snapshot", async () => {
+      const targetWorkspaceId = "forked-workspace";
+      await appendNumberedMessages(service, wsId, 3);
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+      const chatContents = await fs.readFile(chatPath(wsId), "utf-8");
+      const hash = (contents: string) => createHash("sha256").update(contents).digest("hex");
+      await fs.writeFile(
+        `${archivePath(wsId)}.truncate.json`,
+        JSON.stringify({
+          finalArchiveHash: hash("replacement archive\n"),
+          finalChatHash: hash(chatContents),
+        })
+      );
+      await fs.rename(archivePath(wsId), `${archivePath(wsId)}.truncate`);
+
+      const result = await service.copyHistorySnapshotToNewWorkspace(wsId, targetWorkspaceId);
+      expect(result.success).toBe(true);
+      expect(
+        (await collectFullHistory(service, targetWorkspaceId)).map((message) => message.id)
+      ).toEqual(["msg-0", "msg-1", "msg-2", "boundary-1", "post-0"]);
+    });
+
     it("does not restore a committed archive tombstone before appending", async () => {
       await appendNumberedMessages(service, wsId, 3);
       await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));

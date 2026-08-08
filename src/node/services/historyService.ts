@@ -958,6 +958,45 @@ export class HistoryService {
     }
   }
 
+  async copyHistorySnapshotToNewWorkspace(
+    sourceWorkspaceId: string,
+    targetWorkspaceId: string
+  ): Promise<Result<void>> {
+    assert(
+      sourceWorkspaceId !== targetWorkspaceId,
+      "history snapshot target must be a new workspace"
+    );
+    const snapshot = await this.withRecoveredHistoryResultLock(
+      sourceWorkspaceId,
+      "Failed to read history snapshot",
+      async () =>
+        Ok({
+          archive: await this.readExistingFile(this.getChatArchivePath(sourceWorkspaceId)),
+          chat: await this.readExistingFile(this.getChatHistoryPath(sourceWorkspaceId)),
+        })
+    );
+    if (!snapshot.success) {
+      return snapshot;
+    }
+
+    try {
+      await ensurePrivateDir(this.config.getSessionDir(targetWorkspaceId));
+      for (const [targetPath, contents] of [
+        [this.getChatArchivePath(targetWorkspaceId), snapshot.data.archive],
+        [this.getChatHistoryPath(targetWorkspaceId), snapshot.data.chat],
+      ] as const) {
+        if (contents === null) {
+          await fs.rm(targetPath, { force: true });
+        } else {
+          await writeFileAtomic(targetPath, contents);
+        }
+      }
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to copy history snapshot: ${getErrorMessage(error)}`);
+    }
+  }
+
   private async iterateFullHistoryUnlocked(
     workspaceId: string,
     direction: "forward" | "backward",
