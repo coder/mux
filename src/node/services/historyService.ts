@@ -1976,6 +1976,10 @@ export class HistoryService {
    *        committed step first removes provider-eligible rows from the
    *        active window. Fires even when a later step fails, so callers can
    *        invalidate cached usage for mutations an Err result leaves on disk.
+   * @param onRowsDeleted Invoked with each committed step's deleted
+   *        historySequence numbers the moment that step commits. Fires even
+   *        when a later step fails, so callers can emit renderer deletions
+   *        for rows an Err result leaves removed from disk.
    * @returns Result with deleted historySequence numbers plus whether the cut
    *          reached the active provider-context window (at or past the latest
    *          durable boundary). Callers use that flag to decide whether cached
@@ -1984,7 +1988,8 @@ export class HistoryService {
   async truncateHistory(
     workspaceId: string,
     percentage: number,
-    onActiveContextTruncated?: () => void
+    onActiveContextTruncated?: () => void,
+    onRowsDeleted?: (historySequences: number[]) => void
   ): Promise<Result<{ deletedSequences: number[]; activeContextTruncated: boolean }, string>> {
     return this.fileLocks.withLock(workspaceId, async () => {
       let contextChangeNotified = false;
@@ -2001,6 +2006,22 @@ export class HistoryService {
           log.error("truncateHistory context-change callback failed", { workspaceId, error });
         }
       };
+      const sequencesOf = (msgs: MuxMessage[]): number[] =>
+        msgs
+          .map((msg) => msg.metadata?.historySequence)
+          .filter((s): s is number => isNonNegativeInteger(s));
+      const notifyRowsDeleted = (msgs: MuxMessage[]) => {
+        const historySequences = sequencesOf(msgs);
+        if (historySequences.length === 0) {
+          return;
+        }
+        try {
+          onRowsDeleted?.(historySequences);
+        } catch (error) {
+          // Same invariant as above: committed deletions must stand.
+          log.error("truncateHistory rows-deleted callback failed", { workspaceId, error });
+        }
+      };
       try {
         const historyPath = this.getChatHistoryPath(workspaceId);
         const archivePath = this.getChatArchivePath(workspaceId);
@@ -2009,20 +2030,21 @@ export class HistoryService {
         if (percentage >= 1.0) {
           // Need sequence numbers for return value before deleting
           const archivedMessages = await this.readArchivedHistory(workspaceId);
-          const messages = [...archivedMessages, ...(await this.readChatHistory(workspaceId))];
-          const deletedSequences = messages
-            .map((msg) => msg.metadata?.historySequence)
-            .filter((s): s is number => isNonNegativeInteger(s));
+          const chatMessages = await this.readChatHistory(workspaceId);
+          const messages = [...archivedMessages, ...chatMessages];
+          const deletedSequences = sequencesOf(messages);
 
           // Archive first: normally it holds only sealed pre-boundary rows,
           // so if the second rm fails the active provider window is still
           // intact. A malformed boundary-less archive IS window content, so
           // notify at commit; the caller must not trust a later Err.
           await fs.rm(archivePath, { force: true });
+          notifyRowsDeleted(archivedMessages);
           if (cutChangesActiveWindow(messages, archivedMessages.length)) {
             notifyActiveContextTruncated();
           }
           await fs.rm(historyPath, { force: true });
+          notifyRowsDeleted(chatMessages);
           notifyActiveContextTruncated();
 
           // Reset sequence counter when clearing history
@@ -2079,16 +2101,15 @@ export class HistoryService {
         // with the same commit-time notifications.
         if (removeCount >= messages.length) {
           await fs.rm(archivePath, { force: true });
+          notifyRowsDeleted(archivedMessages);
           if (cutChangesActiveWindow(messages, archivedMessages.length)) {
             notifyActiveContextTruncated();
           }
           await fs.rm(historyPath, { force: true });
+          notifyRowsDeleted(chatMessages);
           notifyActiveContextTruncated();
           this.sequenceCounters.set(workspaceId, 0);
-          const deletedSequences = messages
-            .map((msg) => msg.metadata?.historySequence)
-            .filter((s): s is number => isNonNegativeInteger(s));
-          return Ok({ deletedSequences, activeContextTruncated: true });
+          return Ok({ deletedSequences: sequencesOf(messages), activeContextTruncated: true });
         }
 
         const activeContextTruncated = cutChangesActiveWindow(messages, removeCount);
@@ -2112,9 +2133,7 @@ export class HistoryService {
         };
         const remainingMessages = messages.slice(removeCount).map(sanitizeRetained);
         const deletedMessages = messages.slice(0, removeCount);
-        const deletedSequences = deletedMessages
-          .map((msg) => msg.metadata?.historySequence)
-          .filter((s): s is number => isNonNegativeInteger(s));
+        const deletedSequences = sequencesOf(deletedMessages);
 
         // Rewrite each file in place instead of collapsing the archive into
         // chat.jsonl: every step is either an atomic single-file write or a
@@ -2167,12 +2186,14 @@ export class HistoryService {
               archivePath,
               this.serializeHistoryEntries(retainedArchive, workspaceId)
             );
+            notifyRowsDeleted(deletedMessages);
           } else {
             // Cut consumes the whole archive: every archive row is a cut
             // target, so deleting the archive before committing the chat cut
             // can only remove rows the cut targets.
             if (archivedMessages.length > 0) {
               await fs.rm(archivePath, { force: true });
+              notifyRowsDeleted(archivedMessages);
               windowChanged = archiveDeleteChangesWindow;
               if (archiveDeleteChangesWindow) {
                 notifyActiveContextTruncated();
@@ -2185,6 +2206,7 @@ export class HistoryService {
               historyPath,
               this.serializeHistoryEntries(retainedChat, workspaceId)
             );
+            notifyRowsDeleted(chatMessages.slice(0, removeCount - archivedMessages.length));
           }
         } catch (error) {
           if (needsPreSanitize && !windowChanged && originalChat !== null) {
@@ -2245,9 +2267,15 @@ export class HistoryService {
 
   async clearHistory(
     workspaceId: string,
-    onActiveContextTruncated?: () => void
+    onActiveContextTruncated?: () => void,
+    onRowsDeleted?: (historySequences: number[]) => void
   ): Promise<Result<number[], string>> {
-    const result = await this.truncateHistory(workspaceId, 1.0, onActiveContextTruncated);
+    const result = await this.truncateHistory(
+      workspaceId,
+      1.0,
+      onActiveContextTruncated,
+      onRowsDeleted
+    );
     if (!result.success) {
       return Err(result.error);
     }

@@ -2125,14 +2125,22 @@ describe("HistoryService", () => {
       );
 
       let notified = 0;
-      const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
-        notified += 1;
-      });
+      const reportedDeletions: number[] = [];
+      const truncateResult = await service.truncateHistory(
+        wsId,
+        0.5,
+        () => {
+          notified += 1;
+        },
+        (historySequences) => reportedDeletions.push(...historySequences)
+      );
       expect(truncateResult.success).toBe(true);
       expect(notified).toBe(1);
       if (truncateResult.success) {
         expect(truncateResult.data.deletedSequences.length).toBeGreaterThan(0);
         expect(truncateResult.data.activeContextTruncated).toBe(true);
+        // Commit-time reports cover exactly the sequences the result returns.
+        expect(reportedDeletions).toEqual(truncateResult.data.deletedSequences);
       }
 
       const remaining = await service.getHistoryFromLatestBoundary(wsId);
@@ -2591,11 +2599,18 @@ describe("HistoryService", () => {
       );
       try {
         // The archive delete removed window content, so the caller must be
-        // notified at commit time despite the Err result.
+        // notified at commit time despite the Err result, and the committed
+        // archive deletions must be reported so the renderer can drop them.
         let notified = 0;
-        const truncateResult = await service.truncateHistory(wsId, 0.5, () => {
-          notified += 1;
-        });
+        const reportedDeletions: number[] = [];
+        const truncateResult = await service.truncateHistory(
+          wsId,
+          0.5,
+          () => {
+            notified += 1;
+          },
+          (historySequences) => reportedDeletions.push(...historySequences)
+        );
         expect(truncateResult.success).toBe(false);
         expect(notified).toBe(1);
         expect(await fileExists(archivePath(wsId))).toBe(false);
@@ -2605,6 +2620,9 @@ describe("HistoryService", () => {
         const activeAssistant = chatRows.find((msg) => msg.id === "assistant-active");
         expect(activeAssistant).toBeDefined();
         expect(activeAssistant?.metadata?.contextUsage).toBeUndefined();
+        // Exactly the deleted archive rows (msg-0, msg-1), not the retained
+        // chat rows whose cut never committed.
+        expect(reportedDeletions).toEqual([0, 1]);
       } finally {
         serializeSpy.mockRestore();
       }
@@ -2766,10 +2784,16 @@ describe("HistoryService", () => {
         return realRm(...args);
       });
       try {
-        const truncateResult = await service.truncateHistory(wsId, 1.0);
+        // Committed archive deletions must still be reported despite the Err
+        // (clearHistory forwards this callback for the destructive callers).
+        const reportedDeletions: number[] = [];
+        const truncateResult = await service.truncateHistory(wsId, 1.0, undefined, (seqs) =>
+          reportedDeletions.push(...seqs)
+        );
         expect(truncateResult.success).toBe(false);
         expect(await fs.readFile(chatPath(wsId), "utf-8")).toBe(chatBefore);
         expect(await fileExists(archivePath(wsId))).toBe(false);
+        expect(reportedDeletions).toEqual([0, 1, 2]);
       } finally {
         rmSpy.mockRestore();
       }

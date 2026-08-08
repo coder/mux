@@ -4571,9 +4571,12 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
       expect((await historyService.deleteMessage(workspaceId, "boundary-1")).success).toBe(true);
 
       const clearUsageState = mock(() => undefined);
+      const emittedChatEvents: unknown[] = [];
       const session = {
         isBusy: mock(() => false),
-        emitChatEvent: mock(() => undefined),
+        emitChatEvent: mock((event: unknown) => {
+          emittedChatEvents.push(event);
+        }),
         clearUsageState,
         clearFileState: mock(() => undefined),
       } as unknown as AgentSession;
@@ -4584,7 +4587,8 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
 
       // Fail the chat cut (serialize call 2) after the whole-archive delete
       // commits: truncation returns Err, but window content is already gone,
-      // so the session's usage must still be invalidated.
+      // so the session's usage must still be invalidated and the committed
+      // archive deletions must reach the renderer (no ghost rows).
       const internals = historyService as unknown as {
         serializeHistoryEntries: (messages: MuxMessage[], workspaceId: string) => string;
       };
@@ -4603,6 +4607,14 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
         const result = await workspaceService.truncateHistory(workspaceId, 0.5);
         expect(result.success).toBe(false);
         expect(clearUsageState).toHaveBeenCalledTimes(1);
+        const deleteEvents = emittedChatEvents.filter(
+          (event): event is { type: string; historySequences: number[] } =>
+            typeof event === "object" &&
+            event !== null &&
+            (event as { type?: string }).type === "delete"
+        );
+        expect(deleteEvents).toHaveLength(1);
+        expect(deleteEvents[0].historySequences).toEqual([0, 1]);
       } finally {
         serializeSpy.mockRestore();
       }

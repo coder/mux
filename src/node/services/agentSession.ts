@@ -388,6 +388,7 @@ interface AgentSessionOptions {
   /** Destructive clear coordinator used by exec hard restart. */
   clearHistoryForHardRestart?: (options: {
     monitorHistoryLockHeld: boolean;
+    onRowsDeleted?: (historySequences: number[]) => void;
   }) => Promise<Result<number[]>>;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
@@ -423,6 +424,7 @@ export class AgentSession {
   private readonly workspaceGoalService?: WorkspaceGoalService;
   private readonly clearHistoryForHardRestart?: (options: {
     monitorHistoryLockHeld: boolean;
+    onRowsDeleted?: (historySequences: number[]) => void;
   }) => Promise<Result<number[]>>;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onPostCompactionStateChange?: () => void;
@@ -4618,12 +4620,35 @@ export class AgentSession {
       });
     }
 
+    // Same ghost-row invariant as WorkspaceService.truncateHistory: emit
+    // deletions for every committed clear step even when a later step fails.
+    const committedDeletedSequences: number[] = [];
+    const onRowsDeleted = (historySequences: number[]) => {
+      committedDeletedSequences.push(...historySequences);
+    };
+    const emitCommittedDeletions = () => {
+      if (committedDeletedSequences.length === 0) {
+        return;
+      }
+      const deleteMessage: DeleteMessage = {
+        type: "delete",
+        historySequences: [...committedDeletedSequences],
+      };
+      committedDeletedSequences.length = 0;
+      this.emitChatEvent(deleteMessage);
+    };
     const clearResult = this.clearHistoryForHardRestart
       ? await this.clearHistoryForHardRestart({
           monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
+          onRowsDeleted,
         })
-      : await this.historyService.clearHistory(this.workspaceId, () => this.clearUsageState());
+      : await this.historyService.clearHistory(
+          this.workspaceId,
+          () => this.clearUsageState(),
+          onRowsDeleted
+        );
     if (!clearResult.success) {
+      emitCommittedDeletions();
       log.warn("Failed to clear history for exec subagent hard restart", {
         workspaceId: this.workspaceId,
         error: clearResult.error,
@@ -4641,14 +4666,7 @@ export class AgentSession {
       reason: "exec sub-agent hard restart",
     });
 
-    const deletedSequences = clearResult.data;
-    if (deletedSequences.length > 0) {
-      const deleteMessage: DeleteMessage = {
-        type: "delete",
-        historySequences: deletedSequences,
-      };
-      this.emitChatEvent(deleteMessage);
-    }
+    emitCommittedDeletions();
 
     const cloneForAppend = (msg: MuxMessage): MuxMessage => {
       const metadataCopy = msg.metadata ? { ...msg.metadata } : undefined;

@@ -3490,10 +3490,12 @@ export class WorkspaceService extends EventEmitter {
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,
-      clearHistoryForHardRestart: ({ monitorHistoryLockHeld }) => {
+      clearHistoryForHardRestart: ({ monitorHistoryLockHeld, onRowsDeleted }) => {
         const clear = () =>
-          this.historyService.clearHistory(workspaceId, () =>
-            this.sessions.get(workspaceId)?.clearUsageState()
+          this.historyService.clearHistory(
+            workspaceId,
+            () => this.sessions.get(workspaceId)?.clearUsageState(),
+            onRowsDeleted
           );
         const options = { discardUnacceptedOnSuccess: true };
         return monitorHistoryLockHeld
@@ -9676,26 +9678,27 @@ export class WorkspaceService extends EventEmitter {
     // success-only guard would leave stale usage alive across both windows.
     // A cut confined to sealed pre-boundary rows never fires the callback,
     // keeping the still-valid usage seedable.
+    const committedDeletedSequences: number[] = [];
     const truncate = () =>
-      this.historyService.truncateHistory(workspaceId, effectivePercentage, () =>
-        this.sessions.get(workspaceId)?.clearUsageState()
+      this.historyService.truncateHistory(
+        workspaceId,
+        effectivePercentage,
+        () => this.sessions.get(workspaceId)?.clearUsageState(),
+        (historySequences) => committedDeletedSequences.push(...historySequences)
       );
-    const truncateResult =
-      effectivePercentage > 0
-        ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate, {
-            discardUnacceptedOnSuccess: isFullClear,
-          })
-        : await truncate();
-    if (!truncateResult.success) {
-      return Err(truncateResult.error);
-    }
-
-    const deletedSequences = truncateResult.data.deletedSequences;
-    if (deletedSequences.length > 0) {
+    // Emit deletions for every committed step even when the truncation or a
+    // wrapper step fails afterwards: rows already removed from disk would
+    // otherwise linger in the renderer as ghosts that no retry can delete
+    // (their sequences no longer exist to be reported).
+    const emitCommittedDeletions = () => {
+      if (committedDeletedSequences.length === 0) {
+        return;
+      }
       const deleteMessage: DeleteMessage = {
         type: "delete",
-        historySequences: deletedSequences,
+        historySequences: [...committedDeletedSequences],
       };
+      committedDeletedSequences.length = 0;
       // Emit through the session so ORPC subscriptions receive the event
       if (session) {
         session.emitChatEvent(deleteMessage);
@@ -9703,6 +9706,22 @@ export class WorkspaceService extends EventEmitter {
         // Fallback to direct emit (legacy path)
         this.emit("chat", { workspaceId, message: deleteMessage });
       }
+    };
+    let truncateResult: Awaited<ReturnType<typeof truncate>>;
+    try {
+      truncateResult =
+        effectivePercentage > 0
+          ? await this.clearHistoryWithRetiredBashMonitorWakes(workspaceId, truncate, {
+              discardUnacceptedOnSuccess: isFullClear,
+            })
+          : await truncate();
+    } catch (error) {
+      emitCommittedDeletions();
+      throw error;
+    }
+    emitCommittedDeletions();
+    if (!truncateResult.success) {
+      return Err(truncateResult.error);
     }
 
     // On full clear, also delete plan file and clear file change tracking
@@ -9814,9 +9833,28 @@ export class WorkspaceService extends EventEmitter {
 
     const replaceMode = options?.mode ?? "destructive";
 
+    // Same ghost-row invariant as truncateHistory: emit deletions for every
+    // committed clear step even when a later step fails, or rows already
+    // removed from disk linger in the renderer with no way to delete them.
+    const committedDeletedSequences: number[] = [];
+    const emitCommittedDeletions = () => {
+      if (committedDeletedSequences.length === 0) {
+        return;
+      }
+      const deleteMessage: DeleteMessage = {
+        type: "delete",
+        historySequences: [...committedDeletedSequences],
+      };
+      committedDeletedSequences.length = 0;
+      const emitSession = this.sessions.get(workspaceId);
+      if (emitSession) {
+        emitSession.emitChatEvent(deleteMessage);
+      } else {
+        this.emit("chat", { workspaceId, message: deleteMessage });
+      }
+    };
     try {
       let messageToAppend = summaryMessage;
-      let deletedSequences: number[] = [];
 
       if (replaceMode === "append-compaction-boundary") {
         assert(
@@ -9878,12 +9916,15 @@ export class WorkspaceService extends EventEmitter {
         const clearResult = await this.clearHistoryWithRetiredBashMonitorWakes(
           workspaceId,
           () =>
-            this.historyService.clearHistory(workspaceId, () =>
-              this.sessions.get(workspaceId)?.clearUsageState()
+            this.historyService.clearHistory(
+              workspaceId,
+              () => this.sessions.get(workspaceId)?.clearUsageState(),
+              (historySequences) => committedDeletedSequences.push(...historySequences)
             ),
           { discardUnacceptedOnSuccess: true }
         );
         if (!clearResult.success) {
+          emitCommittedDeletions();
           return Err(`Failed to clear history: ${clearResult.error}`);
         }
         this.timelineRecorder.record(workspaceId, {
@@ -9891,28 +9932,18 @@ export class WorkspaceService extends EventEmitter {
           source: { system: "chat" },
           status: "completed",
         });
-        deletedSequences = clearResult.data;
       }
 
       const appendResult = await this.historyService.appendToHistory(workspaceId, messageToAppend);
       if (!appendResult.success) {
+        emitCommittedDeletions();
         return Err(`Failed to append summary message: ${appendResult.error}`);
       }
 
       // Emit through the session so ORPC subscriptions receive the events
       const session = this.sessions.get(workspaceId);
       session?.clearUsageState();
-      if (deletedSequences.length > 0) {
-        const deleteMessage: DeleteMessage = {
-          type: "delete",
-          historySequences: deletedSequences,
-        };
-        if (session) {
-          session.emitChatEvent(deleteMessage);
-        } else {
-          this.emit("chat", { workspaceId, message: deleteMessage });
-        }
-      }
+      emitCommittedDeletions();
 
       // Add type: "message" for discriminated union (MuxMessage doesn't have it)
       const typedSummaryMessage = { ...messageToAppend, type: "message" as const };
@@ -9935,6 +9966,7 @@ export class WorkspaceService extends EventEmitter {
 
       return Ok(undefined);
     } catch (error) {
+      emitCommittedDeletions();
       const message = getErrorMessage(error);
       return Err(`Failed to replace history: ${message}`);
     }
