@@ -253,6 +253,39 @@ describe("BackupService", () => {
     expect(await pathExists(tombstone)).toBe(false);
   });
 
+  test("reaps inactive repository caches when preparation rejects", async () => {
+    const cacheRoot = path.join(tempDir, "backup-cache");
+    const settings = ["a", "b", "c", "d"].map((branch) => ({ ...SETTINGS, branch }));
+    for (const [index, current] of settings.slice(0, 3).entries()) {
+      const cachePath = await createCacheDirectory(cacheRoot, current);
+      const usedAt = new Date((index + 1) * 1_000);
+      await fs.utimes(cachePath, usedAt, usedAt);
+    }
+    const gitRepo = createGitRepo({
+      prepare: async (current, options) => {
+        const repositoryRoot = await createCacheDirectory(cacheRoot, current);
+        const cleanup = options?.onPrepareError?.(repositoryRoot);
+        await cleanup?.catch(() => undefined);
+        throw new BackupServiceError("INVALID_BACKUP", "Invalid remote payload");
+      },
+    });
+    const service = createService(tempDir, { gitRepo });
+
+    const result = await service.preview(settings[3]);
+
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected invalid preparation to fail");
+    expect(result.error.code).toBe("INVALID_BACKUP");
+    expect(await cacheDirectories(cacheRoot)).toEqual(
+      settings
+        .slice(1)
+        .map((current) =>
+          path.basename(backupCachePath(cacheRoot, current.repoUrl, current.branch))
+        )
+        .sort()
+    );
+  });
+
   test("never reaps a repository cache while another operation is using it", async () => {
     const cacheRoot = path.join(tempDir, "backup-cache");
     const settings = Object.fromEntries(

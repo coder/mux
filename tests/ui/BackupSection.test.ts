@@ -10,6 +10,21 @@ import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 type MockOptions = Parameters<typeof createMockORPCClient>[0];
 type MockClient = ReturnType<typeof createMockORPCClient>;
 
+function backupSectionTree(client: MockClient) {
+  return React.createElement(
+    ThemeProvider,
+    null,
+    React.createElement(
+      TooltipProvider,
+      null,
+      React.createElement(APIProvider, {
+        client,
+        children: React.createElement(BackupSection),
+      })
+    )
+  );
+}
+
 function renderBackupSection(
   overrides: Partial<NonNullable<MockOptions>> = {},
   setupClient?: (client: MockClient) => void
@@ -43,20 +58,7 @@ function renderBackupSection(
 
   setupClient?.(client);
 
-  const view = render(
-    React.createElement(
-      ThemeProvider,
-      null,
-      React.createElement(
-        TooltipProvider,
-        null,
-        React.createElement(APIProvider, {
-          client,
-          children: React.createElement(BackupSection),
-        })
-      )
-    )
-  );
+  const view = render(backupSectionTree(client));
 
   return { client, view };
 }
@@ -191,6 +193,42 @@ describe("BackupSection", () => {
     await waitFor(() =>
       expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true)
     );
+  });
+
+  test("does not carry config stream liveness across API replacements", async () => {
+    const { view } = renderBackupSection({}, (client) => {
+      const subscription = client.config.onConfigChanged();
+      jest.spyOn(client.config, "onConfigChanged").mockImplementation(async () => {
+        const iterator = await subscription;
+        jest
+          .spyOn(iterator, "next")
+          .mockImplementation(() => new Promise<IteratorResult<void>>(() => undefined));
+        return iterator;
+      });
+    });
+    const canvas = within(view.container);
+
+    await canvas.findByLabelText("Repository URL");
+    await waitFor(() =>
+      expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(false)
+    );
+
+    const replacement = createMockORPCClient({
+      backupSettings: {
+        repoUrl: "git@github.com:example/replacement.git",
+        branch: "main",
+        path: "mux/",
+      },
+    });
+    const getSettings = jest.spyOn(replacement.backup, "getSettings");
+    jest
+      .spyOn(replacement.config, "onConfigChanged")
+      .mockImplementation(() => Promise.reject(new Error("replacement stream failed")));
+
+    view.rerender(backupSectionTree(replacement));
+
+    await waitFor(() => expect(getSettings).toHaveBeenCalledTimes(2));
+    expect(canvas.getByRole("button", { name: /^Restore$/ }).hasAttribute("disabled")).toBe(true);
   });
 
   test("re-reads config after a save instead of trusting the save response", async () => {

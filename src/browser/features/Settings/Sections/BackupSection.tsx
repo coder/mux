@@ -137,9 +137,6 @@ export function BackupSection() {
   const draftRef = useRef(draft);
   const savedDraftRef = useRef(savedDraft);
   const refreshRef = useRef<((options?: { markFresh?: boolean }) => Promise<void>) | null>(null);
-  // Freshness is only meaningful while the config stream can report another window's
-  // changes, so every refresh consults liveness instead of each caller re-deciding.
-  const streamLiveRef = useRef(false);
   draftRef.current = draft;
   savedDraftRef.current = savedDraft;
 
@@ -159,6 +156,9 @@ export function BackupSection() {
     const abortController = new AbortController();
     const { signal } = abortController;
     let iterator: AsyncIterator<unknown> | null = null;
+    // Liveness belongs to this API subscription. An older effect can finish after its
+    // replacement starts, so sharing this flag across generations creates stale writes.
+    let streamLive = false;
     setLoading(true);
     setSettingsFresh(false);
     setSaveError(null);
@@ -179,7 +179,7 @@ export function BackupSection() {
         }
         savedDraftRef.current = nextDraft;
         setSavedDraft(nextDraft);
-        if (options?.markFresh !== false && streamLiveRef.current) setSettingsFresh(true);
+        if (options?.markFresh !== false && streamLive) setSettingsFresh(true);
         setSaveError(null);
 
         if (!draftsEqual(previousSavedDraft, nextDraft)) {
@@ -221,7 +221,7 @@ export function BackupSection() {
         }
         iterator = subscribed;
         nextEvent = subscribed.next();
-        streamLiveRef.current = true;
+        streamLive = true;
       } catch {
         // Without a listener, future changes go unseen, so show the snapshot but keep
         // destructive actions stale.
@@ -240,12 +240,12 @@ export function BackupSection() {
           nextEvent = subscribed.next();
           await refresh();
         }
-        streamLiveRef.current = false;
+        streamLive = false;
         if (!signal.aborted) setSettingsFresh(false);
       } catch {
         // A dead stream can no longer report another window's changes, so the loaded
         // settings stay visible but are no longer fresh enough for destructive actions.
-        streamLiveRef.current = false;
+        streamLive = false;
         if (!signal.aborted) setSettingsFresh(false);
       }
     })();

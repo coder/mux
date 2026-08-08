@@ -352,7 +352,7 @@ describe("backup adapters", () => {
     }
   });
 
-  it("refuses a cache whose push url is not the configured repository", async () => {
+  it("refuses a mismatched push url and reports the failed cache root", async () => {
     await writeFixtureFile(muxRoot, "AGENTS.md", "first\n");
     const gitRepo = createBackupGitRepo({ cacheRoot });
     await gitRepo.prepare(settings);
@@ -362,14 +362,21 @@ describe("backup adapters", () => {
     await runGit(["init", "--bare", "--quiet", "--initial-branch=main", elsewhere]);
     await runGit(["-C", cachePath, "config", "remote.origin.pushurl", elsewhere]);
 
+    const failedCacheRoots: string[] = [];
     const refused = await createBackupGitRepo({ cacheRoot })
-      .prepare(settings)
+      .prepare(settings, {
+        onPrepareError: (repositoryRoot) => {
+          failedCacheRoots.push(repositoryRoot);
+          return Promise.resolve();
+        },
+      })
       .then(
         () => null,
         (error: unknown) => error
       );
 
     expect((refused as Error | null)?.message).toContain("Backup cache origin");
+    expect(failedCacheRoots).toEqual([cachePath]);
   });
 
   it("refuses a cache with a second push url alongside the configured one", async () => {

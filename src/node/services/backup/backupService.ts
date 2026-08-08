@@ -36,7 +36,10 @@ export interface BackupGitRepo {
     credential: BackupCredentialKind;
     empty: boolean;
   }>;
-  prepare(settings: SettingsBackupInput): Promise<PreparedBackupRepository>;
+  prepare(
+    settings: SettingsBackupInput,
+    options?: { onPrepareError?(repositoryRoot: string): Promise<void> }
+  ): Promise<PreparedBackupRepository>;
   getPushChanges(repository: PreparedBackupRepository): Promise<BackupFileChange[]>;
   commitAndPush(
     repository: PreparedBackupRepository,
@@ -436,7 +439,9 @@ export class BackupService {
   private async prepareRepository(
     settings: SettingsBackupInput
   ): Promise<PreparedBackupRepository> {
-    const repository = await this.dependencies.gitRepo.prepare(settings);
+    const repository = await this.dependencies.gitRepo.prepare(settings, {
+      onPrepareError: (repositoryRoot) => this.reapInactiveCaches(repositoryRoot),
+    });
     await this.reapInactiveCaches(repository.rootDir);
     return repository;
   }

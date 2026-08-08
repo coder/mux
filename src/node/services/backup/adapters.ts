@@ -81,9 +81,16 @@ export function createBackupGitRepo(options: {
       return { credential: refs.credential, empty: refs.refs.size === 0 };
     },
 
-    async prepare(settings) {
+    async prepare(settings, options) {
       const cache = newCache(settings);
-      const remoteCommit = await cache.materialize();
+      let remoteCommit: string | null;
+      try {
+        remoteCommit = await cache.materialize();
+      } catch (error) {
+        const cleanup = options?.onPrepareError?.(cache.cachePath);
+        await cleanup?.catch(() => undefined);
+        throw error;
+      }
       const repository = {
         rootDir: cache.cachePath,
         credential: cache.credential ?? "ambient",
