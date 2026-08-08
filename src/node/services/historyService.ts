@@ -944,6 +944,20 @@ export class HistoryService {
     );
   }
 
+  /** Call only while holding workspaceFileLocks for this workspace. */
+  async iterateFullHistoryUnderLock(
+    workspaceId: string,
+    direction: "forward" | "backward",
+    visitor: (messages: MuxMessage[]) => boolean | void | Promise<boolean | void>
+  ): Promise<Result<void>> {
+    try {
+      await this.recoverTruncateTransactionUnlocked(workspaceId);
+      return await this.iterateFullHistoryUnlocked(workspaceId, direction, visitor);
+    } catch (error) {
+      return Err(`Failed to iterate history: ${getErrorMessage(error)}`);
+    }
+  }
+
   private async iterateFullHistoryUnlocked(
     workspaceId: string,
     direction: "forward" | "backward",
