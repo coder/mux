@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
 import type {
@@ -1053,6 +1054,68 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     } finally {
       seqSpy.mockRestore();
     }
+
+    session.dispose();
+  });
+
+  test("archived edit partial failure keeps seeding suppressed", async () => {
+    const workspaceId = "ws-archived-edit-partial-failure";
+    const { session, historyService } = await createSessionHarness({ workspaceId });
+
+    const rows = [
+      createMuxMessage("user-1", "user", "first prompt", { timestamp: Date.now() - 6_000 }),
+      createMuxMessage("assistant-1", "assistant", "first reply", {
+        timestamp: Date.now() - 5_000,
+        model: "openai:gpt-4o",
+        contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+      }),
+      createMuxMessage("user-2", "user", "second prompt", { timestamp: Date.now() - 4_000 }),
+      // Boundary append seals the prefix into the archive.
+      createMuxMessage("boundary-1", "assistant", "Summary 1", {
+        timestamp: Date.now() - 3_000,
+        compactionBoundary: true,
+        compacted: "user",
+        compactionEpoch: 1,
+      }),
+    ];
+    for (const row of rows) {
+      expect((await historyService.appendToHistory(workspaceId, row)).success).toBe(true);
+    }
+
+    // Fail the archive removal so the pre-boundary edit commits chat.jsonl
+    // (the copied prefix) but returns Err with the archive still present.
+    const realRm = fs.rm;
+    const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+      const target = String(args[0]);
+      if (target.includes(workspaceId) && target.includes("chat-archive")) {
+        return Promise.reject(
+          Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+        );
+      }
+      return realRm(...args);
+    });
+    try {
+      const editResult = await session.sendMessage("second prompt, edited", {
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        editMessageId: "user-2",
+      });
+      expect(editResult.success).toBe(false);
+    } finally {
+      rmSpy.mockRestore();
+    }
+
+    // The archive now coexists with a duplicated prefix whose usage snapshot
+    // no longer measures the real payload; seeding must stay suppressed
+    // until fresh provider usage arrives.
+    const seenUsages = installUsageCapturingMonitor(session);
+    const result = await session.sendMessage("follow-up send", {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    });
+    expect(result.success).toBe(true);
+    expect(seenUsages).toHaveLength(1);
+    expect(seenUsages[0]).toBeUndefined();
 
     session.dispose();
   });

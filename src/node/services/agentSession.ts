@@ -2737,15 +2737,21 @@ export class AgentSession {
       // Invalidate usage the moment the rewrite commits, not on success: the
       // truncation can fail after chat.jsonl changed (archive removal or the
       // sequence-floor read), and stale usage from the removed suffix must
-      // not survive that. Edits cut a suffix; the retained prefix's persisted
-      // usage is valid, so re-enable history seeding even if a prior rewrite
-      // suppressed it.
+      // not survive that. Seeding stays suppressed at the commit point
+      // because a partial failure can leave the archive alongside a
+      // duplicated prefix, where retained-row snapshots no longer measure
+      // the real payload.
       const truncateResult = await this.historyService.truncateAfterMessage(
         this.workspaceId,
         truncateTargetId,
-        { onContextRewritten: () => this.clearUsageState({ reenableHistorySeeding: true }) }
+        { onContextRewritten: () => this.clearUsageState() }
       );
-      if (!truncateResult.success) {
+      if (truncateResult.success) {
+        // Fully committed edits cut a suffix and leave both files
+        // consistent; the retained prefix's persisted usage is valid, so
+        // re-enable history seeding even if a prior rewrite suppressed it.
+        this.clearUsageState({ reenableHistorySeeding: true });
+      } else {
         const isMissingEditTarget =
           truncateResult.error.includes("Message with ID") &&
           truncateResult.error.includes("not found in history");
