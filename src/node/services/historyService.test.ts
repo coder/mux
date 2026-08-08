@@ -1980,6 +1980,79 @@ describe("HistoryService", () => {
       }
     });
 
+    it("restores copied-prefix usage once the archived edit fully commits", async () => {
+      // Success path: the archive is gone, so the duplicated-prefix hazard
+      // no longer exists and the restored prefix's usage (exact for that
+      // context) must survive so the next send stays monitored.
+      await service.appendToHistory(wsId, createMuxMessage("msg-0", "user", "first prompt"));
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-archived", "assistant", "archived reply", {
+          model: "openai:gpt-4o",
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+        })
+      );
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+
+      const truncateResult = await service.truncateAfterMessage(wsId, "assistant-archived", {
+        keepTargetMessage: true,
+      });
+      expect(truncateResult.success).toBe(true);
+      expect(await fileExists(archivePath(wsId))).toBe(false);
+      const chatRows = await readJsonlFile(chatPath(wsId));
+      const copiedAssistant = chatRows.find((msg) => msg.id === "assistant-archived");
+      expect(copiedAssistant?.metadata?.contextUsage).toMatchObject({ inputTokens: 95_000 });
+    });
+
+    it("strips usage from the copied prefix so a failed archived edit is restart-safe", async () => {
+      // If archive removal fails after the chat.jsonl commit, the duplicated
+      // prefix persists across restarts; a fresh session must find no usage
+      // to seed on the copied rows.
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("msg-0", "user", "first prompt", { timestamp: Date.now() - 6_000 })
+      );
+      await service.appendToHistory(
+        wsId,
+        createMuxMessage("assistant-archived", "assistant", "archived reply", {
+          timestamp: Date.now() - 5_000,
+          model: "openai:gpt-4o",
+          contextUsage: { inputTokens: 95_000, outputTokens: 100, totalTokens: 95_100 },
+          contextProviderMetadata: { anthropic: {} },
+        })
+      );
+      await service.appendToHistory(wsId, boundaryMessage("boundary-1", 1));
+      await service.appendToHistory(wsId, createMuxMessage("post-0", "user", "after"));
+
+      const realRm = fs.rm;
+      const rmSpy = spyOn(fs, "rm").mockImplementation((...args: Parameters<typeof fs.rm>) => {
+        if (args[0] === archivePath(wsId)) {
+          return Promise.reject(
+            Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" })
+          );
+        }
+        return realRm(...args);
+      });
+      try {
+        const truncateResult = await service.truncateAfterMessage(wsId, "assistant-archived", {
+          keepTargetMessage: true,
+        });
+        expect(truncateResult.success).toBe(false);
+        // Archive retained (removal failed), copied prefix committed with
+        // usage stripped and other metadata intact.
+        expect(await fileExists(archivePath(wsId))).toBe(true);
+        const chatRows = await readJsonlFile(chatPath(wsId));
+        const copiedAssistant = chatRows.find((msg) => msg.id === "assistant-archived");
+        expect(copiedAssistant).toBeDefined();
+        expect(copiedAssistant?.metadata?.contextUsage).toBeUndefined();
+        expect(copiedAssistant?.metadata?.contextProviderMetadata).toBeUndefined();
+        expect(copiedAssistant?.metadata?.model).toBe("openai:gpt-4o");
+      } finally {
+        rmSpy.mockRestore();
+      }
+    });
+
     it("does not notify context rewrite when the edit target is missing", async () => {
       await appendNumberedMessages(service, wsId, 2);
 

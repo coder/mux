@@ -75,6 +75,20 @@ function cutChangesActiveWindow(messages: MuxMessage[], cutEnd: number): boolean
   );
 }
 
+function stripContextUsage(msg: MuxMessage): MuxMessage {
+  if (msg.metadata?.contextUsage === undefined) {
+    return msg;
+  }
+  return {
+    ...msg,
+    metadata: {
+      ...msg.metadata,
+      contextUsage: undefined,
+      contextProviderMetadata: undefined,
+    },
+  };
+}
+
 function getCompactionMetadataToPreserve(
   workspaceId: string,
   existingMessage: MuxMessage,
@@ -1921,14 +1935,44 @@ export class HistoryService {
         0,
         keepTargetMessage ? messageIndex + 1 : messageIndex
       );
+      const historyPath = this.getChatHistoryPath(workspaceId);
+      const copiedPrefixHasUsage = truncatedMessages.some(
+        (msg) => msg.metadata?.contextUsage !== undefined
+      );
 
+      // Write the copied prefix with usage snapshots stripped while the
+      // archive still exists: if the removal below fails or the process dies
+      // first, the duplicated-prefix state persists across restarts, where a
+      // fresh session would seed the copied assistant's old contextUsage and
+      // understate the archive-plus-prefix payload. Once the removal
+      // commits, the hazard is gone and the restore write below brings the
+      // usage back, because it is exact for the restored prefix context and
+      // an edited near-limit prefix must stay monitored on the next send.
       await writeFileAtomic(
-        this.getChatHistoryPath(workspaceId),
-        this.serializeHistoryEntries(truncatedMessages, workspaceId)
+        historyPath,
+        this.serializeHistoryEntries(
+          copiedPrefixHasUsage ? truncatedMessages.map(stripContextUsage) : truncatedMessages,
+          workspaceId
+        )
       );
       // The archive removal below can still fail after this commit.
       notifyContextRewritten();
       await fs.rm(this.getChatArchivePath(workspaceId), { force: true });
+      if (copiedPrefixHasUsage) {
+        try {
+          await writeFileAtomic(
+            historyPath,
+            this.serializeHistoryEntries(truncatedMessages, workspaceId)
+          );
+        } catch (error) {
+          // Safe-but-blind state: one unmonitored send, reseeded by the next
+          // provider response. Not worth failing the committed truncation.
+          log.warn("Failed to restore copied-prefix usage after archived edit", {
+            workspaceId,
+            error,
+          });
+        }
+      }
       // chat.jsonl may contain sealed epochs again — allow the lazy check to re-run.
       this.sealedRotationChecked.delete(workspaceId);
 
@@ -2118,19 +2162,8 @@ export class HistoryService {
         // (including the removed prefix). Persisting it would reseed stale
         // auto-compaction pressure, even across app restarts. Strip it; the
         // next provider response reports fresh usage.
-        const sanitizeRetained = (msg: MuxMessage): MuxMessage => {
-          if (!activeContextTruncated || msg.metadata?.contextUsage === undefined) {
-            return msg;
-          }
-          return {
-            ...msg,
-            metadata: {
-              ...msg.metadata,
-              contextUsage: undefined,
-              contextProviderMetadata: undefined,
-            },
-          };
-        };
+        const sanitizeRetained = (msg: MuxMessage): MuxMessage =>
+          activeContextTruncated ? stripContextUsage(msg) : msg;
         const remainingMessages = messages.slice(removeCount).map(sanitizeRetained);
         const deletedMessages = messages.slice(0, removeCount);
         const deletedSequences = sequencesOf(deletedMessages);
