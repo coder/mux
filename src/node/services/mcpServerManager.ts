@@ -571,9 +571,25 @@ async function runServerTest(
   projectPath: string,
   logContext: string
 ): Promise<MCPTestResult> {
-  const timeoutPromise = new Promise<MCPTestResult>((resolve) =>
-    setTimeout(() => resolve({ success: false, error: "Connection timed out" }), TEST_TIMEOUT_MS)
-  );
+  // Resettable deadline: the fragile-legacy stdio respawn below restarts the
+  // clock so the compatibility retry gets a full test window instead of
+  // whatever is left after the failed probe attempt.
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  let resolveTimeout: (result: MCPTestResult) => void;
+  const timeoutPromise = new Promise<MCPTestResult>((resolve) => {
+    resolveTimeout = resolve;
+  });
+  const armTestDeadline = () => {
+    timeoutHandle = setTimeout(
+      () => resolveTimeout({ success: false, error: "Connection timed out" }),
+      TEST_TIMEOUT_MS
+    );
+  };
+  const resetTestDeadline = () => {
+    clearTimeout(timeoutHandle);
+    armTestDeadline();
+  };
+  armTestDeadline();
 
   const testPromise = (async (): Promise<MCPTestResult> => {
     let stdioTransport: MCPStdioTransport | null = null;
@@ -613,6 +629,9 @@ async function runServerTest(
           } catch {
             // ignore cleanup errors
           }
+          // Give the respawned process a full test window; the failed probe
+          // attempt may have consumed most of the original deadline.
+          resetTestDeadline();
           stdioTransport = await spawnTransport();
           client = await createMCPClient({
             transport: stdioTransport,
@@ -1924,13 +1943,17 @@ export class MCPServerManager {
     }
 
     if (info.transport === "stdio") {
+      // Include the effective execution context (cwd defaults to the
+      // workspace path): the same command can resolve different server
+      // versions from different worktrees/runtimes, so verdicts must not
+      // leak across workspaces.
       const verdictKey = JSON.stringify([
         "stdio",
         name,
         info.command,
         info.args ?? null,
         info.env ?? null,
-        info.cwd ?? null,
+        info.cwd ?? workspacePath,
       ]);
       let prior = this.getCachedEraVerdict(verdictKey);
       // A cached verdict of either kind can go stale without a config change:
