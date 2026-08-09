@@ -1,16 +1,30 @@
 import React, { useState } from "react";
+import { Copy, Download, Maximize2 } from "lucide-react";
 import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
 import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { ImageLightbox } from "@/browser/components/ImageLightbox";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import {
+  PositionedMenu,
+  PositionedMenuItem,
+} from "@/browser/components/PositionedMenu/PositionedMenu";
+import {
+  copyImageDataUrlToClipboard,
+  downloadDataUrl,
+  getImageDownloadFilename,
+} from "@/browser/utils/imageActions";
 
 /**
- * Image content from MCP tool results (transformed from MCP's image type to AI SDK's media type)
+ * Image content from tool results (attach_file, desktop screenshots, MCP tools).
+ * MCP's image type is transformed to the AI SDK's media type upstream.
  */
-interface MediaContent {
+export interface MediaContent {
   type: "media";
   data: string; // base64
   mediaType: string;
+  /** Original filename when known (e.g. attach_file results) */
+  filename?: string;
 }
 
 function isMediaContent(value: unknown): value is MediaContent {
@@ -66,7 +80,23 @@ export function sanitizeImageData(mediaType: string, data: string): string | nul
 export function extractImagesFromToolResult(result: unknown): MediaContent[] {
   if (!isToolContentResult(result)) return [];
 
-  return result.value.filter(isMediaContent);
+  return result.value.filter(isMediaContent).map((media) => {
+    // Normalize to a known shape: media parts may carry extra fields, and
+    // filename may be absent or malformed (e.g. from arbitrary MCP servers).
+    const filename = (media as { filename?: unknown }).filename;
+    return {
+      type: "media" as const,
+      data: media.data,
+      mediaType: media.mediaType,
+      filename: typeof filename === "string" && filename.length > 0 ? filename : undefined,
+    };
+  });
+}
+
+interface SafeToolResultImage {
+  dataUrl: string;
+  mediaType: string;
+  filename?: string;
 }
 
 interface ToolResultImagesProps {
@@ -74,42 +104,130 @@ interface ToolResultImagesProps {
 }
 
 /**
- * Display images extracted from MCP tool results (e.g., Chrome DevTools screenshots)
+ * Display images extracted from tool results (attach_file, desktop screenshots,
+ * MCP tools). Click opens a lightbox; right-click (or long-press on touch)
+ * opens a menu with copy/download actions.
  */
 export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) => {
   const images = extractImagesFromToolResult(result);
-  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [selectedImage, setSelectedImage] = useState<SafeToolResultImage | null>(null);
+  // The image the context menu currently targets (set on right-click/long-press).
+  const [menuImage, setMenuImage] = useState<SafeToolResultImage | null>(null);
+  const contextMenu = useContextMenuPosition({ longPress: true });
 
   // Sanitize all images upfront, filtering out any that fail validation
   const safeImages = images
-    .map((image) => sanitizeImageData(image.mediaType, image.data))
-    .filter((url): url is string => url !== null);
+    .map((image): SafeToolResultImage | null => {
+      const dataUrl = sanitizeImageData(image.mediaType, image.data);
+      if (dataUrl === null) {
+        return null;
+      }
+      return { dataUrl, mediaType: image.mediaType, filename: image.filename };
+    })
+    .filter((image): image is SafeToolResultImage => image !== null);
 
   if (safeImages.length === 0) return null;
+
+  const handleCopyImage = async (image: SafeToolResultImage) => {
+    try {
+      await copyImageDataUrlToClipboard(image.dataUrl);
+    } catch (err) {
+      console.error("Failed to copy image:", err);
+    }
+  };
 
   return (
     <>
       <div className="mt-2 flex flex-wrap gap-2">
-        {safeImages.map((dataUrl, index) => (
-          <TooltipIfPresent key={index} tooltip="Click to view full size" side="top">
+        {safeImages.map((image, index) => (
+          <TooltipIfPresent
+            key={index}
+            tooltip="Click to view full size. Right-click for actions."
+            side="top"
+          >
             <button
-              onClick={() => setSelectedImage(dataUrl)}
-              className="border-border-light bg-dark block cursor-pointer overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
+              onClick={() => {
+                // A long-press already opened the context menu; don't also open the lightbox.
+                if (contextMenu.suppressClickIfLongPress()) return;
+                setSelectedImage(image);
+              }}
+              onContextMenu={(e) => {
+                setMenuImage(image);
+                contextMenu.onContextMenu(e);
+              }}
+              onTouchStart={(e) => {
+                setMenuImage(image);
+                contextMenu.touchHandlers.onTouchStart(e);
+              }}
+              onTouchEnd={contextMenu.touchHandlers.onTouchEnd}
+              onTouchMove={contextMenu.touchHandlers.onTouchMove}
+              className="border-border-light bg-dark flex max-w-full cursor-pointer flex-col overflow-hidden rounded border p-0 transition-opacity hover:opacity-80"
             >
               <img
-                src={dataUrl}
-                alt={`Tool result image ${index + 1}`}
+                src={image.dataUrl}
+                alt={image.filename ?? `Tool result image ${index + 1}`}
                 className="max-h-48 max-w-full object-contain"
               />
+              {image.filename && (
+                // w-0 min-w-full keeps the caption from widening the thumbnail
+                // beyond the image while still truncating long filenames.
+                <span className="text-muted border-border-light w-0 min-w-full truncate border-t px-1.5 py-0.5 text-left text-[10px]">
+                  {image.filename}
+                </span>
+              )}
             </button>
           </TooltipIfPresent>
         ))}
       </div>
 
+      <PositionedMenu
+        open={contextMenu.isOpen}
+        onOpenChange={contextMenu.onOpenChange}
+        position={contextMenu.position}
+      >
+        {menuImage && (
+          <>
+            <PositionedMenuItem
+              icon={<Maximize2 />}
+              label="View full size"
+              onClick={() => {
+                setSelectedImage(menuImage);
+                contextMenu.close();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Copy />}
+              label="Copy image"
+              onClick={() => {
+                void handleCopyImage(menuImage);
+                contextMenu.close();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<Download />}
+              label="Download image"
+              onClick={() => {
+                downloadDataUrl(
+                  menuImage.dataUrl,
+                  getImageDownloadFilename(menuImage.filename, menuImage.mediaType)
+                );
+                contextMenu.close();
+              }}
+            />
+          </>
+        )}
+      </PositionedMenu>
+
       <ImageLightbox
-        src={selectedImage}
+        src={selectedImage?.dataUrl ?? null}
         title="Image Preview"
-        alt="Full size preview"
+        alt={selectedImage?.filename ?? "Full size preview"}
+        filename={selectedImage?.filename}
+        downloadFilename={
+          selectedImage
+            ? getImageDownloadFilename(selectedImage.filename, selectedImage.mediaType)
+            : undefined
+        }
         onClose={() => setSelectedImage(null)}
       />
     </>

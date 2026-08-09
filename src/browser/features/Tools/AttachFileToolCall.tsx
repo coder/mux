@@ -29,7 +29,12 @@ import {
 import { useToolExpansion, getStatusDisplay, type ToolStatus } from "./Shared/toolUtils";
 import { JsonHighlight } from "./Shared/HighlightedCode";
 import { redactToolResultAttachmentsForDisplay } from "./Shared/toolResultDisplay";
-import { ToolResultImages, extractImagesFromToolResult } from "./Shared/ToolResultImages";
+import {
+  ToolResultImages,
+  extractImagesFromToolResult,
+  sanitizeImageData,
+  type MediaContent,
+} from "./Shared/ToolResultImages";
 
 const MARKDOWN_PREVIEW_CHAR_LIMIT = 50_000;
 const MARKDOWN_PREVIEW_MEDIA_TYPES = new Set([MARKDOWN_MEDIA_TYPE, "text/x-markdown"]);
@@ -145,6 +150,44 @@ const DisplayOnlyFile: React.FC<{ file: DisplayOnlyFilePart }> = (props) => {
   );
 };
 
+/**
+ * Card for media attachments that were sent to the model but cannot be
+ * previewed inline (PDF, SVG). SVG is intentionally never rendered in the
+ * renderer because it can contain scripts (see sanitizeImageData); both
+ * formats are offered as downloads instead so the attachment isn't invisible.
+ */
+const MediaAttachmentDownloadCard: React.FC<{ media: MediaContent }> = (props) => {
+  const baseMediaType = normalizeAttachmentMediaType(props.media.mediaType);
+  const dataUrl = isValidBase64AttachmentData(props.media.data)
+    ? `data:${baseMediaType};base64,${props.media.data}`
+    : null;
+  const label = props.media.filename ?? `Attachment (${baseMediaType})`;
+
+  return (
+    <div className="border-border-light bg-dark mt-2 max-w-xl rounded border p-3">
+      <div className="mb-2 flex items-center gap-2 text-sm text-[var(--color-subtle)]">
+        <FileText className="h-4 w-4 shrink-0" />
+        <span className="truncate font-medium text-[var(--color-text)]">{label}</span>
+        <span className="counter-nums text-xs">{baseMediaType}</span>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-[var(--color-subtle)]">
+        <span>Attached for the model; inline preview is not available for this file type.</span>
+        {dataUrl == null && <span>File data is unavailable for download.</span>}
+        {dataUrl != null && (
+          <a
+            href={dataUrl}
+            download={props.media.filename ?? "attachment"}
+            className="border-border-light hover:bg-surface flex items-center gap-1 rounded border px-2 py-1 text-[var(--color-text)]"
+          >
+            <Download className="h-3 w-3" />
+            Download
+          </a>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const AttachFileToolCall: React.FC<AttachFileToolCallProps> = (props) => {
   const { expanded, toggleExpanded } = useToolExpansion();
   const displayFiles = extractDisplayFilesFromToolResult(props.result);
@@ -152,6 +195,11 @@ export const AttachFileToolCall: React.FC<AttachFileToolCallProps> = (props) => 
   const hasDetails = props.args !== undefined || props.result !== undefined;
   const images = extractImagesFromToolResult(props.result);
   const hasImages = images.length > 0;
+  // Media attachments the image gallery refuses to render (PDF, SVG) would
+  // otherwise be invisible in the tool card; surface them as download cards.
+  const downloadOnlyMedia = images.filter(
+    (image) => sanitizeImageData(image.mediaType, image.data) === null
+  );
   const shouldShowDetails = expanded || hasImages || hasDisplayFiles;
 
   return (
@@ -166,6 +214,16 @@ export const AttachFileToolCall: React.FC<AttachFileToolCallProps> = (props) => 
       </ToolHeader>
 
       {hasImages && <ToolResultImages result={props.result} />}
+      {downloadOnlyMedia.length > 0 && (
+        <div className="space-y-2">
+          {downloadOnlyMedia.map((media, index) => (
+            <MediaAttachmentDownloadCard
+              key={`${media.filename ?? media.mediaType}-${index}`}
+              media={media}
+            />
+          ))}
+        </div>
+      )}
       {hasDisplayFiles && (
         <div className="space-y-2">
           {displayFiles.map((file, index) => (

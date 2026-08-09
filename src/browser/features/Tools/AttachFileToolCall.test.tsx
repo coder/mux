@@ -57,4 +57,59 @@ describe("AttachFileToolCall", () => {
     expect(download.getAttribute("download")).toBe("release-notes.md");
     expect(download.getAttribute("href")).toBe(`data:text/markdown;base64,${data}`);
   });
+
+  test("renders image attachments with a filename caption", () => {
+    const data = Buffer.from("fake-png-bytes").toString("base64");
+
+    const view = render(
+      <TooltipProvider>
+        <AttachFileToolCall
+          toolName="attach_file"
+          args={{ path: "screenshot.png" }}
+          result={{
+            type: "content",
+            value: [
+              { type: "text", text: "[Attachment prepared: screenshot.png]" },
+              { type: "media", data, mediaType: "image/png", filename: "screenshot.png" },
+            ],
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    const image = view.getByRole("img", { name: "screenshot.png" });
+    expect(image.getAttribute("src")).toBe(`data:image/png;base64,${data}`);
+    // Caption is rendered alongside the thumbnail so users can identify the file.
+    expect(view.getByText("screenshot.png")).toBeTruthy();
+  });
+
+  test("renders a download card for media attachments without an inline preview (PDF)", () => {
+    const data = Buffer.from("fake-pdf-bytes").toString("base64");
+
+    const view = render(
+      <TooltipProvider>
+        <AttachFileToolCall
+          toolName="attach_file"
+          args={{ path: "report.pdf" }}
+          result={{
+            type: "content",
+            value: [
+              { type: "text", text: "[Attachment prepared: report.pdf]" },
+              { type: "media", data, mediaType: "application/pdf", filename: "report.pdf" },
+            ],
+          }}
+          status="completed"
+        />
+      </TooltipProvider>
+    );
+
+    // No inline preview for PDFs (not in the raster allowlist)...
+    expect(view.queryByRole("img")).toBeNull();
+    // ...but the attachment is surfaced as a download card instead of being invisible.
+    expect(view.getByText("report.pdf")).toBeTruthy();
+    const download = view.getByRole("link", { name: /Download/ });
+    expect(download.getAttribute("download")).toBe("report.pdf");
+    expect(download.getAttribute("href")).toBe(`data:application/pdf;base64,${data}`);
+  });
 });

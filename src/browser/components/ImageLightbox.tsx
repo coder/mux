@@ -1,30 +1,69 @@
+import { Check, Copy, Download } from "lucide-react";
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   VisuallyHidden,
 } from "@/browser/components/Dialog/Dialog";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { copyImageDataUrlToClipboard } from "@/browser/utils/imageActions";
 
 interface ImageLightboxProps {
   src: string | null;
   title: string;
   alt: string;
+  /** Optional filename shown in the action bar */
+  filename?: string;
+  /** Filename used by the Download action (defaults to filename, then "image") */
+  downloadFilename?: string;
   onClose: () => void;
 }
 
+const ACTION_BUTTON_CLASS =
+  "border-border-light hover:bg-hover flex items-center gap-1 rounded border px-2 py-1 text-xs text-[var(--color-text)]";
+
 export function ImageLightbox(props: ImageLightboxProps) {
+  const src = props.src;
+  // Reuse the shared copied-feedback hook with an image write function.
+  const { copied, copyToClipboard } = useCopyToClipboard(copyImageDataUrlToClipboard);
+
   return (
-    <Dialog open={props.src !== null} onOpenChange={props.onClose}>
+    <Dialog open={src !== null} onOpenChange={props.onClose}>
       <DialogContent
         maxWidth="90vw"
         maxHeight="90vh"
-        className="flex w-auto items-center justify-center bg-black/90 p-2"
+        className="flex w-auto flex-col items-center justify-center gap-2 bg-black/90 p-2"
       >
         <VisuallyHidden>
           <DialogTitle>{props.title}</DialogTitle>
         </VisuallyHidden>
-        {props.src && (
-          <img src={props.src} alt={props.alt} className="max-h-[85vh] max-w-full object-contain" />
+        {src !== null && (
+          <>
+            <img src={src} alt={props.alt} className="max-h-[80vh] max-w-full object-contain" />
+            <div className="flex w-full min-w-0 items-center gap-2 px-1">
+              {props.filename && (
+                <span className="text-muted min-w-0 flex-1 truncate text-xs">{props.filename}</span>
+              )}
+              <div className="ml-auto flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void copyToClipboard(src)}
+                  className={ACTION_BUTTON_CLASS}
+                >
+                  {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+                <a
+                  href={src}
+                  download={props.downloadFilename ?? props.filename ?? "image"}
+                  className={ACTION_BUTTON_CLASS}
+                >
+                  <Download className="h-3 w-3" />
+                  Download
+                </a>
+              </div>
+            </div>
+          </>
         )}
       </DialogContent>
     </Dialog>

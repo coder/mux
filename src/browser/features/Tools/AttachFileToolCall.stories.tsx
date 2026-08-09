@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { fireEvent, waitFor, within } from "@storybook/test";
 import { createDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnlyFileParts";
 import { AttachFileToolCall } from "@/browser/features/Tools/AttachFileToolCall";
 import { lightweightMeta } from "@/browser/stories/meta.js";
@@ -129,6 +130,25 @@ export const Gallery: Story = {
             status="completed"
           />
         </GallerySection>
+        <GallerySection label="PDF attachment (download card)">
+          <AttachFileToolCall
+            toolName="attach_file"
+            args={{ path: "quarterly-report.pdf" }}
+            result={{
+              type: "content",
+              value: [
+                { type: "text", text: "[Attachment prepared: quarterly-report.pdf]" },
+                {
+                  type: "media",
+                  data: sampleBytes,
+                  mediaType: "application/pdf",
+                  filename: "quarterly-report.pdf",
+                },
+              ],
+            }}
+            status="completed"
+          />
+        </GallerySection>
         <GallerySection label="Display-only generic file">
           <AttachFileToolCall
             toolName="attach_file"
@@ -147,6 +167,45 @@ export const Gallery: Story = {
       </div>
     </ToolStoryShell>
   ),
+};
+
+// Right-click on an image thumbnail opens a context menu with view/copy/download
+// actions. The play function opens the menu so the Pixel snapshot captures it.
+export const ImageContextMenu: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <AttachFileToolCall
+        toolName="attach_file"
+        args={{ path: "screenshot.png" }}
+        result={{
+          type: "content",
+          value: [
+            { type: "text", text: "[Attachment prepared: screenshot.png]" },
+            {
+              type: "media",
+              data: samplePng,
+              mediaType: "image/png",
+              filename: "screenshot.png",
+            },
+          ],
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+    const image = await canvas.findByRole("img", { name: "screenshot.png" });
+
+    // Fixed coordinates keep the menu position deterministic for snapshots.
+    await fireEvent.contextMenu(image, { clientX: 120, clientY: 160 });
+
+    // The menu renders in a portal attached to document.body.
+    const body = within(document.body);
+    await waitFor(() => body.getByText("Copy image"));
+    await waitFor(() => body.getByText("Download image"));
+    await waitFor(() => body.getByText("View full size"));
+  },
 };
 
 export const FailedAttachment: Story = {
