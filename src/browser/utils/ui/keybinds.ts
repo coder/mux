@@ -575,6 +575,12 @@ export const KEYBINDS = {
   /** Toggle plan annotation mode in propose_plan */
   TOGGLE_PLAN_ANNOTATE: { key: "a", shift: true },
 
+  /** Copy image to clipboard (scoped to image lightbox / image context menu) */
+  IMAGE_COPY: { key: "c", ctrl: true },
+
+  /** Download image (scoped to image lightbox / image context menu) */
+  IMAGE_DOWNLOAD: { key: "s", ctrl: true },
+
   TOGGLE_POWER_MODE: { key: "F12", shift: true },
 } as const;
 

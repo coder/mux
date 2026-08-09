@@ -14,6 +14,11 @@ interface PositionedMenuProps {
   children: React.ReactNode;
   /** Tailwind width class (default: "w-[180px]") */
   className?: string;
+  /**
+   * Keyboard handler for menu-scoped shortcuts. Attached to the popover
+   * content, which receives focus when the menu opens.
+   */
+  onKeyDown?: (e: React.KeyboardEvent) => void;
 }
 
 /**
@@ -66,6 +71,7 @@ export function PositionedMenu(props: PositionedMenuProps) {
         className={cn("min-w-0! bg-surface-primary p-1", props.className ?? "w-[180px]")}
         style={{ visibility: !props.open || isPlaced ? "visible" : "hidden" }}
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={props.onKeyDown}
       >
         {props.children}
       </PopoverContent>

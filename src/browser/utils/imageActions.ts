@@ -1,4 +1,7 @@
+import type React from "react";
 import { normalizeAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
+import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { stopKeyboardPropagation } from "@/browser/utils/events";
 
 /**
  * Actions for images rendered from base64 data URLs (tool result images,
@@ -92,6 +95,37 @@ export async function copyImageDataUrlToClipboard(dataUrl: string): Promise<void
 
   const pngBlob = blob.type === "image/png" ? blob : await reencodeImageBlobToPng(blob);
   await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+}
+
+/**
+ * Shared keyboard handler for image surfaces (lightbox, image context menu):
+ * mod+C copies the image, mod+S downloads it. Returns true when the event was
+ * consumed. When text is selected, mod+C is left to the native copy behavior.
+ */
+export function handleImageActionKeyDown(
+  e: React.KeyboardEvent,
+  actions: { copy: () => void; download: () => void }
+): boolean {
+  if (matchesKeybind(e, KEYBINDS.IMAGE_COPY)) {
+    if (window.getSelection()?.toString()) {
+      return false;
+    }
+    e.preventDefault();
+    // Block global handlers (e.g. Ctrl+C stream interrupt in vim mode).
+    stopKeyboardPropagation(e);
+    actions.copy();
+    return true;
+  }
+
+  if (matchesKeybind(e, KEYBINDS.IMAGE_DOWNLOAD)) {
+    // preventDefault suppresses the browser's save-page dialog.
+    e.preventDefault();
+    stopKeyboardPropagation(e);
+    actions.download();
+    return true;
+  }
+
+  return false;
 }
 
 /** Trigger a browser download of a data URL via a temporary anchor element. */

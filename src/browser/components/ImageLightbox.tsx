@@ -6,7 +6,12 @@ import {
   VisuallyHidden,
 } from "@/browser/components/Dialog/Dialog";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { copyImageDataUrlToClipboard } from "@/browser/utils/imageActions";
+import {
+  copyImageDataUrlToClipboard,
+  downloadDataUrl,
+  handleImageActionKeyDown,
+} from "@/browser/utils/imageActions";
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 
 interface ImageLightboxProps {
   src: string | null;
@@ -22,10 +27,20 @@ interface ImageLightboxProps {
 const ACTION_BUTTON_CLASS =
   "border-border-light hover:bg-hover flex items-center gap-1 rounded border px-2 py-1 text-xs text-[var(--color-text)]";
 
+/** Keybind hint rendered inside an action button; hidden on mobile views. */
+function ShortcutHint(props: { keybind: (typeof KEYBINDS)[keyof typeof KEYBINDS] }) {
+  return (
+    <span className="text-muted hidden text-[10px] sm:inline">
+      ({formatKeybind(props.keybind)})
+    </span>
+  );
+}
+
 export function ImageLightbox(props: ImageLightboxProps) {
   const src = props.src;
   // Reuse the shared copied-feedback hook with an image write function.
   const { copied, copyToClipboard } = useCopyToClipboard(copyImageDataUrlToClipboard);
+  const downloadFilename = props.downloadFilename ?? props.filename ?? "image";
 
   return (
     <Dialog open={src !== null} onOpenChange={props.onClose}>
@@ -33,6 +48,13 @@ export function ImageLightbox(props: ImageLightboxProps) {
         maxWidth="90vw"
         maxHeight="90vh"
         className="flex w-auto flex-col items-center justify-center gap-2 bg-black/90 p-2"
+        onKeyDown={(e) => {
+          if (src === null) return;
+          handleImageActionKeyDown(e, {
+            copy: () => void copyToClipboard(src),
+            download: () => downloadDataUrl(src, downloadFilename),
+          });
+        }}
       >
         <VisuallyHidden>
           <DialogTitle>{props.title}</DialogTitle>
@@ -52,14 +74,12 @@ export function ImageLightbox(props: ImageLightboxProps) {
                 >
                   {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                   {copied ? "Copied" : "Copy"}
+                  <ShortcutHint keybind={KEYBINDS.IMAGE_COPY} />
                 </button>
-                <a
-                  href={src}
-                  download={props.downloadFilename ?? props.filename ?? "image"}
-                  className={ACTION_BUTTON_CLASS}
-                >
+                <a href={src} download={downloadFilename} className={ACTION_BUTTON_CLASS}>
                   <Download className="h-3 w-3" />
                   Download
+                  <ShortcutHint keybind={KEYBINDS.IMAGE_DOWNLOAD} />
                 </a>
               </div>
             </div>

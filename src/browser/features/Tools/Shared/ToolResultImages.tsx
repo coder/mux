@@ -13,7 +13,9 @@ import {
   copyImageDataUrlToClipboard,
   downloadDataUrl,
   getImageDownloadFilename,
+  handleImageActionKeyDown,
 } from "@/browser/utils/imageActions";
+import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
 
 /**
  * Image content from tool results (attach_file, desktop screenshots, MCP tools).
@@ -136,6 +138,10 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
     }
   };
 
+  const handleDownloadImage = (image: SafeToolResultImage) => {
+    downloadDataUrl(image.dataUrl, getImageDownloadFilename(image.filename, image.mediaType));
+  };
+
   return (
     <>
       <div className="mt-2 flex flex-wrap gap-2">
@@ -184,9 +190,21 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
         open={contextMenu.isOpen}
         onOpenChange={contextMenu.onOpenChange}
         position={contextMenu.position}
+        onKeyDown={(e) => {
+          if (!menuImage) return;
+          const consumed = handleImageActionKeyDown(e, {
+            copy: () => void handleCopyImage(menuImage),
+            download: () => handleDownloadImage(menuImage),
+          });
+          if (consumed) {
+            contextMenu.close();
+          }
+        }}
       >
         {menuImage && (
           <>
+            {/* No shortcut hint: Enter/Space on the focused thumbnail button
+                already opens the lightbox (native button activation). */}
             <PositionedMenuItem
               icon={<Maximize2 />}
               label="View full size"
@@ -198,6 +216,7 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
             <PositionedMenuItem
               icon={<Copy />}
               label="Copy image"
+              shortcut={formatKeybind(KEYBINDS.IMAGE_COPY)}
               onClick={() => {
                 void handleCopyImage(menuImage);
                 contextMenu.close();
@@ -206,11 +225,9 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
             <PositionedMenuItem
               icon={<Download />}
               label="Download image"
+              shortcut={formatKeybind(KEYBINDS.IMAGE_DOWNLOAD)}
               onClick={() => {
-                downloadDataUrl(
-                  menuImage.dataUrl,
-                  getImageDownloadFilename(menuImage.filename, menuImage.mediaType)
-                );
+                handleDownloadImage(menuImage);
                 contextMenu.close();
               }}
             />

@@ -92,6 +92,11 @@ const KEYBIND_LABELS: Record<keyof typeof KEYBINDS, string> = {
   REVIEW_COMMENT: "Add comment (immersive)",
   REVIEW_FOCUS_NOTES: "Focus notes sidebar (immersive)",
   TOGGLE_PLAN_ANNOTATE: "Toggle plan annotate mode",
+  // Image-viewer-scoped keybinds (lightbox / image context menu); intentionally
+  // omitted from KEYBIND_GROUPS because they only apply while an image surface
+  // is focused.
+  IMAGE_COPY: "Copy image (image viewer)",
+  IMAGE_DOWNLOAD: "Download image (image viewer)",
   // Easter egg keybind; intentionally omitted from KEYBIND_GROUPS.
   TOGGLE_POWER_MODE: "",
 };

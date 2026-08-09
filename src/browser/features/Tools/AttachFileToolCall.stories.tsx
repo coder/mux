@@ -208,6 +208,58 @@ export const ImageContextMenu: Story = {
   },
 };
 
+// Touch-only contract: a 500ms long-press on the thumbnail opens the same
+// context menu. Pixel does not emulate touch (pointer: coarse never matches),
+// so this play function exercises the touch path directly per the Storybook
+// responsive/Pixel validation rule.
+export const ImageLongPressMenu: Story = {
+  render: () => (
+    <ToolStoryShell>
+      <AttachFileToolCall
+        toolName="attach_file"
+        args={{ path: "screenshot.png" }}
+        result={{
+          type: "content",
+          value: [
+            { type: "text", text: "[Attachment prepared: screenshot.png]" },
+            {
+              type: "media",
+              data: samplePng,
+              mediaType: "image/png",
+              filename: "screenshot.png",
+            },
+          ],
+        }}
+        status="completed"
+      />
+    </ToolStoryShell>
+  ),
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+    const image = await canvas.findByRole("img", { name: "screenshot.png" });
+
+    // Start a touch and hold: the long-press timer opens the menu after 500ms.
+    // Fixed coordinates keep the menu position deterministic for snapshots.
+    await fireEvent.touchStart(image, { touches: [{ clientX: 120, clientY: 160 }] });
+
+    // The menu renders in a portal attached to document.body. waitFor polls
+    // past the 500ms long-press threshold.
+    const body = within(document.body);
+    await waitFor(() => body.getByText("Copy image"), { timeout: 3000 });
+
+    await fireEvent.touchEnd(image);
+
+    // The click that follows a long-press must be suppressed: the lightbox
+    // dialog should not open on top of the context menu.
+    await fireEvent.click(image);
+    await waitFor(() => {
+      if (document.body.querySelector("[role='dialog']")) {
+        throw new Error("Lightbox should not open after a long-press");
+      }
+    });
+  },
+};
+
 export const FailedAttachment: Story = {
   render: () => (
     <ToolStoryShell>
