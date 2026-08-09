@@ -158,8 +158,17 @@ function mcpToModelOutput({
   output: unknown;
 }): ReturnType<NonNullable<Tool["toModelOutput"]>> {
   const result = output as {
+    type?: string;
+    value?: unknown;
     content?: Array<Record<string, unknown> & { type?: string }>;
   };
+  // mcpServerManager's wrapMCPTools runs transformMCPResult over execute
+  // results first (it owns the image size guard); image results arrive here
+  // already in AI SDK model-output shape. Pass them through instead of
+  // re-converting (which would demote them to JSON and lose multimodal input).
+  if (result && typeof result === "object" && result.type === "content" && "value" in result) {
+    return result as ReturnType<NonNullable<Tool["toModelOutput"]>>;
+  }
   if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
     return { type: "json", value: result as never };
   }
@@ -224,10 +233,14 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
           title: definition.title ?? definition.annotations?.title,
           // Server-provided JSON schemas are runtime data; the SDK types them
           // as loose JSON values, so narrow to the AI SDK's JSONSchema7 shape.
+          // Preserve a server-declared additionalProperties (map-style params
+          // like env vars or labels rely on it); default to false only when
+          // absent, matching the previous @ai-sdk/mcp behavior for strict
+          // providers. Provider-specific strictness stays in schemaSanitizer.
           inputSchema: jsonSchema({
             ...inputSchema,
             properties: inputSchema.properties ?? {},
-            additionalProperties: false,
+            additionalProperties: inputSchema.additionalProperties ?? false,
           } as JSONSchema7),
           execute: async (args: unknown, options: { abortSignal?: AbortSignal }) => {
             options.abortSignal?.throwIfAborted();

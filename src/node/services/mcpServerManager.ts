@@ -1936,7 +1936,15 @@ export class MCPServerManager {
           if (signal.aborted) {
             return null;
           }
-          if (prior !== undefined && isModernEra(prior) && isEraNegotiationFailedError(error)) {
+          // Connect failures reach us wrapped in MCPStdioConnectError; unwrap
+          // before checking for the typed negotiation error, or a stale modern
+          // verdict would stay cached forever.
+          const connectCause = error instanceof MCPStdioConnectError ? error.cause : error;
+          if (
+            prior !== undefined &&
+            isModernEra(prior) &&
+            isEraNegotiationFailedError(connectCause)
+          ) {
             // Stale modern verdict (server downgraded or changed identity):
             // drop it and re-probe from scratch.
             log.info("[MCP] Cached modern era verdict rejected; re-probing", { name });
