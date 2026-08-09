@@ -1,7 +1,5 @@
 import {
   Client,
-  SdkError,
-  SdkErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   type OAuthClientProvider,
@@ -104,15 +102,6 @@ export interface MCPClientHandle {
 /** True when the connection negotiated the stateless 2026-07-28+ era. */
 export function isModernEra(prior: PriorDiscovery): boolean {
   return prior.kind === "modern";
-}
-
-/**
- * True for the typed error the SDK throws when a cached modern era verdict
- * (`prior: { kind: "modern" }`) no longer overlaps the server's supported
- * protocol versions. Callers should drop the cached verdict and re-probe.
- */
-export function isEraNegotiationFailedError(error: unknown): boolean {
-  return error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed;
 }
 
 function isHttpTransportConfig(

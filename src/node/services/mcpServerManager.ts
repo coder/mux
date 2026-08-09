@@ -4,7 +4,6 @@ import type { OAuthClientProvider, PriorDiscovery } from "@modelcontextprotocol/
 import type { Tool } from "ai";
 import {
   createMCPClient,
-  isEraNegotiationFailedError,
   isModernEra,
   MCP_TOOL_CALL_TIMEOUT_MS,
   type MCPClientHandle,
@@ -1909,6 +1908,12 @@ export class MCPServerManager {
         info.cwd ?? null,
       ]);
       let prior = this.getCachedEraVerdict(verdictKey);
+      // A cached verdict of either kind can go stale without a config change:
+      // a modern verdict after a server downgrade (typed EraNegotiationFailed)
+      // and a legacy verdict after an upgrade to a 2026-only server that
+      // rejects the initialize handshake. On the first connect failure with a
+      // cached verdict, drop it and re-probe from scratch.
+      let priorFromCache = prior !== undefined;
       // A server/discover probe can kill fragile legacy stdio servers that
       // exit on any pre-initialize request. Allow one legacy respawn retry
       // when no cached verdict skipped the probe.
@@ -1936,20 +1941,15 @@ export class MCPServerManager {
           if (signal.aborted) {
             return null;
           }
-          // Connect failures reach us wrapped in MCPStdioConnectError; unwrap
-          // before checking for the typed negotiation error, or a stale modern
-          // verdict would stay cached forever.
-          const connectCause = error instanceof MCPStdioConnectError ? error.cause : error;
-          if (
-            prior !== undefined &&
-            isModernEra(prior) &&
-            isEraNegotiationFailedError(connectCause)
-          ) {
-            // Stale modern verdict (server downgraded or changed identity):
-            // drop it and re-probe from scratch.
-            log.info("[MCP] Cached modern era verdict rejected; re-probing", { name });
+          if (priorFromCache) {
+            log.info("[MCP] Cached era verdict rejected; re-probing", {
+              name,
+              cachedEra: prior !== undefined && isModernEra(prior) ? "modern" : "legacy",
+              error: getErrorMessage(error instanceof MCPStdioConnectError ? error.cause : error),
+            });
             this.eraVerdicts.delete(verdictKey);
             prior = undefined;
+            priorFromCache = false;
             allowLegacyRetry = true;
             continue;
           }
@@ -2338,14 +2338,22 @@ export class MCPServerManager {
       try {
         client = await establishClient();
       } catch (error) {
-        if (prior === undefined || !isModernEra(prior) || !isEraNegotiationFailedError(error)) {
+        if (prior === undefined) {
           throw error;
         }
-        // Stale modern verdict (server downgraded or changed identity):
-        // drop it and reconnect with a fresh probe.
-        log.info("[MCP] Cached modern era verdict rejected; re-probing", { name });
+        // A cached verdict of either kind can go stale without a config
+        // change: a modern verdict after a server downgrade (typed
+        // EraNegotiationFailed) and a legacy verdict after an upgrade to a
+        // 2026-only server that rejects the initialize handshake. Drop the
+        // verdict and reconnect with a fresh probe.
+        log.info("[MCP] Cached era verdict rejected; re-probing", {
+          name,
+          cachedEra: isModernEra(prior) ? "modern" : "legacy",
+          error: getErrorMessage(error),
+        });
         this.eraVerdicts.delete(verdictKey);
         prior = undefined;
+        autoFallbackUsed = false;
         client = await establishClient();
       }
 
