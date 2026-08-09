@@ -227,14 +227,14 @@ export const ImageLongPressMenu: Story = {
     // Chromium's TouchEvent constructor requires real Touch instances (plain
     // objects throw). Fixed coordinates keep the menu position deterministic.
     const touch = new Touch({ identifier: 1, target: image, clientX: 120, clientY: 160 });
-    await fireEvent.touchStart(image, { touches: [touch] });
+    await fireEvent.touchStart(image, { touches: [touch], changedTouches: [touch] });
 
     // The menu renders in a portal attached to document.body. waitFor polls
     // past the 500ms long-press threshold.
     const body = within(document.body);
     await waitFor(() => body.getByText("Copy image"), { timeout: 3000 });
 
-    await fireEvent.touchEnd(image);
+    await fireEvent.touchEnd(image, { changedTouches: [touch] });
 
     // The click that follows a long-press must be suppressed: the lightbox
     // must not open on top of the context menu. The Radix popover menu itself
@@ -248,9 +248,14 @@ export const ImageLongPressMenu: Story = {
   },
 };
 
-// The expanded lightbox offers the same right-click menu as the thumbnails.
-// The play function also asserts layering: Escape closes only the menu (the
-// topmost Radix layer) while the lightbox dialog stays open.
+// The expanded lightbox offers the same context menu as the thumbnails, on
+// both input paths. The play function asserts:
+// 1. right-click opens the menu at the cursor (regression contract: the
+//    dialog's centering transform used to offset the fixed-position anchor),
+// 2. Escape closes only the menu (topmost Radix layer) while the lightbox
+//    dialog stays open,
+// 3. the touch-only 500ms long-press path opens the menu too (Pixel does not
+//    emulate touch, so this must be a play contract).
 export const LightboxContextMenu: Story = {
   render: renderImageAttachment,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
@@ -270,8 +275,27 @@ export const LightboxContextMenu: Story = {
 
     // Fixed coordinates keep the menu position deterministic for snapshots.
     await fireEvent.contextMenu(fullSizeImage, { clientX: 240, clientY: 200 });
-    await waitFor(() => body.getByText("Copy image"));
+    const menuItem = await waitFor(() => body.getByText("Copy image"));
     await waitFor(() => body.getByText("Download image"));
+
+    // The menu must open at the cursor. Before the virtual-anchor fix, the
+    // dialog's translate(-50%,-50%) made the fixed-position anchor resolve
+    // against the dialog box, offsetting the menu by hundreds of pixels.
+    // 100px tolerance allows for collision flipping while still catching that.
+    // Retry inside waitFor: Floating UI positions the content a frame after it
+    // mounts (PositionedMenu keeps it hidden until placement settles).
+    const menuContent = menuItem.closest("[role='dialog']");
+    if (!menuContent) {
+      throw new Error("Menu popover content not found");
+    }
+    await waitFor(() => {
+      const menuRect = menuContent.getBoundingClientRect();
+      if (Math.abs(menuRect.left - 240) > 100 || Math.abs(menuRect.top - 200) > 100) {
+        throw new Error(
+          `Context menu misaligned with cursor (240,200): got (${menuRect.left},${menuRect.top})`
+        );
+      }
+    });
 
     // Escape must close only the menu; the lightbox stays open underneath.
     // Radix attaches its escape listener asynchronously after the menu
@@ -286,9 +310,16 @@ export const LightboxContextMenu: Story = {
     });
     await waitFor(() => body.getByText("Image Preview"));
 
-    // Reopen and leave open so the Pixel snapshot captures lightbox + menu.
-    await fireEvent.contextMenu(fullSizeImage, { clientX: 240, clientY: 200 });
-    await waitFor(() => body.getByText("Copy image"));
+    // Reopen via the touch long-press path (lightbox-specific contract; the
+    // thumbnail long-press story never exercises the lightbox wiring) and
+    // leave open so the Pixel snapshot captures lightbox + menu.
+    // changedTouches must be populated: the Radix dialog mounts
+    // react-remove-scroll, whose document-level touch listeners read
+    // event.changedTouches[0] and crash on events that omit it.
+    const touch = new Touch({ identifier: 1, target: fullSizeImage, clientX: 240, clientY: 200 });
+    await fireEvent.touchStart(fullSizeImage, { touches: [touch], changedTouches: [touch] });
+    await waitFor(() => body.getByText("Copy image"), { timeout: 3000 });
+    await fireEvent.touchEnd(fullSizeImage, { changedTouches: [touch] });
   },
 };
 

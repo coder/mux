@@ -30,6 +30,24 @@ interface PositionedMenuProps {
 export function PositionedMenu(props: PositionedMenuProps) {
   const [isPlaced, setIsPlaced] = React.useState(false);
 
+  // Anchor via a Radix virtual ref measured in viewport coordinates instead of
+  // a `position: fixed` <span>. Fixed-position elements resolve against the
+  // nearest transformed ancestor, so a span rendered inside e.g. DialogContent
+  // (centered with translate(-50%,-50%)) landed offset from the cursor. A
+  // virtual rect is consumed by Floating UI directly in viewport space and is
+  // immune to the caller's ancestor transforms.
+  const positionRef = React.useRef(props.position);
+  positionRef.current = props.position;
+  const virtualAnchorRef = React.useRef({
+    getBoundingClientRect: () =>
+      DOMRect.fromRect({
+        x: positionRef.current?.x ?? 0,
+        y: positionRef.current?.y ?? 0,
+        width: 0,
+        height: 0,
+      }),
+  });
+
   // Keep content invisible for one animation frame after opening/repositioning.
   // This gives Radix/Floating UI time to compute final placement and avoids a
   // first-frame flash at fallback coordinates.
@@ -51,19 +69,7 @@ export function PositionedMenu(props: PositionedMenuProps) {
 
   return (
     <Popover open={props.open} onOpenChange={props.onOpenChange}>
-      {props.position && (
-        <PopoverAnchor asChild>
-          <span
-            style={{
-              position: "fixed",
-              left: props.position.x,
-              top: props.position.y,
-              width: 0,
-              height: 0,
-            }}
-          />
-        </PopoverAnchor>
-      )}
+      {props.position && <PopoverAnchor virtualRef={virtualAnchorRef} />}
       <PopoverContent
         align="start"
         side="right"
