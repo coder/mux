@@ -50,19 +50,19 @@ Spawn **2–5** sub-agents depending on scope. Tailor them to the change.
 When sub-agent results arrive, produce a consolidated review with:
 
 1. **Summary** (what changed + overall risk)
-2. **Issues** 
+2. **Issues**
 3. **Questions** (unknown intent; ask for clarification)
 4. **Suggested validation plan** (commands + manual checks)
 
 Issues should have a severity in form of:
 
-| Severity | Description | Example |
-|----------|-------------|
-| P0 | Change must not be merged until resolved | Change would permanently break core workflows if merged. |
-| P1 | Change should not be merged| New code will not work as expected due to severe bugs|
-| P2 | Consideration required before merging | The change creates inconsistency / fragility |
-| P3 | Minor issue | The change introduces a minor issue that may be addressed later |
-| P4 | Long-term issue | The change raises concerns about long-term maintainability or may break under rare conditions |
+| Severity | Description                              | Example                                                                                       |
+| -------- | ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| P0       | Change must not be merged until resolved | Change would permanently break core workflows if merged.                                      |
+| P1       | Change should not be merged              | New code will not work as expected due to severe bugs                                         |
+| P2       | Consideration required before merging    | The change creates inconsistency / fragility                                                  |
+| P3       | Minor issue                              | The change introduces a minor issue that may be addressed later                               |
+| P4       | Long-term issue                          | The change raises concerns about long-term maintainability or may break under rare conditions |
 
 ### Review rubric
 
@@ -76,6 +76,10 @@ Use this rubric to avoid blind spots:
 - **Performance**: hot paths, streaming, excessive re-renders/IO
 - **Safety**: secrets, path traversal, injection risks, filesystem safety
 - **DX**: logs, error messages, debuggability
+
+## Clean up delegated review work
+
+After consolidating the findings, remember that completed review sub-agents remain as persistent child workspaces. Keep any child that still needs follow-up; otherwise archive completed review children in one `task_workspace_lifecycle` batch. Do not use `task_terminate` to clean up completed reviews.
 
 ## Anti-patterns
 

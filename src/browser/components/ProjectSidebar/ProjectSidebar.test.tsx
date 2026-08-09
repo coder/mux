@@ -12,7 +12,6 @@ import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
@@ -880,30 +879,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(childRow.dataset.depth).toBe("1");
   });
 
-  test("shows completed child rows by default when sub-agent preservation is enabled", async () => {
-    const getConfig = mock(() =>
-      Promise.resolve({
-        taskSettings: {
-          ...DEFAULT_TASK_SETTINGS,
-          preserveSubagentsUntilArchive: true,
-        },
-      })
-    );
-    spyOn(APIModule, "useAPI").mockImplementation(() => ({
-      api: {
-        config: {
-          getConfig,
-          onConfigChanged: async function* () {
-            // No-op stream for this test; the initial config load is enough.
-          },
-        },
-      } as unknown as APIModule.APIClient,
-      status: "connected",
-      error: null,
-      authenticate: () => undefined,
-      retry: () => undefined,
-    }));
-
+  test("keeps persistent completed child rows collapsed until the user expands them", async () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
 
     const singleProjectRefs = [
@@ -940,19 +916,15 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       />
     );
 
-    await waitFor(() => {
-      expect(view.getByTestId(agentItemTestId("child"))).toBeTruthy();
-    });
-
-    expect(getConfig).toHaveBeenCalled();
-    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("true");
+    expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
+    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("false");
 
     fireEvent.click(view.getByRole("button", { name: toggleButtonLabel("parent") }));
 
     await waitFor(() => {
-      expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
+      expect(view.getByTestId(agentItemTestId("child"))).toBeTruthy();
     });
-    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("false");
+    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("true");
   });
 
   test("coalesces best-of sub-agents into a single sidebar row until expanded", async () => {

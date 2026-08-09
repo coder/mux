@@ -9218,7 +9218,7 @@ describe("WorkspaceService remove preserved descendants", () => {
     }
   });
 
-  test("remove() allows removal when preserve toggle is off even with completed descendants", async () => {
+  test("remove() does not let an explicit retention opt-out orphan descendants", async () => {
     const workspaceEntry = configState.projects.get(projectPath)?.workspaces[0];
     expect(workspaceEntry).toBeDefined();
     if (!workspaceEntry) {
@@ -9233,8 +9233,10 @@ describe("WorkspaceService remove preserved descendants", () => {
     };
 
     const hasCompletedDescendants = mock(() => true);
+    const hasDescendantAgentTasks = mock(() => true);
     workspaceService.setTaskService({
       hasCompletedDescendants,
+      hasDescendantAgentTasks,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       deleteWorkspace: deleteWorkspaceMock,
@@ -9243,17 +9245,16 @@ describe("WorkspaceService remove preserved descendants", () => {
     try {
       const result = await workspaceService.remove(workspaceId);
 
-      expect(result.success).toBe(true);
-      expect(hasCompletedDescendants).not.toHaveBeenCalled();
-      expect(stopStreamMock).toHaveBeenCalledTimes(1);
-      expect(deleteWorkspaceMock).toHaveBeenCalledWith(
-        projectPath,
-        "ws-remove-preserved",
-        false,
-        undefined,
-        false
+      expect(result).toEqual(
+        Err(
+          "This workspace has descendant sub-agent workspaces. Remove those descendants deepest-first before removing their parent."
+        )
       );
-      expect(removeWorkspaceMock).toHaveBeenCalledWith(workspaceId);
+      expect(hasCompletedDescendants).not.toHaveBeenCalled();
+      expect(hasDescendantAgentTasks).toHaveBeenCalledWith(workspaceId);
+      expect(stopStreamMock).not.toHaveBeenCalled();
+      expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
     } finally {
       createRuntimeSpy.mockRestore();
     }
@@ -9297,10 +9298,12 @@ describe("WorkspaceService remove preserved descendants", () => {
     }
   });
 
-  test("remove() allows removal when force is true even with preserved descendants", async () => {
+  test("remove() does not let force orphan descendants", async () => {
     const hasCompletedDescendants = mock(() => true);
+    const hasDescendantAgentTasks = mock(() => true);
     workspaceService.setTaskService({
       hasCompletedDescendants,
+      hasDescendantAgentTasks,
     } as unknown as TaskService);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue({
       deleteWorkspace: deleteWorkspaceMock,
@@ -9309,17 +9312,16 @@ describe("WorkspaceService remove preserved descendants", () => {
     try {
       const result = await workspaceService.remove(workspaceId, true);
 
-      expect(result.success).toBe(true);
-      expect(hasCompletedDescendants).not.toHaveBeenCalled();
-      expect(stopStreamMock).toHaveBeenCalledTimes(1);
-      expect(deleteWorkspaceMock).toHaveBeenCalledWith(
-        projectPath,
-        "ws-remove-preserved",
-        true,
-        undefined,
-        false
+      expect(result).toEqual(
+        Err(
+          "This workspace has descendant sub-agent workspaces. Remove those descendants deepest-first before removing their parent."
+        )
       );
-      expect(removeWorkspaceMock).toHaveBeenCalledWith(workspaceId);
+      expect(hasCompletedDescendants).not.toHaveBeenCalled();
+      expect(hasDescendantAgentTasks).toHaveBeenCalledWith(workspaceId);
+      expect(stopStreamMock).not.toHaveBeenCalled();
+      expect(deleteWorkspaceMock).not.toHaveBeenCalled();
+      expect(removeWorkspaceMock).not.toHaveBeenCalled();
     } finally {
       createRuntimeSpy.mockRestore();
     }
@@ -11113,6 +11115,7 @@ describe("WorkspaceService deleteWorktree", () => {
   function createHarness(options?: {
     archivedAt?: string;
     runtimeConfig?: FrontendWorkspaceMetadata["runtimeConfig"];
+    taskIsolation?: FrontendWorkspaceMetadata["taskIsolation"];
   }): {
     workspaceService: WorkspaceService;
     metadataEvents: Array<FrontendWorkspaceMetadata | null>;
@@ -11137,6 +11140,7 @@ describe("WorkspaceService deleteWorktree", () => {
         projectPath,
         runtimeConfig,
         archivedAt: options?.archivedAt,
+        taskIsolation: options?.taskIsolation,
         transcriptOnly,
         namedWorkspacePath: managedPath,
       };
@@ -11234,6 +11238,23 @@ describe("WorkspaceService deleteWorktree", () => {
         .then(() => true)
         .catch(() => false)
     ).toBe(true);
+  });
+
+  test("rejects deleting the shared checkout for an isolation-none sub-agent", async () => {
+    const { workspaceService, managedPath } = createHarness({
+      archivedAt: "2026-03-01T00:00:00.000Z",
+      taskIsolation: "none",
+    });
+    await fsPromises.mkdir(managedPath, { recursive: true });
+    const removeManagedGitWorktreeSpy = spyOn(
+      removeManagedGitWorktreeModule,
+      "removeManagedGitWorktree"
+    );
+
+    const result = await workspaceService.deleteWorktree(workspaceId);
+
+    expect(result).toEqual(Err("Shared-checkout sub-agents do not own a managed worktree"));
+    expect(removeManagedGitWorktreeSpy).not.toHaveBeenCalled();
   });
 
   test("rejects deleting a worktree for non-worktree runtimes", async () => {

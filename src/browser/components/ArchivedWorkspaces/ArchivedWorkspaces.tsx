@@ -54,7 +54,12 @@ interface BulkOperationState {
 }
 
 function canDeleteManagedWorktree(workspace: FrontendWorkspaceMetadata): boolean {
-  return isWorktreeRuntime(workspace.runtimeConfig) && workspace.transcriptOnly !== true;
+  return (
+    isWorktreeRuntime(workspace.runtimeConfig) &&
+    workspace.transcriptOnly !== true &&
+    // isolation:none tasks reuse an ancestor checkout, so they do not own local worktree state.
+    workspace.taskIsolation !== "none"
+  );
 }
 
 /** Group workspaces by time period for timeline display */
@@ -111,6 +116,47 @@ function flattenGrouped(
     result.push(...workspaces);
   }
   return result;
+}
+
+/**
+ * Preserve selection order among peers while ensuring descendants are deleted before parents.
+ * This keeps bulk deletion deterministic and prevents the backend's orphan guard from turning a
+ * single subtree deletion into a partial operation that needs a second attempt.
+ */
+function sortWorkspaceIdsDeepestFirst(
+  workspaceIds: readonly string[],
+  workspaces: readonly FrontendWorkspaceMetadata[]
+): string[] {
+  const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+  const depthById = new Map<string, number>();
+
+  const getDepth = (workspaceId: string, visiting: Set<string>): number => {
+    const cached = depthById.get(workspaceId);
+    if (cached != null) return cached;
+    if (visiting.has(workspaceId)) return 0;
+
+    const workspace = workspaceById.get(workspaceId);
+    const parentWorkspaceId = workspace?.parentWorkspaceId;
+    if (parentWorkspaceId == null || !workspaceById.has(parentWorkspaceId)) {
+      depthById.set(workspaceId, 0);
+      return 0;
+    }
+
+    visiting.add(workspaceId);
+    const depth = Math.min(getDepth(parentWorkspaceId, visiting) + 1, 32);
+    visiting.delete(workspaceId);
+    depthById.set(workspaceId, depth);
+    return depth;
+  };
+
+  return workspaceIds
+    .map((workspaceId, index) => ({
+      workspaceId,
+      index,
+      depth: getDepth(workspaceId, new Set()),
+    }))
+    .sort((left, right) => right.depth - left.depth || left.index - right.index)
+    .map(({ workspaceId }) => workspaceId);
 }
 
 /** Calculate total cost from a SessionUsageFile by summing all model usages */
@@ -477,7 +523,7 @@ export const ArchivedWorkspaces: React.FC<ArchivedWorkspacesProps> = ({
   // Bulk delete (always force: true) - requires confirmation
   const handleBulkDelete = async () => {
     setBulkDeleteConfirm(false);
-    const idsToDelete = Array.from(selectedIds);
+    const idsToDelete = sortWorkspaceIdsDeepestFirst(Array.from(selectedIds), workspaces);
     setBulkOperation({
       type: "delete",
       total: idsToDelete.length,

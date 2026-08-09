@@ -22,7 +22,9 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
-  preserveSubagentsUntilArchive: false,
+  // Completed user-spawned sub-agents are durable workspace records. The parent decides when to
+  // archive them after consuming their result; workflow-owned tasks keep their transient cleanup.
+  preserveSubagentsUntilArchive: true,
 };
 
 export {

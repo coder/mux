@@ -82,7 +82,6 @@ import {
 } from "@/browser/utils/archiveConfirmation";
 import { ProjectDeleteConfirmationModal } from "../ProjectDeleteConfirmationModal/ProjectDeleteConfirmationModal";
 import { useSettings } from "@/browser/contexts/SettingsContext";
-import { normalizeTaskSettings } from "@/common/types/tasks";
 
 import { AgentListItem, type WorkspaceSelection } from "../AgentListItem/AgentListItem";
 import { SubAgentListItem } from "../AgentListItem/SubAgentListItem";
@@ -657,66 +656,6 @@ function didUntrackedPathSetChange(
   return latestUntrackedPaths.some((path) => !acknowledgedSet.has(path));
 }
 
-function usePreserveSubagentsUntilArchiveSetting(api: ReturnType<typeof useAPI>["api"]): boolean {
-  const [preserveSubagentsUntilArchive, setPreserveSubagentsUntilArchive] = useState(false);
-
-  useEffect(() => {
-    if (!api) {
-      return;
-    }
-
-    const abortController = new AbortController();
-    const { signal } = abortController;
-    let iterator: AsyncIterator<unknown> | null = null;
-    let refreshVersion = 0;
-
-    const refresh = async () => {
-      const version = (refreshVersion += 1);
-      try {
-        const cfg = await api.config.getConfig();
-        if (signal.aborted || version !== refreshVersion) {
-          return;
-        }
-        setPreserveSubagentsUntilArchive(
-          normalizeTaskSettings(cfg.taskSettings).preserveSubagentsUntilArchive === true
-        );
-      } catch {
-        // Best-effort: keep the last known setting instead of hiding preserved rows on a
-        // transient config fetch failure.
-      }
-    };
-
-    void refresh();
-
-    void (async () => {
-      try {
-        const subscribedIterator = await api.config.onConfigChanged(undefined, { signal });
-        if (signal.aborted) {
-          void subscribedIterator.return?.();
-          return;
-        }
-
-        iterator = subscribedIterator;
-        for await (const _ of subscribedIterator) {
-          if (signal.aborted) {
-            break;
-          }
-          void refresh();
-        }
-      } catch {
-        // Subscription cancellation is expected during unmount/API reconnects.
-      }
-    })();
-
-    return () => {
-      abortController.abort();
-      void iterator?.return?.();
-    };
-  }, [api]);
-
-  return preserveSubagentsUntilArchive;
-}
-
 const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   collapsed,
   onToggleCollapsed,
@@ -749,7 +688,6 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const runtimeStatusStore = useRuntimeStatusStoreRaw();
   const { navigateToProject } = useRouter();
   const { api } = useAPI();
-  const preserveSubagentsUntilArchive = usePreserveSubagentsUntilArchiveSetting(api);
   const { confirm: confirmDialog } = useConfirmDialog();
   const settings = useSettings();
 
@@ -906,24 +844,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   >("expandedCompletedSubAgents", {});
   const toggleCompletedChildrenExpansion = useCallback(
     (workspaceId: string) => {
-      setExpandedCompletedSubAgents((prev) => {
-        const current = prev[workspaceId] ?? preserveSubagentsUntilArchive;
-        const next = !current;
-        const updated = { ...prev };
-        if (next === preserveSubagentsUntilArchive) {
-          delete updated[workspaceId];
-        } else {
-          updated[workspaceId] = next;
-        }
-        return updated;
-      });
+      setExpandedCompletedSubAgents((prev) => ({
+        ...prev,
+        [workspaceId]: !(prev[workspaceId] ?? false),
+      }));
     },
-    [preserveSubagentsUntilArchive, setExpandedCompletedSubAgents]
+    [setExpandedCompletedSubAgents]
   );
   const expandedCompletedParentIds = new Set<string>();
   for (const workspaces of sortedWorkspacesByProject.values()) {
     for (const workspace of workspaces) {
-      if (expandedCompletedSubAgents[workspace.id] ?? preserveSubagentsUntilArchive) {
+      // Persistence and presentation are intentionally independent: durable inactive tasks stay
+      // collapsed until the user asks to inspect them, so history never crowds the active list.
+      if (expandedCompletedSubAgents[workspace.id] === true) {
         expandedCompletedParentIds.add(workspace.id);
       }
     }

@@ -214,6 +214,7 @@ interface WorkspaceLifecycleOptions {
 
 interface ResolvedWorkspaceLifecycleTarget {
   action: WorkspaceLifecycleAction;
+  targetKind: "agent_task" | "workspace_turn";
   taskId?: string;
   taskTitle?: string;
   workspaceId: string;
@@ -244,9 +245,8 @@ export interface TaskCreateArgs {
    */
   isolation?: TaskIsolation;
   /**
-   * Keep the child workspace after it reports. This is an explicit per-task retention request;
-   * automatic cleanup and workflow sweeps must leave sticky tasks intact until the user chooses a
-   * lifecycle action.
+   * Strong retention marker. User-spawned sub-agents persist after reporting by default; an
+   * unarchived sticky task blocks ancestor archive and requires its own archive/remove decision.
    */
   sticky?: boolean;
   parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
@@ -6726,6 +6726,14 @@ export class TaskService {
     return statuses;
   }
 
+  hasDescendantAgentTasks(workspaceId: string): boolean {
+    assert(workspaceId.length > 0, "hasDescendantAgentTasks: workspaceId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    return this.listDescendantAgentTaskIdsFromIndex(index, workspaceId).length > 0;
+  }
+
   hasActiveDescendantAgentTasksForWorkspace(workspaceId: string): boolean {
     assert(
       workspaceId.length > 0,
@@ -6781,8 +6789,8 @@ export class TaskService {
     );
   }
 
-  // This ignores archive state and preserveSubagentsUntilArchive so callers can detect
-  // completed descendants that are still waiting on cleanup prerequisites.
+  // This ignores archive state so callers can detect completed descendants that are still
+  // waiting on cleanup prerequisites.
   hasCompletedDescendants(workspaceId: string): boolean {
     assert(workspaceId.length > 0, "hasCompletedDescendants: workspaceId must be non-empty");
 
@@ -7209,6 +7217,33 @@ export class TaskService {
     return result;
   }
 
+  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
+  async archiveOwnedTaskWorkspace(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    return await this.archiveOwnedWorkspaceTurnWorkspace(ownerWorkspaceId, target, options);
+  }
+
+  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
+  async deleteOwnedTaskWorktree(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    return await this.deleteOwnedWorkspaceTurnWorktree(ownerWorkspaceId, target, options);
+  }
+
+  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
+  async removeOwnedTaskWorkspace(
+    ownerWorkspaceId: string,
+    target: WorkspaceLifecycleTarget,
+    options: WorkspaceLifecycleOptions = {}
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+    return await this.removeOwnedWorkspaceTurnWorkspace(ownerWorkspaceId, target, options);
+  }
+
   async archiveOwnedWorkspaceTurnWorkspace(
     ownerWorkspaceId: string,
     target: WorkspaceLifecycleTarget,
@@ -7222,7 +7257,7 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
       if (resolved.metadata == null) {
         return Ok({
           status: "not_found",
@@ -7289,7 +7324,7 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
       if (resolved.metadata == null) {
         return Ok({
           status: "not_found",
@@ -7350,7 +7385,21 @@ export class TaskService {
     );
     if ("status" in resolved) return Ok(resolved);
 
-    return await this.withWorkspaceLifecycleLock(resolved, async (resolved) => {
+    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
+      const descendantTaskIds = this.listDescendantAgentTasks(resolved.workspaceId).map(
+        (task) => task.taskId
+      );
+      if (descendantTaskIds.length > 0) {
+        return Ok({
+          status: "error",
+          action: "remove",
+          ...this.lifecycleTargetFields(resolved),
+          descendantTaskIds,
+          error:
+            "Cannot remove a workspace while descendant sub-agent workspaces remain. Remove descendants deepest-first.",
+        });
+      }
+
       if (resolved.metadata == null) {
         return Ok({
           status: "already_removed",
@@ -7389,17 +7438,45 @@ export class TaskService {
     });
   }
 
-  private async withWorkspaceLifecycleLock<T>(
+  private async withWorkspaceLifecycleLock(
+    ownerWorkspaceId: string,
     resolved: ResolvedWorkspaceLifecycleTarget,
-    operation: (lockedResolved: ResolvedWorkspaceLifecycleTarget) => Promise<T>
-  ): Promise<T> {
+    operation: (
+      lockedResolved: ResolvedWorkspaceLifecycleTarget
+    ) => Promise<Result<WorkspaceLifecycleResult, string>>
+  ): Promise<Result<WorkspaceLifecycleResult, string>> {
     return await this.workspaceLifecycleLocks.withLock(resolved.workspaceId, async () => {
-      const lockedResolved = {
-        ...resolved,
-        metadata: await this.findWorkspaceLifecycleMetadata(resolved.workspaceId),
-      };
+      // Ownership can change while an archive/remove waits for the per-workspace lock. Re-resolve
+      // inside the lock so a reparented or otherwise out-of-scope child cannot be mutated by a
+      // stale authorization decision.
+      const lockedResolved = await this.resolveOwnedWorkspaceLifecycleTarget(
+        ownerWorkspaceId,
+        resolved.action,
+        resolved.taskId != null
+          ? { taskId: resolved.taskId }
+          : { workspaceId: resolved.workspaceId }
+      );
+      if ("status" in lockedResolved) {
+        return Ok(lockedResolved);
+      }
       return await operation(lockedResolved);
     });
+  }
+
+  private async isAgentTaskLifecycleTargetInScope(
+    ownerWorkspaceId: string,
+    taskId: string
+  ): Promise<boolean> {
+    const config = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(config, taskId);
+    if (entry != null) {
+      const index = this.buildAgentTaskIndex(config);
+      return this.isDescendantAgentTaskUsingParentById(index.parentById, ownerWorkspaceId, taskId);
+    }
+
+    // Removed tasks can still be addressed idempotently through their persisted report ancestry.
+    const scopedTaskIds = await this.filterDescendantAgentTaskIds(ownerWorkspaceId, [taskId]);
+    return scopedTaskIds.includes(taskId);
   }
 
   private async resolveOwnedWorkspaceLifecycleTarget(
@@ -7415,39 +7492,56 @@ export class TaskService {
     const hasWorkspaceId = target.workspaceId != null && target.workspaceId.trim().length > 0;
     assert(hasTaskId !== hasWorkspaceId, "workspace lifecycle target must have exactly one ID");
 
+    let targetKind: ResolvedWorkspaceLifecycleTarget["targetKind"];
     let taskId: string | undefined;
     let taskTitle: string | undefined;
     let workspaceId: string;
     if (hasTaskId) {
       taskId = target.taskId;
       assert(taskId != null, "workspace lifecycle taskId must be resolved");
-      if (!isWorkspaceTurnTaskId(taskId)) {
-        return { status: "invalid_scope", action, taskId };
+      if (isWorkspaceTurnTaskId(taskId)) {
+        const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
+        if (record == null) {
+          return { status: "invalid_scope", action, taskId };
+        }
+        if (
+          !(await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, record.workspaceId))
+        ) {
+          return { status: "invalid_scope", action, taskId, workspaceId: record.workspaceId };
+        }
+        targetKind = "workspace_turn";
+        taskTitle = record.title;
+        workspaceId = record.workspaceId;
+      } else {
+        // Agent task IDs are their workspace IDs. Current config lineage is authoritative while the
+        // workspace exists; persisted report ancestry keeps already-removed tasks idempotent.
+        if (!(await this.isAgentTaskLifecycleTargetInScope(ownerWorkspaceId, taskId))) {
+          return { status: "invalid_scope", action, taskId };
+        }
+        targetKind = "agent_task";
+        workspaceId = taskId;
       }
-      const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-      if (record == null) {
-        return { status: "invalid_scope", action, taskId };
-      }
-      taskTitle = record.title;
-      workspaceId = record.workspaceId;
     } else {
       assert(target.workspaceId != null, "workspace lifecycle workspaceId must be resolved");
       workspaceId = target.workspaceId;
-    }
-
-    const owned = await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId);
-    if (!owned) {
-      return {
-        status: "invalid_scope",
-        action,
-        ...(taskId != null ? { taskId } : {}),
-        workspaceId,
-      };
+      if (await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId)) {
+        targetKind = "workspace_turn";
+      } else {
+        if (!(await this.isAgentTaskLifecycleTargetInScope(ownerWorkspaceId, workspaceId))) {
+          return {
+            status: "invalid_scope",
+            action,
+            workspaceId,
+          };
+        }
+        targetKind = "agent_task";
+      }
     }
 
     const metadata = await this.findWorkspaceLifecycleMetadata(workspaceId);
     return {
       action,
+      targetKind,
       ...(taskId != null ? { taskId } : {}),
       ...(taskTitle != null ? { taskTitle } : {}),
       workspaceId,
@@ -7501,6 +7595,33 @@ export class TaskService {
     resolved: ResolvedWorkspaceLifecycleTarget,
     interruptActive: boolean
   ): Promise<WorkspaceLifecycleResult | null> {
+    if (resolved.targetKind === "agent_task") {
+      const activeTaskIds = this.listActiveDescendantAgentTaskIds(resolved.workspaceId);
+      const taskStatus = resolved.metadata?.taskStatus;
+      if (
+        (taskStatus != null && ACTIVE_AGENT_TASK_STATUSES.has(taskStatus)) ||
+        this.aiService.isStreaming(resolved.workspaceId)
+      ) {
+        activeTaskIds.unshift(resolved.workspaceId);
+      }
+
+      const uniqueActiveTaskIds = Array.from(new Set(activeTaskIds));
+      if (uniqueActiveTaskIds.length === 0) {
+        return null;
+      }
+
+      return {
+        status: "active",
+        action: resolved.action,
+        ...this.lifecycleTargetFields(resolved),
+        activeTaskIds: uniqueActiveTaskIds,
+        note:
+          interruptActive === true
+            ? "Active sub-agents are not archived in place because that would preserve a partial task state. Use task_terminate to discard the active task, or wait for it to finish before archiving."
+            : "Wait for the sub-agent to finish before archiving, or use task_terminate to discard its in-progress work.",
+      };
+    }
+
     const activeRecords = (
       await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
         statuses: ["queued", "starting", "running"],
@@ -12002,9 +12123,8 @@ export class TaskService {
       return { ok: false, reason: "patch_pending" };
     }
 
-    // Workflow task results are persisted in the workflow run/report artifacts before cleanup,
-    // so the user-level "preserve subagents until archive" setting should not keep those
-    // transient worktrees around indefinitely.
+    // Workflow task results are persisted in run/report artifacts before cleanup, so the
+    // user-level persistence setting should not keep those transient worktrees indefinitely.
     const taskSettings = normalizeTaskSettings(config.taskSettings);
     if (
       !isWorkflowOwnedTask &&

@@ -231,6 +231,14 @@ export function getPinnedTodoExpandedKey(workspaceId: string): string {
 }
 
 /**
+ * Get the localStorage key for the sub-agent chat decoration expansion state.
+ * Format: "subAgentTasksExpanded:{workspaceId}"
+ */
+export function getSubAgentTasksExpandedKey(workspaceId: string): string {
+  return `subAgentTasksExpanded:${workspaceId}`;
+}
+
+/**
  * Get the localStorage key for per-workspace transcript auto-expand preferences.
  *
  * Stores the user's last expand/collapse intent, shaped like

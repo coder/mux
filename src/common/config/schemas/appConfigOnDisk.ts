@@ -77,6 +77,8 @@ export const AppConfigMigrationsSchema = z
     userPreferencesInitialized: z.boolean().optional(),
     /** One-time seed of DEFAULT_MODEL_FALLBACKS; not re-applied while true. */
     defaultModelFallbacksSeeded: z.boolean().optional(),
+    /** One-time migration from the legacy auto-delete default to persistent sub-agents. */
+    persistentSubagentsDefaulted: z.boolean().optional(),
   })
   // Preserve flags introduced by newer app versions: without the catchall a
   // downgrade to this version would strip unknown flags on save, re-running

@@ -76,6 +76,57 @@ describe("Config", () => {
     });
   });
 
+  describe("persistent sub-agent retention migration", () => {
+    it.each([
+      ["missing", undefined],
+      ["legacy false", false],
+    ] as const)("persists true when the previous setting is %s", async (_label, legacyValue) => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          taskSettings:
+            legacyValue === undefined ? {} : { preserveSubagentsUntilArchive: legacyValue },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.taskSettings?.preserveSubagentsUntilArchive).toBe(true);
+
+      await flushConfigEdits();
+
+      const persisted = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        taskSettings?: { preserveSubagentsUntilArchive?: boolean };
+        migrations?: { persistentSubagentsDefaulted?: boolean };
+      };
+      expect(persisted.taskSettings?.preserveSubagentsUntilArchive).toBe(true);
+      expect(persisted.migrations?.persistentSubagentsDefaulted).toBe(true);
+    });
+
+    it("does not overwrite an explicit value after the one-time default migration", async () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [],
+          taskSettings: { preserveSubagentsUntilArchive: false },
+          migrations: { persistentSubagentsDefaulted: true },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.taskSettings?.preserveSubagentsUntilArchive).toBe(false);
+
+      await flushConfigEdits();
+
+      const persisted = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        taskSettings?: { preserveSubagentsUntilArchive?: boolean };
+      };
+      expect(persisted.taskSettings?.preserveSubagentsUntilArchive).toBe(false);
+    });
+  });
+
   describe("loadConfigOrDefault with trailing slash migration", () => {
     it("should strip trailing slashes from project paths on load", () => {
       // Create config file with trailing slashes in project paths

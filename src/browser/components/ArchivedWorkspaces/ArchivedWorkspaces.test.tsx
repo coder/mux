@@ -49,7 +49,9 @@ describe("ArchivedWorkspaces", () => {
   const deleteWorktreeMock = mock(() => Promise.resolve({ success: true }));
   const getSessionUsageBatchMock = mock(() => Promise.resolve({}));
   const unarchiveWorkspaceMock = mock(() => Promise.resolve({ success: true }));
-  const removeWorkspaceMock = mock(() => Promise.resolve({ success: true }));
+  const removeWorkspaceMock = mock((_workspaceId: string, _options?: { force?: boolean }) =>
+    Promise.resolve({ success: true })
+  );
   const setSelectedWorkspaceMock = mock(() => undefined);
   const onWorkspacesChangedMock = mock(() => undefined);
 
@@ -152,6 +154,39 @@ describe("ArchivedWorkspaces", () => {
     expect(alert.textContent).toContain("Restore failed");
   });
 
+  test("bulk deletion removes selected descendants before their parent", async () => {
+    const parent = createWorkspace({
+      id: "parent",
+      name: "parent",
+    });
+    const child = createWorkspace({
+      id: "child",
+      name: "child",
+      parentWorkspaceId: parent.id,
+    });
+
+    const view = render(
+      <ArchivedWorkspaces
+        projectPath={parent.projectPath}
+        projectName={parent.projectName}
+        workspaces={[parent, child]}
+        onWorkspacesChanged={onWorkspacesChangedMock}
+      />
+    );
+
+    fireEvent.click(view.getByLabelText("Expand archived workspaces"));
+    fireEvent.click(await waitFor(() => view.getByLabelText("Select parent")));
+    fireEvent.click(view.getByLabelText("Select child"));
+    fireEvent.click(view.getByLabelText("Delete selected"));
+    fireEvent.click(view.getByRole("button", { name: "Yes, delete 2" }));
+
+    await waitFor(() => {
+      expect(removeWorkspaceMock).toHaveBeenCalledTimes(2);
+    });
+    expect(removeWorkspaceMock.mock.calls.map((call) => call[0])).toEqual([child.id, parent.id]);
+    expect(removeWorkspaceMock.mock.calls.every((call) => call[1]?.force === true)).toBe(true);
+  });
+
   test("shows delete worktree for archived worktree workspaces and calls the API", async () => {
     const workspace = createWorkspace({
       id: "ws-worktree",
@@ -217,7 +252,7 @@ describe("ArchivedWorkspaces", () => {
     expect(alert.textContent).toContain("Permission denied");
   });
 
-  test("hides delete worktree for transcript-only and non-worktree archived workspaces", async () => {
+  test("hides delete worktree when an archived workspace does not own a managed checkout", async () => {
     const transcriptOnlyWorkspace = createWorkspace({
       id: "ws-transcript-only",
       name: "transcript-only",
@@ -230,11 +265,18 @@ describe("ArchivedWorkspaces", () => {
       transcriptOnly: false,
     });
 
+    const sharedCheckoutWorkspace = createWorkspace({
+      id: "ws-shared-checkout",
+      name: "shared-checkout",
+      taskIsolation: "none",
+      transcriptOnly: false,
+    });
+
     const view = render(
       <ArchivedWorkspaces
         projectPath={transcriptOnlyWorkspace.projectPath}
         projectName={transcriptOnlyWorkspace.projectName}
-        workspaces={[transcriptOnlyWorkspace, localWorkspace]}
+        workspaces={[transcriptOnlyWorkspace, localWorkspace, sharedCheckoutWorkspace]}
       />
     );
 
@@ -246,6 +288,9 @@ describe("ArchivedWorkspaces", () => {
       ).toBeNull();
       expect(
         view.queryByLabelText(`Remove local checkout for workspace ${localWorkspace.name}`)
+      ).toBeNull();
+      expect(
+        view.queryByLabelText(`Remove local checkout for workspace ${sharedCheckoutWorkspace.name}`)
       ).toBeNull();
     });
   });

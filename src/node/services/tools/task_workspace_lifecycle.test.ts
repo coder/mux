@@ -17,13 +17,13 @@ describe("task_workspace_lifecycle tool", () => {
     using tempDir = new TestTempDir("test-task-workspace-lifecycle-archive");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
-    const archiveOwnedWorkspaceTurnWorkspace = mock(
+    const archiveOwnedTaskWorkspace = mock(
       (): Promise<Result<unknown, string>> =>
         Promise.resolve(
           Ok({ status: "archived" as const, action: "archive" as const, workspaceId: "child-a" })
         )
     );
-    const taskService = { archiveOwnedWorkspaceTurnWorkspace } as unknown as TaskService;
+    const taskService = { archiveOwnedTaskWorkspace } as unknown as TaskService;
     const tool = createTaskWorkspaceLifecycleTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
@@ -33,7 +33,7 @@ describe("task_workspace_lifecycle tool", () => {
       )
     );
 
-    expect(archiveOwnedWorkspaceTurnWorkspace).toHaveBeenCalledWith(
+    expect(archiveOwnedTaskWorkspace).toHaveBeenCalledWith(
       "root-workspace",
       { workspaceId: "child-a" },
       {
@@ -47,11 +47,56 @@ describe("task_workspace_lifecycle tool", () => {
     });
   });
 
+  it("accepts descendant sub-agent task IDs", async () => {
+    using tempDir = new TestTempDir("test-task-workspace-lifecycle-agent-task");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const archiveOwnedTaskWorkspace = mock(
+      (): Promise<Result<unknown, string>> =>
+        Promise.resolve(
+          Ok({
+            status: "archived" as const,
+            action: "archive" as const,
+            taskId: "child-agent",
+            workspaceId: "child-agent",
+          })
+        )
+    );
+    const taskService = { archiveOwnedTaskWorkspace } as unknown as TaskService;
+    const tool = createTaskWorkspaceLifecycleTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        { action: "archive", targets: [{ taskId: "child-agent" }] },
+        mockToolCallOptions
+      )
+    );
+
+    expect(archiveOwnedTaskWorkspace).toHaveBeenCalledWith(
+      "root-workspace",
+      { taskId: "child-agent" },
+      {
+        interruptActive: false,
+        acknowledgedUntrackedPaths: undefined,
+        acknowledgedUntrackedPathsByWorkspaceId: undefined,
+      }
+    );
+    expect(result).toEqual({
+      results: [
+        {
+          status: "archived",
+          action: "archive",
+          taskId: "child-agent",
+          workspaceId: "child-agent",
+        },
+      ],
+    });
+  });
+
   it("routes delete_worktree and remove actions independently", async () => {
     using tempDir = new TestTempDir("test-task-workspace-lifecycle-route-actions");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
-    const deleteOwnedWorkspaceTurnWorktree = mock(
+    const deleteOwnedTaskWorktree = mock(
       (): Promise<Result<unknown, string>> =>
         Promise.resolve(
           Ok({
@@ -62,15 +107,15 @@ describe("task_workspace_lifecycle tool", () => {
           })
         )
     );
-    const removeOwnedWorkspaceTurnWorkspace = mock(
+    const removeOwnedTaskWorkspace = mock(
       (): Promise<Result<unknown, string>> =>
         Promise.resolve(
           Ok({ status: "removed" as const, action: "remove" as const, workspaceId: "child-remove" })
         )
     );
     const taskService = {
-      deleteOwnedWorkspaceTurnWorktree,
-      removeOwnedWorkspaceTurnWorkspace,
+      deleteOwnedTaskWorktree,
+      removeOwnedTaskWorkspace,
     } as unknown as TaskService;
 
     const deleteTool = createTaskWorkspaceLifecycleTool({ ...baseConfig, taskService });
@@ -81,7 +126,7 @@ describe("task_workspace_lifecycle tool", () => {
       )
     );
 
-    expect(deleteOwnedWorkspaceTurnWorktree).toHaveBeenCalledWith(
+    expect(deleteOwnedTaskWorktree).toHaveBeenCalledWith(
       "root-workspace",
       { taskId: "wst_delete" },
       { interruptActive: false }
@@ -105,13 +150,77 @@ describe("task_workspace_lifecycle tool", () => {
       )
     );
 
-    expect(removeOwnedWorkspaceTurnWorkspace).toHaveBeenCalledWith(
+    expect(removeOwnedTaskWorkspace).toHaveBeenCalledWith(
       "root-workspace",
       { workspaceId: "child-remove" },
       { interruptActive: false, force: true }
     );
     expect(removeResult).toEqual({
       results: [{ status: "removed", action: "remove", workspaceId: "child-remove" }],
+    });
+  });
+
+  it("processes nested removals sequentially in caller-provided deepest-first order", async () => {
+    using tempDir = new TestTempDir("test-task-workspace-lifecycle-sequential-remove");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    let childRemoved = false;
+    const removeOwnedTaskWorkspace = mock(
+      async (
+        _ownerWorkspaceId: string,
+        target: { taskId?: string; workspaceId?: string }
+      ): Promise<Result<unknown, string>> => {
+        if (target.taskId === "child-agent") {
+          await Promise.resolve();
+          childRemoved = true;
+          return Ok({
+            status: "removed" as const,
+            action: "remove" as const,
+            taskId: "child-agent",
+            workspaceId: "child-agent",
+          });
+        }
+
+        expect(childRemoved).toBe(true);
+        return Ok({
+          status: "removed" as const,
+          action: "remove" as const,
+          taskId: "parent-agent",
+          workspaceId: "parent-agent",
+        });
+      }
+    );
+    const taskService = { removeOwnedTaskWorkspace } as unknown as TaskService;
+    const tool = createTaskWorkspaceLifecycleTool({ ...baseConfig, taskService });
+
+    const result: unknown = await Promise.resolve(
+      tool.execute!(
+        {
+          action: "remove",
+          targets: [{ taskId: "child-agent" }, { taskId: "parent-agent" }],
+        },
+        mockToolCallOptions
+      )
+    );
+
+    expect(removeOwnedTaskWorkspace.mock.calls.map((call) => call[1])).toEqual([
+      { taskId: "child-agent" },
+      { taskId: "parent-agent" },
+    ]);
+    expect(result).toEqual({
+      results: [
+        {
+          status: "removed",
+          action: "remove",
+          taskId: "child-agent",
+          workspaceId: "child-agent",
+        },
+        {
+          status: "removed",
+          action: "remove",
+          taskId: "parent-agent",
+          workspaceId: "parent-agent",
+        },
+      ],
     });
   });
 

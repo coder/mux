@@ -75,6 +75,7 @@ import {
   ConcurrentLocalWarningDecoration,
   useConcurrentLocalStreamingWorkspaceName,
 } from "../ConcurrentLocalWarning/ConcurrentLocalWarning";
+import { SubAgentTasksDecoration } from "../SubAgentTasksDecoration/SubAgentTasksDecoration";
 import { BackgroundProcessesBanner } from "../BackgroundProcessesBanner/BackgroundProcessesBanner";
 import { checkAutoCompaction } from "@/common/utils/compaction/autoCompactionCheck";
 import { cancelCompaction } from "@/browser/utils/compaction/handler";
@@ -1894,6 +1895,12 @@ const ChatInputPane: React.FC<ChatInputPaneProps> = (props) => {
       node: <PinnedTodoList workspaceId={props.workspaceId} />,
     });
   }
+  addDecorationEntry({
+    key: "sub-agent-tasks",
+    // Durable sub-agents live with their parent chat instead of relying only on nested sidebar rows.
+    // The decoration is collapsed by default, so inactive task history is available without noise.
+    node: <SubAgentTasksDecoration workspaceId={props.workspaceId} />,
+  });
   addDecorationEntry({
     key: "background-processes",
     node: <BackgroundProcessesBanner workspaceId={props.workspaceId} />,

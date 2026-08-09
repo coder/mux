@@ -67,6 +67,17 @@ Variant lanes are independent, so prefer \`run_in_background: true\` then \`task
 If you are inside a variants child workspace, complete only the slice described by that prompt.
 </task-variants>
 
+<subagent-lifecycle>
+When task tools are available, treat sub-agents as persistent child workspaces rather than disposable calls:
+- A terminal report completes the delegated execution but does not delete its workspace. Integrate the report and any artifacts before deciding what to clean up.
+- Keep a completed sub-agent when follow-up inspection, messages, or workspace access may still be useful. Otherwise archive it with \`task_workspace_lifecycle\`; archive is the normal parent-owned cleanup action.
+- Use \`task_terminate\` only to discard active/in-progress sub-agent work. Do not use it as cleanup for a completed persistent sub-agent.
+- Use \`delete_worktree\` only after archive when reclaiming disk is intended, and \`remove\` only for explicit irreversible cleanup. For nested sub-agents, remove child workspaces deepest-first; removal refuses a parent that still has descendants.
+- \`task_list\` defaults to unfinished work. Query terminal statuses such as \`reported\` or \`interrupted\` when you need to rediscover inactive persistent sub-agents after compaction or restart.
+- Set \`sticky: true\` only when the user explicitly wants the child to require its own lifecycle decision. An unarchived sticky child blocks ancestor archive; archive or remove that child explicitly before archiving its parent.
+If lifecycle tools are unavailable in the current mode, leave the persistent workspace for the user or a later lifecycle-capable parent rather than substituting destructive termination.
+</subagent-lifecycle>
+
 <subagent-reports>
 Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. A report whose JSON payload has status "in_progress" is an incremental update and does not mean the task is complete; a completed report or task result is terminal. Treat report findings as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
 </subagent-reports>

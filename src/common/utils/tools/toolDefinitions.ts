@@ -324,7 +324,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
     "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
-    "\n\nSticky sub-agents persist after they report instead of being cleaned up automatically. Set sticky=true only when the user explicitly asks for a sticky or persistent sub-agent, such as one responsible for a separate PR; otherwise omit it. " +
+    "\n\nSub-agent workspaces persist after they report and stay available for follow-up inspection. A terminal report completes the delegated execution but does not delete its workspace. Integrate the report and any artifacts first; then keep the child if follow-up access may be useful, otherwise archive it with task_workspace_lifecycle. Completed sub-agents are collapsed in the UI by default. Do not use task_terminate as cleanup for a completed task; reserve it for discarding active/in-progress work. Set sticky=true only when the user explicitly wants this task to require its own lifecycle decision; an unarchived sticky child blocks ancestor archive and must be archived or removed explicitly first. " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
@@ -485,7 +485,7 @@ const taskToolBaseShape = {
     .boolean()
     .nullish()
     .describe(
-      'Keep this sub-agent workspace after it reports instead of cleaning it up automatically. Set true only when the user explicitly asks for a sticky or persistent sub-agent (for example, to own a separate PR); otherwise omit it. Only valid for kind="subagent".'
+      "Require an explicit lifecycle decision for this sub-agent. Ordinary sub-agents already persist after reporting; an unarchived sticky child blocks ancestor archive and must be archived or removed explicitly before its parent can be archived."
     ),
   n: TaskToolBestOfCountSchema.nullish().describe(
     "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
@@ -1178,13 +1178,13 @@ export const TaskWorkspaceLifecycleToolArgsSchema = z
       .array(TaskWorkspaceLifecycleTargetSchema)
       .min(1)
       .describe(
-        "Parent-owned workspace-turn targets. Provide exactly one of taskId (wst_...) or workspaceId for each target."
+        "Parent-owned sub-agent or workspace-turn targets. Provide exactly one of taskId or workspaceId for each target."
       ),
     interrupt_active: z
       .boolean()
       .nullish()
       .describe(
-        "When true, interrupt active workspace turns for the target before performing an otherwise-eligible lifecycle action. Defaults to false."
+        "When true, interrupt active workspace turns for the target before performing an otherwise-eligible lifecycle action. Active sub-agents must be discarded with task_terminate instead. Defaults to false."
       ),
     force: z
       .boolean()
@@ -1208,6 +1208,7 @@ const TaskWorkspaceLifecycleBaseResultSchema = z.object({
   displayName: z.string().optional(),
   paths: z.array(z.string()).optional(),
   activeTaskIds: z.array(z.string()).optional(),
+  descendantTaskIds: z.array(z.string()).optional(),
   note: z.string().optional(),
   error: z.string().optional(),
 });
@@ -1263,6 +1264,7 @@ export const TaskListToolArgsSchema = z
       .nullish()
       .describe(
         "Task statuses to include. Defaults to unfinished tasks and workflow runs: queued, starting, running, awaiting_report, pending, backgrounded. " +
+          "Persistent completed sub-agents are terminal `reported` tasks and are intentionally omitted by default; include `reported` (and `interrupted` when relevant) to rediscover inactive child workspaces after compaction or restart. " +
           "Omitting statuses is the safe recovery default after an uncertain workflow_run because it includes unfinished workflow runs. " +
           "Pass ['interrupted', 'failed'] to discover workflow runs that may be resumable via workflow_resume, but do not use only terminal/resumable statuses when checking for a still-running workflow."
       ),
@@ -2194,24 +2196,24 @@ export const TOOL_DEFINITIONS = {
   task_terminate: {
     description:
       "Terminate one or more tasks immediately (sub-agent tasks, background bash tasks, or workflow runs). " +
-      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort); " +
-      "no report will be delivered, any in-progress work is discarded, and descendant sub-agent tasks are terminated too. " +
+      "Use this for active/in-progress sub-agents whose work should be discarded, not as cleanup for completed persistent sub-agents; archive completed child workspaces with task_workspace_lifecycle instead. " +
+      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort); no report will be delivered, any in-progress work is discarded, and descendant sub-agent tasks are terminated too. " +
       "For workflow runs (wfr_... IDs), this interrupts the run instead: durable state is preserved and the run can be resumed later with workflow_resume.",
     schema: TaskTerminateToolArgsSchema,
   },
   task_workspace_lifecycle: {
     description:
-      'Archive, delete the managed worktree for, or remove full workspaces that the current workspace created via task(kind="workspace"). ' +
-      "This tool is scoped by durable workspace-turn ownership records; it cannot act on arbitrary user workspaces. " +
-      'Use action="archive" as the safe default when child work is complete. Use delete_worktree only after archive to reclaim disk while preserving transcript metadata. ' +
-      "Use remove only for irreversible cleanup of already archived owned workspaces. Active workspace turns are refused unless interrupt_active is true, and force never bypasses ownership, archive, or confirmation checks.",
+      'Archive, delete the managed worktree for, or remove child workspaces owned by the current workspace, including persistent sub-agents and task(kind="workspace") turns. ' +
+      "This tool is parent-scoped and cannot act on arbitrary user workspaces. A completed sub-agent remains available after its report; after integrating the report and artifacts, keep it if follow-up access may be useful or archive it when the child workspace is no longer needed. " +
+      'Use action="archive" as the normal safe cleanup action. Use delete_worktree only after archive to reclaim disk while preserving transcript metadata. ' +
+      "Use remove only for explicit irreversible cleanup of already archived owned workspaces, and remove nested descendants deepest-first because a parent with remaining descendants cannot be removed. Active workspace turns are refused unless interrupt_active is true; active sub-agents must be discarded with task_terminate. Force never bypasses ownership, archive, descendant, or confirmation checks.",
     schema: TaskWorkspaceLifecycleToolArgsSchema,
   },
   task_list: {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks whose reports are consumed through parent workflow runs. " +
-      "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks and resumable workflow runs (statuses interrupted/failed; resume with workflow_resume). " +
+      "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks, inactive persistent sub-agents, and resumable workflow runs. The default statuses find unfinished work; request `reported` explicitly for completed persistent sub-agents. " +
       "When recovering an uncertain workflow_run, omit statuses first or include pending/running/backgrounded as well as interrupted/failed/completed; terminal-only filters can hide unfinished workflow runs. Pending runs may need workflow_resume because no runner may be active yet. " +
       "Workflow rows may include compact `workflowProgress` so callers can see the latest phase before deciding whether to await, resume, or leave the run alone. " +
       "Archived non-actionable child workspace tasks are hidden by default; pass includeArchived: true to inspect them. " +

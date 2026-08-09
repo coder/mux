@@ -14,12 +14,12 @@ import {
 } from "@/common/utils/pin";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
+import { normalizeTaskSettings } from "@/common/types/tasks";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
 import type { ProjectsConfig, Workspace } from "@/common/types/project";
 import type { Result } from "@/common/types/result";
 import { Ok, Err } from "@/common/types/result";
-import { normalizeTaskSettings } from "@/common/types/tasks";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
@@ -549,6 +549,8 @@ interface WorkspaceAgentStatus {
 type WorkspaceRuntimeStatus = "running" | "stopped" | "unknown" | "unsupported";
 const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
+const DESCENDANT_WORKSPACE_REMOVE_ERROR =
+  "This workspace has descendant sub-agent workspaces. Remove those descendants deepest-first before removing their parent.";
 const STICKY_DESCENDANT_ARCHIVE_ERROR =
   "This workspace has unarchived sticky sub-agent workspaces. Archive or remove those sub-agents explicitly before archiving their parent.";
 const STICKY_DESCENDANT_REMOVE_ERROR =
@@ -2742,6 +2744,11 @@ export class WorkspaceService extends EventEmitter {
     );
   }
 
+  private isSharedTaskWorkspace(workspaceId: string): boolean {
+    const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), workspaceId);
+    return entry?.workspace.taskIsolation === "none";
+  }
+
   private async getCurrentArchiveUntrackedPaths(args: {
     workspaceId: string;
     workspaceMetadata: WorkspaceMetadata;
@@ -4797,6 +4804,10 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
+      if (this.taskService?.hasDescendantAgentTasks?.(workspaceId) === true) {
+        return Err(DESCENDANT_WORKSPACE_REMOVE_ERROR);
+      }
+
       // Stop any active stream before deleting metadata/config to avoid tool calls racing with removal.
       //
       // IMPORTANT: AIService forwards "stream-abort" asynchronously after partial cleanup. If we roll up
@@ -6713,7 +6724,9 @@ export class WorkspaceService extends EventEmitter {
 
       const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
       const snapshotBehaviorEnabled =
-        worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
+        !this.isSharedTaskWorkspace(workspaceId) &&
+        worktreeArchiveBehavior === "snapshot" &&
+        this.worktreeArchiveSnapshotService != null;
 
       if (!snapshotBehaviorEnabled) {
         return Ok({ kind: "ready" as const });
@@ -6804,7 +6817,9 @@ export class WorkspaceService extends EventEmitter {
       const { projectPath, workspacePath } = workspace;
       const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
       const snapshotBehaviorEnabled =
-        worktreeArchiveBehavior === "snapshot" && this.worktreeArchiveSnapshotService != null;
+        !this.isSharedTaskWorkspace(workspaceId) &&
+        worktreeArchiveBehavior === "snapshot" &&
+        this.worktreeArchiveSnapshotService != null;
 
       let beforeArchiveMetadata: WorkspaceMetadata | undefined;
       if (this.workspaceLifecycleHooks || snapshotBehaviorEnabled) {
@@ -7138,6 +7153,10 @@ export class WorkspaceService extends EventEmitter {
 
       if (!isWorkspaceArchived(workspaceMetadata.archivedAt, workspaceMetadata.unarchivedAt)) {
         return Err("Only archived workspaces can delete their managed worktree");
+      }
+
+      if (workspaceMetadata.taskIsolation === "none") {
+        return Err("Shared-checkout sub-agents do not own a managed worktree");
       }
 
       if (!isWorktreeRuntime(workspaceMetadata.runtimeConfig)) {

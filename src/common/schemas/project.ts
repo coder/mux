@@ -215,8 +215,9 @@ export const WorkspaceConfigSchema = z.object({
     .optional()
     .meta({
       description:
-        "When true, automatic agent-task cleanup leaves this workspace intact after it reports. " +
-        "Explicit user lifecycle actions may still archive or remove it.",
+        "Strong retention for an agent-task workspace. Ordinary user-spawned tasks persist after " +
+        "reporting; an unarchived sticky task blocks ancestor archive and requires its own explicit " +
+        "archive or remove action.",
     }),
   taskAttentionPolicy: BackgroundWorkAttentionPolicySchema.optional().meta({
     description:

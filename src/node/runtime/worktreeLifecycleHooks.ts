@@ -26,6 +26,12 @@ export function createWorktreeArchiveHook(options: {
       return Ok(undefined);
     }
 
+    // isolation:none tasks point at an ancestor's checkout, so treating their path as a managed
+    // child worktree would delete the parent's live workspace.
+    if (workspaceMetadata.taskIsolation === "none") {
+      return Ok(undefined);
+    }
+
     if (!shouldDeleteWorktreeOnArchive(options.getWorktreeArchiveBehavior())) {
       return Ok(undefined);
     }

@@ -539,8 +539,7 @@ function mergeTaskSettingsForConfigSave(current: unknown, input: unknown) {
   }
 
   // saveConfig predates optional task flags. Preserve existing values when a client only sends
-  // the required numeric limits; otherwise unrelated settings saves can silently disable toggles
-  // like preserveSubagentsUntilArchive before task cleanup evaluates them.
+  // the required numeric limits; otherwise unrelated settings saves can silently reset newer flags.
   return normalizeTaskSettings({ ...normalizeTaskSettings(current), ...definedInput });
 }
 

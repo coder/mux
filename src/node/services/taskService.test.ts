@@ -204,7 +204,13 @@ type SaveProjectWorkspacesOptions = TestConfigOverrides & {
 };
 
 function testTaskSettings(maxParallelAgentTasks = 3, maxTaskNestingDepth = 3): TestTaskSettings {
-  return { maxParallelAgentTasks, maxTaskNestingDepth };
+  return {
+    maxParallelAgentTasks,
+    maxTaskNestingDepth,
+    // Most TaskService tests exercise transient cleanup mechanics. Persistent-by-default behavior
+    // has dedicated coverage below, so keep legacy cleanup explicit in the shared fixture.
+    preserveSubagentsUntilArchive: false,
+  };
 }
 
 function projectWorkspace(
@@ -230,6 +236,10 @@ async function saveTestConfig(
   await config.editConfig(() => ({
     projects: new Map(projects),
     ...overrides,
+    migrations: {
+      persistentSubagentsDefaulted: true,
+      ...overrides.migrations,
+    },
   }));
 }
 
@@ -20106,7 +20116,8 @@ describe("TaskService", () => {
           },
         ],
       ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      taskSettings: testTaskSettings(),
+      migrations: { persistentSubagentsDefaulted: true },
     }));
 
     const isStreaming = mock(() => false);
@@ -20177,7 +20188,8 @@ describe("TaskService", () => {
           },
         ],
       ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      taskSettings: testTaskSettings(),
+      migrations: { persistentSubagentsDefaulted: true },
     }));
 
     const isStreaming = mock(() => false);
@@ -20259,7 +20271,8 @@ describe("TaskService", () => {
           },
         ],
       ]),
-      taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
+      taskSettings: testTaskSettings(),
+      migrations: { persistentSubagentsDefaulted: true },
     }));
 
     const isStreaming = mock(() => false);
@@ -20304,7 +20317,7 @@ describe("TaskService", () => {
       directoryName: string;
       name: string;
       agentType: string;
-      taskStatus?: "reported" | "interrupted";
+      taskStatus?: WorkspaceConfigEntry["taskStatus"];
       reportedAt?: string;
       taskSticky?: boolean;
       workflowTask?: WorkspaceConfigEntry["workflowTask"];
@@ -20399,19 +20412,163 @@ describe("TaskService", () => {
         return Ok(undefined);
       });
       const { aiService } = createAIServiceMocks(config, { isStreaming });
-      const { workspaceService } = createWorkspaceServiceMocks({ remove });
+      const archive = mock(
+        (_workspaceId: string): Promise<Result<{ kind: "archived" }>> =>
+          Promise.resolve(Ok({ kind: "archived" }))
+      );
+      const { workspaceService } = createWorkspaceServiceMocks({ archive, remove });
       const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
       const internal = taskService as unknown as TaskServiceCleanupInternals;
 
       return {
         config,
         taskService,
+        archive,
         remove,
         rootWorkspaceId,
         taskChain,
         internal,
       };
     }
+
+    test("parent lifecycle archives a completed descendant agent workspace", async () => {
+      const { archive, rootWorkspaceId, taskService, taskChain } = await setupReportedTaskChain();
+      const childTaskId = taskChain[1]?.id;
+      expect(childTaskId).toBe("child-333");
+      if (!childTaskId) return;
+
+      const result = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
+        taskId: childTaskId,
+      });
+
+      expect(result).toEqual(
+        Ok({
+          status: "archived",
+          action: "archive",
+          taskId: childTaskId,
+          workspaceId: childTaskId,
+          displayName: "agent_explore_child",
+        })
+      );
+      expect(archive).toHaveBeenCalledWith(childTaskId, undefined);
+    });
+
+    test("parent lifecycle accepts descendant workspace IDs and rejects unrelated tasks", async () => {
+      const { archive, rootWorkspaceId, taskService, taskChain } = await setupReportedTaskChain();
+      const childTaskId = taskChain[1]?.id;
+      expect(childTaskId).toBe("child-333");
+      if (!childTaskId) return;
+
+      const byWorkspaceId = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
+        workspaceId: childTaskId,
+      });
+      const unrelated = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
+        taskId: "unrelated-task",
+      });
+
+      expect(byWorkspaceId).toEqual(
+        Ok({
+          status: "archived",
+          action: "archive",
+          workspaceId: childTaskId,
+          displayName: "agent_explore_child",
+        })
+      );
+      expect(unrelated).toEqual(
+        Ok({ status: "invalid_scope", action: "archive", taskId: "unrelated-task" })
+      );
+      expect(archive).toHaveBeenCalledTimes(1);
+    });
+
+    test("parent lifecycle refuses to archive an active descendant agent workspace", async () => {
+      const activeTaskId = "active-222";
+      const { archive, rootWorkspaceId, taskService } = await setupReportedTaskChain({
+        taskChain: [
+          {
+            id: activeTaskId,
+            directoryName: "active-task",
+            name: "agent_exec_active",
+            agentType: "exec",
+            taskStatus: "running",
+          },
+        ],
+      });
+
+      const result = await taskService.archiveOwnedTaskWorkspace(
+        rootWorkspaceId,
+        { taskId: activeTaskId },
+        { interruptActive: true }
+      );
+
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+      expect(result.data).toMatchObject({
+        status: "active",
+        action: "archive",
+        taskId: activeTaskId,
+        workspaceId: activeTaskId,
+        activeTaskIds: [activeTaskId],
+      });
+      expect(result.data.note).toContain("task_terminate");
+      expect(archive).not.toHaveBeenCalled();
+    });
+
+    test("parent lifecycle removes nested agent workspaces deepest-first", async () => {
+      const { config, remove, rootWorkspaceId, taskService, taskChain } =
+        await setupReportedTaskChain();
+      const parentTaskId = taskChain[0]?.id;
+      const childTaskId = taskChain[1]?.id;
+      expect(parentTaskId).toBe("parent-222");
+      expect(childTaskId).toBe("child-333");
+      if (!parentTaskId || !childTaskId) return;
+
+      await archiveWorkspaceInTestConfig(config, parentTaskId);
+      const blocked = await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, {
+        taskId: parentTaskId,
+      });
+
+      expect(blocked).toEqual(
+        Ok({
+          status: "error",
+          action: "remove",
+          taskId: parentTaskId,
+          workspaceId: parentTaskId,
+          displayName: "agent_exec_parent",
+          descendantTaskIds: [childTaskId],
+          error:
+            "Cannot remove a workspace while descendant sub-agent workspaces remain. Remove descendants deepest-first.",
+        })
+      );
+      expect(remove).not.toHaveBeenCalled();
+
+      await archiveWorkspaceInTestConfig(config, childTaskId);
+      expect(
+        await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, { taskId: childTaskId })
+      ).toEqual(
+        Ok({
+          status: "removed",
+          action: "remove",
+          taskId: childTaskId,
+          workspaceId: childTaskId,
+          displayName: "agent_explore_child",
+        })
+      );
+      expect(
+        await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, { taskId: parentTaskId })
+      ).toEqual(
+        Ok({
+          status: "removed",
+          action: "remove",
+          taskId: parentTaskId,
+          workspaceId: parentTaskId,
+          displayName: "agent_exec_parent",
+        })
+      );
+      expect(remove.mock.calls).toEqual([
+        [childTaskId, false],
+        [parentTaskId, false],
+      ]);
+    });
 
     test("cleanup is blocked when toggle is on and no ancestor is archived", async () => {
       const { config, remove, taskChain, internal } = await setupReportedTaskChain();
@@ -20672,7 +20829,7 @@ describe("TaskService", () => {
       }
     });
 
-    test("with toggle off, current cleanup behavior remains unchanged", async () => {
+    test("an explicit post-migration opt-out retains legacy automatic cleanup", async () => {
       const { config, remove, taskChain, internal } = await setupReportedTaskChain({
         preserveSubagentsUntilArchive: false,
       });
@@ -20776,13 +20933,7 @@ describe("TaskService", () => {
       }
     });
 
-    test("hasPreservedCompletedDescendants returns true when descendants exist and toggle is on", async () => {
-      const { taskService, rootWorkspaceId } = await setupReportedTaskChain();
-
-      expect(taskService.hasPreservedCompletedDescendants(rootWorkspaceId)).toBe(true);
-    });
-
-    test("hasPreservedCompletedDescendants returns false when toggle is off", async () => {
+    test("hasPreservedCompletedDescendants honors an explicit post-migration opt-out", async () => {
       const { taskService, rootWorkspaceId } = await setupReportedTaskChain({
         preserveSubagentsUntilArchive: false,
       });
