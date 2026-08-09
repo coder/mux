@@ -239,8 +239,10 @@ export const ImageLongPressMenu: Story = {
     const image = await canvas.findByRole("img", { name: "screenshot.png" });
 
     // Start a touch and hold: the long-press timer opens the menu after 500ms.
-    // Fixed coordinates keep the menu position deterministic for snapshots.
-    await fireEvent.touchStart(image, { touches: [{ clientX: 120, clientY: 160 }] });
+    // Chromium's TouchEvent constructor requires real Touch instances (plain
+    // objects throw). Fixed coordinates keep the menu position deterministic.
+    const touch = new Touch({ identifier: 1, target: image, clientX: 120, clientY: 160 });
+    await fireEvent.touchStart(image, { touches: [touch] });
 
     // The menu renders in a portal attached to document.body. waitFor polls
     // past the 500ms long-press threshold.
@@ -250,10 +252,11 @@ export const ImageLongPressMenu: Story = {
     await fireEvent.touchEnd(image);
 
     // The click that follows a long-press must be suppressed: the lightbox
-    // dialog should not open on top of the context menu.
+    // must not open on top of the context menu. The Radix popover menu itself
+    // has role="dialog", so detect the lightbox by its (visually hidden) title.
     await fireEvent.click(image);
     await waitFor(() => {
-      if (document.body.querySelector("[role='dialog']")) {
+      if (body.queryByText("Image Preview")) {
         throw new Error("Lightbox should not open after a long-press");
       }
     });
