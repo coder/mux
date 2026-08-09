@@ -169,10 +169,9 @@ export const Gallery: Story = {
   ),
 };
 
-// Right-click on an image thumbnail opens a context menu with view/copy/download
-// actions. The play function opens the menu so the Pixel snapshot captures it.
-export const ImageContextMenu: Story = {
-  render: () => (
+// Shared render for the interactive image-menu stories below.
+function renderImageAttachment() {
+  return (
     <ToolStoryShell>
       <AttachFileToolCall
         toolName="attach_file"
@@ -192,7 +191,13 @@ export const ImageContextMenu: Story = {
         status="completed"
       />
     </ToolStoryShell>
-  ),
+  );
+}
+
+// Right-click on an image thumbnail opens a context menu with view/copy/download
+// actions. The play function opens the menu so the Pixel snapshot captures it.
+export const ImageContextMenu: Story = {
+  render: renderImageAttachment,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
     const image = await canvas.findByRole("img", { name: "screenshot.png" });
@@ -213,27 +218,7 @@ export const ImageContextMenu: Story = {
 // so this play function exercises the touch path directly per the Storybook
 // responsive/Pixel validation rule.
 export const ImageLongPressMenu: Story = {
-  render: () => (
-    <ToolStoryShell>
-      <AttachFileToolCall
-        toolName="attach_file"
-        args={{ path: "screenshot.png" }}
-        result={{
-          type: "content",
-          value: [
-            { type: "text", text: "[Attachment prepared: screenshot.png]" },
-            {
-              type: "media",
-              data: samplePng,
-              mediaType: "image/png",
-              filename: "screenshot.png",
-            },
-          ],
-        }}
-        status="completed"
-      />
-    </ToolStoryShell>
-  ),
+  render: renderImageAttachment,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     const canvas = within(canvasElement);
     const image = await canvas.findByRole("img", { name: "screenshot.png" });
@@ -260,6 +245,50 @@ export const ImageLongPressMenu: Story = {
         throw new Error("Lightbox should not open after a long-press");
       }
     });
+  },
+};
+
+// The expanded lightbox offers the same right-click menu as the thumbnails.
+// The play function also asserts layering: Escape closes only the menu (the
+// topmost Radix layer) while the lightbox dialog stays open.
+export const LightboxContextMenu: Story = {
+  render: renderImageAttachment,
+  play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
+    const canvas = within(canvasElement);
+    const thumbnail = await canvas.findByRole("img", { name: "screenshot.png" });
+    await fireEvent.click(thumbnail);
+
+    // The lightbox renders in a portal; locate the full-size image inside it
+    // via the dialog's (visually hidden) title.
+    const body = within(document.body);
+    await waitFor(() => body.getByText("Image Preview"));
+    const dialog = document.body.querySelector("[role='dialog']");
+    if (!(dialog instanceof HTMLElement)) {
+      throw new Error("Lightbox dialog not found");
+    }
+    const fullSizeImage = within(dialog).getByRole("img");
+
+    // Fixed coordinates keep the menu position deterministic for snapshots.
+    await fireEvent.contextMenu(fullSizeImage, { clientX: 240, clientY: 200 });
+    await waitFor(() => body.getByText("Copy image"));
+    await waitFor(() => body.getByText("Download image"));
+
+    // Escape must close only the menu; the lightbox stays open underneath.
+    // Radix attaches its escape listener asynchronously after the menu
+    // contents render, so dispatch inside the retry loop — guarded so we never
+    // send Escape once the menu is gone (a stray extra Escape would close the
+    // lightbox and break the layering assertion below).
+    await waitFor(async () => {
+      if (body.queryByText("Copy image")) {
+        await fireEvent.keyDown(document, { key: "Escape" });
+        throw new Error("Context menu should close on Escape");
+      }
+    });
+    await waitFor(() => body.getByText("Image Preview"));
+
+    // Reopen and leave open so the Pixel snapshot captures lightbox + menu.
+    await fireEvent.contextMenu(fullSizeImage, { clientX: 240, clientY: 200 });
+    await waitFor(() => body.getByText("Copy image"));
   },
 };
 

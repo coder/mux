@@ -1,21 +1,13 @@
 import React, { useState } from "react";
-import { Copy, Download, Maximize2 } from "lucide-react";
+import { Maximize2 } from "lucide-react";
 import { isValidBase64AttachmentData } from "@/common/utils/attachments/base64";
 import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { ImageLightbox } from "@/browser/components/ImageLightbox";
 import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
-import {
-  PositionedMenu,
-  PositionedMenuItem,
-} from "@/browser/components/PositionedMenu/PositionedMenu";
-import {
-  copyImageDataUrlToClipboard,
-  downloadDataUrl,
-  getImageDownloadFilename,
-  handleImageActionKeyDown,
-} from "@/browser/utils/imageActions";
-import { KEYBINDS, formatKeybind } from "@/browser/utils/ui/keybinds";
+import { PositionedMenuItem } from "@/browser/components/PositionedMenu/PositionedMenu";
+import { ImageActionsMenu } from "@/browser/components/ImageActionsMenu";
+import { getImageDownloadFilename } from "@/browser/utils/imageActions";
 
 /**
  * Image content from tool results (attach_file, desktop screenshots, MCP tools).
@@ -130,18 +122,6 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
 
   if (safeImages.length === 0) return null;
 
-  const handleCopyImage = async (image: SafeToolResultImage) => {
-    try {
-      await copyImageDataUrlToClipboard(image.dataUrl);
-    } catch (err) {
-      console.error("Failed to copy image:", err);
-    }
-  };
-
-  const handleDownloadImage = (image: SafeToolResultImage) => {
-    downloadDataUrl(image.dataUrl, getImageDownloadFilename(image.filename, image.mediaType));
-  };
-
   return (
     <>
       <div className="mt-2 flex flex-wrap gap-2">
@@ -186,54 +166,30 @@ export const ToolResultImages: React.FC<ToolResultImagesProps> = ({ result }) =>
         ))}
       </div>
 
-      <PositionedMenu
-        open={contextMenu.isOpen}
-        onOpenChange={contextMenu.onOpenChange}
-        position={contextMenu.position}
-        onKeyDown={(e) => {
-          if (!menuImage) return;
-          const consumed = handleImageActionKeyDown(e, {
-            copy: () => void handleCopyImage(menuImage),
-            download: () => handleDownloadImage(menuImage),
-          });
-          if (consumed) {
-            contextMenu.close();
-          }
-        }}
+      <ImageActionsMenu
+        contextMenu={contextMenu}
+        image={
+          menuImage
+            ? {
+                dataUrl: menuImage.dataUrl,
+                downloadFilename: getImageDownloadFilename(menuImage.filename, menuImage.mediaType),
+              }
+            : null
+        }
       >
+        {/* No shortcut hint: Enter/Space on the focused thumbnail button
+            already opens the lightbox (native button activation). */}
         {menuImage && (
-          <>
-            {/* No shortcut hint: Enter/Space on the focused thumbnail button
-                already opens the lightbox (native button activation). */}
-            <PositionedMenuItem
-              icon={<Maximize2 />}
-              label="View full size"
-              onClick={() => {
-                setSelectedImage(menuImage);
-                contextMenu.close();
-              }}
-            />
-            <PositionedMenuItem
-              icon={<Copy />}
-              label="Copy image"
-              shortcut={formatKeybind(KEYBINDS.IMAGE_COPY)}
-              onClick={() => {
-                void handleCopyImage(menuImage);
-                contextMenu.close();
-              }}
-            />
-            <PositionedMenuItem
-              icon={<Download />}
-              label="Download image"
-              shortcut={formatKeybind(KEYBINDS.IMAGE_DOWNLOAD)}
-              onClick={() => {
-                handleDownloadImage(menuImage);
-                contextMenu.close();
-              }}
-            />
-          </>
+          <PositionedMenuItem
+            icon={<Maximize2 />}
+            label="View full size"
+            onClick={() => {
+              setSelectedImage(menuImage);
+              contextMenu.close();
+            }}
+          />
         )}
-      </PositionedMenu>
+      </ImageActionsMenu>
 
       <ImageLightbox
         src={selectedImage?.dataUrl ?? null}

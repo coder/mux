@@ -6,6 +6,8 @@ import {
   VisuallyHidden,
 } from "@/browser/components/Dialog/Dialog";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { useContextMenuPosition } from "@/browser/hooks/useContextMenuPosition";
+import { ImageActionsMenu } from "@/browser/components/ImageActionsMenu";
 import {
   copyImageDataUrlToClipboard,
   downloadDataUrl,
@@ -40,6 +42,9 @@ export function ImageLightbox(props: ImageLightboxProps) {
   const src = props.src;
   // Reuse the shared copied-feedback hook with an image write function.
   const { copied, copyToClipboard } = useCopyToClipboard(copyImageDataUrlToClipboard);
+  // Same right-click/long-press menu as the thumbnails so the expanded view
+  // stays consistent with the tool card experience.
+  const contextMenu = useContextMenuPosition({ longPress: true });
   const downloadFilename = props.downloadFilename ?? props.filename ?? "image";
 
   return (
@@ -61,7 +66,22 @@ export function ImageLightbox(props: ImageLightboxProps) {
         </VisuallyHidden>
         {src !== null && (
           <>
-            <img src={src} alt={props.alt} className="max-h-[80vh] max-w-full object-contain" />
+            <img
+              src={src}
+              alt={props.alt}
+              className="max-h-[80vh] max-w-full object-contain"
+              onContextMenu={contextMenu.onContextMenu}
+              onTouchStart={contextMenu.touchHandlers.onTouchStart}
+              onTouchEnd={contextMenu.touchHandlers.onTouchEnd}
+              onTouchMove={contextMenu.touchHandlers.onTouchMove}
+            />
+            {/* Route menu copies through the feedback hook so the Copy button
+                flashes "Copied" regardless of how the copy was triggered. */}
+            <ImageActionsMenu
+              contextMenu={contextMenu}
+              image={{ dataUrl: src, downloadFilename }}
+              onCopy={(dataUrl) => void copyToClipboard(dataUrl)}
+            />
             <div className="flex w-full min-w-0 items-center gap-2 px-1">
               {props.filename && (
                 <span className="text-muted min-w-0 flex-1 truncate text-xs">{props.filename}</span>
