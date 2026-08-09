@@ -1317,7 +1317,8 @@ export class MCPServerManager {
             projectPath,
             workspacePath,
             projectSecrets,
-            () => this.markActivity(workspaceId)
+            () => this.markActivity(workspaceId),
+            workspaceId
           );
 
           // Config changes can replace the workspace cache entry while this retry is still
@@ -1453,7 +1454,8 @@ export class MCPServerManager {
           projectPath,
           workspacePath,
           projectSecrets,
-          () => this.markActivity(workspaceId)
+          () => this.markActivity(workspaceId),
+          workspaceId
         );
         restartFailedNames = failedNames;
         restartTimedOutNames = timedOutNames;
@@ -1532,7 +1534,8 @@ export class MCPServerManager {
       projectPath,
       workspacePath,
       projectSecrets,
-      () => this.markActivity(workspaceId)
+      () => this.markActivity(workspaceId),
+      workspaceId
     );
 
     const allFailedNames = [...restartFailedNames, ...startFailedNames];
@@ -1781,7 +1784,8 @@ export class MCPServerManager {
     projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
-    onActivity: () => void
+    onActivity: () => void,
+    workspaceId?: string
   ): Promise<{
     instances: Map<string, MCPServerInstance>;
     failedServerNames: string[];
@@ -1801,7 +1805,8 @@ export class MCPServerManager {
           projectPath,
           workspacePath,
           projectSecrets,
-          onActivity
+          onActivity,
+          workspaceId
         );
         if (instance) {
           instances.set(name, instance);
@@ -1826,7 +1831,8 @@ export class MCPServerManager {
     projectPath: string,
     workspacePath: string,
     projectSecrets: Record<string, string> | undefined,
-    onActivity: () => void
+    onActivity: () => void,
+    workspaceId?: string
   ): Promise<MCPServerInstance | null> {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const abortController = new AbortController();
@@ -1848,7 +1854,8 @@ export class MCPServerManager {
       projectSecrets,
       onActivity,
       abortController.signal,
-      registerAbortCleanup
+      registerAbortCleanup,
+      workspaceId
     ).then(
       (instance) => (didTimeout ? keepPendingAfterTimeout() : instance),
       (error) => {
@@ -1936,19 +1943,22 @@ export class MCPServerManager {
     projectSecrets: Record<string, string> | undefined,
     onActivity: () => void,
     signal: AbortSignal,
-    onAbortCleanup?: (cleanupPromise: Promise<void>) => void
+    onAbortCleanup?: (cleanupPromise: Promise<void>) => void,
+    workspaceId?: string
   ): Promise<MCPServerInstance | null> {
     if (signal.aborted) {
       return null;
     }
 
     if (info.transport === "stdio") {
-      // Include the effective execution context (cwd defaults to the
-      // workspace path): the same command can resolve different server
-      // versions from different worktrees/runtimes, so verdicts must not
-      // leak across workspaces.
+      // Scope verdicts by workspace identity (each workspace binds exactly
+      // one runtime, and workspace IDs are unique across hosts) plus the
+      // effective execution cwd: the same command can resolve different
+      // server versions from different worktrees, hosts, or runtimes, so a
+      // verdict probed in one execution context must not leak into another.
       const verdictKey = JSON.stringify([
         "stdio",
+        workspaceId ?? null,
         name,
         info.command,
         info.args ?? null,
