@@ -585,15 +585,40 @@ async function runServerTest(
         const runtime = createRuntime({ type: "local", srcBaseDir: projectPath });
         log.debug(`[MCP] Testing ${logContext}`, { transport: "stdio" });
 
-        const execStream = await runtime.exec(server.command, {
-          cwd: server.cwd ?? projectPath,
-          ...(server.env !== undefined ? { env: server.env } : {}),
-          timeout: TEST_TIMEOUT_MS / 1000,
-        });
+        const spawnTransport = async () => {
+          const execStream = await runtime.exec(server.command, {
+            cwd: server.cwd ?? projectPath,
+            ...(server.env !== undefined ? { env: server.env } : {}),
+            timeout: TEST_TIMEOUT_MS / 1000,
+          });
 
-        stdioTransport = new MCPStdioTransport(execStream);
-        await stdioTransport.start();
-        client = await createMCPClient({ transport: stdioTransport });
+          const transport = new MCPStdioTransport(execStream);
+          await transport.start();
+          return transport;
+        };
+
+        stdioTransport = await spawnTransport();
+        try {
+          client = await createMCPClient({ transport: stdioTransport });
+        } catch (error) {
+          // Fragile legacy stdio servers can exit on the server/discover
+          // negotiation probe. Mirror the production startup path
+          // (startSingleServerImpl): respawn once and connect with a legacy
+          // verdict so a working legacy server does not fail the test.
+          log.debug(`[MCP] ${logContext} stdio probe connect failed; retrying as legacy`, {
+            error: getErrorMessage(error),
+          });
+          try {
+            await stdioTransport.close();
+          } catch {
+            // ignore cleanup errors
+          }
+          stdioTransport = await spawnTransport();
+          client = await createMCPClient({
+            transport: stdioTransport,
+            prior: { kind: "legacy" },
+          });
+        }
       } else {
         log.debug(`[MCP] Testing ${logContext}`, { transport: server.transport });
 
