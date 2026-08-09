@@ -11,7 +11,7 @@ import { log } from "@/node/services/log";
 export const MAX_IMAGE_DATA_BYTES = 8 * 1024 * 1024; // 8MB guard per image
 
 /**
- * MCP CallToolResult content types (from @ai-sdk/mcp)
+ * MCP CallToolResult content types (MCP spec wire shapes)
  */
 interface MCPTextContent {
   type: "text";

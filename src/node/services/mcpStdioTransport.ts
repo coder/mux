@@ -1,14 +1,16 @@
 import { TextDecoder, TextEncoder } from "util";
-import type { MCPTransport, JSONRPCMessage } from "@ai-sdk/mcp";
+import type { Transport, JSONRPCMessage } from "@modelcontextprotocol/client";
 import type { ExecStream } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
 
 /**
  * Minimal stdio transport for MCP servers using newline-delimited JSON (NDJSON).
  * Each message is a single line of JSON followed by \n.
- * This matches the protocol used by @ai-sdk/mcp's StdioMCPTransport.
+ * This matches the protocol used by the official SDK's StdioClientTransport,
+ * but reads/writes a Runtime.exec() stream so MCP servers can run on remote
+ * (SSH/devcontainer) runtimes too.
  */
-export class MCPStdioTransport implements MCPTransport {
+export class MCPStdioTransport implements Transport {
   private readonly decoder = new TextDecoder();
   private readonly encoder = new TextEncoder();
   private readonly stdoutReader: ReadableStreamDefaultReader<Uint8Array>;

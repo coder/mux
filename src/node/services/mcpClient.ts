@@ -1,0 +1,197 @@
+import {
+  Client,
+  SSEClientTransport,
+  StreamableHTTPClientTransport,
+  type OAuthClientProvider,
+  type Transport,
+} from "@modelcontextprotocol/client";
+import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai";
+import assert from "@/common/utils/assert";
+
+/**
+ * MCP client adapter over the official TypeScript SDK v2
+ * (@modelcontextprotocol/client).
+ *
+ * Mux previously used @ai-sdk/mcp, which only speaks MCP protocol revisions up
+ * to 2025-11-25 (initialize handshake + Mcp-Session-Id sessions) and has no
+ * support for the stateless 2026-07-28 revision (SEP-2575/2567). The official
+ * SDK v2 client implements both revisions; its default connect sequence is the
+ * plain legacy `initialize` handshake, byte-identical to the previous wire
+ * behavior, so existing user-configured servers see no change.
+ *
+ * This module intentionally mirrors the small surface mcpServerManager
+ * consumed from @ai-sdk/mcp (createMCPClient -> { tools(), close() }) so the
+ * manager's instance-cache/lease/recycle machinery stays unchanged.
+ */
+
+/** Client identity sent to servers (initialize request / clientInfo _meta). */
+const CLIENT_INFO = { name: "mux", version: "1.0.0" };
+
+/**
+ * Maximum time a single MCP tool call may run.
+ *
+ * mcpServerManager's wrapMCPTools enforces this deadline (with recycle
+ * semantics) around every tool execution.
+ */
+export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
+
+/**
+ * SDK-level timeout for tools/call requests.
+ *
+ * @ai-sdk/mcp had no per-request timeouts; the official SDK defaults to 60s,
+ * which would cut long-running tool calls that Mux intentionally allows (up to
+ * MCP_TOOL_CALL_TIMEOUT_MS). Keep the SDK timeout slightly above the wrapper
+ * deadline so wrapMCPTools' MCPDeadlineError (which drives client recycling)
+ * always wins the race, while the SDK still cleans up abandoned requests.
+ */
+const SDK_TOOL_CALL_TIMEOUT_MS = MCP_TOOL_CALL_TIMEOUT_MS + 5_000;
+
+export interface MCPHttpTransportConfig {
+  type: "http" | "sse";
+  url: string;
+  headers?: Record<string, string> | undefined;
+  /** Custom fetch (e.g. WWW-Authenticate capture during server tests). */
+  fetch?: typeof fetch;
+  authProvider?: OAuthClientProvider;
+}
+
+export interface MCPClientConfig {
+  /** Either a ready transport (stdio) or an HTTP/SSE transport config. */
+  transport: Transport | MCPHttpTransportConfig;
+  /** Receives transport/protocol errors surfaced outside request call sites. */
+  onUncaughtError?: (error: unknown) => void;
+}
+
+export interface MCPClientHandle {
+  /** Fetch tools/list and build AI SDK tools whose execute calls tools/call. */
+  tools(): Promise<Record<string, Tool>>;
+  close(): Promise<void>;
+}
+
+function isHttpTransportConfig(
+  transport: Transport | MCPHttpTransportConfig
+): transport is MCPHttpTransportConfig {
+  return "type" in transport && (transport.type === "http" || transport.type === "sse");
+}
+
+function createHttpTransport(config: MCPHttpTransportConfig): Transport {
+  const url = new URL(config.url);
+  // MCP server URLs are user-configured and already trusted to execute tools,
+  // so follow HTTP redirects (http->https, trailing slash) to avoid breaking
+  // existing setups. Note undici's fetch follows redirects by default; this
+  // pins the behavior explicitly.
+  const requestInit: RequestInit = {
+    redirect: "follow",
+    ...(config.headers !== undefined ? { headers: config.headers } : {}),
+  };
+
+  const options = {
+    requestInit,
+    ...(config.fetch !== undefined ? { fetch: config.fetch } : {}),
+    ...(config.authProvider !== undefined ? { authProvider: config.authProvider } : {}),
+  };
+
+  // Custom headers in requestInit are merged into every request by both
+  // transports, including the SSE GET stream (verified against SDK v2.0.0's
+  // _commonHeaders implementation).
+  return config.type === "http"
+    ? new StreamableHTTPClientTransport(url, options)
+    : new SSEClientTransport(url, options);
+}
+
+/**
+ * MCP CallToolResult -> AI SDK tool-result output for the model.
+ *
+ * Mirrors @ai-sdk/mcp's mcpToModelOutput so model-visible tool results stay
+ * identical across the SDK swap.
+ */
+function mcpToModelOutput({
+  output,
+}: {
+  output: unknown;
+}): ReturnType<NonNullable<Tool["toModelOutput"]>> {
+  const result = output as {
+    content?: Array<Record<string, unknown> & { type?: string }>;
+  };
+  if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
+    return { type: "json", value: result as never };
+  }
+  const convertedContent = result.content.map((part) => {
+    if (part.type === "text" && typeof part.text === "string") {
+      return { type: "text" as const, text: part.text };
+    }
+    if (
+      part.type === "image" &&
+      typeof part.data === "string" &&
+      typeof part.mimeType === "string"
+    ) {
+      return {
+        type: "file" as const,
+        mediaType: part.mimeType,
+        data: { type: "data" as const, data: part.data },
+      };
+    }
+    return { type: "text" as const, text: JSON.stringify(part) };
+  });
+  return { type: "content", value: convertedContent };
+}
+
+/**
+ * Connect to an MCP server and return a handle exposing AI SDK tools.
+ *
+ * Uses the SDK's default legacy connect (2025-11-25 initialize handshake), so
+ * every configured server sees the same bytes as before the SDK migration.
+ */
+export async function createMCPClient(config: MCPClientConfig): Promise<MCPClientHandle> {
+  const client = new Client(CLIENT_INFO);
+
+  if (config.onUncaughtError) {
+    const onUncaughtError = config.onUncaughtError;
+    client.onerror = (error) => onUncaughtError(error);
+  }
+
+  const transport = isHttpTransportConfig(config.transport)
+    ? createHttpTransport(config.transport)
+    : config.transport;
+
+  await client.connect(transport);
+
+  return {
+    tools: async () => {
+      const listResult = await client.listTools();
+      assert(Array.isArray(listResult.tools), "MCP tools/list result must carry a tools array");
+
+      const tools: Record<string, Tool> = {};
+      for (const definition of listResult.tools) {
+        const inputSchema = definition.inputSchema ?? { type: "object" };
+        tools[definition.name] = dynamicTool({
+          description: definition.description,
+          title: definition.title ?? definition.annotations?.title,
+          // Server-provided JSON schemas are runtime data; the SDK types them
+          // as loose JSON values, so narrow to the AI SDK's JSONSchema7 shape.
+          inputSchema: jsonSchema({
+            ...inputSchema,
+            properties: inputSchema.properties ?? {},
+            additionalProperties: false,
+          } as JSONSchema7),
+          execute: async (args: unknown, options: { abortSignal?: AbortSignal }) => {
+            options.abortSignal?.throwIfAborted();
+            return await client.callTool(
+              {
+                name: definition.name,
+                arguments: args as Record<string, unknown>,
+              },
+              {
+                timeout: SDK_TOOL_CALL_TIMEOUT_MS,
+                ...(options.abortSignal !== undefined ? { signal: options.abortSignal } : {}),
+              }
+            );
+          },
+          toModelOutput: mcpToModelOutput,
+        });
+      }
+      return tools;
+    },
+    close: () => client.close(),
+  };
+}

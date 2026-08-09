@@ -3,7 +3,7 @@ import * as http from "http";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import writeFileAtomic from "write-file-atomic";
-import { auth, type OAuthClientProvider } from "@ai-sdk/mcp";
+import { auth, type OAuthClientProvider } from "@modelcontextprotocol/client";
 import type { Config } from "@/node/config";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { WindowService } from "@/node/services/windowService";
@@ -100,7 +100,7 @@ interface OAuthFlowBase {
   scope?: string;
   resourceMetadataUrl?: URL;
 
-  /** PKCE verifier for this flow (set by @ai-sdk/mcp auth()). */
+  /** PKCE verifier for this flow (set by the MCP SDK auth()). */
   codeVerifier: string | null;
 
   timeout: ReturnType<typeof setTimeout>;
@@ -290,7 +290,7 @@ export async function probeServerForBearerChallenge(options: {
  * Resolve the OAuth scope to request for an authorization flow.
  *
  * The Bearer challenge's `scope=` wins when present. Otherwise we fall back to
- * the Protected Resource Metadata's `scopes_supported` (RFC 9728). @ai-sdk/mcp
+ * the Protected Resource Metadata's `scopes_supported` (RFC 9728). The MCP SDK
  * fetches this same metadata to locate the authorization server but ignores its
  * advertised scopes, so without this a server that omits `scope=` from its 401
  * (e.g. Carta) grants only identity scopes and every resource call then fails
@@ -330,13 +330,15 @@ async function fetchProtectedResourceScopes(url: URL): Promise<string[]> {
 }
 
 /**
- * Parses the @ai-sdk/mcp authorization-server binding fields
+ * Parses the legacy @ai-sdk/mcp authorization-server binding fields
  * (authorization_server / token_endpoint) from a stored credentials object.
  *
- * These MUST survive the store round-trip: auth() refuses to use a stored
- * refresh_token without them and instead invalidates the tokens and demands
- * interactive re-login (i.e. dropping them silently breaks token refresh
- * after an app restart).
+ * These MUST survive the store round-trip: the legacy @ai-sdk/mcp auth()
+ * refused to use a stored refresh_token without them and instead invalidated
+ * the tokens and demanded interactive re-login. The official SDK v2 ignores
+ * these fields (it stamps `issuer` instead — see MCPOAuthTokens.issuer), but
+ * we keep round-tripping them so downgrading Mux does not break token
+ * refresh after an app restart.
  */
 function parseAuthorizationServerBinding(value: Record<string, unknown>): {
   authorization_server?: string;
@@ -365,6 +367,23 @@ function parseAuthorizationServerBinding(value: Record<string, unknown>): {
   }
 
   return { authorization_server: authorizationServer, token_endpoint: tokenEndpoint };
+}
+
+/**
+ * Parses the official SDK v2 issuer stamp (SEP-2352 credential/issuer binding)
+ * from a stored credentials object. Must survive the store round-trip:
+ * dropping it would reactivate the SDK's unstamped-credential warning on every
+ * request and defeat issuer binding. Same defensive http(s) validation as
+ * parseAuthorizationServerBinding; a corrupted value is dropped for
+ * self-healing (the SDK back-stamps on the next save).
+ */
+function parseIssuerStamp(value: Record<string, unknown>): { issuer?: string } {
+  const raw = value.issuer;
+  if (typeof raw !== "string" || !URL.canParse(raw)) {
+    return {};
+  }
+  const protocol = new URL(raw).protocol;
+  return protocol === "http:" || protocol === "https:" ? { issuer: raw } : {};
 }
 
 function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | null {
@@ -404,6 +423,7 @@ function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | nul
             ? clientInformationRaw.client_secret_expires_at
             : undefined,
         ...parseAuthorizationServerBinding(clientInformationRaw),
+        ...parseIssuerStamp(clientInformationRaw),
       }
     : undefined;
 
@@ -423,6 +443,7 @@ function parseStoredCredentials(value: unknown): MCPOAuthStoredCredentials | nul
         refresh_token:
           typeof tokensRaw.refresh_token === "string" ? tokensRaw.refresh_token : undefined,
         ...parseAuthorizationServerBinding(tokensRaw),
+        ...parseIssuerStamp(tokensRaw),
       }
     : undefined;
 
@@ -798,7 +819,7 @@ export class McpOauthService {
     const redirectUri = `http://127.0.0.1:${address.port}/callback`;
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
-    // @ai-sdk/mcp can still fall back to well-known discovery.
+    // the MCP SDK can still fall back to well-known discovery.
     const challenge = await probeServerForBearerChallenge({
       serverUrl: serverUrlForDiscovery,
       transport,
@@ -942,7 +963,7 @@ export class McpOauthService {
       createDeferred<Result<void, string>>();
 
     // Best-effort probe for OAuth hints (scope/resource_metadata). If it fails,
-    // @ai-sdk/mcp can still fall back to well-known discovery.
+    // the MCP SDK can still fall back to well-known discovery.
     const challenge = await probeServerForBearerChallenge({
       serverUrl: serverUrlForDiscovery,
       transport,
@@ -1140,6 +1161,11 @@ export class McpOauthService {
         return Promise.resolve(flow.codeVerifier);
       },
       invalidateCredentials: async (scope) => {
+        // "discovery" (SDK v2) refers to cached AS metadata, which Mux does
+        // not persist; nothing to invalidate.
+        if (scope === "discovery") {
+          return;
+        }
         await this.invalidateStoredCredentials({
           serverUrl: flow.serverUrlForStoreKey,
           scope,
@@ -1207,6 +1233,11 @@ export class McpOauthService {
       },
       codeVerifier: () => Promise.reject(new Error("PKCE verifier is not available")),
       invalidateCredentials: async (scope) => {
+        // "discovery" (SDK v2) refers to cached AS metadata, which Mux does
+        // not persist; nothing to invalidate.
+        if (scope === "discovery") {
+          return;
+        }
         await this.invalidateStoredCredentials({
           serverUrl: input.serverUrl,
           scope,

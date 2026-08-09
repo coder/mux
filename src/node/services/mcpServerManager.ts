@@ -1,7 +1,8 @@
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
-import { createMCPClient, type OAuthClientProvider } from "@ai-sdk/mcp";
+import type { OAuthClientProvider } from "@modelcontextprotocol/client";
 import type { Tool } from "ai";
+import { createMCPClient, MCP_TOOL_CALL_TIMEOUT_MS } from "@/node/services/mcpClient";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
 import type {
@@ -38,9 +39,11 @@ const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 const MCP_STARTUP_TIMEOUT_MS = 60_000; // 60s — generous for npx package downloads
 const MCP_STARTUP_CLEANUP_WAIT_TIMEOUT_MS = 5_000; // fail-safe so timeout error cannot hang forever
 
-/** Detect errors from the @ai-sdk/mcp SDK indicating the client/transport is closed.
- *  MCPClientError is not exported from the SDK, so we match on known message patterns.
- *  Known patterns: "closed client", "Connection closed", "Connection closed unexpectedly". */
+/** Detect errors from the MCP SDK indicating the client/transport is closed.
+ *  We match on known message patterns rather than error classes so wrapped or
+ *  re-thrown errors are still recognized.
+ *  Known patterns: "Not connected", "Connection closed" (official SDK v2),
+ *  plus "closed client" kept from the previous @ai-sdk/mcp integration. */
 export function isClosedClientError(error: unknown): boolean {
   const msg = getErrorMessage(error).toLowerCase();
   return (
@@ -49,8 +52,6 @@ export function isClosedClientError(error: unknown): boolean {
     msg.includes("not connected")
   );
 }
-
-const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
 
 /**
  * Thrown by runMCPToolWithDeadline when abort or timeout wins the race.
@@ -364,7 +365,8 @@ function extractWwwAuthenticateHeader(error: unknown): string | null {
 function createWwwAuthenticateCaptureFetch() {
   let capturedHeader: string | null = null;
 
-  // @ai-sdk/mcp expects a full fetch implementation (including static helpers like
+  // The MCP SDK accepts any fetch-like function, but some call paths (and our
+  // own probes) may rely on static helpers like
   // preconnect), so wrap the call path while preserving the original function shape.
   const fetchWithCapture = Object.assign(async (...args: Parameters<typeof fetch>) => {
     const response = await fetch(...args);
@@ -574,11 +576,6 @@ async function runServerTest(
           url: server.url,
           headers: server.headers,
           fetch: challengeCapture.fetch,
-          // AI SDK 7 rejects HTTP redirects by default (SSRF hardening for
-          // untrusted URLs). MCP server URLs here are user-configured and
-          // already trusted to execute tools, so keep following redirects to
-          // avoid breaking existing setups (e.g. http→https, trailing slash).
-          redirect: "follow" as const,
           ...(server.authProvider ? { authProvider: server.authProvider } : {}),
         };
 
@@ -2019,9 +2016,6 @@ export class MCPServerManager {
     const transportBase = {
       url: info.url,
       headers,
-      // AI SDK 7 rejects HTTP redirects by default; these URLs are
-      // user-configured and trusted (see the test-connection transport above).
-      redirect: "follow" as const,
       ...(authProvider ? { authProvider } : {}),
     };
 

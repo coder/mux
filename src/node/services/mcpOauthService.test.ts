@@ -11,6 +11,7 @@ import {
   probeServerForBearerChallenge,
   resolveOAuthScope,
 } from "./mcpOauthService";
+import type { MCPOAuthClientInformation, MCPOAuthTokens } from "@/common/types/mcpOauth";
 
 function getStoreFilePath(muxHome: string): string {
   return path.join(muxHome, "mcp-oauth.json");
@@ -206,11 +207,13 @@ describe("McpOauthService store", () => {
     expect(await readStoreFile()).toEqual({ version: 2, entries: {} });
   });
 
-  // Regression test: @ai-sdk/mcp auth() only uses a stored refresh_token when
-  // the persisted tokens/clientInformation retain the authorization_server +
-  // token_endpoint binding it saved. Stripping them during store parsing made
-  // auth() invalidate the tokens and demand interactive re-login after every
-  // app restart.
+  // Regression test: the legacy @ai-sdk/mcp auth() only used a stored
+  // refresh_token when the persisted tokens/clientInformation retained the
+  // authorization_server + token_endpoint binding it saved. Stripping them
+  // during store parsing made auth() invalidate the tokens and demand
+  // interactive re-login after every app restart. The official SDK v2 ignores
+  // these fields (it stamps `issuer` instead), but the store must keep
+  // round-tripping them so downgrading Mux does not break token refresh.
   test("authorization server binding survives store round-trip", async () => {
     const populatedStore = {
       version: 2,
@@ -238,12 +241,16 @@ describe("McpOauthService store", () => {
     const provider = await service.getAuthProviderForServer({ serverUrl });
     expect(provider).toBeDefined();
 
-    const tokens = await provider!.tokens();
+    // The SDK types no longer carry the legacy binding fields; read them via
+    // Mux's storage type, which is what the provider actually returns.
+    const tokens = (await provider!.tokens()) as MCPOAuthTokens | undefined;
     expect(tokens?.refresh_token).toBe("refresh-token");
     expect(tokens?.authorization_server).toBe("https://auth.example.com/");
     expect(tokens?.token_endpoint).toBe("https://auth.example.com/token");
 
-    const clientInformation = await provider!.clientInformation();
+    const clientInformation = (await provider!.clientInformation()) as
+      | MCPOAuthClientInformation
+      | undefined;
     expect(clientInformation?.authorization_server).toBe("https://auth.example.com/");
     expect(clientInformation?.token_endpoint).toBe("https://auth.example.com/token");
   });
@@ -251,7 +258,7 @@ describe("McpOauthService store", () => {
   test.each([
     // Corrupted: not a parseable URL.
     "not a url",
-    // Parseable but rejected by @ai-sdk/mcp's SafeUrlSchema; must be dropped
+    // Parseable but rejected by the MCP SDK's SafeUrlSchema; must be dropped
     // for self-healing rather than surfacing as a metadata mismatch in auth().
     "javascript:alert(1)",
     "data:text/plain,x",
@@ -281,7 +288,7 @@ describe("McpOauthService store", () => {
     const provider = await service.getAuthProviderForServer({ serverUrl });
     expect(provider).toBeDefined();
 
-    const tokens = await provider!.tokens();
+    const tokens = (await provider!.tokens()) as MCPOAuthTokens | undefined;
     expect(tokens?.refresh_token).toBe("refresh-token");
     expect(tokens?.authorization_server).toBeUndefined();
     expect(tokens?.token_endpoint).toBeUndefined();
@@ -465,7 +472,7 @@ describe("McpOauthService.startDesktopFlow", () => {
           res.end(
             JSON.stringify({
               // RFC 8414 canonical issuer: no trailing slash at the root.
-              // @ai-sdk/mcp v2 strictly validates metadata issuer identity.
+              // The MCP SDK strictly validates metadata issuer identity.
               issuer: new URL(baseUrl).origin,
               authorization_endpoint: `${baseUrl}authorize`,
               token_endpoint: `${baseUrl}token`,
@@ -532,9 +539,10 @@ describe("McpOauthService.startDesktopFlow", () => {
 
       const authorizeUrl = new URL(startResult.data.authorizeUrl);
       expect(authorizeUrl.searchParams.get("code_challenge_method")).toBe("S256");
-      // OAuth providers may canonicalize a root resource URL to its origin. That is
-      // equivalent to the configured root server URL, while base-path URLs are covered below.
-      expect(authorizeUrl.searchParams.get("resource")).toBe(new URL(baseUrl).origin);
+      // The SDK sends the canonicalized server URL as the RFC 8707 resource
+      // (the legacy @ai-sdk/mcp collapsed root URLs to their origin instead;
+      // both name the same resource). Base-path URLs are covered below.
+      expect(authorizeUrl.searchParams.get("resource")).toBe(new URL(baseUrl).toString());
 
       // Clean up the loopback listener (no callback will occur during this test).
       await service.cancelDesktopFlow(startResult.data.flowId);
@@ -559,7 +567,7 @@ describe("McpOauthService.startDesktopFlow", () => {
           res.end(
             JSON.stringify({
               // RFC 8414 canonical issuer: no trailing slash at the root.
-              // @ai-sdk/mcp v2 strictly validates metadata issuer identity.
+              // The MCP SDK strictly validates metadata issuer identity.
               issuer: new URL(authorizationServerBaseUrl).origin,
               authorization_endpoint: `${authorizationServerBaseUrl}authorize`,
               token_endpoint: `${authorizationServerBaseUrl}token`,

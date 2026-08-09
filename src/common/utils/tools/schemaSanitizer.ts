@@ -322,7 +322,7 @@ function sanitizeWorkflowAgentReportSchemaNode(schema: unknown): void {
  *
  * Tools can have schemas in two places:
  * - `parameters`: Used by tools created with ai SDK's `tool()` function
- * - `inputSchema`: Used by MCP tools created with `dynamicTool()` from @ai-sdk/mcp
+ * - `inputSchema`: Used by MCP tools created with `dynamicTool()` (see mcpClient.ts)
  *
  * @param tool - The original tool to sanitize
  * @returns A new tool with sanitized parameter schema

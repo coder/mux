@@ -3,7 +3,7 @@ import { createServer } from "http";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import * as mcpSdk from "@ai-sdk/mcp";
+import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
   isClosedClientError,

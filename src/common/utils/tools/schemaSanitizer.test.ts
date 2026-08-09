@@ -192,7 +192,7 @@ describe("schemaSanitizer", () => {
         type: "dynamic",
         description: "MCP test tool",
         inputSchema: {
-          // Simulate the jsonSchema getter that @ai-sdk/mcp creates
+          // Simulate the jsonSchema getter that the MCP tool adapter creates
           get jsonSchema() {
             return jsonSchema;
           },
