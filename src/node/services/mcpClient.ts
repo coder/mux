@@ -166,7 +166,7 @@ function mcpToModelOutput({
       return { type: "text" as const, text: part.text };
     }
     if (
-      part.type === "image" &&
+      (part.type === "image" || part.type === "audio") &&
       typeof part.data === "string" &&
       typeof part.mimeType === "string"
     ) {
@@ -175,6 +175,26 @@ function mcpToModelOutput({
         mediaType: part.mimeType,
         data: { type: "data" as const, data: part.data },
       };
+    }
+    // Embedded resources: surface text contents as text and binary contents
+    // as file parts instead of stringifying the base64 payload into JSON.
+    if (part.type === "resource" && part.resource && typeof part.resource === "object") {
+      const resource = part.resource as {
+        uri?: string;
+        text?: string;
+        blob?: string;
+        mimeType?: string;
+      };
+      if (typeof resource.text === "string") {
+        return { type: "text" as const, text: resource.text };
+      }
+      if (typeof resource.blob === "string") {
+        return {
+          type: "file" as const,
+          mediaType: resource.mimeType ?? "application/octet-stream",
+          data: { type: "data" as const, data: resource.blob },
+        };
+      }
     }
     return { type: "text" as const, text: JSON.stringify(part) };
   });
