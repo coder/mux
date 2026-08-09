@@ -148,52 +148,54 @@ function mcpToModelOutput({
 }): ReturnType<NonNullable<Tool["toModelOutput"]>> {
   const result = output as {
     type?: string;
-    value?: unknown;
+    value?: Array<Record<string, unknown> & { type?: string }>;
     content?: Array<Record<string, unknown> & { type?: string }>;
   };
   // mcpServerManager's wrapMCPTools runs transformMCPResult over execute
-  // results first (it owns the image size guard); image results arrive here
-  // already in AI SDK model-output shape. Pass them through instead of
-  // re-converting (which would demote them to JSON and lose multimodal input).
-  if (result && typeof result === "object" && result.type === "content" && "value" in result) {
-    return result as ReturnType<NonNullable<Tool["toModelOutput"]>>;
+  // results first — the single conversion layer for MCP binary content
+  // (image/audio/blob resources, size guard included) — producing Mux's
+  // canonical { type: "content", value: [text | media] } shape. Map its
+  // media parts to model-output file parts here.
+  if (
+    result &&
+    typeof result === "object" &&
+    result.type === "content" &&
+    Array.isArray(result.value)
+  ) {
+    return {
+      type: "content",
+      value: result.value.map((part) => {
+        if (
+          part.type === "media" &&
+          typeof part.data === "string" &&
+          typeof part.mediaType === "string"
+        ) {
+          return {
+            type: "file" as const,
+            mediaType: part.mediaType,
+            data: { type: "data" as const, data: part.data },
+          };
+        }
+        if (part.type === "text" && typeof part.text === "string") {
+          return { type: "text" as const, text: part.text };
+        }
+        return { type: "text" as const, text: JSON.stringify(part) };
+      }),
+    };
   }
   if (!result || typeof result !== "object" || !Array.isArray(result.content)) {
     return { type: "json", value: result as never };
   }
+  // Untransformed MCP results (no binary payloads; see transformMCPResult):
+  // text and text-resource parts only in practice.
   const convertedContent = result.content.map((part) => {
     if (part.type === "text" && typeof part.text === "string") {
       return { type: "text" as const, text: part.text };
     }
-    if (
-      (part.type === "image" || part.type === "audio") &&
-      typeof part.data === "string" &&
-      typeof part.mimeType === "string"
-    ) {
-      return {
-        type: "file" as const,
-        mediaType: part.mimeType,
-        data: { type: "data" as const, data: part.data },
-      };
-    }
-    // Embedded resources: surface text contents as text and binary contents
-    // as file parts instead of stringifying the base64 payload into JSON.
     if (part.type === "resource" && part.resource && typeof part.resource === "object") {
-      const resource = part.resource as {
-        uri?: string;
-        text?: string;
-        blob?: string;
-        mimeType?: string;
-      };
+      const resource = part.resource as { uri?: string; text?: string };
       if (typeof resource.text === "string") {
         return { type: "text" as const, text: resource.text };
-      }
-      if (typeof resource.blob === "string") {
-        return {
-          type: "file" as const,
-          mediaType: resource.mimeType ?? "application/octet-stream",
-          data: { type: "data" as const, data: resource.blob },
-        };
       }
     }
     return { type: "text" as const, text: JSON.stringify(part) };

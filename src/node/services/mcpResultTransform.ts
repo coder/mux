@@ -24,12 +24,18 @@ interface MCPImageContent {
   mimeType: string;
 }
 
+interface MCPAudioContent {
+  type: "audio";
+  data: string; // base64
+  mimeType: string;
+}
+
 interface MCPResourceContent {
   type: "resource";
   resource: { uri: string; text?: string; blob?: string; mimeType?: string };
 }
 
-type MCPContent = MCPTextContent | MCPImageContent | MCPResourceContent;
+type MCPContent = MCPTextContent | MCPImageContent | MCPAudioContent | MCPResourceContent;
 
 export interface MCPCallToolResult {
   content?: MCPContent[];
@@ -56,10 +62,33 @@ function formatBytesSI(bytes: number): string {
   return `${Math.round(bytes / 1000)} KB`;
 }
 
+/** Binary media guard shared by image/audio content and blob resources. */
+function toGuardedMediaPart(
+  kind: string,
+  data: string | undefined,
+  mediaType: string
+): AISDKContentPart {
+  const dataLength = data?.length ?? 0;
+  if (dataLength > MAX_IMAGE_DATA_BYTES) {
+    log.warn(`[MCP] ${kind} data too large, omitting from context`, {
+      mediaType,
+      dataLength,
+      maxAllowed: MAX_IMAGE_DATA_BYTES,
+    });
+    return {
+      type: "text",
+      text: `[${kind} omitted: ${formatBytesSI(dataLength)} exceeds per-${kind.toLowerCase()} guard of ${formatBytesSI(MAX_IMAGE_DATA_BYTES)}. Reduce resolution or quality and retry.]`,
+    };
+  }
+  return { type: "media", data: data ?? "", mediaType };
+}
+
 /**
  * Transform MCP tool result to AI SDK format.
- * Converts MCP's "image" content type to AI SDK's "media" type.
- * Truncates large images to prevent context overflow.
+ * Converts MCP binary content (image, audio, embedded blob resources) to AI
+ * SDK "media" parts — the single conversion layer for MCP media (mixed
+ * text+binary results included). Truncates large payloads to prevent context
+ * overflow.
  */
 export function transformMCPResult(result: unknown): unknown {
   if (!result || typeof result !== "object") {
@@ -78,18 +107,21 @@ export function transformMCPResult(result: unknown): unknown {
     return result;
   }
 
-  // Check if any content is an image
-  const hasImage = typed.content.some((c) => c.type === "image");
-  if (!hasImage) {
+  // Only rewrite results carrying binary payloads; text-only results pass
+  // through in MCP shape (converted by the tool's toModelOutput).
+  const hasBinaryContent = typed.content.some(
+    (c) =>
+      c.type === "image" ||
+      c.type === "audio" ||
+      (c.type === "resource" && typeof c.resource?.blob === "string")
+  );
+  if (!hasBinaryContent) {
     return result;
   }
 
   // Debug: log what we received from MCP
   log.debug("[MCP] transformMCPResult input", {
     contentTypes: typed.content.map((c) => c.type),
-    imageItems: typed.content
-      .filter((c): c is MCPImageContent => c.type === "image")
-      .map((c) => ({ type: c.type, mimeType: c.mimeType, dataLen: c.data?.length })),
   });
 
   // Transform to AI SDK content format
@@ -98,29 +130,22 @@ export function transformMCPResult(result: unknown): unknown {
       return { type: "text" as const, text: item.text };
     }
     if (item.type === "image") {
-      const imageItem = item;
-      // Check if image data exceeds the limit
-      const dataLength = imageItem.data?.length ?? 0;
-      if (dataLength > MAX_IMAGE_DATA_BYTES) {
-        log.warn("[MCP] Image data too large, omitting from context", {
-          mimeType: imageItem.mimeType,
-          dataLength,
-          maxAllowed: MAX_IMAGE_DATA_BYTES,
-        });
-        return {
-          type: "text" as const,
-          text: `[Image omitted: ${formatBytesSI(dataLength)} exceeds per-image guard of ${formatBytesSI(MAX_IMAGE_DATA_BYTES)}. Reduce resolution or quality and retry.]`,
-        };
-      }
       // Ensure mediaType is present - default to image/png if missing
-      const mediaType = imageItem.mimeType || "image/png";
-      log.debug("[MCP] Transforming image content", { mimeType: imageItem.mimeType, mediaType });
-      return { type: "media" as const, data: imageItem.data, mediaType };
+      return toGuardedMediaPart("Image", item.data, item.mimeType || "image/png");
     }
-    // For resource type, convert to text representation
+    if (item.type === "audio") {
+      return toGuardedMediaPart("Audio", item.data, item.mimeType || "audio/wav");
+    }
     if (item.type === "resource") {
-      const text = item.resource.text ?? item.resource.uri;
-      return { type: "text" as const, text };
+      if (typeof item.resource.blob === "string") {
+        return toGuardedMediaPart(
+          "Resource",
+          item.resource.blob,
+          item.resource.mimeType ?? "application/octet-stream"
+        );
+      }
+      // Text resources: surface the text (or the URI as a reference).
+      return { type: "text" as const, text: item.resource.text ?? item.resource.uri };
     }
     // Fallback: stringify unknown content
     return { type: "text" as const, text: JSON.stringify(item) };
