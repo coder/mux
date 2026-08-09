@@ -1,8 +1,11 @@
 import {
   Client,
+  SdkError,
+  SdkErrorCode,
   SSEClientTransport,
   StreamableHTTPClientTransport,
   type OAuthClientProvider,
+  type PriorDiscovery,
   type Transport,
 } from "@modelcontextprotocol/client";
 import { dynamicTool, jsonSchema, type JSONSchema7, type Tool } from "ai";
@@ -55,17 +58,61 @@ export interface MCPHttpTransportConfig {
   authProvider?: OAuthClientProvider;
 }
 
+/**
+ * Timeout for the connect-time `server/discover` probe.
+ *
+ * Deliberately short: a legacy stdio server that silently ignores unknown
+ * pre-`initialize` requests only reveals itself via probe timeout, and that
+ * wait counts against mcpServerManager's 60s startup deadline. Probe verdicts
+ * are cached per server config (see MCPServerManager.eraVerdicts), so the
+ * cost is paid once per config change, not per startup.
+ */
+const NEGOTIATION_PROBE_TIMEOUT_MS = 5_000;
+
 export interface MCPClientConfig {
   /** Either a ready transport (stdio) or an HTTP/SSE transport config. */
   transport: Transport | MCPHttpTransportConfig;
   /** Receives transport/protocol errors surfaced outside request call sites. */
   onUncaughtError?: (error: unknown) => void;
+  /**
+   * Cached era verdict from a previous negotiation against the same server
+   * config. When present, connect() adopts it with zero probe round trips:
+   * a modern verdict replays the stored server/discover result (failing
+   * loudly via EraNegotiationFailed if stale), a legacy verdict runs the
+   * plain initialize handshake directly.
+   */
+  prior?: PriorDiscovery;
 }
 
 export interface MCPClientHandle {
   /** Fetch tools/list and build AI SDK tools whose execute calls tools/call. */
   tools(): Promise<Record<string, Tool>>;
+  /**
+   * The MCP protocol revision negotiated at connect ("2026-07-28" once the
+   * server/discover probe finds a modern server; "2025-11-25" or earlier on
+   * the legacy initialize fallback).
+   */
+  negotiatedProtocolVersion(): string | undefined;
+  /**
+   * Persistable era verdict for this connection, suitable for `prior` on a
+   * later connect against the same server config.
+   */
+  priorDiscovery(): PriorDiscovery;
   close(): Promise<void>;
+}
+
+/** True when the connection negotiated the stateless 2026-07-28+ era. */
+export function isModernEra(prior: PriorDiscovery): boolean {
+  return prior.kind === "modern";
+}
+
+/**
+ * True for the typed error the SDK throws when a cached modern era verdict
+ * (`prior: { kind: "modern" }`) no longer overlaps the server's supported
+ * protocol versions. Callers should drop the cached verdict and re-probe.
+ */
+export function isEraNegotiationFailedError(error: unknown): boolean {
+  return error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed;
 }
 
 function isHttpTransportConfig(
@@ -139,11 +186,19 @@ function mcpToModelOutput({
 /**
  * Connect to an MCP server and return a handle exposing AI SDK tools.
  *
- * Uses the SDK's default legacy connect (2025-11-25 initialize handshake), so
- * every configured server sees the same bytes as before the SDK migration.
+ * Version negotiation is per connection (and therefore per configured
+ * server): connect() probes with `server/discover` and conservatively falls
+ * back to the plain legacy 2025-11-25 initialize handshake — byte-identical
+ * to a pre-2026 client — on anything but definitive modern evidence. A
+ * `prior` verdict skips the probe entirely.
  */
 export async function createMCPClient(config: MCPClientConfig): Promise<MCPClientHandle> {
-  const client = new Client(CLIENT_INFO);
+  const client = new Client(CLIENT_INFO, {
+    versionNegotiation: {
+      mode: "auto",
+      probe: { timeoutMs: NEGOTIATION_PROBE_TIMEOUT_MS },
+    },
+  });
 
   if (config.onUncaughtError) {
     const onUncaughtError = config.onUncaughtError;
@@ -154,7 +209,7 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
     ? createHttpTransport(config.transport)
     : config.transport;
 
-  await client.connect(transport);
+  await client.connect(transport, config.prior !== undefined ? { prior: config.prior } : {});
 
   return {
     tools: async () => {
@@ -191,6 +246,11 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
         });
       }
       return tools;
+    },
+    negotiatedProtocolVersion: () => client.getNegotiatedProtocolVersion(),
+    priorDiscovery: (): PriorDiscovery => {
+      const discover = client.getDiscoverResult();
+      return discover !== undefined ? { kind: "modern", discover } : { kind: "legacy" };
     },
     close: () => client.close(),
   };

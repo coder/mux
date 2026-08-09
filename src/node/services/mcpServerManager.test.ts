@@ -519,6 +519,61 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("startSingleServerImpl respawns stdio server as legacy after probe crash", async () => {
+    // Fragile legacy stdio servers can exit on the server/discover probe.
+    // The manager must respawn the process once and reconnect with a legacy
+    // era verdict so the server still comes up.
+    const controller = new AbortController();
+    const priors: unknown[] = [];
+    const tool = testTool();
+
+    const createMCPClientSpy = spyOn(mcpSdk, "createMCPClient").mockImplementation(
+      (config: mcpSdk.MCPClientConfig) => {
+        priors.push(config.prior);
+        if (priors.length === 1) {
+          // First attempt: probe kills the server -> connect fails.
+          return Promise.reject(new Error("Connection closed"));
+        }
+        return Promise.resolve({
+          tools: mock(() => Promise.resolve({ crashy_tool: tool })),
+          negotiatedProtocolVersion: () => "2025-11-25",
+          priorDiscovery: () => ({ kind: "legacy" as const }),
+          close: mock(() => Promise.resolve(undefined)),
+        } as unknown as Awaited<ReturnType<typeof mcpSdk.createMCPClient>>);
+      }
+    );
+
+    const exec = mock(() =>
+      Promise.resolve({
+        stdin: new WritableStream<Uint8Array>({ close: () => undefined }),
+        stdout: new ReadableStream<Uint8Array>({ cancel: () => undefined }),
+        stderr: new ReadableStream<Uint8Array>({ cancel: () => undefined }),
+        exitCode: new Promise<number>(() => undefined),
+        duration: Promise.resolve(0),
+      })
+    );
+
+    try {
+      const result = (await access.startSingleServerImpl(
+        "crashy",
+        stdioConfig("node crash-on-probe.js"),
+        { exec } as unknown as Runtime,
+        PROJECT_PATH,
+        WORKSPACE_PATH,
+        undefined,
+        () => undefined,
+        controller.signal
+      )) as { name: string; tools: Record<string, Tool> } | null;
+
+      expect(exec).toHaveBeenCalledTimes(2);
+      expect(priors).toEqual([undefined, { kind: "legacy" }]);
+      expect(result?.name).toBe("crashy");
+      expect(Object.keys(result?.tools ?? {})).toEqual(["crashy_tool"]);
+    } finally {
+      createMCPClientSpy.mockRestore();
+    }
+  });
+
   test("getToolsForWorkspace tracks failed server names in stats", async () => {
     const workspaceId = "ws-failed-names";
     configService.listServers = mock(() =>

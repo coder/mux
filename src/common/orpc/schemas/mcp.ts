@@ -223,7 +223,11 @@ export const BearerChallengeSchema = z.object({
 });
 
 export const MCPTestResultSchema = z.discriminatedUnion("success", [
-  z.object({ success: z.literal(true), tools: z.array(z.string()) }),
+  z.object({
+    success: z.literal(true),
+    tools: z.array(z.string()),
+    protocolVersion: z.string().optional(),
+  }),
   z.object({
     success: z.literal(false),
     error: z.string(),

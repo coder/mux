@@ -84,7 +84,12 @@ export interface BearerChallenge {
 
 /** Result of testing an MCP server connection */
 export type MCPTestResult =
-  | { success: true; tools: string[] }
+  | {
+      success: true;
+      tools: string[];
+      /** MCP protocol revision negotiated during the test connection. */
+      protocolVersion?: string;
+    }
   | { success: false; error: string; oauthChallenge?: BearerChallenge };
 
 /** Cached test result with timestamp for age display */
