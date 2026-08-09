@@ -97,8 +97,8 @@ export function transformMCPResult(result: unknown): unknown {
 
   const typed = result as MCPCallToolResult;
 
-  // If it's an error or has toolResult, pass through as-is
-  if (typed.isError || typed.toolResult !== undefined) {
+  // If it has toolResult (non-standard result shape), pass through as-is
+  if (typed.toolResult !== undefined) {
     return result;
   }
 
@@ -107,8 +107,9 @@ export function transformMCPResult(result: unknown): unknown {
     return result;
   }
 
-  // Only rewrite results carrying binary payloads; text-only results pass
-  // through in MCP shape (converted by the tool's toModelOutput).
+  // Only rewrite results carrying binary payloads; text-only results
+  // (including text-only errors) pass through in MCP shape (converted by the
+  // tool's toModelOutput, which keeps the isError flag visible to the model).
   const hasBinaryContent = typed.content.some(
     (c) =>
       c.type === "image" ||
@@ -150,6 +151,13 @@ export function transformMCPResult(result: unknown): unknown {
     // Fallback: stringify unknown content
     return { type: "text" as const, text: JSON.stringify(item) };
   });
+
+  // The model-output "content" shape has no error flag, so error results
+  // carrying binary payloads get an explicit text marker instead of bypassing
+  // the media conversion (and its size guard).
+  if (typed.isError) {
+    transformedContent.unshift({ type: "text", text: "[Tool reported an error]" });
+  }
 
   return { type: "content", value: transformedContent };
 }

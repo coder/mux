@@ -109,12 +109,36 @@ describe("transformMCPResult", () => {
       expect(transformMCPResult("serena")).toBe("serena");
     });
 
-    it("should pass through error results unchanged", () => {
+    it("should pass through text-only error results unchanged", () => {
       const errorResult = {
         isError: true,
         content: [{ type: "text" as const, text: "Error!" }],
       };
       expect(transformMCPResult(errorResult)).toBe(errorResult);
+    });
+
+    it("should convert binary content in error results and mark the error", () => {
+      // Error results carrying binary payloads must not bypass the media
+      // conversion (or the size guard); the error flag is surfaced as text.
+      const bigData = "x".repeat(9 * 1024 * 1024);
+      const errorResult = {
+        isError: true,
+        content: [
+          { type: "text" as const, text: "capture failed" },
+          { type: "image" as const, data: "abc123", mimeType: "image/png" },
+          { type: "image" as const, data: bigData, mimeType: "image/png" },
+        ],
+      };
+      const result = transformMCPResult(errorResult) as {
+        type: string;
+        value: Array<{ type: string; text?: string; data?: string; mediaType?: string }>;
+      };
+      expect(result.type).toBe("content");
+      expect(result.value[0]).toEqual({ type: "text", text: "[Tool reported an error]" });
+      expect(result.value[1]).toEqual({ type: "text", text: "capture failed" });
+      expect(result.value[2]).toEqual({ type: "media", data: "abc123", mediaType: "image/png" });
+      expect(result.value[3].type).toBe("text");
+      expect(result.value[3].text).toContain("Image omitted");
     });
 
     it("should pass through toolResult unchanged", () => {
