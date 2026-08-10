@@ -3,7 +3,7 @@ import { MUX_GATEWAY_ORIGIN } from "@/common/constants/muxGatewayOAuth";
 import type { Result } from "@/common/types/result";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
-import { isLegacyOpApiKey } from "@/node/utils/providerRequirements";
+import { resolveProviderCredentials } from "@/node/utils/providerRequirements";
 import type { Config } from "@/node/config";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -58,11 +58,13 @@ export class VoiceService {
         !isProviderDisabledInConfig(gatewayConfig ?? {}) &&
         !!gatewayToken &&
         (this.policyService?.isProviderAllowed("mux-gateway") ?? true);
-      // Legacy op:// references (removed 1Password integration) are unusable
-      // at runtime; treat them as no key so routing falls back cleanly.
-      const openaiApiKey = isLegacyOpApiKey(openaiConfig?.apiKey)
-        ? undefined
-        : openaiConfig?.apiKey;
+      // Resolve through the shared config -> file -> env funnel so voice honors
+      // the same credential fallbacks as chat requests (and ignores legacy
+      // op:// references from the removed 1Password integration).
+      const openaiApiKey = resolveProviderCredentials(
+        "openai",
+        providersConfig.openai ?? {}
+      ).apiKey;
       const openaiAvailable =
         !isProviderDisabledInConfig(openaiConfig ?? {}) &&
         !!openaiApiKey &&

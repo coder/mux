@@ -1,4 +1,4 @@
-import { describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -29,6 +29,23 @@ async function withTempConfig(
 }
 
 describe("VoiceService.transcribe", () => {
+  // Voice credential resolution consults process.env (config -> file -> env
+  // funnel), so pin the env key to keep "unconfigured" scenarios deterministic.
+  let savedOpenAiEnvKey: string | undefined;
+
+  beforeEach(() => {
+    savedOpenAiEnvKey = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+  });
+
+  afterEach(() => {
+    if (savedOpenAiEnvKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = savedOpenAiEnvKey;
+    }
+  });
+
   it("returns provider-disabled error without calling fetch", async () => {
     await withTempConfig(async (config, service) => {
       config.saveProvidersConfig({
