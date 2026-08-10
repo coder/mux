@@ -629,6 +629,80 @@ describe("TaskAwaitToolCall", () => {
   });
 });
 
+const taskListArgs = { statuses: ["reported" as const, "interrupted" as const] };
+const TaskListToolCall = getToolComponent("task_list", taskListArgs);
+
+describe("TaskListToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
+  test("shows inactive child cleanup guidance when expanded", () => {
+    const note =
+      "Keep reusable roles, retitle stale role names with task_retitle, and remove obsolete children with task_remove.";
+    const view = render(
+      <TooltipProvider>
+        <TaskListToolCall args={taskListArgs} status="completed" result={{ tasks: [], note }} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(view.getByText("task_list"));
+    expect(view.getByText(note)).toBeDefined();
+  });
+});
+
+const taskRetitleArgs = { task_id: "child-task", title: "Simplicity Auditor" };
+const TaskRetitleToolCall = getToolComponent("task_retitle", taskRetitleArgs);
+
+describe("TaskRetitleToolCall", () => {
+  let originalWindow: typeof globalThis.window;
+  let originalDocument: typeof globalThis.document;
+
+  beforeEach(() => {
+    originalWindow = globalThis.window;
+    originalDocument = globalThis.document;
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+  });
+
+  afterEach(() => {
+    cleanup();
+    mock.restore();
+    globalThis.window = originalWindow;
+    globalThis.document = originalDocument;
+  });
+
+  test("shows the stable task ID and friendly role name", () => {
+    const view = render(
+      <TooltipProvider>
+        <TaskRetitleToolCall
+          args={taskRetitleArgs}
+          status="completed"
+          result={{ status: "retitled", taskId: "child-task", title: "Simplicity Auditor" }}
+        />
+      </TooltipProvider>
+    );
+
+    expect(view.getByText("Simplicity Auditor")).toBeDefined();
+    fireEvent.click(view.getByText("task_retitle"));
+    expect(view.getByText("child-task")).toBeDefined();
+    expect(view.getByText("retitled")).toBeDefined();
+  });
+});
+
 const taskSendMessageArgs = {
   task_id: "child-task",
   message: "Use the corrected API shape.",

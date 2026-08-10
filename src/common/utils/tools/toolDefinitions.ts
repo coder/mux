@@ -319,7 +319,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
-    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. " +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. Use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary or ordinary chat title. " +
     `Use n when you want several agents to try the same prompt independently. Use variants when you want several agents to run the same prompt template with a different ${TASK_VARIANT_PLACEHOLDER} substituted into each run. ` +
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
@@ -471,11 +471,13 @@ const taskToolBaseShape = {
   agentId: TaskAgentIdSchema.nullish(),
   subagent_type: SubagentTypeSchema.nullish(),
   prompt: z.string().min(1),
+  // Persistent children appear alongside normal chats, so a short role label stays friendly and
+  // reusable across follow-up assignments instead of reading like another task-specific chat title.
   title: z
     .string()
     .min(1)
     .describe(
-      "Parent-chosen durable title for the child workspace. Name the sub-agent's long-term area of expertise, not the current one-off assignment."
+      'Parent-chosen short, friendly role name for the persistent child, such as "Reviewer" or "Simplicity Auditor". Name reusable expertise, not the current assignment; avoid task-summary titles such as "Analyze lifecycle semantics".'
     ),
   run_in_background: z.boolean().default(false),
   n: TaskToolBestOfCountSchema.nullish().describe(
@@ -1072,6 +1074,37 @@ export const TaskSendMessageToolResultSchema = z.discriminatedUnion("status", [
 ]);
 
 // -----------------------------------------------------------------------------
+// task_retitle (rename a persistent descendant sub-agent)
+// -----------------------------------------------------------------------------
+export const TaskRetitleToolArgsSchema = z
+  .object({
+    task_id: z.string().min(1).describe("Stable descendant sub-agent task ID."),
+    title: z
+      .string()
+      .trim()
+      .min(1)
+      .describe('New short, friendly reusable role name, such as "Reviewer".'),
+  })
+  .strict();
+
+const TaskRetitleToolBaseResultSchema = z.object({
+  taskId: z.string(),
+});
+
+export const TaskRetitleToolResultSchema = z.discriminatedUnion("status", [
+  TaskRetitleToolBaseResultSchema.extend({
+    status: z.literal("retitled"),
+    title: z.string(),
+  }).strict(),
+  TaskRetitleToolBaseResultSchema.extend({ status: z.literal("not_found") }).strict(),
+  TaskRetitleToolBaseResultSchema.extend({ status: z.literal("invalid_scope") }).strict(),
+  TaskRetitleToolBaseResultSchema.extend({
+    status: z.literal("error"),
+    error: z.string(),
+  }).strict(),
+]);
+
+// -----------------------------------------------------------------------------
 // task_stop (non-destructively stop tasks/processes)
 // -----------------------------------------------------------------------------
 export const TaskStopToolArgsSchema = z
@@ -1386,6 +1419,7 @@ export const TaskListToolTaskSchema = z
 export const TaskListToolResultSchema = z
   .object({
     tasks: z.array(TaskListToolTaskSchema),
+    note: z.string().optional(),
   })
   .strict();
 
@@ -2278,9 +2312,14 @@ export const TOOL_DEFINITIONS = {
       "The stable sub-agent task ID and durable title remain unchanged. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
+  task_retitle: {
+    description:
+      "Change the short, friendly role name of a persistent descendant sub-agent without changing its stable task identity or workspace. Active and inactive user-owned children can be retitled; workflow-owned internal workers cannot.",
+    schema: TaskRetitleToolArgsSchema,
+  },
   task_stop: {
     description:
-      "Stop one or more tasks without removing persistent child workspaces. Sub-agent trees are stopped leaf-first and become inactive; workspace turns and workflow runs are interrupted; bash processes are terminated. Stopping an already-inactive task is idempotent.",
+      "Stop one or more tasks without removing persistent child workspaces. Sub-agent trees are stopped leaf-first and unfinished children become interrupted; workspace turns and workflow runs are interrupted; bash processes are terminated. Use this to cancel or abandon work, not to mark useful progress as completed—ask a child to finalize with task_send_message and await its report instead. Stopping an already-inactive task is idempotent.",
     schema: TaskStopToolArgsSchema,
   },
   task_remove: {
@@ -3145,6 +3184,7 @@ export type BridgeableToolName =
   | "task_apply_git_patch"
   | "task_list"
   | "task_send_message"
+  | "task_retitle"
   | "task_stop"
   | "task_remove"
   | "heartbeat"
@@ -3173,6 +3213,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_send_message: TaskSendMessageToolResultSchema,
+  task_retitle: TaskRetitleToolResultSchema,
   task_stop: TaskStopToolResultSchema,
   task_remove: TaskRemoveToolResultSchema,
   heartbeat: HeartbeatToolResultSchema,
@@ -3288,6 +3329,7 @@ export function getAvailableTools(
     "task_await",
     "task_apply_git_patch",
     "task_send_message",
+    "task_retitle",
     "task_stop",
     "task_remove",
     "task_list",

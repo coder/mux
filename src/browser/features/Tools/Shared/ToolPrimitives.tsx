@@ -278,6 +278,7 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_update: Sparkles,
   review_pane_get: ScanEye,
   analytics_query: Database,
+  task_retitle: Pencil,
   task_stop: Square,
   task_remove: Trash2,
   task_send_message: MessageSquareMore,

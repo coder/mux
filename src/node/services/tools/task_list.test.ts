@@ -168,6 +168,26 @@ describe("task_list tool", () => {
     });
   });
 
+  it("guides cleanup when listed user-owned children are inactive", async () => {
+    using tempDir = new TestTempDir("test-task-list-inactive-cleanup-note");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const listDescendantAgentTasks = mock(() => [
+      buildAgentTask("reviewer", "reported"),
+      buildAgentTask("tooling-mapper", "interrupted"),
+    ]);
+    const taskService = { listDescendantAgentTasks } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    const result = (await Promise.resolve(
+      tool.execute!({ statuses: ["reported", "interrupted"] }, mockToolCallOptions)
+    )) as { tasks: unknown[]; note?: string };
+
+    expect(result.tasks).toHaveLength(2);
+    expect(result.note).toContain("task_retitle");
+    expect(result.note).toContain("task_remove");
+    expect(result.note).toContain("ask them to finalize");
+  });
+
   it("hides archived non-actionable descendant agent tasks by default", async () => {
     using tempDir = new TestTempDir("test-task-list-agent-archive-filter");
     await writeWorkspaceConfig(tempDir.path, [
@@ -364,26 +384,25 @@ describe("task_list tool", () => {
     } as unknown as TaskService;
     const tool = createTaskListTool({ ...baseConfig, taskService });
 
-    expect(
-      await Promise.resolve(
-        tool.execute!({ statuses: ["failed", "interrupted"] }, mockToolCallOptions)
-      )
-    ).toEqual({
-      tasks: [
-        {
-          taskId: "failed-child",
-          status: "failed",
-          parentWorkspaceId: "root-workspace",
-          depth: 1,
-        },
-        {
-          taskId: "interrupted-child",
-          status: "interrupted",
-          parentWorkspaceId: "root-workspace",
-          depth: 1,
-        },
-      ],
-    });
+    const result = (await Promise.resolve(
+      tool.execute!({ statuses: ["failed", "interrupted"] }, mockToolCallOptions)
+    )) as { tasks: unknown[]; note?: string };
+
+    expect(result.note).toContain("task_remove");
+    expect(result.tasks).toEqual([
+      {
+        taskId: "failed-child",
+        status: "failed",
+        parentWorkspaceId: "root-workspace",
+        depth: 1,
+      },
+      {
+        taskId: "interrupted-child",
+        status: "interrupted",
+        parentWorkspaceId: "root-workspace",
+        depth: 1,
+      },
+    ]);
   });
 
   it("never exposes settled continuation handles for descendant agent workspaces", async () => {

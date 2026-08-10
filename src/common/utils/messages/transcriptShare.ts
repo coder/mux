@@ -128,6 +128,7 @@ const PRESERVE_OUTPUT_TOOLS = new Set([
   "task",
   "task_await",
   "task_list",
+  "task_retitle",
   "task_stop",
   "task_remove",
   "task_terminate",

@@ -13,7 +13,7 @@ import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { HeartbeatToolCall } from "../HeartbeatToolCall";
-import { TaskRemoveToolCall, TaskStopToolCall } from "../TaskToolCall";
+import { TaskRemoveToolCall, TaskRetitleToolCall, TaskStopToolCall } from "../TaskToolCall";
 import { ToolSearchToolCall } from "../ToolSearchToolCall";
 import { getToolComponent } from "./getToolComponent";
 
@@ -24,6 +24,9 @@ describe("getToolComponent", () => {
   });
 
   test("routes the simplified task lifecycle tools", () => {
+    expect(getToolComponent("task_retitle", { task_id: "child", title: "Reviewer" })).toBe(
+      TaskRetitleToolCall
+    );
     expect(getToolComponent("task_stop", { task_ids: ["child"] })).toBe(TaskStopToolCall);
     expect(getToolComponent("task_remove", { task_ids: ["child"] })).toBe(TaskRemoveToolCall);
   });

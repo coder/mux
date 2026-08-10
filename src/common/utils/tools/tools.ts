@@ -36,6 +36,7 @@ import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
 import { createTaskSendMessageTool } from "@/node/services/tools/task_send_message";
+import { createTaskRetitleTool } from "@/node/services/tools/task_retitle";
 import { createTaskStopTool } from "@/node/services/tools/task_stop";
 import { createTaskRemoveTool } from "@/node/services/tools/task_remove";
 import { createTaskListTool } from "@/node/services/tools/task_list";
@@ -750,6 +751,7 @@ export async function getToolsForModel(
     task_await: wrap(createTaskAwaitTool(config)),
     task_apply_git_patch: wrap(createTaskApplyGitPatchTool(config)),
     task_send_message: wrap(createTaskSendMessageTool(config)),
+    task_retitle: wrap(createTaskRetitleTool(config)),
     task_stop: wrap(createTaskStopTool(config)),
     task_remove: wrap(createTaskRemoveTool(config)),
     task_list: wrap(createTaskListTool(config)),

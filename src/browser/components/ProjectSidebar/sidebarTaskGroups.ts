@@ -362,22 +362,9 @@ export function computeSidebarTaskGroups(params: {
     let title: string;
     let totalCount: number;
     if (descriptor.kind === "workflow") {
-      if (hasActiveMember) {
-        // D9: active runs show their full task list, including completed
-        // siblings that completed-sub-agent filtering would otherwise hide.
-        displayMembers = sortWorkflowMembers(allMembers);
-      } else {
-        const selected =
-          params.selectedWorkspaceId != null
-            ? allMembers.find((member) => member.id === params.selectedWorkspaceId)
-            : undefined;
-        const visibleIds = new Set(visibleMembers.map((member) => member.id));
-        displayMembers = sortWorkflowMembers(
-          selected != null && !visibleIds.has(selected.id)
-            ? [...visibleMembers, selected]
-            : visibleMembers
-        );
-      }
+      // Inactive persistent children stay out of the left sidebar even when their workflow group is
+      // active or selected; the transcript decoration is the canonical hierarchy for those rows.
+      displayMembers = sortWorkflowMembers(visibleMembers);
       const workflowName = allMembers.find((member) => member.workflowTask?.workflowName != null)
         ?.workflowTask?.workflowName;
       title = workflowName ?? shortenWorkflowRunId(descriptor.id);

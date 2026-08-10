@@ -64,6 +64,9 @@ function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListS
   }
 }
 
+const INACTIVE_CHILD_CLEANUP_NOTE =
+  "Inactive persistent children remain available under stable task IDs. After consuming a terminal result, keep reusable roles, retitle stale role names with task_retitle, and remove clearly one-shot or obsolete children with task_remove (deepest-first). Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.";
+
 const MAX_ARCHIVE_ANCESTOR_DEPTH = 32;
 
 interface WorkspaceArchiveLookup {
@@ -242,6 +245,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       const resolveAgentExecution =
         taskService.getDescendantAgentTaskExecutionSnapshot?.bind(taskService);
       const internalExecutionIds = new Set<string>();
+      let listedInactiveChild = false;
       const tasks: TaskListToolSuccessResult["tasks"] = [];
       for (const task of allAgentTasks) {
         let status: TaskListStatus = task.status;
@@ -264,6 +268,9 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         }
         if (!requestedStatusSet.has(status)) {
           continue;
+        }
+        if (status === "reported" || status === "interrupted" || status === "failed") {
+          listedInactiveChild = true;
         }
         const {
           executionTaskId: _executionTaskId,
@@ -369,7 +376,14 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         }
       }
 
-      return parseToolResult(TaskListToolResultSchema, { tasks }, "task_list");
+      return parseToolResult(
+        TaskListToolResultSchema,
+        {
+          tasks,
+          ...(listedInactiveChild ? { note: INACTIVE_CHILD_CLEANUP_NOTE } : {}),
+        },
+        "task_list"
+      );
     },
   });
 };

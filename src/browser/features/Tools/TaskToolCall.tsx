@@ -42,6 +42,8 @@ import type {
   TaskListToolSuccessResult,
   TaskSendMessageToolArgs,
   TaskSendMessageToolSuccessResult,
+  TaskRetitleToolArgs,
+  TaskRetitleToolSuccessResult,
   TaskStopToolArgs,
   TaskStopToolSuccessResult,
   TaskRemoveToolArgs,
@@ -109,6 +111,7 @@ const TaskStatusBadge: React.FC<{
   const getStatusStyle = () => {
     switch (status) {
       case "accepted":
+      case "retitled":
       case "completed":
       case "reported":
         return "bg-success/20 text-success";
@@ -1702,6 +1705,12 @@ export const TaskListToolCall: React.FC<TaskListToolCallProps> = ({
               </div>
             )}
 
+            {result?.note && (
+              <div className="bg-code-bg text-muted mb-2 rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+                {result.note}
+              </div>
+            )}
+
             {tasks.length > 0 ? (
               <div className="space-y-2">
                 {tasks.map((task) => (
@@ -1771,6 +1780,47 @@ export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = (
             </div>
             <div className="text-foreground bg-code-bg max-h-[140px] overflow-y-auto rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
               {props.args.message}
+            </div>
+            {props.result && "error" in props.result && props.result.error && (
+              <div className="text-danger text-[11px]">{props.result.error}</div>
+            )}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
+
+interface TaskRetitleToolCallProps {
+  args: TaskRetitleToolArgs;
+  result?: TaskRetitleToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskRetitleToolCall: React.FC<TaskRetitleToolCallProps> = (props) => {
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+  const status = props.status ?? "pending";
+  const summary = props.result?.status ?? "retitling";
+
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_retitle" />
+        <ToolName>task_retitle</ToolName>
+        <span className="text-muted min-w-0 truncate text-[10px]">{props.args.title}</span>
+        <StatusIndicator status={status}>{getStatusDisplay(status)}</StatusIndicator>
+      </ToolHeader>
+
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 space-y-2 rounded-md p-3">
+            <div className="flex items-center gap-2">
+              <TaskId id={props.args.task_id} />
+              <TaskStatusBadge status={summary} />
+            </div>
+            <div className="text-foreground bg-code-bg rounded-sm p-2 text-[11px] break-words whitespace-pre-wrap">
+              {props.result?.status === "retitled" ? props.result.title : props.args.title}
             </div>
             {props.result && "error" in props.result && props.result.error && (
               <div className="text-danger text-[11px]">{props.result.error}</div>

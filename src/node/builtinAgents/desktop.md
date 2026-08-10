@@ -36,6 +36,7 @@ tools:
     - task_await
     - task_list
     - task_send_message
+    - task_retitle
     - task_stop
     - task_apply_git_patch
     # No planning tools

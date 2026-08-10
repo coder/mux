@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { TaskApplyGitPatchToolCall } from "@/browser/features/Tools/TaskApplyGitPatchToolCall";
 import {
   TaskRemoveToolCall,
+  TaskRetitleToolCall,
   TaskStopToolCall,
   TaskToolCall,
 } from "@/browser/features/Tools/TaskToolCall";
@@ -35,7 +36,7 @@ export const TaskWorkflowStates: Story = {
         args={{
           subagent_type: "explore",
           prompt: "Analyze the frontend React components in src/browser/",
-          title: "Frontend analysis",
+          title: "Frontend Reviewer",
           run_in_background: true,
         }}
         result={{
@@ -52,7 +53,7 @@ export const TaskWorkflowStates: Story = {
         args={{
           subagent_type: "exec",
           prompt: "Run linting on src/node/ and summarize the findings.",
-          title: "Backend linting",
+          title: "Backend Auditor",
           run_in_background: true,
         }}
         result={{
@@ -70,6 +71,15 @@ export const TaskWorkflowStates: Story = {
 export const TaskLifecycleOperations: Story = {
   render: () => (
     <ToolStoryShell>
+      <TaskRetitleToolCall
+        args={{ task_id: "lifecycle-auditor", title: "Simplicity Auditor" }}
+        result={{
+          status: "retitled",
+          taskId: "lifecycle-auditor",
+          title: "Simplicity Auditor",
+        }}
+        status="completed"
+      />
       <TaskStopToolCall
         args={{ task_ids: ["react-expert", "api-expert"] }}
         result={{
@@ -185,7 +195,7 @@ export const TaskNarrowLongModelId: Story = {
         args={{
           subagent_type: "explore",
           prompt: "Analyze the frontend React components in src/browser/",
-          title: "Frontend analysis",
+          title: "Frontend Reviewer",
           run_in_background: true,
         }}
         result={{

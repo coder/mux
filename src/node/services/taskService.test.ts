@@ -390,6 +390,7 @@ function createWorkspaceServiceMocks(
     emit: ReturnType<typeof mock>;
     getInfo: ReturnType<typeof mock>;
     replaceHistory: ReturnType<typeof mock>;
+    updateTitle: ReturnType<typeof mock>;
     updateAgentStatus: ReturnType<typeof mock>;
     isExperimentEnabled: ReturnType<typeof mock>;
     emitChatEvent: ReturnType<typeof mock>;
@@ -418,6 +419,7 @@ function createWorkspaceServiceMocks(
   emit: ReturnType<typeof mock>;
   getInfo: ReturnType<typeof mock>;
   replaceHistory: ReturnType<typeof mock>;
+  updateTitle: ReturnType<typeof mock>;
   updateAgentStatus: ReturnType<typeof mock>;
   isExperimentEnabled: ReturnType<typeof mock>;
   emitChatEvent: ReturnType<typeof mock>;
@@ -460,6 +462,8 @@ function createWorkspaceServiceMocks(
   const getInfo = overrides?.getInfo ?? mock(() => Promise.resolve(null));
   const replaceHistory =
     overrides?.replaceHistory ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+  const updateTitle =
+    overrides?.updateTitle ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
   const updateAgentStatus =
     overrides?.updateAgentStatus ?? mock((): Promise<void> => Promise.resolve());
   const isExperimentEnabled = overrides?.isExperimentEnabled ?? mock(() => false);
@@ -501,6 +505,7 @@ function createWorkspaceServiceMocks(
       emit,
       getInfo,
       replaceHistory,
+      updateTitle,
       updateAgentStatus,
       isExperimentEnabled,
       emitChatEvent,
@@ -527,6 +532,7 @@ function createWorkspaceServiceMocks(
     emit,
     getInfo,
     replaceHistory,
+    updateTitle,
     updateAgentStatus,
     isExperimentEnabled,
     emitChatEvent,
@@ -10263,6 +10269,107 @@ describe("TaskService", () => {
     expect(sendMessage).not.toHaveBeenCalled();
     const parentHistory = await collectFullHistory(historyService, parentWorkspaceId);
     expect(JSON.stringify(parentHistory)).not.toContain("<mux_subagent_report>");
+  });
+
+  test("retitleDescendantAgentTask renames active or inactive persistent descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-retitle";
+    const childTaskId = "child-retitle";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "reported",
+          title: "Old task-like title",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const updateTitle = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const { workspaceService } = createWorkspaceServiceMocks({ updateTitle });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.retitleDescendantAgentTask(
+        parentWorkspaceId,
+        childTaskId,
+        "  Simplicity Auditor  "
+      )
+    ).toEqual(Ok({ title: "Simplicity Auditor" }));
+    expect(updateTitle).toHaveBeenCalledWith(childTaskId, "Simplicity Auditor");
+  });
+
+  test("retitleDescendantAgentTask rejects missing, foreign, self, and workflow-owned targets", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-retitle-scope";
+    const otherParentId = "other-retitle-scope";
+    const foreignChildId = "foreign-retitle-child";
+    const workflowChildId = "workflow-retitle-child";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "other-parent", otherParentId),
+        projectWorkspace(projectPath, "foreign-child", foreignChildId, {
+          parentWorkspaceId: otherParentId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "workflow-child", workflowChildId, {
+          parentWorkspaceId,
+          taskStatus: "reported",
+          workflowTask: { runId: "wfr_retitle", stepId: "step" },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const { workspaceService, updateTitle } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.retitleDescendantAgentTask(parentWorkspaceId, "missing", "Reviewer")
+    ).toEqual(Err({ code: "not_found" }));
+    expect(
+      await taskService.retitleDescendantAgentTask(parentWorkspaceId, parentWorkspaceId, "Reviewer")
+    ).toEqual(Err({ code: "invalid_scope" }));
+    expect(
+      await taskService.retitleDescendantAgentTask(parentWorkspaceId, foreignChildId, "Reviewer")
+    ).toEqual(Err({ code: "invalid_scope" }));
+    expect(
+      await taskService.retitleDescendantAgentTask(parentWorkspaceId, workflowChildId, "Reviewer")
+    ).toEqual(Err({ code: "invalid_scope" }));
+    expect(updateTitle).not.toHaveBeenCalled();
+  });
+
+  test("retitleDescendantAgentTask surfaces title update failures", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-retitle-failure";
+    const childTaskId = "child-retitle-failure";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const updateTitle = mock((): Promise<Result<void>> => Promise.resolve(Err("disk full")));
+    const { workspaceService } = createWorkspaceServiceMocks({ updateTitle });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.retitleDescendantAgentTask(parentWorkspaceId, childTaskId, "Reviewer")
+    ).toEqual(Err({ code: "update_failed", message: "disk full" }));
   });
 
   test("sendMessageToDescendantAgentTask sends updated guidance with the child's settings", async () => {

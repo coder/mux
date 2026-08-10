@@ -96,7 +96,6 @@ import {
   collectActiveWorkflowGroupKeys,
   computeSidebarTaskGroups,
   computeTaskGroupMemberRowMeta,
-  ensureWorkflowGroupMembersVisible,
   type SidebarTaskGroupsResult,
 } from "./sidebarTaskGroups";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
@@ -1747,12 +1746,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const scratchDepthByWorkspaceId = computeWorkspaceDepthMap(scratchWorkspaces);
   const visibleScratchWorkspaces = filterVisibleAgentRows(
     scratchWorkspaces,
-    expandedCompletedParentIds
+    expandedCompletedParentIds,
+    { isWorkspaceLiveActive }
   );
   const scratchRowMetaByWorkspaceId = computeAgentRowRenderMeta(
     scratchWorkspaces,
     scratchDepthByWorkspaceId,
-    expandedCompletedParentIds
+    expandedCompletedParentIds,
+    { isWorkspaceLiveActive }
   );
   const isScratchSectionExpanded = expandedProjectsList.includes(SCRATCH_SIDEBAR_SECTION_ID);
   const scratchDrafts = (workspaceDraftsByProject[SCRATCH_PROJECT_CONFIG_KEY] ?? [])
@@ -1764,17 +1765,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const multiProjectWorkspaces = orderMultiProjectSectionRows(
     Array.from(multiProjectWorkspacesById.values())
   );
-  // Multi-project rows should share the same completed-subagent chevron behavior as
-  // regular workspace rows, so reuse the same visibility + metadata calculations.
   const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectWorkspaces);
   const visibleMultiProjectWorkspaces = filterVisibleAgentRows(
     multiProjectWorkspaces,
-    expandedCompletedParentIds
+    expandedCompletedParentIds,
+    { isWorkspaceLiveActive }
   );
   const multiProjectRowMetaByWorkspaceId = computeAgentRowRenderMeta(
     multiProjectWorkspaces,
     multiProjectDepthByWorkspaceId,
-    expandedCompletedParentIds
+    expandedCompletedParentIds,
+    { isWorkspaceLiveActive }
   );
   const isMultiProjectSectionExpanded = expandedProjectsList.includes(
     MULTI_PROJECT_SIDEBAR_SECTION_ID
@@ -2419,19 +2420,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               )) {
                                 sessionActiveTaskGroupKeysRef.current.add(key);
                               }
-                              const visibleWorkspacesForNormalRendering =
-                                ensureWorkflowGroupMembersVisible({
-                                  allRows: workspacesForNormalRendering,
-                                  visibleRows: filterVisibleAgentRows(
-                                    workspacesForNormalRendering,
-                                    expandedCompletedParentIds
-                                  ),
-                                  sessionActiveGroupKeys: sessionActiveTaskGroupKeysRef.current,
-                                });
+                              const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
+                                workspacesForNormalRendering,
+                                expandedCompletedParentIds,
+                                { isWorkspaceLiveActive }
+                              );
                               const baseRowMetaByWorkspaceId = computeAgentRowRenderMeta(
                                 workspacesForNormalRendering,
                                 depthByWorkspaceId,
-                                expandedCompletedParentIds
+                                expandedCompletedParentIds,
+                                { isWorkspaceLiveActive }
                               );
                               const sortedDrafts = draftsForProject
                                 .slice()

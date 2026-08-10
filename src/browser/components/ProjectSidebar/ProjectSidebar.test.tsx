@@ -838,93 +838,50 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
   });
 
-  test("reuses normal workspace chevron/collapse behavior for multi-project rows", async () => {
+  test("keeps inactive persistent children out of the left sidebar", () => {
     const parentWorkspace = createWorkspace("parent", { title: "Parent workspace" });
-    const completedChildWorkspace = createWorkspace("child", {
+    const activeChildWorkspace = createWorkspace("active-child", {
+      parentWorkspaceId: "parent",
+      taskStatus: "running",
+      title: "Reviewer",
+    });
+    const completedChildWorkspace = createWorkspace("completed-child", {
       parentWorkspaceId: "parent",
       taskStatus: "reported",
-      title: "Completed child workspace",
+      title: "Simplicity Auditor",
     });
-
-    const sortedWorkspacesByProject = new Map([
-      ["/projects/demo-project", [parentWorkspace, completedChildWorkspace]],
-    ]);
+    const interruptedChildWorkspace = createWorkspace("interrupted-child", {
+      parentWorkspaceId: "parent",
+      taskStatus: "interrupted",
+      title: "Tooling Mapper",
+    });
 
     const view = render(
       <ProjectSidebar
         collapsed={false}
         onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={sortedWorkspacesByProject}
+        sortedWorkspacesByProject={
+          new Map([
+            [
+              "/projects/demo-project",
+              [
+                parentWorkspace,
+                activeChildWorkspace,
+                completedChildWorkspace,
+                interruptedChildWorkspace,
+              ],
+            ],
+          ])
+        }
         workspaceRecency={{}}
       />
     );
 
-    const parentRow = view.getByTestId(agentItemTestId("parent"));
-    expect(parentRow.dataset.rowKind).toBe("primary");
-    expect(parentRow.dataset.completedExpanded).toBe("false");
-    expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
-
-    const toggleButton = view.getByRole("button", { name: toggleButtonLabel("parent") });
-    fireEvent.click(toggleButton);
-
-    await waitFor(() => {
-      expect(view.getByTestId(agentItemTestId("child"))).toBeTruthy();
-    });
-
-    const expandedParentRow = view.getByTestId(agentItemTestId("parent"));
-    const childRow = view.getByTestId(agentItemTestId("child"));
-
-    expect(expandedParentRow.dataset.completedExpanded).toBe("true");
-    expect(childRow.dataset.rowKind).toBe("subagent");
-    expect(childRow.dataset.depth).toBe("1");
-  });
-
-  test("keeps persistent completed child rows collapsed until the user expands them", async () => {
-    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
-
-    const singleProjectRefs = [
-      { projectPath: "/projects/demo-project", projectName: "demo-project" },
-    ];
-    const parentWorkspace = {
-      ...createWorkspace("parent", { title: "Parent workspace" }),
-      projects: singleProjectRefs,
-    };
-    const completedChildWorkspace = {
-      ...createWorkspace("child", {
-        parentWorkspaceId: "parent",
-        taskStatus: "reported",
-        title: "Completed child workspace",
-      }),
-      projects: singleProjectRefs,
-    };
-
-    const sortedWorkspacesByProject = new Map([
-      ["/projects/demo-project", [parentWorkspace, completedChildWorkspace]],
-    ]);
-    projectContextValue = createProjectContextValue({
-      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
-      hasAnyProject: true,
-      resolveNewChatProjectPath: () => "/projects/demo-project",
-    });
-
-    const view = render(
-      <ProjectSidebar
-        collapsed={false}
-        onToggleCollapsed={() => undefined}
-        sortedWorkspacesByProject={sortedWorkspacesByProject}
-        workspaceRecency={{ parent: Date.now(), child: Date.now() }}
-      />
-    );
-
-    expect(view.queryByTestId(agentItemTestId("child"))).toBeNull();
-    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("false");
-
-    fireEvent.click(view.getByRole("button", { name: toggleButtonLabel("parent") }));
-
-    await waitFor(() => {
-      expect(view.getByTestId(agentItemTestId("child"))).toBeTruthy();
-    });
-    expect(view.getByTestId(agentItemTestId("parent")).dataset.completedExpanded).toBe("true");
+    expect(view.getByTestId(agentItemTestId("parent"))).toBeTruthy();
+    expect(view.getByTestId(agentItemTestId("active-child"))).toBeTruthy();
+    expect(view.queryByTestId(agentItemTestId("completed-child"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("interrupted-child"))).toBeNull();
+    expect(view.queryByRole("button", { name: toggleButtonLabel("parent") })).toBeNull();
   });
 
   test("coalesces best-of sub-agents into a single sidebar row until expanded", async () => {
@@ -1469,7 +1426,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(persisted["workflow:parent:wfr_alpha"]).toBe(true);
   });
 
-  test("active workflow groups reveal completed siblings hidden by completed-sub-agent filtering", () => {
+  test("active workflow groups keep completed siblings out of the left sidebar", () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
     projectContextValue = createProjectContextValue({
       userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
@@ -1514,15 +1471,11 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       />
     );
 
-    // done-1 would normally be hidden (completed child, parent not expanded),
-    // but the active run keeps its full task list visible (D9).
-    expect(view.getByTestId(agentItemTestId("done-1")).dataset.connectorLayout).toBe(
-      "task-group-member"
-    );
+    expect(view.queryByTestId(agentItemTestId("done-1"))).toBeNull();
     expect(view.getByTestId(agentItemTestId("run-1"))).toBeTruthy();
   });
 
-  test("keeps the workflow group mounted across step gaps where all members are terminal", () => {
+  test("removes workflow groups from the sidebar when all members become inactive", () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
     projectContextValue = createProjectContextValue({
       userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
@@ -1558,14 +1511,12 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     const view = render(<ProjectSidebar {...renderProps(step("running"))} />);
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
 
-    // Step gap: the only member finished, the next step hasn't spawned yet.
-    // The group must stay mounted (no flash-out) with its member visible.
     view.rerender(<ProjectSidebar {...renderProps(step("reported"))} />);
-    expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
-    expect(view.getByTestId(agentItemTestId("step-1"))).toBeTruthy();
+    expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("step-1"))).toBeNull();
   });
 
-  test("renders a completed-only workflow group when a hidden member is selected and reveals it on expand", async () => {
+  test("does not reinsert selected inactive workflow members into the sidebar", () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
     projectContextValue = createProjectContextValue({
       userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
@@ -1636,19 +1587,9 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       />
     );
 
-    // Inactive group: default collapsed, but the header is marked selected for
-    // the hidden member.
-    const header = view.getByTestId("task-group-wfr_alpha");
+    expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
     expect(view.queryByTestId(agentItemTestId("done-1"))).toBeNull();
-
-    fireEvent.click(header);
-
-    await waitFor(() => {
-      // Expanding reveals the selected member even though completed-sub-agent
-      // filtering would normally hide it.
-      expect(view.getByTestId(agentItemTestId("done-1"))).toBeTruthy();
-      expect(view.getByTestId(agentItemTestId("int-1"))).toBeTruthy();
-    });
+    expect(view.queryByTestId(agentItemTestId("int-1"))).toBeNull();
   });
 
   test("does not coalesce a best-of group when one candidate still has hidden child tasks", () => {

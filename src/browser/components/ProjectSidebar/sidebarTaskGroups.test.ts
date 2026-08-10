@@ -125,7 +125,7 @@ describe("computeSidebarTaskGroups", () => {
     expect(result.groupsByStorageKey.size).toBe(0);
   });
 
-  test("active workflow groups display hidden completed siblings; inactive ones do not", () => {
+  test("workflow groups display only active members from the visible sidebar rows", () => {
     const done = workflowChild("done", "wfr_alpha", {
       taskStatus: "reported",
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -135,35 +135,23 @@ describe("computeSidebarTaskGroups", () => {
       createdAt: "2026-01-01T00:01:00.000Z",
     });
     const allRows = [parent, done, running];
-    // Completed-sub-agent filtering hid "done" from the visible rows.
     const visibleRows = [parent, running];
 
     const active = computeSidebarTaskGroups({ rows: visibleRows, allRows });
     const activeGroup = active.groupsByStorageKey.get("workflow:parent:wfr_alpha");
     expect(activeGroup?.hasActiveMember).toBe(true);
-    expect(activeGroup?.displayMembers.map((m) => m.id)).toEqual(["done", "running"]);
+    expect(activeGroup?.displayMembers.map((member) => member.id)).toEqual(["running"]);
 
-    // Same run, fully terminal: hidden completed members stay hidden...
-    const doneToo = { ...running, taskStatus: "reported" as const };
-    const inactive = computeSidebarTaskGroups({
-      rows: [parent, doneToo],
-      allRows: [parent, done, doneToo],
-    });
-    const inactiveGroup = inactive.groupsByStorageKey.get("workflow:parent:wfr_alpha");
-    expect(inactiveGroup?.hasActiveMember).toBe(false);
-    expect(inactiveGroup?.displayMembers.map((m) => m.id)).toEqual(["running"]);
-
-    // ...unless one of them is selected, which must stay reachable on expand.
-    const withSelection = computeSidebarTaskGroups({
-      rows: [parent, doneToo],
-      allRows: [parent, done, doneToo],
+    const selectedInactive = computeSidebarTaskGroups({
+      rows: visibleRows,
+      allRows,
       selectedWorkspaceId: "done",
     });
     expect(
-      withSelection.groupsByStorageKey
+      selectedInactive.groupsByStorageKey
         .get("workflow:parent:wfr_alpha")
-        ?.displayMembers.map((m) => m.id)
-    ).toEqual(["done", "running"]);
+        ?.displayMembers.map((member) => member.id)
+    ).toEqual(["running"]);
   });
 
   test("counts queued members as active so new runs default to expanded", () => {

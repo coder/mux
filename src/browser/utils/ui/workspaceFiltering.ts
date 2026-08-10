@@ -149,6 +149,16 @@ function hasDelegatedActivity(activity: WorkspaceDelegatedActivity): boolean {
   return activity.activeCount > 0 || activity.queuedCount > 0;
 }
 
+export function isSidebarSubAgentActive(workspace: FrontendWorkspaceMetadata): boolean {
+  return (
+    isActionableTaskExecutionStatus(workspace.taskExecutionStatus) ||
+    workspace.taskStatus === "queued" ||
+    workspace.taskStatus === "starting" ||
+    workspace.taskStatus === "running" ||
+    workspace.taskStatus === "awaiting_report"
+  );
+}
+
 export function isActionableTaskExecutionStatus(
   status: FrontendWorkspaceMetadata["taskExecutionStatus"]
 ): boolean {
@@ -318,12 +328,14 @@ export interface AgentRowRenderMeta {
 }
 
 /**
- * Hide completed child tasks by default unless their parent is expanded.
+ * Keep only active sub-agent rows in the left sidebar. Inactive persistent children remain
+ * accessible through the transcript's sub-agent decoration, which is the canonical hierarchy UI.
  * Child visibility is inherited from ancestors so hidden parents also hide descendants.
  */
 export function filterVisibleAgentRows(
   flattenedWorkspaces: FrontendWorkspaceMetadata[],
-  expandedParentIds: ReadonlySet<string> = new Set()
+  _expandedParentIds: ReadonlySet<string> = new Set(),
+  options: DelegatedActivityOptions = {}
 ): FrontendWorkspaceMetadata[] {
   if (flattenedWorkspaces.length === 0) {
     return [];
@@ -365,13 +377,9 @@ export function filterVisibleAgentRows(
     }
 
     const parentVisible = isVisible(parent);
-    // A reawakened child retains its prior report while the continuation runs. Keep that active
-    // execution visible even when the parent's completed-history section is collapsed.
-    const isCompletedChildTask =
-      hasCompletedAgentReport(workspace) &&
-      !isActionableTaskExecutionStatus(workspace.taskExecutionStatus);
-    const shouldHideCompletedChild = isCompletedChildTask && !expandedParentIds.has(parentId);
-    const visible = parentVisible && !shouldHideCompletedChild;
+    const visible =
+      parentVisible &&
+      (isSidebarSubAgentActive(workspace) || getIsWorkspaceLiveActive(workspace.id, options));
 
     visiting.delete(workspace.id);
     visibilityById.set(workspace.id, visible);
@@ -387,13 +395,12 @@ export function filterVisibleAgentRows(
 export function computeAgentRowRenderMeta(
   flattenedWorkspaces: FrontendWorkspaceMetadata[],
   depthByWorkspaceId: Record<string, number>,
-  expandedParentIds: ReadonlySet<string> = new Set()
+  expandedParentIds: ReadonlySet<string> = new Set(),
+  options: DelegatedActivityOptions = {}
 ): Map<string, AgentRowRenderMeta> {
-  const visibleRows = filterVisibleAgentRows(flattenedWorkspaces, expandedParentIds);
-  const visibleWorkspaceIds = new Set(visibleRows.map((workspace) => workspace.id));
+  const visibleRows = filterVisibleAgentRows(flattenedWorkspaces, expandedParentIds, options);
 
   const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
-  const completedChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
   const visibleWorkspaceById = new Map<string, FrontendWorkspaceMetadata>();
 
   for (const workspace of visibleRows) {
@@ -407,20 +414,6 @@ export function computeAgentRowRenderMeta(
     const siblings = visibleChildrenByParent.get(parentId) ?? [];
     siblings.push(workspace);
     visibleChildrenByParent.set(parentId, siblings);
-  }
-
-  for (const workspace of flattenedWorkspaces) {
-    if (
-      !workspace.parentWorkspaceId ||
-      !hasCompletedAgentReport(workspace) ||
-      isActionableTaskExecutionStatus(workspace.taskExecutionStatus)
-    ) {
-      continue;
-    }
-
-    const completedChildren = completedChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
-    completedChildren.push(workspace);
-    completedChildrenByParent.set(workspace.parentWorkspaceId, completedChildren);
   }
 
   const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
@@ -486,14 +479,6 @@ export function computeAgentRowRenderMeta(
       ancestorTrunks = continuingAncestorTrunks;
     }
 
-    const completedChildren = completedChildrenByParent.get(workspace.id) ?? [];
-    let visibleCompletedChildrenCount = 0;
-    for (const child of completedChildren) {
-      if (visibleWorkspaceIds.has(child.id)) {
-        visibleCompletedChildrenCount += 1;
-      }
-    }
-
     metadataByWorkspaceId.set(workspace.id, {
       depth: depthByWorkspaceId[workspace.id] ?? 0,
       rowKind,
@@ -502,8 +487,10 @@ export function computeAgentRowRenderMeta(
       sharedTrunkActiveThroughRow,
       sharedTrunkActiveBelowRow,
       ancestorTrunks,
-      hasHiddenCompletedChildren: visibleCompletedChildrenCount < completedChildren.length,
-      visibleCompletedChildrenCount,
+      // Inactive sub-agents are intentionally absent from the sidebar; the transcript decoration
+      // is the canonical place to inspect and manage the persistent hierarchy.
+      hasHiddenCompletedChildren: false,
+      visibleCompletedChildrenCount: 0,
     });
   }
 

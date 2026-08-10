@@ -6,6 +6,7 @@ import {
   getAvailableTools,
   supportsGoogleNativeToolsWithFunctionTools,
   TaskToolArgsSchema,
+  TaskRetitleToolArgsSchema,
   TaskWorkspaceLifecycleToolArgsSchema,
   TOOL_DEFINITIONS,
   WorkflowRunToolArgsSchema,
@@ -24,6 +25,15 @@ describe("TOOL_DEFINITIONS", () => {
     if (parsed.success) {
       expect(parsed.data.subagent_type).toBe("potato");
     }
+  });
+
+  it("requires a nonblank friendly title when retitling a persistent child", () => {
+    expect(
+      TaskRetitleToolArgsSchema.safeParse({ task_id: "child", title: "Reviewer" }).success
+    ).toBe(true);
+    expect(TaskRetitleToolArgsSchema.safeParse({ task_id: "child", title: "   " }).success).toBe(
+      false
+    );
   });
 
   it("leaves n unset for task tool calls when omitted", () => {
@@ -634,6 +644,15 @@ describe("TOOL_DEFINITIONS", () => {
 
     expect(tools).toContain("skills_catalog_search");
     expect(tools).toContain("skills_catalog_read");
+  });
+
+  it("includes persistent child management tools", () => {
+    const tools = getAvailableTools("openai:gpt-4o");
+
+    expect(tools).toContain("task_send_message");
+    expect(tools).toContain("task_retitle");
+    expect(tools).toContain("task_stop");
+    expect(tools).toContain("task_remove");
   });
 
   it("includes the workspace heartbeat tool", () => {

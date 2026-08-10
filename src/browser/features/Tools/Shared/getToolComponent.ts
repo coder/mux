@@ -46,6 +46,7 @@ import {
   TaskAwaitToolCall,
   TaskListToolCall,
   TaskSendMessageToolCall,
+  TaskRetitleToolCall,
   TaskStopToolCall,
   TaskRemoveToolCall,
   TaskTerminateToolCall,
@@ -202,6 +203,10 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   task_send_message: {
     component: TaskSendMessageToolCall,
     schema: TOOL_DEFINITIONS.task_send_message.schema,
+  },
+  task_retitle: {
+    component: TaskRetitleToolCall,
+    schema: TOOL_DEFINITIONS.task_retitle.schema,
   },
   task_stop: {
     component: TaskStopToolCall,

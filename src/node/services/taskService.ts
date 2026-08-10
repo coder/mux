@@ -592,6 +592,15 @@ export interface SendAgentTaskMessageResult {
   executionTaskId?: string;
 }
 
+export interface RetitleAgentTaskResult {
+  title: string;
+}
+
+export type RetitleAgentTaskError =
+  | { code: "not_found" }
+  | { code: "invalid_scope" }
+  | { code: "update_failed"; message: string };
+
 export type SendAgentTaskMessageError =
   | { code: "not_found" }
   | { code: "invalid_scope" }
@@ -4266,6 +4275,39 @@ export class TaskService {
       status: "running",
       modelString: taskModelString,
       thinkingLevel: effectiveThinkingLevel,
+    });
+  }
+
+  async retitleDescendantAgentTask(
+    ancestorWorkspaceId: string,
+    taskId: string,
+    title: string
+  ): Promise<Result<RetitleAgentTaskResult, RetitleAgentTaskError>> {
+    assert(ancestorWorkspaceId.length > 0, "retitleDescendantAgentTask: ancestor ID is required");
+    assert(taskId.length > 0, "retitleDescendantAgentTask: task ID is required");
+    const trimmedTitle = title.trim();
+    assert(trimmedTitle.length > 0, "retitleDescendantAgentTask: title is required");
+
+    return await this.withTaskTreeLifecycleLock(taskId, async () => {
+      const cfg = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(cfg, taskId);
+      if (entry == null) {
+        return Err({ code: "not_found" as const });
+      }
+
+      const index = this.buildAgentTaskIndex(cfg);
+      if (
+        !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId) ||
+        this.isWorkflowOwnedTaskUsingIndex(index, taskId)
+      ) {
+        return Err({ code: "invalid_scope" as const });
+      }
+
+      const result = await this.workspaceService.updateTitle(taskId, trimmedTitle);
+      if (!result.success) {
+        return Err({ code: "update_failed" as const, message: result.error });
+      }
+      return Ok({ title: trimmedTitle });
     });
   }
 
