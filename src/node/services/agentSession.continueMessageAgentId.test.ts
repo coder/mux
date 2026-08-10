@@ -28,7 +28,7 @@ interface SessionInternals {
   sendMessage: (
     message: string,
     options?: SendOptions,
-    internal?: { synthetic?: boolean }
+    internal?: { synthetic?: boolean; agentInitiated?: boolean }
   ) => Promise<SendMessageResult>;
   scheduleStartupRecovery: () => void;
   startupRecoveryPromise: Promise<void> | null;
@@ -149,7 +149,7 @@ describe("AgentSession continue-message agentId fallback", () => {
   test("legacy continueMessage.mode does not fall back to compact agent", async () => {
     let dispatchedMessage: string | undefined;
     let dispatchedOptions: SendOptions | undefined;
-    let dispatchedInternal: { synthetic?: boolean } | undefined;
+    let dispatchedInternal: { synthetic?: boolean; agentInitiated?: boolean } | undefined;
     const legacyFollowUp = {
       text: "follow up",
       model: "openai:gpt-4o",
@@ -161,7 +161,11 @@ describe("AgentSession continue-message agentId fallback", () => {
     ]);
 
     internals.sendMessage = mock(
-      (message: string, options?: SendOptions, internal?: { synthetic?: boolean }) => {
+      (
+        message: string,
+        options?: SendOptions,
+        internal?: { synthetic?: boolean; agentInitiated?: boolean }
+      ) => {
         dispatchedMessage = message;
         dispatchedOptions = options;
         dispatchedInternal = internal;
@@ -174,6 +178,33 @@ describe("AgentSession continue-message agentId fallback", () => {
     expect(dispatchedMessage).toBe("follow up");
     expect(dispatchedOptions?.agentId).toBe("plan");
     expect(dispatchedInternal?.synthetic).toBe(true);
+  });
+
+  test("dispatchPendingFollowUp preserves agent-initiated attribution", async () => {
+    let dispatchedInternal: { synthetic?: boolean; agentInitiated?: boolean } | undefined;
+    const { internals } = await createSession([
+      compactionSummaryMessage("summary-agent-initiated", {
+        text: "continue delegated work",
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        agentInitiated: true,
+      }),
+    ]);
+    internals.sendMessage = mock(
+      (
+        _message: string,
+        _options?: SendOptions,
+        internal?: { synthetic?: boolean; agentInitiated?: boolean }
+      ) => {
+        dispatchedInternal = internal;
+        return Promise.resolve({ success: true as const });
+      }
+    );
+
+    await internals.dispatchPendingFollowUp();
+
+    expect(dispatchedInternal).toMatchObject({ synthetic: true, agentInitiated: true });
+    expect(internals.lastAutoRetryResumeRequest?.agentInitiated).toBe(true);
   });
 
   test("dispatchPendingFollowUp skips idle-only follow-ups when queued user input exists", async () => {

@@ -4451,6 +4451,57 @@ describe("TaskService", () => {
     expect(snapshot?.error).toBeUndefined();
   });
 
+  test("compaction stream-end does not advance a running persistent child toward recovery", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-child-compaction";
+    const childTaskId = "child-compaction";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "child-compaction-agent-id",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "compact",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Compacted child context" }],
+    });
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "child-compaction-mode",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        mode: "compact",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Compacted child context" }],
+    });
+
+    const child = findWorkspaceInConfig(config, childTaskId);
+    expect(child?.taskStatus).toBe("running");
+    expect(child?.taskRecoveryAttempts).toBeUndefined();
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
   test("workspace-turn tool-calls stream-end without continuation settles error", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
@@ -12454,6 +12505,105 @@ describe("TaskService", () => {
     expect(generationAttention?.id).not.toBe(pendingAttention.id);
     expect(await terminalAttentionStore.get(parentWorkspaceId, pendingAttention.id)).toMatchObject({
       status: "delivered",
+    });
+  });
+
+  test("reawakened child stays active through compaction and settles from its correlated follow-up", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["compactionhandle", "compactionturn"]);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-reactivated-compaction";
+    const childTaskId = "child-reactivated-compaction";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          title: "Compaction specialist",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const reactivated = await taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Continue after compacting the prior context.",
+      "tool-end"
+    );
+    expect(reactivated).toMatchObject({
+      success: true,
+      data: { delivery: "reactivated", executionTaskId: "wst_compactionhandle" },
+    });
+    const handleId = "wst_compactionhandle";
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const activeRecord = await taskHandleStore.getWorkspaceTurn(parentWorkspaceId, handleId);
+    assert(activeRecord, "reactivated workspace-turn record is required");
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "reactivated-compaction-summary",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "compact",
+        mode: "compact",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Compacted specialist context" }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentWorkspaceId, handleId)).toMatchObject({
+      status: "running",
+      workspaceId: childTaskId,
+    });
+    expect(findWorkspaceInConfig(config, childTaskId)).toMatchObject({
+      taskStatus: "reported",
+      taskExecutionId: handleId,
+      taskExecutionStatus: "running",
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "reactivated-post-compaction-result",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: handleId,
+          ownerWorkspaceId: parentWorkspaceId,
+          turnId: activeRecord.turnId,
+        },
+      },
+      parts: [{ type: "text", text: "Post-compaction result" }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentWorkspaceId, handleId)).toMatchObject({
+      status: "completed",
+      workspaceId: childTaskId,
+      messageId: "reactivated-post-compaction-result",
+      reportMarkdown: "Post-compaction result",
+    });
+    expect(findWorkspaceInConfig(config, childTaskId)).toMatchObject({
+      taskStatus: "reported",
+      taskExecutionId: handleId,
+      taskExecutionStatus: "completed",
     });
   });
 

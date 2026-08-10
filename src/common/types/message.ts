@@ -149,6 +149,8 @@ export interface CompactionFollowUpRequest extends CompactionFollowUpInput, Pres
   model: string;
   /** Agent ID for the follow-up message (user's original agentId, not "compact") */
   agentId: string;
+  /** Preserve internal sub-agent/automation attribution across the mechanical compact turn. */
+  agentInitiated?: boolean;
   /** Internal goal continuation classification for synthetic follow-up accounting. */
   goalKind?: GoalSyntheticMessageKind;
   /** Internal dispatch guardrails for crash-safe follow-up recovery. */

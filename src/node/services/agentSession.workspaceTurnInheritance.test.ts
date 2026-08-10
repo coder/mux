@@ -212,11 +212,15 @@ describe("AgentSession workspace-turn correlation inheritance", () => {
         getThreshold: mock(() => 0.85),
       };
 
-      const result = await session.sendMessage("monitor wake", {
-        model: "anthropic:claude-sonnet-4-5",
-        agentId: "exec",
-        muxMetadata: { type: "bash-monitor-wake", records: [] },
-      });
+      const result = await session.sendMessage(
+        "monitor wake",
+        {
+          model: "anthropic:claude-sonnet-4-5",
+          agentId: "exec",
+          muxMetadata: { type: "bash-monitor-wake", records: [] },
+        },
+        { agentInitiated: true }
+      );
       expect(result.success).toBe(true);
 
       const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
@@ -229,6 +233,7 @@ describe("AgentSession workspace-turn correlation inheritance", () => {
       if (requestMeta?.type !== "compaction-request") {
         throw new Error("expected a persisted compaction request");
       }
+      expect(requestMeta.parsed.followUpContent?.agentInitiated).toBe(true);
       expect(requestMeta.parsed.followUpContent?.workspaceTurnMetadata).toEqual(correlation);
     } finally {
       session.dispose();

@@ -1,5 +1,5 @@
 import assert from "@/common/utils/assert";
-import type { MuxMessage } from "@/common/types/message";
+import type { MuxMessage, MuxMessageMetadata } from "@/common/types/message";
 import { createMuxMessage } from "@/common/types/message";
 import type { HistoryService } from "@/node/services/historyService";
 import type { Result } from "@/common/types/result";
@@ -126,6 +126,10 @@ interface ActiveStream {
   historySequence: number;
   startTime: number;
   model: string;
+  mode?: MockStreamStartEvent["mode"];
+  agentId?: string;
+  thinkingLevel?: MockStreamStartEvent["thinkingLevel"];
+  muxMetadata?: MuxMessageMetadata;
   parts: MuxMessage["parts"];
   partialWriteTimer: ReturnType<typeof setTimeout> | null;
   eventQueue: Array<() => Promise<void>>;
@@ -272,7 +276,9 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     options?: {
       model?: string;
+      agentId?: string;
       thinkingLevel?: StreamStartEvent["thinkingLevel"];
+      muxMetadata?: MuxMessageMetadata;
       abortSignal?: AbortSignal;
     }
   ): Promise<Result<void, SendMessageError>> {
@@ -312,6 +318,7 @@ export class MockAiStreamPlayer {
     const events = buildMockStreamEventsFromReply(reply, {
       messageId,
       model: options?.model,
+      agentId: options?.agentId,
       thinkingLevel: options?.thinkingLevel,
     });
 
@@ -359,6 +366,10 @@ export class MockAiStreamPlayer {
     const assistantMessage = createMuxMessage(messageId, "assistant", "", {
       timestamp: Date.now(),
       model: streamStart.model,
+      ...(streamStart.mode && { mode: streamStart.mode }),
+      ...(streamStart.agentId && { agentId: streamStart.agentId }),
+      ...(streamStart.thinkingLevel && { thinkingLevel: streamStart.thinkingLevel }),
+      ...(options?.muxMetadata && { muxMetadata: options.muxMetadata }),
     });
 
     if (abortSignal?.aborted) {
@@ -391,7 +402,7 @@ export class MockAiStreamPlayer {
       return Ok(undefined);
     }
 
-    this.scheduleEvents(workspaceId, events, messageId, historySequence);
+    this.scheduleEvents(workspaceId, events, messageId, historySequence, options?.muxMetadata);
 
     await streamStartPromise;
     if (abortSignal?.aborted) {
@@ -409,15 +420,23 @@ export class MockAiStreamPlayer {
     workspaceId: string,
     events: MockAssistantEvent[],
     messageId: string,
-    historySequence: number
+    historySequence: number,
+    muxMetadata?: MuxMessageMetadata
   ): void {
     const timers: Array<ReturnType<typeof setTimeout>> = [];
+    const streamStart = events.find(
+      (event): event is MockStreamStartEvent => event.kind === "stream-start"
+    );
     this.activeStreams.set(workspaceId, {
       timers,
       messageId,
       historySequence,
       startTime: Date.now(),
-      model: KNOWN_MODELS.OPUS.id,
+      model: streamStart?.model ?? KNOWN_MODELS.OPUS.id,
+      mode: streamStart?.mode,
+      agentId: streamStart?.agentId,
+      thinkingLevel: streamStart?.thinkingLevel,
+      muxMetadata,
       parts: [],
       partialWriteTimer: null,
       eventQueue: [],
@@ -583,6 +602,10 @@ export class MockAiStreamPlayer {
         historySequence: active.historySequence,
         timestamp: active.startTime,
         model: active.model,
+        ...(active.mode && { mode: active.mode }),
+        ...(active.agentId && { agentId: active.agentId }),
+        ...(active.thinkingLevel && { thinkingLevel: active.thinkingLevel }),
+        ...(active.muxMetadata && { muxMetadata: active.muxMetadata }),
         partial: true,
       },
       parts: structuredClone(active.parts),
@@ -661,6 +684,7 @@ export class MockAiStreamPlayer {
           historySequence,
           startTime: Date.now(),
           ...(event.mode && { mode: event.mode }),
+          ...(event.agentId && { agentId: event.agentId }),
           ...(event.thinkingLevel && { thinkingLevel: event.thinkingLevel }),
         };
         active.model = event.model;
@@ -795,6 +819,10 @@ export class MockAiStreamPlayer {
           messageId,
           metadata: {
             model: event.metadata.model,
+            ...(active.mode && { mode: active.mode }),
+            ...(active.agentId && { agentId: active.agentId }),
+            ...(active.thinkingLevel && { thinkingLevel: active.thinkingLevel }),
+            ...(active.muxMetadata && { muxMetadata: active.muxMetadata }),
             systemMessageTokens: event.metadata.systemMessageTokens,
           },
           parts: completedParts,

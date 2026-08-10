@@ -2939,6 +2939,7 @@ export class AgentSession {
           options: optionsForStream,
           modelForStream,
           fileParts: followUpFileParts,
+          agentInitiated,
           goalKind,
           muxMetadata: typedMuxMetadata,
           workspaceTurnMetadata: inheritedWorkspaceTurnMetadata,
@@ -3579,6 +3580,7 @@ export class AgentSession {
     options: SendMessageOptions;
     modelForStream: string;
     fileParts?: FilePart[];
+    agentInitiated?: boolean;
     goalKind?: GoalSyntheticMessageKind;
     muxMetadata?: MuxMessageMetadata;
     workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
@@ -3589,6 +3591,10 @@ export class AgentSession {
       agentId: params.options.agentId,
       ...pickPreservedSendOptions(params.options),
     };
+
+    if (params.agentInitiated === true) {
+      followUp.agentInitiated = true;
+    }
 
     if (params.goalKind != null) {
       followUp.goalKind = params.goalKind;
@@ -3756,6 +3762,7 @@ export class AgentSession {
         // buildCompactionMessageText can hide the internal resume marker.
         messageText: "Continue",
         options: streamContext.options,
+        agentInitiated: streamContext.agentInitiated,
         goalKind: streamContext.goalKind,
         modelForStream: streamContext.modelString,
       });
@@ -3771,7 +3778,7 @@ export class AgentSession {
           ...autoCompactionRequest.sendOptions,
           muxMetadata: autoCompactionRequest.metadata,
         },
-        { synthetic: true }
+        { synthetic: true, agentInitiated: autoCompactionRequest.agentInitiated }
       );
       if (!sendResult.success) {
         log.warn("Failed to dispatch mid-stream compaction request", {
@@ -5775,7 +5782,7 @@ export class AgentSession {
     // The compaction summary is now the source of truth for the next live resume
     // request. Pre-arm retry state from the reconstructed follow-up so failures
     // before stream startup do not fall back to the already-completed compact turn.
-    this.setAutoRetryResumeState(options, undefined, followUp.goalKind);
+    this.setAutoRetryResumeState(options, followUp.agentInitiated, followUp.goalKind);
 
     // Await sendMessage to ensure the follow-up is persisted before returning.
     // This guarantees ordering: the follow-up message is written to history
@@ -5784,6 +5791,7 @@ export class AgentSession {
     // re-enable auto-retry after a user explicitly opted out.
     const sendResult = await this.sendMessage(finalText, options, {
       synthetic: true,
+      agentInitiated: followUp.agentInitiated,
       goalKind: followUp.goalKind,
       goalContinuation: followUp.goalKind === GOAL_CONTINUATION_KIND,
     });

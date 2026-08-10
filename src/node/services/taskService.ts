@@ -10813,6 +10813,13 @@ export class TaskService {
   }
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
+    // Compaction is a mechanical history rewrite, not a child execution boundary. Ignoring it here
+    // keeps active and reawakened sub-agents in their existing lifecycle state until the correlated
+    // post-compaction follow-up produces the delegated turn's real outcome.
+    if (event.metadata.agentId === "compact" || event.metadata.mode === "compact") {
+      return;
+    }
+
     const workspaceId = event.workspaceId;
 
     // Ensure any in-flight notify_on_terminal persistence (from a just-detached foreground wait)

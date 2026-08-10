@@ -1137,7 +1137,9 @@ export class AIService extends EventEmitter {
         }
         return await this.mockAiStreamPlayer.play(messages, workspaceId, {
           model: modelString,
+          agentId,
           thinkingLevel,
+          muxMetadata,
           abortSignal: combinedAbortSignal,
         });
       }

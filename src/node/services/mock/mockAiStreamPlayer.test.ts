@@ -5,6 +5,7 @@ import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Ok } from "@/common/types/result";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
+import type { StreamEndEvent, StreamStartEvent } from "@/common/types/stream";
 import { createTestHistoryService } from "../testHistoryService";
 
 function readWorkspaceId(payload: unknown): string | undefined {
@@ -692,6 +693,57 @@ describe("MockAiStreamPlayer", () => {
     const assistantMessage = historyMessages.find((message) => message.role === "assistant");
     expect(assistantMessage).toBeDefined();
     expect(extractText(assistantMessage)).toContain("Here are three programming languages");
+  });
+
+  test("preserves agent and workspace-turn metadata through mock stream completion", async () => {
+    const aiServiceStub = new EventEmitter();
+    const player = new MockAiStreamPlayer({
+      historyService,
+      aiService: aiServiceStub as unknown as AIService,
+    });
+    const workspaceId = "workspace-metadata";
+    const muxMetadata = {
+      type: "workspace-turn-task",
+      taskHandleId: "wst_mock_metadata",
+      ownerWorkspaceId: "parent-metadata",
+      turnId: "turn-metadata",
+    } as const;
+    let streamStart: StreamStartEvent | undefined;
+    let streamEnd: StreamEndEvent | undefined;
+    aiServiceStub.on("stream-start", (payload: StreamStartEvent) => {
+      if (payload.workspaceId === workspaceId) streamStart = payload;
+    });
+    aiServiceStub.on("stream-end", (payload: StreamEndEvent) => {
+      if (payload.workspaceId === workspaceId) streamEnd = payload;
+    });
+
+    const userMessage = createMuxMessage("user-metadata", "user", "Continue delegated work", {
+      timestamp: Date.now(),
+    });
+    const playResult = await player.play([userMessage], workspaceId, {
+      model: "anthropic:claude-sonnet-4-6",
+      agentId: "explore",
+      thinkingLevel: "high",
+      muxMetadata,
+    });
+    expect(playResult.success).toBe(true);
+    await waitForCondition(() => !player.isStreaming(workspaceId), 2000);
+
+    expect(streamStart).toMatchObject({ agentId: "explore", thinkingLevel: "high" });
+    expect(streamEnd?.metadata).toMatchObject({
+      agentId: "explore",
+      thinkingLevel: "high",
+      muxMetadata,
+    });
+    const historyResult = await historyService.getLastMessages(workspaceId, 10);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) throw new Error(historyResult.error);
+    const assistantMessage = historyResult.data.find((message) => message.role === "assistant");
+    expect(assistantMessage?.metadata).toMatchObject({
+      agentId: "explore",
+      thinkingLevel: "high",
+      muxMetadata,
+    });
   });
 
   test("stop prevents queued stream events from emitting", async () => {
