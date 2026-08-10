@@ -107,8 +107,6 @@ COPY --from=builder /app/node_modules/sharp ./node_modules/sharp
 COPY --from=builder /app/node_modules/@img ./node_modules/@img
 COPY --from=builder /app/node_modules/detect-libc ./node_modules/detect-libc
 COPY --from=builder /app/node_modules/semver ./node_modules/semver
-# - @1password/sdk + sdk-core: externalized; contains native WASM for secret resolution
-COPY --from=builder /app/node_modules/@1password ./node_modules/@1password
 
 # Copy frontend/static assets from least to most volatile for better cache reuse.
 # Vite outputs JS/CSS/HTML directly to dist/ (assetsDir: ".").
