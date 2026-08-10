@@ -5465,6 +5465,16 @@ describe("TaskService", () => {
       "wst_secondhandle"
     );
     assert(staleInterruptedRecord, "expected second running workspace-turn record");
+    await interrupted.config.editConfig((cfg) => {
+      const project = cfg.projects.get(interrupted.projectPath);
+      const child = project?.workspaces.find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = interrupted.parentId;
+      child.taskStatus = "reported";
+      child.taskExecutionId = "wst_secondhandle";
+      child.taskExecutionStatus = "running";
+      return cfg;
+    });
     const interruptResult = await interrupted.taskService.interruptWorkspaceTurn(
       interrupted.parentId,
       "wst_secondhandle"
@@ -5497,6 +5507,9 @@ describe("TaskService", () => {
       "wst_secondhandle"
     );
     expect(interruptedSnapshot).toMatchObject({ status: "interrupted" });
+    expect(findWorkspaceInConfig(interrupted.config, "childworkspace")?.taskExecutionStatus).toBe(
+      "interrupted"
+    );
     expect(interruptedSnapshot?.reportMarkdown).toBeUndefined();
   });
 

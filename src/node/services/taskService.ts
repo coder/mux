@@ -6083,13 +6083,14 @@ export class TaskService {
       "settleWorkspaceTurn requires stable workspaceId"
     );
 
-    // The settlement lock only persists durable state and resolves waiters. The terminal wake-up is
-    // enqueued AFTER the lock is released (no sendMessage / notifier work while holding the lock).
-    const pendingNotify = await this.workspaceTurnSettlementLocks.withLock(
+    // The settlement lock persists the handle and its stable-child status mirror, then resolves
+    // waiters. The terminal wake-up is enqueued AFTER release (no sendMessage/notifier work here).
+    const settlementResult = await this.workspaceTurnSettlementLocks.withLock(
       params.record.handleId,
-      async (): Promise<
-        { kind: "notify"; resettled: boolean } | { kind: "drain_pending" } | null
-      > => {
+      async (): Promise<{
+        pendingNotify: { kind: "notify"; resettled: boolean } | { kind: "drain_pending" } | null;
+        winningStatus: WorkspaceTurnTaskStatus;
+      } | null> => {
         const current = await this.taskHandleStore.getWorkspaceTurn(
           params.record.ownerWorkspaceId,
           params.record.handleId
@@ -6134,8 +6135,13 @@ export class TaskService {
                   ),
                 }
           );
+          await this.updateAgentTaskExecutionState(
+            current.workspaceId,
+            current.handleId,
+            current.status
+          );
           this.markTaskForegroundRelevant(current.handleId);
-          return null;
+          return { pendingNotify: null, winningStatus: current.status };
         }
 
         // Decide the terminal wake-up using persisted policy + the restart-safe dedupe marker.
@@ -6157,6 +6163,11 @@ export class TaskService {
           delete nextRecord.terminalAttentionNotifiedAt;
         }
         await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
+        await this.updateAgentTaskExecutionState(
+          nextRecord.workspaceId,
+          nextRecord.handleId,
+          nextRecord.status
+        );
         const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
         if (
           active?.handleId === params.record.handleId &&
@@ -6176,21 +6187,25 @@ export class TaskService {
         // this source's synthetic wake-up. Still kick the drain after the lock: another sibling may
         // have a pending terminal notification that was deferred on this workspace turn.
         if (hadForegroundWaiter) {
-          return { kind: "drain_pending" };
+          return {
+            pendingNotify: { kind: "drain_pending" },
+            winningStatus: nextRecord.status,
+          };
         }
         if (!shouldNotify) {
-          return null;
+          return { pendingNotify: null, winningStatus: nextRecord.status };
         }
-        return { kind: "notify", resettled: resettleStaleTerminal };
+        return {
+          pendingNotify: { kind: "notify", resettled: resettleStaleTerminal },
+          winningStatus: nextRecord.status,
+        };
       }
     );
 
-    await this.updateAgentTaskExecutionState(
-      params.record.workspaceId,
-      params.record.handleId,
-      params.next.status
-    );
-
+    if (settlementResult == null) {
+      return;
+    }
+    const { pendingNotify } = settlementResult;
     if (pendingNotify == null) {
       return;
     }
@@ -6213,7 +6228,7 @@ export class TaskService {
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: params.record.ownerWorkspaceId,
       sourceKind: "workspace_turn",
-      terminalOutcome: terminalAttentionOutcome(params.next.status),
+      terminalOutcome: terminalAttentionOutcome(settlementResult.winningStatus),
       sourceId: params.record.handleId,
     });
     const terminal = await this.taskHandleStore.getWorkspaceTurn(
