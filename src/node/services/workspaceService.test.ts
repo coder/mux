@@ -9590,6 +9590,19 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     await cleanupHistory();
   });
 
+  test("archive coordinates through the task-tree lifecycle lock", async () => {
+    const withTaskTreeLifecycleLock = mock(
+      <T>(_: string, operation: () => Promise<T>): Promise<T> => operation()
+    );
+    workspaceService.setTaskService({
+      withTaskTreeLifecycleLock,
+      hasActiveDescendantAgentTasksForWorkspace: mock(() => false),
+    } as unknown as TaskService);
+
+    expect(await workspaceService.archive(workspaceId)).toEqual(Ok({ kind: "archived" }));
+    expect(withTaskTreeLifecycleLock).toHaveBeenCalledWith(workspaceId, expect.any(Function));
+  });
+
   test("archive refuses to hide a parent while descendant sub-agents remain active", async () => {
     const hasActiveDescendantAgentTasksForWorkspace = mock(() => true);
     workspaceService.setTaskService({
@@ -9787,6 +9800,7 @@ describe("WorkspaceService archive lifecycle hooks", () => {
     const cleanupReportedDescendantsAfterArchive = mock(() => Promise.resolve());
     workspaceService.setTaskService({
       cleanupReportedDescendantsAfterArchive,
+      hasActiveDescendantAgentTasksForWorkspace: () => false,
     } as unknown as TaskService);
 
     const result = await workspaceService.archive(workspaceId);

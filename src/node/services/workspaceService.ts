@@ -6718,6 +6718,19 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
+  async archive(
+    workspaceId: string,
+    acknowledgedUntrackedPaths?: string[]
+  ): Promise<Result<ArchiveWorkspaceResult>> {
+    const taskService = this.taskService;
+    if (taskService?.withTaskTreeLifecycleLock == null) {
+      return await this.archiveUnlocked(workspaceId, acknowledgedUntrackedPaths);
+    }
+    return await taskService.withTaskTreeLifecycleLock(workspaceId, async () =>
+      this.archiveUnlocked(workspaceId, acknowledgedUntrackedPaths)
+    );
+  }
+
   /**
    * Archive a workspace. Archived workspaces are hidden from the main sidebar
    * but can be viewed on the project page.
@@ -6728,7 +6741,7 @@ export class WorkspaceService extends EventEmitter {
    * Returns a typed confirmation result instead of a generic error when the current
    * untracked-file set must be re-reviewed before a lossy snapshot archive can proceed.
    */
-  async archive(
+  private async archiveUnlocked(
     workspaceId: string,
     acknowledgedUntrackedPaths?: string[]
   ): Promise<Result<ArchiveWorkspaceResult>> {

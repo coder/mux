@@ -3083,6 +3083,63 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
   });
 
+  test("initialize prefers a newer unreferenced execution over a stale child pointer", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-newer-execution";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child-newer", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          title: "React lifecycle expert",
+          taskExecutionId: "wst_old",
+          taskExecutionStatus: "completed",
+        })
+      );
+      return cfg;
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_old",
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "turn-old",
+      status: "completed",
+      createdAt: "2026-08-10T00:00:01.000Z",
+      updatedAt: "2026-08-10T00:00:02.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_new",
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "turn-new",
+      status: "running",
+      createdAt: "2026-08-10T00:00:03.000Z",
+      updatedAt: "2026-08-10T00:00:04.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+
+    await taskService.initialize();
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionId).toBe("wst_new");
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
+  });
+
   test("initialize recovers terminal notify workspace turns without pending notification", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);
@@ -10652,6 +10709,50 @@ describe("TaskService", () => {
     expect(await taskService.listWorkspaceTurnTasks(parentWorkspaceId)).toHaveLength(1);
   });
 
+  test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-tree-lock";
+    const childTaskId = "child-tree-lock";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "reported",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const { taskService } = createTaskServiceHarness(config);
+
+    let releaseChild: (() => void) | undefined;
+    const childGate = new Promise<void>((resolve) => {
+      releaseChild = resolve;
+    });
+    let childEntered: (() => void) | undefined;
+    const childStarted = new Promise<void>((resolve) => {
+      childEntered = resolve;
+    });
+    let ancestorEntered = false;
+    const childOperation = taskService.withTaskTreeLifecycleLock(childTaskId, async () => {
+      childEntered?.();
+      await childGate;
+    });
+    await childStarted;
+    const ancestorOperation = taskService.withTaskTreeLifecycleLock(parentWorkspaceId, () => {
+      ancestorEntered = true;
+      return Promise.resolve();
+    });
+    await Promise.resolve();
+    expect(ancestorEntered).toBe(false);
+    releaseChild?.();
+    await Promise.all([childOperation, ancestorOperation]);
+    expect(ancestorEntered).toBe(true);
+  });
+
   test("task removal waits for inactive-child reawakening and then rejects the active child", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["racehandle", "raceturn"]);
@@ -10788,6 +10889,7 @@ describe("TaskService", () => {
       childTaskId
     );
     expect(result).toMatchObject({ success: true, data: { status: "removed" } });
+    expect(await taskService.isDescendantAgentTask(parentWorkspaceId, childTaskId)).toBe(true);
     expect(
       await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
     ).toMatchObject({ success: true, data: { status: "already_removed" } });

@@ -1193,6 +1193,9 @@ export class TaskService {
   // Serialize lifecycle actions per resolved child workspace: a batch may include both the
   // created handle and later existing-mode handles for the same workspace.
   private readonly workspaceLifecycleLocks = new MutexMap<string>();
+  // Serialize lifecycle transitions across a whole parent/descendant tree. Reawakening/removal of a
+  // child and archiving an ancestor must never cross and leave active work hidden behind the archive.
+  private readonly workspaceTreeLifecycleLocks = new MutexMap<string>();
   // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
   // overwrite an already-settled handle.
   private readonly workspaceTurnSettlementLocks = new MutexMap<string>();
@@ -1985,6 +1988,34 @@ export class TaskService {
     };
   }
 
+  private taskTreeRootId(workspaceId: string): string {
+    const index = this.buildAgentTaskIndex(this.config.loadConfigOrDefault());
+    let currentWorkspaceId = workspaceId;
+    const visited = new Set<string>();
+    for (let depth = 0; depth < 32; depth++) {
+      if (visited.has(currentWorkspaceId)) {
+        log.warn("Task tree lifecycle lock encountered a parent cycle", { workspaceId });
+        return workspaceId;
+      }
+      visited.add(currentWorkspaceId);
+      const parentWorkspaceId = index.parentById.get(currentWorkspaceId);
+      if (parentWorkspaceId == null) {
+        return currentWorkspaceId;
+      }
+      currentWorkspaceId = parentWorkspaceId;
+    }
+    log.warn("Task tree lifecycle lock exceeded parent traversal depth", { workspaceId });
+    return workspaceId;
+  }
+
+  async withTaskTreeLifecycleLock<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    assert(workspaceId.length > 0, "withTaskTreeLifecycleLock requires workspaceId");
+    return await this.workspaceTreeLifecycleLocks.withLock(
+      this.taskTreeRootId(workspaceId),
+      operation
+    );
+  }
+
   private async editWorkspaceEntry(
     workspaceId: string,
     updater: (workspace: WorkspaceConfigEntry) => void,
@@ -2039,12 +2070,19 @@ export class TaskService {
         task.taskExecutionId != null ? recordsByHandleId.get(task.taskExecutionId) : undefined;
       // Recover the crash window where the handle record became durable before the stable child
       // pointer. The latest matching handle is the continuation the public child ID should follow.
-      const record =
-        referenced ??
-        candidates.reduce<WorkspaceTurnTaskHandleRecord | undefined>((latest, candidate) => {
+      const latestCandidate = candidates.reduce<WorkspaceTurnTaskHandleRecord | undefined>(
+        (latest, candidate) => {
           if (latest == null) return candidate;
           return candidate.updatedAt > latest.updatedAt ? candidate : latest;
-        }, undefined);
+        },
+        undefined
+      );
+      const record =
+        referenced == null
+          ? latestCandidate
+          : latestCandidate != null && latestCandidate.updatedAt > referenced.updatedAt
+            ? latestCandidate
+            : referenced;
       if (record == null) {
         if (task.taskExecutionId != null) {
           await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
@@ -4251,7 +4289,7 @@ export class TaskService {
       return Ok(queuedUpdateResult.data);
     }
 
-    return this.workspaceLifecycleLocks.withLock(taskId, async () =>
+    return this.withTaskTreeLifecycleLock(taskId, async () =>
       this.workspaceEventLocks.withLock(taskId, async () => {
         const cfg = this.config.loadConfigOrDefault();
         const entry = findWorkspaceEntry(cfg, taskId);
@@ -7629,52 +7667,54 @@ export class TaskService {
       return Ok({ status: "invalid_scope", action: "remove", taskId });
     }
 
-    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (locked) => {
-      const descendantTaskIds = this.listDescendantAgentTasks(locked.workspaceId).map(
-        (task) => task.taskId
-      );
-      if (descendantTaskIds.length > 0) {
-        return Ok({
-          status: "error",
-          action: "remove",
-          ...this.lifecycleTargetFields(locked),
-          descendantTaskIds,
-          error: "Cannot remove a sub-agent while descendant sub-agents remain.",
-        });
-      }
-      if (locked.metadata == null) {
-        return Ok({
-          status: "already_removed",
-          action: "remove",
-          ...this.lifecycleTargetFields(locked),
-        });
-      }
-      const active = await this.handleActiveWorkspaceLifecycleTurns(
-        ownerWorkspaceId,
-        locked,
-        false
-      );
-      if (active != null) return Ok(active);
-      const tombstoneResult = await this.persistRemovedAgentTaskTombstones(locked.workspaceId);
-      if (!tombstoneResult.success) {
-        return Ok({
-          status: "error",
-          action: "remove",
-          ...this.lifecycleTargetFields(locked),
-          error: tombstoneResult.error,
-        });
-      }
-      const result = await this.workspaceService.remove(locked.workspaceId, true);
-      if (!result.success) {
-        return Ok({
-          status: "error",
-          action: "remove",
-          ...this.lifecycleTargetFields(locked),
-          error: result.error,
-        });
-      }
-      return Ok({ status: "removed", action: "remove", ...this.lifecycleTargetFields(locked) });
-    });
+    return await this.withTaskTreeLifecycleLock(resolved.workspaceId, async () =>
+      this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (locked) => {
+        const descendantTaskIds = this.listDescendantAgentTasks(locked.workspaceId).map(
+          (task) => task.taskId
+        );
+        if (descendantTaskIds.length > 0) {
+          return Ok({
+            status: "error",
+            action: "remove",
+            ...this.lifecycleTargetFields(locked),
+            descendantTaskIds,
+            error: "Cannot remove a sub-agent while descendant sub-agents remain.",
+          });
+        }
+        if (locked.metadata == null) {
+          return Ok({
+            status: "already_removed",
+            action: "remove",
+            ...this.lifecycleTargetFields(locked),
+          });
+        }
+        const active = await this.handleActiveWorkspaceLifecycleTurns(
+          ownerWorkspaceId,
+          locked,
+          false
+        );
+        if (active != null) return Ok(active);
+        const tombstoneResult = await this.persistRemovedAgentTaskTombstones(locked.workspaceId);
+        if (!tombstoneResult.success) {
+          return Ok({
+            status: "error",
+            action: "remove",
+            ...this.lifecycleTargetFields(locked),
+            error: tombstoneResult.error,
+          });
+        }
+        const result = await this.workspaceService.remove(locked.workspaceId, true);
+        if (!result.success) {
+          return Ok({
+            status: "error",
+            action: "remove",
+            ...this.lifecycleTargetFields(locked),
+            error: result.error,
+          });
+        }
+        return Ok({ status: "removed", action: "remove", ...this.lifecycleTargetFields(locked) });
+      })
+    );
   }
 
   /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
@@ -8433,6 +8473,10 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const parentById = this.buildAgentTaskIndex(cfg).parentById;
     if (this.isDescendantAgentTaskUsingParentById(parentById, ancestorWorkspaceId, taskId)) {
+      return true;
+    }
+
+    if (await this.hasRemovedAgentTaskTombstone(ancestorWorkspaceId, taskId)) {
       return true;
     }
 
