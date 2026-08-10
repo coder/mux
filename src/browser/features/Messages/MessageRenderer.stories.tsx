@@ -30,6 +30,7 @@ import {
   createWebSearchTool,
 } from "@/browser/stories/mocks/tools";
 import { STABLE_TIMESTAMP } from "@/browser/stories/mocks/workspaces";
+import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 
 const meta = { ...appMeta, title: "App/Chat/Messages" };
 export default meta;
@@ -570,8 +571,8 @@ export const WorkflowTriggeredCommand: AppStory = {
 /**
  * Synthetic / goal system-message composite.
  *
- * Folds three non-interactive permutations into one chat:
- * - synthetic auto-resume messages shown with "AUTO" badge and dimmed opacity
+ * Folds non-interactive permutations into one chat:
+ * - compact background-work control events with expandable model-facing details
  * - goal continuation message (merged from GoalContinuationMessages)
  * - goal budget-limit wrap-up message (merged from BudgetLimitWrapupMessages)
  */
@@ -607,12 +608,22 @@ export const SyntheticAutoResumeMessages: AppStory = {
               }
             ),
             createUserMessage(
+              "msg-workspace-terminal",
+              `${BACKGROUND_WORK_WAKE_OPENINGS.workspaceTurnsTerminal} wst_abc123. ` +
+                'Call task_await now with task_ids: ["wst_abc123"] and timeout_secs: 0 to retrieve its terminal output.',
+              {
+                historySequence: 4,
+                timestamp: STABLE_TIMESTAMP - 287500,
+                synthetic: true,
+              }
+            ),
+            createUserMessage(
               "msg-4",
               "Background sub-agent task(s) have completed. Their accepted reports and any structured outputs " +
                 "are already injected into this workspace context as task tool results or synthetic user report " +
                 "messages. Write the final response now, integrating those results.",
               {
-                historySequence: 4,
+                historySequence: 5,
                 timestamp: STABLE_TIMESTAMP - 285000,
                 synthetic: true,
               }
@@ -622,7 +633,7 @@ export const SyntheticAutoResumeMessages: AppStory = {
               "msg-5",
               "Continue working on the active workspace goal.\n\n<untrusted_objective>Ship the requested feature with tests.</untrusted_objective>",
               {
-                historySequence: 5,
+                historySequence: 6,
                 timestamp: STABLE_TIMESTAMP - 120000,
               }
             ),
@@ -630,7 +641,7 @@ export const SyntheticAutoResumeMessages: AppStory = {
               "msg-6",
               "Continuing from the active goal, I'll add coverage next.",
               {
-                historySequence: 6,
+                historySequence: 7,
                 timestamp: STABLE_TIMESTAMP - 110000,
               }
             ),
@@ -639,7 +650,7 @@ export const SyntheticAutoResumeMessages: AppStory = {
               "msg-7",
               "The budget for this goal has been exhausted.\n\n<untrusted_objective>Ship the requested feature with tests.</untrusted_objective>\n\nBring the current line of work to a clean stopping point, summarize where things stand, and stop.",
               {
-                historySequence: 7,
+                historySequence: 8,
                 timestamp: STABLE_TIMESTAMP - 60000,
               }
             ),
@@ -647,7 +658,7 @@ export const SyntheticAutoResumeMessages: AppStory = {
               "msg-8",
               "Stopping here: tests are partially updated and the remaining risk is in the UI smoke coverage.",
               {
-                historySequence: 8,
+                historySequence: 9,
                 timestamp: STABLE_TIMESTAMP - 50000,
               }
             ),

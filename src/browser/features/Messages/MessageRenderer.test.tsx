@@ -4,6 +4,7 @@ import { GlobalWindow } from "happy-dom";
 import { TooltipProvider } from "@radix-ui/react-tooltip";
 import type { DisplayedMessage } from "@/common/types/message";
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
+import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { MessageRenderer } from "./MessageRenderer";
 import { parseSubagentReportEnvelope } from "./SubagentReportMessageContent";
 
@@ -418,6 +419,72 @@ This was typed by a user.
     );
     expect(userView.queryByText("subagent update")).toBeNull();
     expect(userView.queryByText("subagent report")).toBeNull();
+  });
+});
+
+describe("MessageRenderer background work wake rows", () => {
+  beforeEach(() => {
+    globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
+    globalThis.document = globalThis.window.document;
+    globalThis.localStorage = globalThis.window.localStorage;
+  });
+
+  afterEach(() => {
+    cleanup();
+
+    globalThis.window = undefined as unknown as Window & typeof globalThis;
+    globalThis.document = undefined as unknown as Document;
+    globalThis.localStorage = undefined as unknown as Storage;
+  });
+
+  const wakePrompt =
+    `${BACKGROUND_WORK_WAKE_OPENINGS.workspaceTurnsTerminal} wst_abc123. ` +
+    'Call task_await now with task_ids: ["wst_abc123"] and timeout_secs: 0 to retrieve its terminal output.';
+
+  function createWakeMessage(isSynthetic: boolean): DisplayedMessage {
+    return {
+      type: "user",
+      id: "background-work-wake",
+      historyId: "background-work-wake",
+      content: wakePrompt,
+      historySequence: 29,
+      ...(isSynthetic ? { isSynthetic: true } : {}),
+    };
+  }
+
+  test("renders synthetic workspace-turn wakes as a compact machine event", () => {
+    const { container, getByText, getByRole, queryByRole, queryByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={createWakeMessage(true)} />
+      </TooltipProvider>
+    );
+
+    expect(getByText("Background workspace turn finished")).toBeDefined();
+    const toggle = getByRole("button", { name: /show details/i });
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(queryByText(/wst_abc123/)).toBeNull();
+    expect(container.querySelector("[data-background-work-wake]")).not.toBeNull();
+    expect(container.querySelector("[data-message-meta]")).toBeNull();
+    expect(queryByRole("button", { name: "Copy" })).toBeNull();
+    expect(queryByText("auto")).toBeNull();
+
+    fireEvent.click(toggle);
+    const details = queryByText(/wst_abc123/);
+    expect(details).toBeDefined();
+    expect(
+      details?.closest("[data-transcript-quote-root]")?.getAttribute("data-transcript-quote-text")
+    ).toBe(wakePrompt);
+  });
+
+  test("does not apply machine-event treatment to user-authored lookalikes", () => {
+    const { container, getByText } = render(
+      <TooltipProvider>
+        <MessageRenderer message={createWakeMessage(false)} />
+      </TooltipProvider>
+    );
+
+    expect(container.querySelector("[data-background-work-wake]")).toBeNull();
+    expect(getByText(/Call task_await now/)).toBeDefined();
   });
 });
 

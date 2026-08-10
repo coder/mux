@@ -6,6 +6,10 @@ import type { ReviewNoteData } from "@/common/types/review";
 import type { EditingMessageState } from "@/browser/utils/chatEditing";
 import { UserMessage, type UserMessageNavigation } from "./UserMessage";
 import { BashMonitorWakeMessage } from "./BashMonitorWakeMessage";
+import {
+  BackgroundWorkWakeMessage,
+  getBackgroundWorkWakeSummary,
+} from "./BackgroundWorkWakeMessage";
 import { AssistantMessage } from "./AssistantMessage";
 import { ToolMessage } from "./ToolMessage";
 import { ReasoningMessage } from "./ReasoningMessage";
@@ -87,10 +91,18 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
 
     // Route based on message type
     switch (message.type) {
-      case "user":
+      case "user": {
+        const backgroundWorkWakeSummary =
+          message.isSynthetic === true ? getBackgroundWorkWakeSummary(message.content) : null;
         renderedMessage =
           message.bashMonitorWake != null ? (
             <BashMonitorWakeMessage message={message} className={className} />
+          ) : backgroundWorkWakeSummary != null ? (
+            <BackgroundWorkWakeMessage
+              message={message}
+              summary={backgroundWorkWakeSummary}
+              className={className}
+            />
           ) : (
             <UserMessage
               message={message}
@@ -101,6 +113,7 @@ export const MessageRenderer = React.memo<MessageRendererProps>(
             />
           );
         break;
+      }
       case "assistant":
         renderedMessage = (
           <AssistantMessage

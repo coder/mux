@@ -5699,12 +5699,16 @@ export class TaskService {
   private async ensureAgentTerminalMessages(
     ownerWorkspaceId: string,
     notifications: readonly TerminalAttentionNotification[]
-  ): Promise<Set<string>> {
-    const deliverableIds = new Set<string>();
-    if (notifications.length === 0) return deliverableIds;
-
+  ): Promise<{
+    deliverableNotificationIds: Set<string>;
+    latestMessageTimestampByTaskId: Map<string, number>;
+  }> {
+    const deliverableNotificationIds = new Set<string>();
+    const latestMessageTimestampByTaskId = new Map<string, number>();
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(ownerWorkspaceId);
-    if (!historyResult.success) return deliverableIds;
+    if (!historyResult.success) {
+      return { deliverableNotificationIds, latestMessageTimestampByTaskId };
+    }
     const existingTaskIds = new Set<string>();
     for (const message of historyResult.data) {
       if (message.role !== "user" || message.metadata?.synthetic !== true) continue;
@@ -5714,13 +5718,26 @@ export class TaskService {
           .map((part) => part.text)
           .join("\n")
       );
-      if (taskId != null) existingTaskIds.add(taskId);
+      if (taskId == null) continue;
+      existingTaskIds.add(taskId);
+      const timestamp = message.metadata?.timestamp;
+      if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
+        latestMessageTimestampByTaskId.set(
+          taskId,
+          Math.max(latestMessageTimestampByTaskId.get(taskId) ?? 0, timestamp)
+        );
+      }
     }
 
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
-      if (existingTaskIds.has(notification.sourceId)) {
-        deliverableIds.add(notification.id);
+      const existingMessageAt = latestMessageTimestampByTaskId.get(notification.sourceId);
+      const notificationCreatedAt = Date.parse(notification.createdAt);
+      const hasCurrentTerminalMessage =
+        existingMessageAt != null &&
+        (!Number.isFinite(notificationCreatedAt) || existingMessageAt >= notificationCreatedAt);
+      if (existingTaskIds.has(notification.sourceId) && hasCurrentTerminalMessage) {
+        deliverableNotificationIds.add(notification.id);
         continue;
       }
 
@@ -5759,11 +5776,12 @@ export class TaskService {
         continue;
       }
 
+      const timestamp = Date.now();
       const message = createMuxMessage(
         report != null ? createTaskReportMessageId() : createTaskFailureMessageId(),
         "user",
         content,
-        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+        { timestamp, synthetic: true, uiVisible: true }
       );
       const appendResult = await this.historyService.appendToHistory(ownerWorkspaceId, message);
       if (!appendResult.success) {
@@ -5775,9 +5793,11 @@ export class TaskService {
         continue;
       }
       this.workspaceService.emitChatEvent(ownerWorkspaceId, { ...message, type: "message" });
-      deliverableIds.add(notification.id);
+      existingTaskIds.add(notification.sourceId);
+      latestMessageTimestampByTaskId.set(notification.sourceId, timestamp);
+      deliverableNotificationIds.add(notification.id);
     }
-    return deliverableIds;
+    return { deliverableNotificationIds, latestMessageTimestampByTaskId };
   }
 
   private async consumeRespondedAgentTerminalAttention(ownerWorkspaceId: string): Promise<void> {
@@ -5883,29 +5903,48 @@ export class TaskService {
     const agentNotifications = pending.filter(
       (notification) => notification.sourceKind === "agent_task"
     );
-    const deliverableAgentNotificationIds = await this.ensureAgentTerminalMessages(
-      ownerWorkspaceId,
-      agentNotifications
+    const {
+      deliverableNotificationIds: deliverableAgentNotificationIds,
+      latestMessageTimestampByTaskId,
+    } = await this.ensureAgentTerminalMessages(ownerWorkspaceId, agentNotifications);
+    const workspaceTurnNotifications = pending.filter(
+      (notification) => notification.sourceKind === "workspace_turn"
     );
-    const awaitHandleIds = pending
-      .filter((notification) => notification.sourceKind === "workspace_turn")
-      .map((notification) => notification.sourceId);
-    const publicAwaitIds = await Promise.all(
-      awaitHandleIds.map(async (handleId) => {
-        const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    const deliverableWorkspaceTurnNotificationIds = new Set<string>();
+    const publicAwaitIds: string[] = [];
+    for (const notification of workspaceTurnNotifications) {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        ownerWorkspaceId,
+        notification.sourceId
+      );
+      const isPersistentChildContinuation =
+        record != null &&
+        this.isDescendantAgentTaskUsingParentById(
+          taskIndex.parentById,
+          ownerWorkspaceId,
+          record.workspaceId
+        );
+      if (isPersistentChildContinuation) {
+        const latestTerminalMessageAt = latestMessageTimestampByTaskId.get(record.workspaceId);
+        const continuationCreatedAt = Date.parse(record.createdAt);
         if (
-          record != null &&
-          this.isDescendantAgentTaskUsingParentById(
-            taskIndex.parentById,
-            ownerWorkspaceId,
-            record.workspaceId
-          )
+          latestTerminalMessageAt != null &&
+          Number.isFinite(continuationCreatedAt) &&
+          latestTerminalMessageAt >= continuationCreatedAt
         ) {
-          return record.workspaceId;
+          // A persistent child continuation reports through the stable child transcript row. Once
+          // that report/failure is in parent history, a second task_await wake for the private
+          // workspace-turn handle is redundant and exposes an implementation detail to the user.
+          await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+          continue;
         }
-        return handleId;
-      })
-    );
+      }
+
+      deliverableWorkspaceTurnNotificationIds.add(notification.id);
+      publicAwaitIds.push(
+        isPersistentChildContinuation ? record.workspaceId : notification.sourceId
+      );
+    }
     const workflowNotifications = pending.filter(
       (notification) => notification.sourceKind === "workflow_run"
     );
@@ -5938,7 +5977,7 @@ export class TaskService {
       if (notification.sourceKind === "workflow_run") {
         return deliverableWorkflowNotificationIds.has(notification.id);
       }
-      return true;
+      return deliverableWorkspaceTurnNotificationIds.has(notification.id);
     });
     if (effectivePending.length === 0) return;
 

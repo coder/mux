@@ -390,8 +390,14 @@ export function filterVisibleAgentRows(
       return true;
     }
 
+    // Completed children are terminal even if WorkspaceStore still has a stale live signal from
+    // their final stream. Reuse the delegated-activity predicate so retained reports cannot leak
+    // inactive persistent children back into the sidebar; queued work remains visible before it has
+    // live runtime state.
     const visible =
-      isSidebarSubAgentActive(workspace) || getIsWorkspaceLiveActive(workspace.id, options);
+      workspace.taskExecutionStatus === "queued" ||
+      workspace.taskStatus === "queued" ||
+      isWorkspaceDelegatedActivityActive(workspace, options);
 
     visiting.delete(workspace.id);
     visibilityById.set(workspace.id, visible);

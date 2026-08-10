@@ -2916,6 +2916,188 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.listPending(parentId)).toHaveLength(1);
   });
 
+  test("persistent child reports supersede their private continuation wake prompt", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-continuation-report";
+    const childTaskId = "child-continuation-report";
+    const handleId = "wst_continuation_report";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:02.000Z",
+          taskExecutionId: handleId,
+          taskExecutionStatus: "completed",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const resumeStream = mock(
+      (): Promise<Result<{ started: boolean }, SendMessageError>> =>
+        Promise.resolve(Ok({ started: true }))
+    );
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ resumeStream, sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentWorkspaceId,
+      workspaceId: childTaskId,
+      turnId: "turn-continuation-report",
+      status: "completed",
+      createdAt: "2026-08-10T00:00:01.000Z",
+      updatedAt: "2026-08-10T00:00:02.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Private continuation output",
+    });
+    await historyService.appendToHistory(
+      parentWorkspaceId,
+      createMuxMessage(
+        "continuation-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childTaskId,
+          agentType: "explore",
+          status: "completed",
+          title: "Tooling Mapper",
+          reportMarkdown: "Stable child report",
+        }),
+        {
+          timestamp: Date.parse("2026-08-10T00:00:02.000Z"),
+          synthetic: true,
+          uiVisible: true,
+        }
+      )
+    );
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+      createdAt: "2026-08-10T00:00:01.500Z",
+    });
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "workspace_turn",
+      sourceId: handleId,
+    });
+
+    await (
+      taskService as unknown as {
+        drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+      }
+    ).drainTerminalAttention(parentWorkspaceId);
+
+    expect(resumeStream).toHaveBeenCalledTimes(1);
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(
+      await terminalAttentionStore.get(parentWorkspaceId, `workspace_turn:${handleId}`)
+    ).toMatchObject({ status: "superseded" });
+    expect(
+      await terminalAttentionStore.get(parentWorkspaceId, `agent_task:${childTaskId}`)
+    ).toMatchObject({ status: "delivered" });
+  });
+
+  test("persistent child continuation keeps the wake prompt when no current report was delivered", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-continuation-fallback";
+    const childTaskId = "child-continuation-fallback";
+    const handleId = "wst_continuation_fallback";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          taskExecutionId: handleId,
+          taskExecutionStatus: "completed",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const sendMessage = mock(
+      (..._args: unknown[]): Promise<Result<void>> => Promise.resolve(Ok(undefined))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentWorkspaceId,
+      workspaceId: childTaskId,
+      turnId: "turn-continuation-fallback",
+      status: "completed",
+      createdAt: "2026-08-10T00:00:01.000Z",
+      updatedAt: "2026-08-10T00:00:02.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Continuation output without a new agent report",
+    });
+    await historyService.appendToHistory(
+      parentWorkspaceId,
+      createMuxMessage(
+        "old-report",
+        "user",
+        formatSubagentReportEnvelope({
+          taskId: childTaskId,
+          agentType: "explore",
+          status: "completed",
+          title: "Earlier report",
+          reportMarkdown: "This report predates the continuation.",
+        }),
+        {
+          timestamp: Date.parse("2026-08-10T00:00:00.000Z"),
+          synthetic: true,
+          uiVisible: true,
+        }
+      )
+    );
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "workspace_turn",
+      sourceId: handleId,
+    });
+
+    await (
+      taskService as unknown as {
+        drainTerminalAttention: (ownerWorkspaceId: string) => Promise<void>;
+      }
+    ).drainTerminalAttention(parentWorkspaceId);
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain(childTaskId);
+    expect(String(sendMessage.mock.calls[0]?.[1])).toContain("task_await");
+    expect(
+      await terminalAttentionStore.get(parentWorkspaceId, `workspace_turn:${handleId}`)
+    ).toMatchObject({ status: "delivered" });
+  });
+
   test("terminal workflow wake-up reconstructs durable result context", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

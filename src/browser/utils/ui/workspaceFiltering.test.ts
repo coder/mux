@@ -1111,6 +1111,30 @@ describe("sub-agent row render metadata", () => {
     ).toBe(false);
   });
 
+  it("does not resurrect reported children from stale live workspace state", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("reported-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        taskExecutionStatus: "completed",
+      }),
+    ];
+    const options = {
+      isWorkspaceLiveActive: (workspaceId: string) => workspaceId === "reported-child",
+    };
+
+    expect(
+      filterVisibleAgentRows(flattened, new Set(), options).map((workspace) => workspace.id)
+    ).toEqual(["parent"]);
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    expect(
+      computeAgentRowRenderMeta(flattened, depthByWorkspaceId, new Set(), options).has(
+        "reported-child"
+      )
+    ).toBe(false);
+  });
+
   it("propagates ancestor trunk continuation metadata for nested rows", () => {
     const flattened = [
       createWorkspace("parent"),
