@@ -301,18 +301,18 @@ describe("task tool", () => {
     expect(create.mock.calls[0]?.[0]?.isolation).toBeUndefined();
   });
 
-  it("forwards explicit sticky retention to taskService.create", async () => {
-    using tempDir = new TestTempDir("test-task-tool-sticky-passthrough");
+  it("rejects removed sticky retention input before task creation", async () => {
+    using tempDir = new TestTempDir("test-task-tool-sticky-rejected");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
-    const create = mock((_: { sticky?: unknown }) =>
+    const create = mock(() =>
       Ok({ taskId: "child-task", kind: "agent" as const, status: "running" as const })
     );
     const waitForAgentReport = mock(() => Promise.resolve({ reportMarkdown: "ignored" }));
     const taskService = { create, waitForAgentReport } as unknown as TaskService;
     const tool = createTaskTool({ ...baseConfig, taskService });
 
-    await Promise.resolve(
+    const error: unknown = await Promise.resolve(
       tool.execute!(
         {
           agentId: "exec",
@@ -323,10 +323,11 @@ describe("task tool", () => {
         },
         mockToolCallOptions
       )
-    );
+    ).catch((caught: unknown) => caught);
 
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(create.mock.calls[0]?.[0]?.sticky).toBe(true);
+    expect(error).toBeInstanceOf(Error);
+    expect(String(error)).toMatch(/sticky/i);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("should return immediately when run_in_background is true", async () => {
