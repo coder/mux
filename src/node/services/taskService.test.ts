@@ -496,6 +496,7 @@ function createWorkspaceServiceMocks(
       archive,
       unarchive,
       deleteWorktree,
+      removeWhileTaskTreeLocked: remove,
       remove,
       emit,
       getInfo,

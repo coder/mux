@@ -4745,6 +4745,21 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    const taskService = this.taskService;
+    if (taskService?.withTaskTreeLifecycleLock == null) {
+      return await this.removeUnlocked(workspaceId, force);
+    }
+    return await taskService.withTaskTreeLifecycleLock(workspaceId, async () =>
+      this.removeUnlocked(workspaceId, force)
+    );
+  }
+
+  /** Internal entry point for TaskService callers that already hold the task-tree lifecycle lock. */
+  async removeWhileTaskTreeLocked(workspaceId: string, force = false): Promise<Result<void>> {
+    return await this.removeUnlocked(workspaceId, force);
+  }
+
+  private async removeUnlocked(workspaceId: string, force = false): Promise<Result<void>> {
     // Idempotent: if already removing, return success to prevent race conditions
     if (this.removingWorkspaces.has(workspaceId)) {
       return Ok(undefined);

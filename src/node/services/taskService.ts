@@ -7774,7 +7774,10 @@ export class TaskService {
             error: tombstoneResult.error,
           });
         }
-        const result = await this.workspaceService.remove(locked.workspaceId, true);
+        const result = await this.workspaceService.removeWhileTaskTreeLocked(
+          locked.workspaceId,
+          true
+        );
         if (!result.success) {
           return Ok({
             status: "error",
