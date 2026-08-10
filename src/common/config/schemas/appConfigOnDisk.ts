@@ -158,6 +158,9 @@ export const AppConfigOnDiskSchema = z
     // `.catch`: an unusable stored value must not fail the whole config parse. Degrading to
     // "not configured" keeps every other setting loadable and lets the user re-enter this one.
     settingsBackup: SettingsBackupSchema.optional().catch(undefined),
+    // Legacy: 1Password integration was removed. Old builds still read/write this
+    // key, so it is round-tripped for downgrade compatibility but unused at runtime.
+    onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
 

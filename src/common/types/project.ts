@@ -203,4 +203,11 @@ export interface ProjectsConfig {
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 
   settingsBackup?: SettingsBackup;
+
+  /**
+   * Legacy 1Password account name. The integration was removed; the value is
+   * preserved across saves (never used at runtime) so downgrading restores a
+   * working 1Password setup without re-entering the account.
+   */
+  legacyOnePasswordAccountName?: string;
 }

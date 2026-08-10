@@ -1206,6 +1206,7 @@ export class Config {
           settingsBackup: SettingsBackupSchema.optional()
             .catch(undefined)
             .parse(parsed.settingsBackup),
+          legacyOnePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
     } catch (error) {
@@ -1494,6 +1495,15 @@ export class Config {
 
       if (config.settingsBackup) {
         data.settingsBackup = config.settingsBackup;
+      }
+
+      // Round-trip the legacy 1Password account name so unrelated saves don't
+      // delete it from config.json; downgrades depend on it to reinitialize.
+      const legacyOnePasswordAccountName = parseOptionalNonEmptyString(
+        config.legacyOnePasswordAccountName
+      );
+      if (legacyOnePasswordAccountName) {
+        data.onePasswordAccountName = legacyOnePasswordAccountName;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");

@@ -923,6 +923,23 @@ describe("Config", () => {
       expect(loaded.muxGovernorUrl).toBe("https://governor.example.com");
       expect(loaded.terminalDefaultShell).toBe("zsh");
     });
+
+    it("round-trips the legacy 1Password account name across unrelated saves", async () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({ onePasswordAccountName: "my-team.1password.com" })
+      );
+
+      await config.editConfig((current) => ({
+        ...current,
+        terminalDefaultShell: "zsh",
+      }));
+
+      const raw = JSON.parse(fs.readFileSync(configFile, "utf-8")) as Record<string, unknown>;
+      expect(raw.onePasswordAccountName).toBe("my-team.1password.com");
+      expect(raw.terminalDefaultShell).toBe("zsh");
+    });
   });
 
   describe("coderWorkspaceArchiveBehavior", () => {
