@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArchiveRestore, CheckCircle2, CloudUpload, RefreshCw } from "lucide-react";
+import { ArchiveRestore, CheckCircle2, CloudUpload, RefreshCw, TriangleAlert } from "lucide-react";
 import { Button } from "@/browser/components/Button/Button";
 import { Checkbox } from "@/browser/components/Checkbox/Checkbox";
 import { ConfirmationModal } from "@/browser/components/ConfirmationModal/ConfirmationModal";
@@ -518,6 +518,14 @@ export function BackupSection() {
 
   return (
     <div className="space-y-6">
+      <div className="bg-warning/10 border-warning/30 text-warning flex items-start gap-2 rounded-md border px-3 py-2 text-xs">
+        <TriangleAlert aria-hidden="true" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <p>
+          Settings backup is experimental. It may change or be removed in a future release; use it
+          carefully.
+        </p>
+      </div>
+
       <div>
         <h3 className="text-foreground text-sm font-medium">Settings backup</h3>
         <p className="text-muted mt-1 text-xs">
