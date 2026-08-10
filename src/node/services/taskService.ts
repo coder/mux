@@ -2063,7 +2063,10 @@ export class TaskService {
     const timestampedRecords: TimestampedWorkspaceTurn[] = [];
     for (const record of records) {
       const updatedAtMs = Date.parse(record.updatedAt);
-      if (!Number.isFinite(updatedAtMs)) {
+      const canonicalUpdatedAt = Number.isFinite(updatedAtMs)
+        ? new Date(updatedAtMs).toISOString()
+        : null;
+      if (canonicalUpdatedAt !== record.updatedAt) {
         log.warn("Ignoring persistent sub-agent execution with invalid updatedAt", {
           handleId: record.handleId,
           workspaceId: record.workspaceId,

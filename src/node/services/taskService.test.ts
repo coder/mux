@@ -3192,7 +3192,7 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
   });
 
-  test("initialize ignores malformed continuation timestamps when selecting the latest handle", async () => {
+  test("initialize ignores parseable non-ISO timestamps when selecting the latest handle", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
     const childTaskId = "child-invalid-execution-timestamp";
@@ -3224,7 +3224,7 @@ describe("TaskService", () => {
       turnId: "turn-invalid-timestamp",
       status: "completed",
       createdAt: "2026-08-10T00:00:02.000Z",
-      updatedAt: "zzz",
+      updatedAt: "9999",
       createdWorkspace: false,
       disposableWorkspace: false,
     });
