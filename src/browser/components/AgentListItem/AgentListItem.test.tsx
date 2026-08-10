@@ -356,9 +356,47 @@ describe("AgentListItem", () => {
       taskGroupHeaderTitle: "Split review",
     });
     expect(
-      customTitle.view.getByRole("button", { name: "Select workspace backend · My renamed run" })
+      customTitle.view.getByRole("button", {
+        name: "Select workspace My renamed run, scope backend",
+      })
     ).toBeTruthy();
-    expect(customTitle.view.getByText("My renamed run")).toBeTruthy();
+    const roleTitle = customTitle.view.getByText("My renamed run");
+    const scopeLabel = customTitle.view.getByText("scope: backend");
+    expect(roleTitle.compareDocumentPosition(scopeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
+  });
+
+  test("renders a lone running variant as a role title with secondary scope", () => {
+    const variant = renderWorkspaceItem({
+      metadata: createMetadata({
+        title: "Reviewer",
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        bestOf: {
+          groupId: "review-lanes",
+          index: 0,
+          total: 2,
+          kind: "variants",
+          label: "codebase simplicity and concurrency correctness",
+        },
+      }),
+    });
+
+    expect(
+      variant.view.getByRole("button", {
+        name: "Select workspace Reviewer, scope codebase simplicity and concurrency correctness",
+      })
+    ).toBeTruthy();
+    const roleTitle = variant.view.getByText("Reviewer");
+    const scopeLabel = variant.view.getByText(
+      "scope: codebase simplicity and concurrency correctness"
+    );
+    expect(roleTitle.className).toContain("text-[14px]");
+    expect(scopeLabel.className).toContain("text-[11px]");
+    expect(roleTitle.compareDocumentPosition(scopeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING
+    );
   });
 
   test("shows workflow-only activity on idle workspace rows", () => {

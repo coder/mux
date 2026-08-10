@@ -535,7 +535,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const displayTitle = suppressGroupMemberTitle
     ? (memberOnlyLabel ?? workspaceTitle)
     : groupLabel
-      ? `${groupLabel} · ${workspaceTitle}`
+      ? `${workspaceTitle}, scope ${groupLabel}`
       : workspaceTitle;
   const isEditing = editingWorkspaceId === workspaceId;
   const isPinned = isWorkspacePinned(metadata);
@@ -1201,17 +1201,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 data-workspace-id={workspaceId}
               />
             ) : (
-              <div className="flex min-w-0 items-baseline gap-1">
-                {/* Group label (variant name or A/B/C letter) rendered as a non-shrinkable
-                    badge so it stays visible even when the sidebar is narrow.
-                    items-baseline keeps the 12px label on the same text baseline as the
-                    14px title so they look naturally aligned despite the size difference. */}
-                {groupLabel && !suppressGroupMemberTitle && (
-                  <span className="text-muted shrink-0 text-[12px] leading-6">{groupLabel}</span>
-                )}
+              <div className="flex min-w-0 items-baseline gap-1.5">
                 <span
                   className={cn(
-                    "min-w-0 flex-1 truncate text-left text-[14px] leading-6 transition-colors duration-200",
+                    "min-w-0 truncate text-left text-[14px] leading-6 transition-colors duration-200",
+                    groupLabel && !suppressGroupMemberTitle ? "max-w-[45%] shrink-0" : "flex-1",
                     !isDisabled && "cursor-pointer",
                     (isGeneratingTitle || isPendingAutoTitle) && "italic",
                     titleColorClass
@@ -1219,6 +1213,14 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                 >
                   {suppressGroupMemberTitle ? memberOnlyLabel : workspaceTitle}
                 </span>
+                {groupLabel && !suppressGroupMemberTitle && (
+                  <span
+                    data-testid={`workspace-scope-label-${workspaceId}`}
+                    className="text-muted min-w-0 flex-1 truncate text-[11px] leading-6"
+                  >
+                    scope: {groupLabel}
+                  </span>
+                )}
               </div>
             )}
 

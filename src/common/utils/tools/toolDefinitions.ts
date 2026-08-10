@@ -2309,7 +2309,7 @@ export const TOOL_DEFINITIONS = {
   task_send_message: {
     description:
       "Send guidance to a descendant sub-agent. Queued/running work is interrupted or queued at the requested boundary so the child can incorporate the update. An inactive child is reawakened in the same persistent workspace under a fresh internal execution. " +
-      "The stable sub-agent task ID and durable title remain unchanged. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
+      "The stable sub-agent task ID and durable role title remain unchanged. If the new assignment changes the child's reusable responsibility, call task_retitle as well; do not retitle it for ordinary one-off assignments. Grouped n/variants children retain candidate/lane metadata, so reawaken them only to continue that same candidate or lane; use a standalone specialist for unrelated work. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
   task_retitle: {
