@@ -251,6 +251,7 @@ function renderWorkspaceItem(
     rowRenderMeta?: AgentRowRenderMeta;
     subAgentConnectorLayout?: "default" | "task-group-member";
     taskGroupHeaderTitle?: string;
+    isWorkspaceLiveActive?: boolean;
     delegatedActivity?: WorkspaceDelegatedActivity;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -269,6 +270,7 @@ function renderWorkspaceItem(
       rowRenderMeta={options.rowRenderMeta}
       subAgentConnectorLayout={options.subAgentConnectorLayout}
       taskGroupHeaderTitle={options.taskGroupHeaderTitle}
+      isWorkspaceLiveActive={options.isWorkspaceLiveActive}
       delegatedActivity={options.delegatedActivity}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
@@ -672,6 +674,22 @@ describe("AgentListItem", () => {
     expect(topSegment.getAttribute("style")).toContain(`left: ${left}`);
     expect(elbow.getAttribute("style")).toContain(`left: ${left}`);
     expect(elbow.getAttribute("style")).toContain(`width: ${width}`);
+  });
+
+  test("keeps the sub-agent elbow active during live interrupted-state fallback", () => {
+    const { view } = renderWorkspaceItem({
+      metadata: createMetadata({
+        parentWorkspaceId: "parent",
+        taskStatus: "interrupted",
+      }),
+      depth: 1,
+      rowRenderMeta: SUBAGENT_ROW_META,
+      isWorkspaceLiveActive: true,
+    });
+
+    const elbow = view.getByTestId("subagent-connector-elbow");
+    expect(elbow.tagName.toLowerCase()).toBe("svg");
+    expect(elbow.querySelector(".subagent-connector-elbow-active")).toBeTruthy();
   });
 
   test("does not render a heartbeat icon fallback when completed children indicator is shown", () => {

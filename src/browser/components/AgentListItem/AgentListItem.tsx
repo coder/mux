@@ -132,6 +132,8 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   /** Present when pinned rows in this list can be drag-reordered. */
   onPinnedReorderDrop?: (draggedId: string, targetId: string, edge: PinnedDropEdge) => void;
   rowRenderMeta?: AgentRowRenderMeta;
+  /** Live fallback used while task metadata is catching up to a still-running stream. */
+  isWorkspaceLiveActive?: boolean;
   delegatedActivity?: WorkspaceDelegatedActivity;
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -1322,7 +1324,9 @@ function AgentListItemInner(props: UnifiedAgentListItemProps) {
   if (rowMeta?.rowKind === "subagent") {
     // Connector geometry is driven by render metadata so visible siblings keep
     // consistent single/middle/last shapes as parents expand/collapse children.
-    const isElbowActive = isSidebarSubAgentRunning(props.metadata);
+    const isElbowActive = isSidebarSubAgentRunning(props.metadata, {
+      isWorkspaceLiveActive: () => props.isWorkspaceLiveActive === true,
+    });
     const connectorLayout = props.subAgentConnectorLayout ?? "default";
     const connectorDepth = props.depth ?? rowMeta.depth;
     const connectorRailX = getSubAgentParentRailX(connectorDepth, connectorLayout);

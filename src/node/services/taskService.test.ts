@@ -3253,6 +3253,60 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
   });
 
+  test("initialize contains per-child reconciliation persistence failures", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-reconciliation-write-failure";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child-write-failure", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+        })
+      );
+      return cfg;
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_write_failure",
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "turn-write-failure",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+    const internal = taskService as unknown as {
+      emitWorkspaceMetadata: (workspaceId: string) => Promise<void>;
+    };
+    spyOn(internal, "emitWorkspaceMetadata").mockImplementation((workspaceId: string) =>
+      workspaceId === childTaskId
+        ? Promise.reject(new Error("read-only session"))
+        : Promise.resolve()
+    );
+
+    let initializationError: unknown;
+    try {
+      await taskService.initialize();
+    } catch (error: unknown) {
+      initializationError = error;
+    }
+
+    expect(initializationError).toBeUndefined();
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionId).toBe("wst_write_failure");
+  });
+
   test("resolves a nested child execution through the ancestor that owns its handle", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

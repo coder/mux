@@ -2098,63 +2098,73 @@ export class TaskService {
 
     for (const task of this.listAgentTaskWorkspaces(config)) {
       if (task.id == null) continue;
-      const candidates = recordsByWorkspaceId.get(task.id) ?? [];
-      const referenced =
-        task.taskExecutionId != null ? recordsByHandleId.get(task.taskExecutionId) : undefined;
-      // Recover the crash window where the handle record became durable before the stable child
-      // pointer. Invalid timestamps are ignored so corrupt records cannot outrank active work.
-      const latestCandidate = candidates.reduce<TimestampedWorkspaceTurn | undefined>(
-        (latest, candidate) => {
-          if (latest == null) return candidate;
-          return candidate.updatedAtMs > latest.updatedAtMs ? candidate : latest;
-        },
-        undefined
-      );
-      const selected =
-        referenced == null
-          ? latestCandidate
-          : latestCandidate != null && latestCandidate.updatedAtMs > referenced.updatedAtMs
-            ? latestCandidate
-            : referenced;
-      const record = selected?.record;
-      if (record == null) {
-        if (task.taskExecutionId != null) {
-          await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
-        }
-        continue;
-      }
-
-      let normalized: WorkspaceTurnTaskHandleRecord | null;
       try {
-        normalized = await this.normalizeWorkspaceTurnRecord(record);
-      } catch (error: unknown) {
-        log.warn("Failed to reconcile persistent sub-agent execution", {
-          taskId: task.id,
-          handleId: record.handleId,
-          error,
-        });
-        continue;
-      }
-      if (normalized?.workspaceId !== task.id) {
-        if (task.taskExecutionId != null) {
-          await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
+        const candidates = recordsByWorkspaceId.get(task.id) ?? [];
+        const referenced =
+          task.taskExecutionId != null ? recordsByHandleId.get(task.taskExecutionId) : undefined;
+        // Recover the crash window where the handle record became durable before the stable child
+        // pointer. Invalid timestamps are ignored so corrupt records cannot outrank active work.
+        const latestCandidate = candidates.reduce<TimestampedWorkspaceTurn | undefined>(
+          (latest, candidate) => {
+            if (latest == null) return candidate;
+            return candidate.updatedAtMs > latest.updatedAtMs ? candidate : latest;
+          },
+          undefined
+        );
+        const selected =
+          referenced == null
+            ? latestCandidate
+            : latestCandidate != null && latestCandidate.updatedAtMs > referenced.updatedAtMs
+              ? latestCandidate
+              : referenced;
+        const record = selected?.record;
+        if (record == null) {
+          if (task.taskExecutionId != null) {
+            await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
+          }
+          continue;
         }
-        continue;
-      }
 
-      await this.editWorkspaceEntry(
-        task.id,
-        (workspace) => {
-          workspace.taskExecutionId = normalized.handleId;
-          workspace.taskExecutionStatus = normalized.status;
-        },
-        { allowMissing: true }
-      );
-      await this.emitWorkspaceMetadata(task.id);
-      if (isActiveWorkspaceTurnTaskStatus(normalized.status)) {
-        this.activeWorkspaceTurnHandleByWorkspaceId.set(task.id, {
-          handleId: normalized.handleId,
-          ownerWorkspaceId: normalized.ownerWorkspaceId,
+        let normalized: WorkspaceTurnTaskHandleRecord | null;
+        try {
+          normalized = await this.normalizeWorkspaceTurnRecord(record);
+        } catch (error: unknown) {
+          log.warn("Failed to reconcile persistent sub-agent execution", {
+            taskId: task.id,
+            handleId: record.handleId,
+            error,
+          });
+          continue;
+        }
+        if (normalized?.workspaceId !== task.id) {
+          if (task.taskExecutionId != null) {
+            await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
+          }
+          continue;
+        }
+
+        await this.editWorkspaceEntry(
+          task.id,
+          (workspace) => {
+            workspace.taskExecutionId = normalized.handleId;
+            workspace.taskExecutionStatus = normalized.status;
+          },
+          { allowMissing: true }
+        );
+        await this.emitWorkspaceMetadata(task.id);
+        if (isActiveWorkspaceTurnTaskStatus(normalized.status)) {
+          this.activeWorkspaceTurnHandleByWorkspaceId.set(task.id, {
+            handleId: normalized.handleId,
+            ownerWorkspaceId: normalized.ownerWorkspaceId,
+          });
+        }
+      } catch (error: unknown) {
+        // Startup recovery is best-effort: one read-only/corrupt child must not prevent Mux startup
+        // or block reconciliation of the remaining persistent children.
+        log.warn("Failed to persist persistent sub-agent execution reconciliation", {
+          taskId: task.id,
+          handleId: task.taskExecutionId,
+          error,
         });
       }
     }

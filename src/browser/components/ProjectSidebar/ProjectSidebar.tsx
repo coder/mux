@@ -2057,6 +2057,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             pinnedReorderGroup={SCRATCH_PINNED_REORDER_GROUP}
                             onPinnedReorderDrop={handlePinnedReorderDrop}
                             rowRenderMeta={rowRenderMeta}
+                            isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                             delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                             completedChildrenExpanded={expandedCompletedParentIds.has(metadata.id)}
                             onToggleCompletedChildren={toggleCompletedChildrenExpansion}
@@ -2137,6 +2138,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               pinnedReorderGroup={MULTI_PROJECT_PINNED_REORDER_GROUP}
                               onPinnedReorderDrop={handlePinnedReorderDrop}
                               rowRenderMeta={rowRenderMeta}
+                              isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                               delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
                                 metadata.id
@@ -2523,6 +2525,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     rowRenderMeta={rowRenderMeta}
                                     subAgentConnectorLayout={subAgentConnectorLayout}
                                     taskGroupHeaderTitle={taskGroupHeaderTitle}
+                                    isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                                     delegatedActivity={delegatedActivityByWorkspaceId.get(
                                       metadata.id
                                     )}
