@@ -33,6 +33,7 @@ import {
 import { log } from "@/node/services/log";
 import {
   checkProviderConfigured,
+  isLegacyOpApiKey,
   isProviderAutoRouteEligible,
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
@@ -68,7 +69,11 @@ function buildCustomProviderConfigInfo(
     normalizeProviderModelEntries(config.models),
     policy?.allowedModels ?? null
   );
-  const apiKeySet = typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
+  // Legacy op:// references are ignored at runtime, so report them as "not set".
+  const apiKeySet =
+    typeof config.apiKey === "string" &&
+    config.apiKey.trim().length > 0 &&
+    !isLegacyOpApiKey(config.apiKey);
   const apiKeyFile = typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined;
   const isEnabled = !isProviderDisabledInConfig(config);
 
@@ -342,7 +347,8 @@ export class ProviderService {
       const explicitBaseUrl = resolveConfigBaseUrl(config);
 
       const providerInfo: ProviderConfigInfo = {
-        apiKeySet: !!config.apiKey,
+        // Legacy op:// references are ignored at runtime, so report them as "not set".
+        apiKeySet: !!config.apiKey && !isLegacyOpApiKey(config.apiKey),
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below

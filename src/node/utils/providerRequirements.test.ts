@@ -139,6 +139,31 @@ describe("hasAnyConfiguredProvider", () => {
   });
 });
 
+describe("resolveProviderCredentials - legacy op:// references", () => {
+  it("falls back to the env key when config holds a legacy op:// reference", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      { apiKey: "op://Vault/OpenAI/credential" },
+      { OPENAI_API_KEY: "sk-from-env" }
+    );
+
+    expect(result.isConfigured).toBe(true);
+    expect(result.apiKey).toBe("sk-from-env");
+    expect(result.apiKeySource).toBe("env");
+  });
+
+  it("reports not configured when only a legacy op:// reference exists", () => {
+    const result = resolveProviderCredentials(
+      "openai",
+      { apiKey: "op://Vault/OpenAI/credential" },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(false);
+    expect(result.apiKey).toBeUndefined();
+  });
+});
+
 describe("resolveProviderCredentials base URL source", () => {
   it("marks OpenAI base URL from OPENAI_BASE_URL as env sourced", () => {
     const result = resolveProviderCredentials(

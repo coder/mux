@@ -261,6 +261,17 @@ function resolveApiKeyFileDetailed(filePath: unknown): ApiKeyFileResolution {
   }
 }
 
+/**
+ * Legacy 1Password `op://` references. The integration was removed; stored
+ * references are preserved on disk for downgrade compatibility but are
+ * unusable at runtime, so credential resolution and UI status must treat
+ * them as absent (falling back to key files / env vars) instead of sending
+ * the raw reference to a provider as a bearer token.
+ */
+export function isLegacyOpApiKey(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("op://");
+}
+
 function resolveApiKeyCandidate(
   config: { apiKey?: unknown; apiKeyFile?: unknown },
   options: {
@@ -270,7 +281,11 @@ function resolveApiKeyCandidate(
   }
 ): ResolvedApiKeyCandidate {
   const configKey =
-    typeof config.apiKey === "string" && config.apiKey.trim().length > 0 ? config.apiKey : null;
+    typeof config.apiKey === "string" &&
+    config.apiKey.trim().length > 0 &&
+    !isLegacyOpApiKey(config.apiKey)
+      ? config.apiKey
+      : null;
   if (configKey) {
     return { kind: "resolved", apiKey: configKey, source: "config" };
   }

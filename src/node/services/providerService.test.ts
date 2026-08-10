@@ -257,6 +257,22 @@ describe("ProviderService.getConfig", () => {
     });
   });
 
+  it("reports legacy op:// API key references as not set", () => {
+    withTempConfig((config, service) => {
+      config.saveProvidersConfig({
+        anthropic: {
+          apiKey: "op://Personal/Anthropic/credential",
+        },
+      });
+
+      const cfg = service.getConfig();
+
+      // Runtime env fallback is covered in providerRequirements.test.ts;
+      // getConfig() reads process.env, so only assert the display flag here.
+      expect(cfg.anthropic.apiKeySet).toBe(false);
+    });
+  });
+
   it("marks providers disabled when enabled is false", () => {
     withTempConfig((config, service) => {
       saveOpenAIConfig(config, { enabled: false });
