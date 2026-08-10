@@ -316,7 +316,16 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
         const turns = await taskService.listWorkspaceTurnTasks(workspaceId, {
           statuses: ["queued", "starting", "running"],
         });
-        return turns.map((turn) => turn.handleId);
+        const publicTurnIds: string[] = [];
+        for (const turn of turns) {
+          // Reactivated sub-agents use private workspace-turn executions. The stable child task ID
+          // already represents that work, so enumerating the internal handle would await it twice.
+          if (await taskService.isDescendantAgentTask(workspaceId, turn.workspaceId)) {
+            continue;
+          }
+          publicTurnIds.push(turn.handleId);
+        }
+        return publicTurnIds;
       };
       const listInScopeAwaitableTaskIds = async (): Promise<string[]> => {
         const awaitableTaskIds = [...activeDescendantAgentTaskIds];

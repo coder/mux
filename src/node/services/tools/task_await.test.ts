@@ -1597,6 +1597,52 @@ describe("task_await tool", () => {
     });
   });
 
+  it("omitted task_ids await a reactivated child only through its stable task ID", async () => {
+    using tempDir = new TestTempDir("test-task-await-tool-reactivated-descendant");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const continuation = {
+      kind: "workspace_turn",
+      handleId: "wst_continuation",
+      ownerWorkspaceId: "parent-workspace",
+      workspaceId: "child-task",
+      turnId: "turn-continuation",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    } as const;
+    const getWorkspaceTurnSnapshot = mock(() => Promise.resolve(continuation));
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["child-task"]),
+      listWorkspaceTurnTasks: mock(() => Promise.resolve([continuation])),
+      isDescendantAgentTask: mock((_ancestorWorkspaceId: string, taskId: string) =>
+        Promise.resolve(taskId === "child-task")
+      ),
+      getAgentTaskExecutionId: mock((taskId: string) =>
+        taskId === "child-task" ? "wst_continuation" : null
+      ),
+      getWorkspaceTurnSnapshot,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ timeout_secs: 0, min_completed: 2 }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "running",
+          taskId: "child-task",
+          note: "Workspace turn is still running.",
+        },
+      ],
+    });
+    expect(getWorkspaceTurnSnapshot).toHaveBeenCalledTimes(1);
+    expect(getWorkspaceTurnSnapshot).toHaveBeenCalledWith("parent-workspace", "wst_continuation");
+  });
+
   it("returns running status when foreground wait is backgrounded", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-backgrounded");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
