@@ -400,6 +400,8 @@ function createWorkspaceServiceMocks(
     emitChatEvent: ReturnType<typeof mock>;
     isWorkflowInvocationCurrent: ReturnType<typeof mock>;
     create: ReturnType<typeof mock>;
+    on: ReturnType<typeof mock>;
+    off: ReturnType<typeof mock>;
   }>
 ): {
   workspaceService: WorkspaceService;
@@ -427,6 +429,10 @@ function createWorkspaceServiceMocks(
   emitChatEvent: ReturnType<typeof mock>;
   isWorkflowInvocationCurrent: ReturnType<typeof mock>;
   create: ReturnType<typeof mock>;
+  on: ReturnType<typeof mock>;
+  off: ReturnType<typeof mock>;
+  /** Emit a chat event to listeners registered via workspaceService.on("chat"). */
+  emitChatToListeners: (event: { workspaceId: string; message: WorkspaceChatMessage }) => void;
 } {
   const sendMessage =
     overrides?.sendMessage ?? mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
@@ -478,6 +484,35 @@ function createWorkspaceServiceMocks(
         Promise.resolve(Err("workspaceService.create not mocked"))
     );
 
+  const chatListeners = new Set<
+    (event: { workspaceId: string; message: WorkspaceChatMessage }) => void
+  >();
+  const on =
+    overrides?.on ??
+    mock((event: string, listener: (...args: unknown[]) => void) => {
+      if (event === "chat") {
+        chatListeners.add(
+          listener as (event: { workspaceId: string; message: WorkspaceChatMessage }) => void
+        );
+      }
+      return undefined;
+    });
+  const off =
+    overrides?.off ??
+    mock((event: string, listener: (...args: unknown[]) => void) => {
+      if (event === "chat") {
+        chatListeners.delete(
+          listener as (event: { workspaceId: string; message: WorkspaceChatMessage }) => void
+        );
+      }
+      return undefined;
+    });
+  const emitChatToListeners = (event: { workspaceId: string; message: WorkspaceChatMessage }) => {
+    for (const listener of chatListeners) {
+      listener(event);
+    }
+  };
+
   return {
     workspaceService: {
       create,
@@ -505,6 +540,8 @@ function createWorkspaceServiceMocks(
       isExperimentEnabled,
       emitChatEvent,
       isWorkflowInvocationCurrent,
+      on,
+      off,
     } as unknown as WorkspaceService,
     create,
     sendMessage,
@@ -530,6 +567,9 @@ function createWorkspaceServiceMocks(
     isExperimentEnabled,
     emitChatEvent,
     isWorkflowInvocationCurrent,
+    on,
+    off,
+    emitChatToListeners,
   };
 }
 
@@ -19329,7 +19369,7 @@ describe("TaskService", () => {
     expect(childWorkspace?.taskLaunchError).toBe(refusalMessage);
   });
 
-  test("running tasks are NOT settled by aborted, context_exceeded, or retryable stream errors", async () => {
+  test("running tasks are NOT settled by aborted, context_exceeded, or in-flight retryable stream errors", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -19352,7 +19392,12 @@ describe("TaskService", () => {
       testTaskSettings(1, 3)
     );
 
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    // Simulate an in-flight auto-retry so retryable transport errors stay owned
+    // by the session retry loop rather than terminal-settling immediately.
+    const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === childId);
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
+      hasPendingAutoRetry,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const internal = taskService as unknown as {
@@ -19380,7 +19425,8 @@ describe("TaskService", () => {
       errorType: "context_exceeded",
     });
 
-    // Retryable transport errors stay owned by the agent session's retry loop.
+    // Retryable transport errors with a pending auto-retry stay owned by the
+    // agent session's retry loop (settlement happens on abandon if that fails).
     await internal.handleTaskStreamError({
       type: "error",
       workspaceId: childId,
@@ -19395,6 +19441,244 @@ describe("TaskService", () => {
     const childWorkspace = Array.from(postCfg.projects.values())
       .flatMap((project) => project.workspaces)
       .find((workspace) => workspace.id === childId);
+    expect(childWorkspace?.taskStatus).toBe("running");
+    expect(childWorkspace?.taskLaunchError).toBeUndefined();
+  });
+
+  test("running tasks settle immediately when a retryable stream error has no in-flight recovery", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+    const networkError = "fetch failed";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    // Default mocks: no pending auto-retry and not streaming — e.g. auto-retry
+    // disabled, so the stream-error itself must settle the parent waiter.
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+    };
+
+    const waiterOutcome = taskService
+      .waitForAgentReport(childId, { timeoutMs: 10_000, requestingWorkspaceId: parentId })
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-network",
+      error: networkError,
+      errorType: "network",
+    });
+
+    const rejection = await waiterOutcome;
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toBe(networkError);
+
+    const childWorkspace = findWorkspaceInConfig(config, childId);
+    expect(childWorkspace?.taskStatus).toBe("interrupted");
+    expect(childWorkspace?.taskLaunchError).toBe(networkError);
+  });
+
+  // Regression: a retryable stream error schedules in-session auto-retry, so
+  // handleTaskStreamError deliberately leaves the parent waiter blocked. If that
+  // retry is later abandoned (missing resume options, retry callback failed) without
+  // a new settling stream-error, the parent would wait until the 10-minute timeout.
+  // auto-retry-abandoned must settle the child and unblock the parent promptly.
+  test("auto-retry abandoned after a retryable stream error settles the child and unblocks the parent", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+    const networkError = "fetch failed";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    // Pending auto-retry keeps the task running after the stream error; abandonment
+    // is what must settle the parent (the no-pending path is covered separately).
+    let retryPending = true;
+    const hasPendingAutoRetry = mock(
+      (workspaceId: string) => retryPending && workspaceId === childId
+    );
+    const workspaceMocks = createWorkspaceServiceMocks({ hasPendingAutoRetry });
+    const { taskService } = createTaskServiceHarness(config, {
+      workspaceService: workspaceMocks.workspaceService,
+    });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+      workspaceEventLocks: { withLock(key: string, fn: () => Promise<void>): Promise<void> };
+    };
+
+    // Parent is blocked on the child when the retryable failure lands.
+    const waiterOutcome = taskService
+      .waitForAgentReport(childId, { timeoutMs: 10_000, requestingWorkspaceId: parentId })
+      .then(
+        () => null,
+        (error: unknown) => error
+      );
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-network",
+      error: networkError,
+      errorType: "network",
+    });
+
+    // Still running after the retryable error — session owns the retry loop.
+    expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("running");
+
+    // Auto-retry abandons without a further stream-error (e.g. missing_retry_options).
+    retryPending = false;
+    workspaceMocks.emitChatToListeners({
+      workspaceId: childId,
+      message: { type: "auto-retry-abandoned", reason: "missing_retry_options" },
+    });
+    // Drain the chat-listener lock so settlement finishes before assertions.
+    await internal.workspaceEventLocks.withLock(childId, () => Promise.resolve());
+
+    const rejection = await waiterOutcome;
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toBe(networkError);
+
+    const childWorkspace = findWorkspaceInConfig(config, childId);
+    expect(childWorkspace?.taskStatus).toBe("interrupted");
+    expect(childWorkspace?.taskLaunchError).toBe(networkError);
+
+    const failure = await readSubagentFailureArtifact(config.getSessionDir(parentId), childId);
+    expect(failure).not.toBeNull();
+    expect(failure?.errorType).toBe("network");
+    expect(failure?.errorMessage).toBe(networkError);
+  });
+
+  test("workspace-turn auto-retry abandoned after pending retry settles the handle as failed", async () => {
+    let retryPending = true;
+    const hasPendingAutoRetry = mock(
+      (workspaceId: string) => retryPending && workspaceId === "childworkspace"
+    );
+    const waitForPendingStreamErrorRecoveryDecision = mock((): Promise<void> => Promise.resolve());
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingAutoRetry,
+      waitForPendingStreamErrorRecoveryDecision,
+    });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+      handleTaskAutoRetryAbandoned: (workspaceId: string, reason: string) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: "childworkspace",
+      messageId: "msg_truncated_pending",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+      errorType: "stream_truncated",
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+      workspaceId: "childworkspace",
+    });
+
+    // Retry later abandons (callback failed / missing options). Clear pending flag first.
+    retryPending = false;
+    await internal.handleTaskAutoRetryAbandoned("childworkspace", "missing_retry_options");
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "error",
+      workspaceId: "childworkspace",
+      error: "Anthropic stream closed unexpectedly before the response completed.",
+    });
+  });
+
+  test("auto-retry abandoned with disabled_by_user does not terminal-fail a running task", async () => {
+    const config = await createTestConfig(rootDir);
+
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-111";
+    const childId = "child-222";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "child", childId, {
+          name: "agent_explore_child",
+          parentWorkspaceId: parentId,
+          agentType: "explore",
+          taskStatus: "running",
+          taskModelString: "openai:gpt-5.5-pro",
+        }),
+      ],
+      testTaskSettings(1, 3)
+    );
+
+    // Pending retry during the stream-error path keeps the task running; clear it
+    // before abandon so we exercise the disabled_by_user early-return itself
+    // (not the hasPendingAutoRetry live-check).
+    let retryPending = true;
+    const hasPendingAutoRetry = mock(
+      (workspaceId: string) => retryPending && workspaceId === childId
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ hasPendingAutoRetry });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const internal = taskService as unknown as {
+      handleTaskStreamError: (event: ErrorEvent) => Promise<void>;
+      handleTaskAutoRetryAbandoned: (workspaceId: string, reason: string) => Promise<void>;
+    };
+
+    await internal.handleTaskStreamError({
+      type: "error",
+      workspaceId: childId,
+      messageId: "assistant-error-network",
+      error: "fetch failed",
+      errorType: "network",
+    });
+
+    retryPending = false;
+    await internal.handleTaskAutoRetryAbandoned(childId, "disabled_by_user");
+
+    const childWorkspace = findWorkspaceInConfig(config, childId);
     expect(childWorkspace?.taskStatus).toBe("running");
     expect(childWorkspace?.taskLaunchError).toBeUndefined();
   });
