@@ -16,6 +16,7 @@ function createWorkspace(
   opts?: {
     parentWorkspaceId?: string;
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
+    taskExecutionStatus?: FrontendWorkspaceMetadata["taskExecutionStatus"];
     title?: string;
     createdAt?: string;
     bestOf?: FrontendWorkspaceMetadata["bestOf"];
@@ -32,6 +33,7 @@ function createWorkspace(
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     createdAt: opts?.createdAt,
     parentWorkspaceId: opts?.parentWorkspaceId,
+    taskExecutionStatus: opts?.taskExecutionStatus,
     taskStatus: opts?.taskStatus,
     bestOf: opts?.bestOf,
     workflowTask: opts?.workflowTask,
@@ -45,6 +47,7 @@ function workflowChild(
   runId: string,
   opts?: {
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
+    taskExecutionStatus?: FrontendWorkspaceMetadata["taskExecutionStatus"];
     createdAt?: string;
     workflowName?: string;
     title?: string;
@@ -53,6 +56,7 @@ function workflowChild(
   return createWorkspace(id, {
     parentWorkspaceId: "parent",
     taskStatus: opts?.taskStatus ?? "running",
+    taskExecutionStatus: opts?.taskExecutionStatus,
     createdAt: opts?.createdAt,
     title: opts?.title,
     workflowTask: {
@@ -152,6 +156,28 @@ describe("computeSidebarTaskGroups", () => {
         .get("workflow:parent:wfr_alpha")
         ?.displayMembers.map((member) => member.id)
     ).toEqual(["running"]);
+  });
+
+  test("counts reawakened grouped children by continuation state before retained reports", () => {
+    const running = workflowChild("reawakened-running", "wfr_reawakened", {
+      taskStatus: "reported",
+      taskExecutionStatus: "running",
+    });
+    const queued = workflowChild("reawakened-queued", "wfr_reawakened", {
+      taskStatus: "reported",
+      taskExecutionStatus: "queued",
+    });
+    const rows = [parent, running, queued];
+
+    const result = computeSidebarTaskGroups({ rows, allRows: rows });
+    const group = result.groupsByStorageKey.get("workflow:parent:wfr_reawakened");
+
+    expect(group).toMatchObject({
+      runningCount: 1,
+      queuedCount: 1,
+      completedCount: 0,
+      hasActiveMember: true,
+    });
   });
 
   test("counts queued members as active so new runs default to expanded", () => {

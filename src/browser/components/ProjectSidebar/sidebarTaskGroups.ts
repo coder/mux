@@ -336,10 +336,8 @@ export function computeSidebarTaskGroups(params: {
     let queuedCount = 0;
     let interruptedCount = 0;
     for (const member of allMembers) {
-      if (hasCompletedAgentReport(member)) {
-        completedCount += 1;
-        continue;
-      }
+      // A reawakened child retains its prior report while the private continuation runs. Live
+      // execution state must win over completed-report evidence so grouped rows stay active.
       if (
         isWorkspaceDelegatedActivityActive(member, {
           isWorkspaceLiveActive: params.isWorkspaceLiveActive,
@@ -348,8 +346,12 @@ export function computeSidebarTaskGroups(params: {
         runningCount += 1;
         continue;
       }
-      if (member.taskStatus === "queued") {
+      if (member.taskExecutionStatus === "queued" || member.taskStatus === "queued") {
         queuedCount += 1;
+        continue;
+      }
+      if (hasCompletedAgentReport(member)) {
+        completedCount += 1;
         continue;
       }
       if (member.taskStatus === "interrupted") {
