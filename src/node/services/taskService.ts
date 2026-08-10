@@ -4308,10 +4308,10 @@ export class TaskService {
           return Err({ code: "invalid_scope" as const });
         }
 
-        const currentExecutionId = entry.workspace.taskExecutionId;
         const currentExecution =
-          currentExecutionId != null
-            ? await this.getWorkspaceTurnSnapshot(ancestorWorkspaceId, currentExecutionId)
+          entry.workspace.taskExecutionId != null
+            ? ((await this.getDescendantAgentTaskExecutionSnapshot(ancestorWorkspaceId, taskId))
+                ?.record ?? null)
             : null;
         const continuationActive =
           currentExecution?.status === "queued" ||

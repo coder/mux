@@ -10657,6 +10657,71 @@ describe("TaskService", () => {
     expect(reactivated.data.executionTaskId).toMatch(/^wst_/);
   });
 
+  test("higher ancestors steer a nested active continuation without reawakening it again", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-nested-active-guidance";
+    const parentTaskId = "parent-nested-active-guidance";
+    const childTaskId = "child-nested-active-guidance";
+    const executionTaskId = "wst_nested_active_guidance";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent", parentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: parentTaskId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          taskExecutionId: executionTaskId,
+          taskExecutionStatus: "queued",
+          title: "React lifecycle expert",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const hasPendingQueuedOrPreparingTurn = mock(
+      (workspaceId: string) => workspaceId === childTaskId
+    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
+      hasPendingQueuedOrPreparingTurn,
+    });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: executionTaskId,
+      ownerWorkspaceId: parentTaskId,
+      workspaceId: childTaskId,
+      turnId: "turn-nested-active-guidance",
+      status: "queued",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        rootWorkspaceId,
+        childTaskId,
+        "Keep investigating the existing continuation.",
+        "tool-end"
+      )
+    ).toEqual(Ok({ delivery: "queued", queueDispatchMode: "tool-end" }));
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionId).toBe(executionTaskId);
+    expect(await taskHandleStore.listAllWorkspaceTurns()).toHaveLength(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
   test("reactivated children can report progress while retaining their completed task status", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["reactivatehandle", "reactivateturn"]);

@@ -149,6 +149,12 @@ function hasDelegatedActivity(activity: WorkspaceDelegatedActivity): boolean {
   return activity.activeCount > 0 || activity.queuedCount > 0;
 }
 
+export function isActionableTaskExecutionStatus(
+  status: FrontendWorkspaceMetadata["taskExecutionStatus"]
+): boolean {
+  return status === "queued" || status === "starting" || status === "running";
+}
+
 export function isActiveOrStartingTaskStatus(
   status: FrontendWorkspaceMetadata["taskStatus"]
 ): boolean {
@@ -181,7 +187,11 @@ export function isWorkspaceDelegatedActivityActive(
   workspace: FrontendWorkspaceMetadata,
   options: DelegatedActivityOptions = {}
 ): boolean {
-  if (isActiveOrStartingTaskStatus(workspace.taskStatus)) {
+  if (
+    workspace.taskExecutionStatus === "starting" ||
+    workspace.taskExecutionStatus === "running" ||
+    isActiveOrStartingTaskStatus(workspace.taskStatus)
+  ) {
     return true;
   }
   if (hasCompletedAgentReport(workspace)) {
@@ -261,7 +271,10 @@ export function computeDelegatedActivityByWorkspaceId(
         if (childWorkflowOwned) {
           descendantActivity.workflowActiveCount += 1;
         }
-      } else if (!hasCompletedAgentReport(child) && child.taskStatus === "queued") {
+      } else if (
+        child.taskExecutionStatus === "queued" ||
+        (!hasCompletedAgentReport(child) && child.taskStatus === "queued")
+      ) {
         descendantActivity.queuedCount += 1;
         if (childWorkflowOwned) {
           descendantActivity.workflowQueuedCount += 1;
@@ -352,7 +365,11 @@ export function filterVisibleAgentRows(
     }
 
     const parentVisible = isVisible(parent);
-    const isCompletedChildTask = hasCompletedAgentReport(workspace);
+    // A reawakened child retains its prior report while the continuation runs. Keep that active
+    // execution visible even when the parent's completed-history section is collapsed.
+    const isCompletedChildTask =
+      hasCompletedAgentReport(workspace) &&
+      !isActionableTaskExecutionStatus(workspace.taskExecutionStatus);
     const shouldHideCompletedChild = isCompletedChildTask && !expandedParentIds.has(parentId);
     const visible = parentVisible && !shouldHideCompletedChild;
 
@@ -393,7 +410,11 @@ export function computeAgentRowRenderMeta(
   }
 
   for (const workspace of flattenedWorkspaces) {
-    if (!workspace.parentWorkspaceId || !hasCompletedAgentReport(workspace)) {
+    if (
+      !workspace.parentWorkspaceId ||
+      !hasCompletedAgentReport(workspace) ||
+      isActionableTaskExecutionStatus(workspace.taskExecutionStatus)
+    ) {
       continue;
     }
 

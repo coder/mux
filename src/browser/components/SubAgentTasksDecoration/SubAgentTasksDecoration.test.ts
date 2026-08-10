@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import { collectDescendantSubAgents, isSubAgentActive } from "./SubAgentTasksDecoration";
+import {
+  collectDescendantSubAgents,
+  getSubAgentStatusPresentation,
+  isSubAgentActive,
+} from "./SubAgentTasksDecoration";
 
 function workspace(
   id: string,
@@ -51,10 +55,33 @@ describe("collectDescendantSubAgents", () => {
     ]);
   });
 
-  test("classifies only actionable task statuses as active", () => {
+  test("classifies actionable base and continuation statuses as active", () => {
     expect(isSubAgentActive(workspace("queued", { taskStatus: "queued" }))).toBe(true);
     expect(isSubAgentActive(workspace("finishing", { taskStatus: "awaiting_report" }))).toBe(true);
+    expect(
+      isSubAgentActive(
+        workspace("reawakened", { taskStatus: "reported", taskExecutionStatus: "running" })
+      )
+    ).toBe(true);
     expect(isSubAgentActive(workspace("reported", { taskStatus: "reported" }))).toBe(false);
     expect(isSubAgentActive(workspace("interrupted", { taskStatus: "interrupted" }))).toBe(false);
+  });
+
+  test("presents terminal continuation outcomes instead of the retained base report", () => {
+    expect(
+      getSubAgentStatusPresentation(
+        workspace("completed", { taskStatus: "reported", taskExecutionStatus: "completed" })
+      ).label
+    ).toBe("Completed");
+    expect(
+      getSubAgentStatusPresentation(
+        workspace("interrupted", { taskStatus: "reported", taskExecutionStatus: "interrupted" })
+      ).label
+    ).toBe("Interrupted");
+    expect(
+      getSubAgentStatusPresentation(
+        workspace("failed", { taskStatus: "reported", taskExecutionStatus: "error" })
+      ).label
+    ).toBe("Failed");
   });
 });

@@ -23,6 +23,7 @@ interface WorkspaceFixtureOptions {
   isInitializing?: boolean;
   parentWorkspaceId?: string;
   taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
+  taskExecutionStatus?: FrontendWorkspaceMetadata["taskExecutionStatus"];
   reportedAt?: string;
   workflowTask?: FrontendWorkspaceMetadata["workflowTask"];
 }
@@ -53,6 +54,7 @@ const createWorkspace = (
     isInitializing: options.isInitializing,
     parentWorkspaceId: options.parentWorkspaceId,
     taskStatus: options.taskStatus,
+    taskExecutionStatus: options.taskExecutionStatus,
     reportedAt: options.reportedAt,
     workflowTask: options.workflowTask,
   };
@@ -843,6 +845,32 @@ describe("delegated workspace activity roll-up", () => {
     expect(activityByWorkspaceId.get("parent")?.activeCount).toBe(1);
   });
 
+  it("rolls reawakened continuation activity up despite the retained report", () => {
+    const reportedAt = new Date(0).toISOString();
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("running-continuation", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        reportedAt,
+        taskExecutionStatus: "running",
+      }),
+      createWorkspace("queued-continuation", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        reportedAt,
+        taskExecutionStatus: "queued",
+      }),
+    ];
+
+    expect(computeDelegatedActivityByWorkspaceId(workspaces).get("parent")).toEqual({
+      activeCount: 1,
+      queuedCount: 1,
+      workflowActiveCount: 0,
+      workflowQueuedCount: 0,
+    });
+  });
+
   it("keeps live interrupted descendants active until report finalization", () => {
     const workspaces = [
       createWorkspace("parent"),
@@ -1079,6 +1107,29 @@ describe("sub-agent row render metadata", () => {
     expect(metadataByWorkspaceId.get("parent")?.hasHiddenCompletedChildren).toBe(false);
     expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(0);
     expect(metadataByWorkspaceId.has("resumed-child")).toBe(true);
+  });
+
+  it("keeps reawakened reported children visible while completed rows are collapsed", () => {
+    const flattened = [
+      createWorkspace("parent"),
+      createWorkspace("reawakened-child", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        reportedAt: "2026-08-09T00:00:00.000Z",
+        taskExecutionStatus: "running",
+      }),
+    ];
+
+    expect(filterVisibleAgentRows(flattened).map((workspace) => workspace.id)).toEqual([
+      "parent",
+      "reawakened-child",
+    ]);
+
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+    expect(metadataByWorkspaceId.get("parent")?.hasHiddenCompletedChildren).toBe(false);
+    expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(0);
+    expect(metadataByWorkspaceId.has("reawakened-child")).toBe(true);
   });
 
   it("keeps unfinished interrupted children visible and out of completed counts", () => {

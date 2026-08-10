@@ -1,4 +1,4 @@
-import { Bot, CheckCircle2, CircleSlash2, Clock3, LoaderCircle } from "lucide-react";
+import { Bot, CheckCircle2, CircleSlash2, CircleX, Clock3, LoaderCircle } from "lucide-react";
 
 import { useWorkspaceMetadata } from "@/browser/contexts/WorkspaceContext";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
@@ -7,6 +7,7 @@ import { ChatInputDecoration } from "@/browser/components/ChatPane/ChatInputDeco
 import { getSubAgentTasksExpandedKey } from "@/common/constants/storage";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { isWorkspaceArchived } from "@/common/utils/archive";
+import { isActionableTaskExecutionStatus } from "@/browser/utils/ui/workspaceFiltering";
 import { cn } from "@/common/lib/utils";
 
 interface DescendantSubAgent {
@@ -23,9 +24,7 @@ const ACTIVE_SUBAGENT_STATUSES = new Set<FrontendWorkspaceMetadata["taskStatus"]
 
 export function isSubAgentActive(workspace: FrontendWorkspaceMetadata): boolean {
   return (
-    workspace.taskExecutionStatus === "queued" ||
-    workspace.taskExecutionStatus === "starting" ||
-    workspace.taskExecutionStatus === "running" ||
+    isActionableTaskExecutionStatus(workspace.taskExecutionStatus) ||
     ACTIVE_SUBAGENT_STATUSES.has(workspace.taskStatus)
   );
 }
@@ -75,22 +74,23 @@ export function collectDescendantSubAgents(
   return descendants;
 }
 
-function getStatusPresentation(workspace: FrontendWorkspaceMetadata): {
+export function getSubAgentStatusPresentation(workspace: FrontendWorkspaceMetadata): {
   label: string;
   icon: typeof Clock3;
   iconClassName: string;
 } {
-  if (
-    workspace.taskExecutionStatus === "queued" ||
-    workspace.taskExecutionStatus === "starting" ||
-    workspace.taskExecutionStatus === "running"
-  ) {
-    return {
-      label: workspace.taskExecutionStatus === "queued" ? "Queued" : "Running",
-      icon: workspace.taskExecutionStatus === "queued" ? Clock3 : LoaderCircle,
-      iconClassName:
-        workspace.taskExecutionStatus === "queued" ? "text-muted" : "text-success animate-spin",
-    };
+  switch (workspace.taskExecutionStatus) {
+    case "queued":
+      return { label: "Queued", icon: Clock3, iconClassName: "text-muted" };
+    case "starting":
+    case "running":
+      return { label: "Running", icon: LoaderCircle, iconClassName: "text-success animate-spin" };
+    case "completed":
+      return { label: "Completed", icon: CheckCircle2, iconClassName: "text-success" };
+    case "interrupted":
+      return { label: "Interrupted", icon: CircleSlash2, iconClassName: "text-muted" };
+    case "error":
+      return { label: "Failed", icon: CircleX, iconClassName: "text-danger" };
   }
   switch (workspace.taskStatus) {
     case "queued":
@@ -143,7 +143,7 @@ export function SubAgentTasksDecoration(props: { workspaceId: string }) {
       }
       renderExpanded={() =>
         subAgents.map(({ workspace, depth }) => {
-          const status = getStatusPresentation(workspace);
+          const status = getSubAgentStatusPresentation(workspace);
           const StatusIcon = status.icon;
           return (
             <button
