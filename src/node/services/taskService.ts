@@ -2056,12 +2056,31 @@ export class TaskService {
       return;
     }
 
-    const recordsByHandleId = new Map(records.map((record) => [record.handleId, record]));
-    const recordsByWorkspaceId = new Map<string, WorkspaceTurnTaskHandleRecord[]>();
+    interface TimestampedWorkspaceTurn {
+      record: WorkspaceTurnTaskHandleRecord;
+      updatedAtMs: number;
+    }
+    const timestampedRecords: TimestampedWorkspaceTurn[] = [];
     for (const record of records) {
-      const workspaceRecords = recordsByWorkspaceId.get(record.workspaceId) ?? [];
-      workspaceRecords.push(record);
-      recordsByWorkspaceId.set(record.workspaceId, workspaceRecords);
+      const updatedAtMs = Date.parse(record.updatedAt);
+      if (!Number.isFinite(updatedAtMs)) {
+        log.warn("Ignoring persistent sub-agent execution with invalid updatedAt", {
+          handleId: record.handleId,
+          workspaceId: record.workspaceId,
+          updatedAt: record.updatedAt,
+        });
+        continue;
+      }
+      timestampedRecords.push({ record, updatedAtMs });
+    }
+    const recordsByHandleId = new Map(
+      timestampedRecords.map((candidate) => [candidate.record.handleId, candidate])
+    );
+    const recordsByWorkspaceId = new Map<string, TimestampedWorkspaceTurn[]>();
+    for (const candidate of timestampedRecords) {
+      const workspaceRecords = recordsByWorkspaceId.get(candidate.record.workspaceId) ?? [];
+      workspaceRecords.push(candidate);
+      recordsByWorkspaceId.set(candidate.record.workspaceId, workspaceRecords);
     }
 
     for (const task of this.listAgentTaskWorkspaces(config)) {
@@ -2070,20 +2089,21 @@ export class TaskService {
       const referenced =
         task.taskExecutionId != null ? recordsByHandleId.get(task.taskExecutionId) : undefined;
       // Recover the crash window where the handle record became durable before the stable child
-      // pointer. The latest matching handle is the continuation the public child ID should follow.
-      const latestCandidate = candidates.reduce<WorkspaceTurnTaskHandleRecord | undefined>(
+      // pointer. Invalid timestamps are ignored so corrupt records cannot outrank active work.
+      const latestCandidate = candidates.reduce<TimestampedWorkspaceTurn | undefined>(
         (latest, candidate) => {
           if (latest == null) return candidate;
-          return candidate.updatedAt > latest.updatedAt ? candidate : latest;
+          return candidate.updatedAtMs > latest.updatedAtMs ? candidate : latest;
         },
         undefined
       );
-      const record =
+      const selected =
         referenced == null
           ? latestCandidate
-          : latestCandidate != null && latestCandidate.updatedAt > referenced.updatedAt
+          : latestCandidate != null && latestCandidate.updatedAtMs > referenced.updatedAtMs
             ? latestCandidate
             : referenced;
+      const record = selected?.record;
       if (record == null) {
         if (task.taskExecutionId != null) {
           await this.updateAgentTaskExecutionState(task.id, task.taskExecutionId, null);
@@ -3562,6 +3582,15 @@ export class TaskService {
         }
         if (targetIsAgentWorkspace) {
           await this.updateAgentTaskExecutionState(targetWorkspaceId, handleId, "running");
+          // A stopped queued child keeps its only copy of the initial brief in taskPrompt. Once the
+          // continuation accepts the replayed prompt, history owns that brief and the config copy can go.
+          await this.editWorkspaceEntry(
+            targetWorkspaceId,
+            (workspace) => {
+              delete workspace.taskPrompt;
+            },
+            { allowMissing: true }
+          );
         }
         this.activeWorkspaceTurnHandleByWorkspaceId.set(targetWorkspaceId, {
           handleId,
@@ -4354,9 +4383,13 @@ export class TaskService {
           if (refreshedEntry == null) {
             return Err({ code: "not_found" as const });
           }
+          const updatedGuidance = `Updated guidance from parent:\n\n${trimmedMessage}`;
+          const preservedQueuedPrompt = coerceNonEmptyString(refreshedEntry.workspace.taskPrompt);
           const execution = await this.createWorkspaceTurn({
             ownerWorkspaceId: ancestorWorkspaceId,
-            prompt: `Updated guidance from parent:\n\n${trimmedMessage}`,
+            prompt: preservedQueuedPrompt
+              ? `${preservedQueuedPrompt}\n\n${updatedGuidance}`
+              : updatedGuidance,
             title:
               coerceNonEmptyString(refreshedEntry.workspace.title) ??
               coerceNonEmptyString(refreshedEntry.workspace.name) ??

@@ -3192,6 +3192,61 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
   });
 
+  test("initialize ignores malformed continuation timestamps when selecting the latest handle", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-invalid-execution-timestamp";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child-invalid-timestamp", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          taskExecutionId: "wst_invalid_timestamp",
+          taskExecutionStatus: "completed",
+        })
+      );
+      return cfg;
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_invalid_timestamp",
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "turn-invalid-timestamp",
+      status: "completed",
+      createdAt: "2026-08-10T00:00:02.000Z",
+      updatedAt: "zzz",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_valid_timestamp",
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "turn-valid-timestamp",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+
+    await taskService.initialize();
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionId).toBe("wst_valid_timestamp");
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
+  });
+
   test("resolves a nested child execution through the ancestor that owns its handle", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
@@ -10720,6 +10775,53 @@ describe("TaskService", () => {
     );
     expect(execution?.title).toBe("React lifecycle expert");
     expect(reactivated.data.executionTaskId).toMatch(/^wst_/);
+  });
+
+  test("reawakening a stopped queued child replays its preserved initial brief", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["queuedreplayhandle", "queuedreplayturn"]);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-queued-replay";
+    const childTaskId = "child-queued-replay";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskPrompt: "Inspect the original queued assignment.",
+          title: "Queued task expert",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const result = await taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Also verify the regression tests.",
+      "tool-end"
+    );
+
+    expect(result).toMatchObject({
+      success: true,
+      data: { delivery: "reactivated", executionTaskId: "wst_queuedreplayhandle" },
+    });
+    expect(sendMessage.mock.calls[0]?.[1]).toBe(
+      "Inspect the original queued assignment.\n\nUpdated guidance from parent:\n\nAlso verify the regression tests."
+    );
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskPrompt).toBeUndefined();
   });
 
   test("higher ancestors steer a nested active continuation without reawakening it again", async () => {
