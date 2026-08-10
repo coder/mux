@@ -5731,12 +5731,10 @@ export class TaskService {
 
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
-      const existingMessageAt = latestMessageTimestampByTaskId.get(notification.sourceId);
-      const notificationCreatedAt = Date.parse(notification.createdAt);
-      const hasCurrentTerminalMessage =
-        existingMessageAt != null &&
-        (!Number.isFinite(notificationCreatedAt) || existingMessageAt >= notificationCreatedAt);
-      if (existingTaskIds.has(notification.sourceId) && hasCurrentTerminalMessage) {
+      if (existingTaskIds.has(notification.sourceId)) {
+        // Report/failure delivery necessarily precedes terminal-attention enqueue. Presence in parent
+        // history is therefore authoritative here; continuation freshness is checked separately
+        // against the private execution's createdAt before suppressing its workspace-turn wake.
         deliverableNotificationIds.add(notification.id);
         continue;
       }

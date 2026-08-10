@@ -2989,7 +2989,6 @@ describe("TaskService", () => {
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       sourceId: childTaskId,
-      createdAt: "2026-08-10T00:00:01.500Z",
     });
     await terminalAttentionStore.enqueueIfAbsent({
       ownerWorkspaceId: parentWorkspaceId,
