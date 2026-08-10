@@ -2169,6 +2169,63 @@ describe("Config", () => {
       expect(parsed.__global__).toEqual([{ key: "GLOBAL_A", value: "1" }]);
     });
 
+    it("preserves unsupported legacy entries on disk when saving unrelated secrets", async () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      const legacyEntry = { key: "LEGACY_OP", value: { op: "op://Vault/Item/field" } };
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: [legacyEntry, { key: "KEEP", value: "kept" }],
+          "/other/project": [legacyEntry],
+        })
+      );
+
+      // Legacy entries are hidden from runtime/UI views...
+      expect(config.getGlobalSecrets()).toEqual([{ key: "KEEP", value: "kept" }]);
+
+      await config.updateGlobalSecrets([
+        { key: "KEEP", value: "kept" },
+        { key: "NEW", value: "added" },
+      ]);
+
+      // ...but survive on disk so a downgrade can still read them, in both the
+      // updated bucket and untouched buckets.
+      const parsed = JSON.parse(fs.readFileSync(secretsFile, "utf-8")) as Record<string, unknown>;
+      expect(parsed.__global__).toEqual([
+        { key: "KEEP", value: "kept" },
+        { key: "NEW", value: "added" },
+        legacyEntry,
+      ]);
+      expect(parsed["/other/project"]).toEqual([legacyEntry]);
+    });
+
+    it("drops a preserved legacy entry when an update reuses its key", async () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      fs.writeFileSync(
+        secretsFile,
+        JSON.stringify({
+          __global__: [{ key: "TOKEN", value: { op: "op://Vault/Item/field" } }],
+        })
+      );
+
+      await config.updateGlobalSecrets([{ key: "TOKEN", value: "replaced" }]);
+
+      const parsed = JSON.parse(fs.readFileSync(secretsFile, "utf-8")) as Record<string, unknown>;
+      expect(parsed.__global__).toEqual([{ key: "TOKEN", value: "replaced" }]);
+    });
+
+    it("preserves legacy entries from trailing-slash duplicate project buckets", async () => {
+      const secretsFile = path.join(tempDir, "secrets.json");
+      const legacyEntry = { key: "LEGACY_OP", value: { op: "op://Vault/Item/field" } };
+      fs.writeFileSync(secretsFile, JSON.stringify({ "/repo/": [legacyEntry] }));
+
+      await config.updateProjectSecrets("/repo", [{ key: "NEW", value: "added" }]);
+
+      const parsed = JSON.parse(fs.readFileSync(secretsFile, "utf-8")) as Record<string, unknown>;
+      expect(parsed["/repo/"]).toBeUndefined();
+      expect(parsed["/repo"]).toEqual([{ key: "NEW", value: "added" }, legacyEntry]);
+    });
+
     it("does not inherit global secrets by default", async () => {
       await config.updateGlobalSecrets([
         { key: "TOKEN", value: "global" },
