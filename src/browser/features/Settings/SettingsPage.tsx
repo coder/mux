@@ -282,11 +282,7 @@ export function SettingsPage(props: SettingsPageProps) {
                 {section.icon}
                 {section.label}
                 {section.experimental && (
-                  <FlaskConical
-                    role="img"
-                    aria-label="Experimental"
-                    className="text-warning h-3 w-3 shrink-0"
-                  />
+                  <FlaskConical aria-hidden="true" className="text-warning h-3 w-3 shrink-0" />
                 )}
               </Button>
             ))}
@@ -310,11 +306,7 @@ export function SettingsPage(props: SettingsPageProps) {
                   {section.icon}
                   {section.label}
                   {section.experimental && (
-                    <FlaskConical
-                      role="img"
-                      aria-label="Experimental"
-                      className="text-warning h-3 w-3 shrink-0"
-                    />
+                    <FlaskConical aria-hidden="true" className="text-warning h-3 w-3 shrink-0" />
                   )}
                 </Button>
               ))}
