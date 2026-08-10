@@ -2115,6 +2115,57 @@ describe("TaskService", () => {
     }
   });
 
+  test("parallel quota counts a reawakened child only through its continuation handle", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const reawakenedTaskId = "reawakened-quota-child";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "ordinary-child", "ordinary-quota-child", {
+          parentWorkspaceId: parentId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "reawakened-child", reawakenedTaskId, {
+          parentWorkspaceId: parentId,
+          taskStatus: "reported",
+          taskExecutionId: "wst_reawakened_quota",
+          taskExecutionStatus: "running",
+        })
+      );
+      return cfg;
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === reawakenedTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_reawakened_quota",
+      ownerWorkspaceId: parentId,
+      workspaceId: reawakenedTaskId,
+      turnId: "turn-reawakened-quota",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+    const internal = taskService as unknown as {
+      countActiveAgentTasks: (cfg: ReturnType<Config["loadConfigOrDefault"]>) => number;
+      countActiveWorkspaceTurns: () => Promise<number>;
+    };
+
+    const activeAgentCount = internal.countActiveAgentTasks(config.loadConfigOrDefault());
+    const activeWorkspaceTurnCount = await internal.countActiveWorkspaceTurns();
+
+    expect(activeAgentCount).toBe(1);
+    expect(activeWorkspaceTurnCount).toBe(1);
+    expect(activeAgentCount + activeWorkspaceTurnCount).toBe(2);
+  });
+
   test("active workspace turn count settles stale persisted handles", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
@@ -10695,6 +10746,15 @@ describe("TaskService", () => {
           reportedAt: "2026-08-10T00:00:00.000Z",
           taskExecutionId: executionTaskId,
           taskExecutionStatus: "queued",
+          taskModelString: "anthropic:claude-sonnet-4-6",
+          taskThinkingLevel: "low",
+          aiSettingsByAgent: {
+            explore: {
+              model: "openai:gpt-5.6-sol",
+              thinkingLevel: "high",
+              reasoningMode: "pro",
+            },
+          },
           title: "React lifecycle expert",
         }),
       ],
@@ -10734,6 +10794,12 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionId).toBe(executionTaskId);
     expect(await taskHandleStore.listAllWorkspaceTurns()).toHaveLength(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage.mock.calls[0]?.[2]).toMatchObject({
+      model: "openai:gpt-5.6-sol",
+      agentId: "explore",
+      thinkingLevel: "high",
+      reasoningMode: "pro",
+    });
   });
 
   test("reactivated children can report progress while retaining their completed task status", async () => {

@@ -4435,6 +4435,8 @@ export class TaskService {
           );
         };
 
+        const activeAgentId = resolveTaskAgentIdForResume(entry.workspace);
+        const activeAiSettings = this.resolveWorkspaceAISettings(entry.workspace, activeAgentId);
         let accepted = false;
         const sendResult = await this.workspaceService.sendMessage(
           taskId,
@@ -4443,10 +4445,13 @@ export class TaskService {
           // human intervention in child-only features such as goals and interactive questions.
           `Updated guidance from parent:\n\n${trimmedMessage}`,
           {
-            model: entry.workspace.taskModelString ?? defaultModel,
-            agentId: resolveTaskAgentIdForResume(entry.workspace),
-            thinkingLevel: entry.workspace.taskThinkingLevel,
-            reasoningMode: coerceOpenAIReasoningMode(entry.workspace.aiSettings?.reasoningMode),
+            model:
+              coerceNonEmptyString(activeAiSettings?.model) ??
+              entry.workspace.taskModelString ??
+              defaultModel,
+            agentId: activeAgentId,
+            thinkingLevel: activeAiSettings?.thinkingLevel ?? entry.workspace.taskThinkingLevel,
+            reasoningMode: coerceOpenAIReasoningMode(activeAiSettings?.reasoningMode),
             experiments: entry.workspace.taskExperiments,
             queueDispatchMode,
           },
@@ -8982,6 +8987,16 @@ export class TaskService {
     let activeCount = 0;
     for (const task of this.listAgentTaskWorkspaces(config)) {
       const status: AgentTaskStatus = task.taskStatus ?? "running";
+      // A reawakened persistent child is represented by its private workspace-turn handle in the
+      // workspace-turn count. Charging its mirrored execution status here would count one task twice.
+      if (
+        isWorkspaceTurnTaskId(task.taskExecutionId) &&
+        (task.taskExecutionStatus === "queued" ||
+          task.taskExecutionStatus === "starting" ||
+          task.taskExecutionStatus === "running")
+      ) {
+        continue;
+      }
       // If this task workspace is blocked in a foreground wait, do not count it towards parallelism.
       // This prevents deadlocks where a task spawns a nested task in the foreground while
       // maxParallelAgentTasks is low (e.g. 1).
