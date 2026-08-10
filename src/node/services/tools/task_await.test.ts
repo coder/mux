@@ -1691,6 +1691,45 @@ describe("task_await tool", () => {
     expect(getAgentTaskStatus).toHaveBeenCalledWith("t1");
   });
 
+  it("awaits a reawakened child through its stable task ID", async () => {
+    using tempDir = new TestTempDir("test-task-await-reactivated-child");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => ["child-agent"]),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskExecutionId: mock(() => "wst_internal"),
+      getWorkspaceTurnSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "workspace_turn" as const,
+          handleId: "wst_internal",
+          ownerWorkspaceId: "parent-workspace",
+          workspaceId: "child-agent",
+          turnId: "turn",
+          status: "running" as const,
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-10T00:00:00.000Z",
+          createdWorkspace: false,
+          disposableWorkspace: false,
+        })
+      ),
+    } as unknown as TaskService;
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+
+    expect(
+      await Promise.resolve(
+        tool.execute!({ task_ids: ["child-agent"], timeout_secs: 0 }, mockToolCallOptions)
+      )
+    ).toEqual({
+      results: [
+        {
+          status: "running",
+          taskId: "child-agent",
+          note: "Workspace turn is still running.",
+        },
+      ],
+    });
+  });
+
   it("returns completed result when timeout_secs=0 and a cached report is available", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-timeout-zero-cached");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

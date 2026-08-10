@@ -54,13 +54,13 @@ describe("normalizeTaskSettings", () => {
     expect(normalized.preserveSubagentsUntilArchive).toBe(true);
   });
 
-  test("legacy explicit retention values remain parseable", () => {
+  test("legacy retention values normalize to the uniform persistent lifecycle", () => {
     expect(
       normalizeTaskSettings({ preserveSubagentsUntilArchive: true }).preserveSubagentsUntilArchive
     ).toBe(true);
     expect(
       normalizeTaskSettings({ preserveSubagentsUntilArchive: false }).preserveSubagentsUntilArchive
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("missing preserveSubagentsUntilArchive falls back to the persistent default", () => {

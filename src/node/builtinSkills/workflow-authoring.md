@@ -103,7 +103,7 @@ For condition-driven monitors (CI, mergeability, review arrival, deployment heal
 
 Runs are durable, so stopping one is non-destructive:
 
-- `task_terminate` with a `wfr_...` run ID interrupts the run; the event journal is preserved.
+- `task_stop` with a `wfr_...` run ID interrupts the run; the event journal is preserved.
 - `workflow_resume` continues an `interrupted` (or crash-orphaned `running`/`backgrounded`) run from its last durable event — completed steps are replayed from the journal, never re-executed. Resuming a `completed` run just returns its existing result.
 - For `failed` runs, `workflow_resume` with `mode: "retry_from_checkpoint"` re-executes work after the last checkpoint; it is rejected when unfinished patch steps make that unsafe — start a fresh `workflow_run` instead.
 - After an app restart, rediscover resumable runs with `task_list` (statuses `interrupted`/`failed`).

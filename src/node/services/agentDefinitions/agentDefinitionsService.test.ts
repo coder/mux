@@ -492,8 +492,8 @@ Custom planning instructions.
           "task_apply_git_patch",
           "task_await",
           "task_list",
-          "task_terminate",
-          "task_workspace_lifecycle",
+          "task_stop",
+          "task_remove",
           "workflow_run",
         ],
         toolPolicy

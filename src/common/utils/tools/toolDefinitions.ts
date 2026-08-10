@@ -324,7 +324,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
     "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
-    "\n\nSub-agent workspaces persist after they report and stay available for follow-up inspection. A terminal report completes the delegated execution but does not delete its workspace. Integrate the report and any artifacts first; then keep the child if follow-up access may be useful, otherwise archive it with task_workspace_lifecycle. Completed sub-agents are collapsed in the UI by default. Do not use task_terminate as cleanup for a completed task; reserve it for discarding active/in-progress work. Set sticky=true only when the user explicitly wants this task to require its own lifecycle decision; an unarchived sticky child blocks ancestor archive and must be archived or removed explicitly first. " +
+    "\n\nA terminal report makes the child inactive but leaves its workspace persistent. Reawaken it later with task_send_message; stop active work with task_stop and irreversibly delete inactive children with task_remove. " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
@@ -336,11 +336,11 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
     "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
     "If the foreground wait times out, returns queued/starting/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
-    "If run_in_background is true, returns immediately with queued/starting/running task metadata and the task runs non-blocking: you may end your turn without awaiting it, and Mux wakes this workspace when the task reaches a terminal state so you can integrate its result. Use task_await only when the current request depends on the output before you can answer, or to inspect progress. " +
+    "If run_in_background is true, returns immediately with queued/starting/running task metadata and arranges a one-shot terminal wake when the task settles. Foreground waits that are later detached use the same terminal-wake path. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
     "Use run_in_background: true when launching multiple tasks in parallel so you can act on each as it completes via task_await (which returns on the first completion by default); a foreground grouped spawn (run_in_background: false) instead blocks until every sibling finishes and returns all reports at once. " +
     "Do not call task_await in the same parallel tool-call batch; wait for the returned task metadata first. " +
-    "If later user guidance corrects or refines an active sub-agent's work, use task_send_message to update the existing child instead of terminating and recreating it. " +
+    "Use task_send_message for later guidance whether the child is active or inactive; inactive children reawaken under the same stable identity. " +
     isolationGuidance +
     "Use the bash tool to run shell commands."
   );
@@ -373,7 +373,6 @@ function refineTaskToolAgentArgs(
     prompt: string;
     n?: number | null;
     variants?: string[] | null;
-    sticky?: boolean | null;
     workspace?: { mode?: "new" | "fork" | "existing" | null; workspaceId?: string | null } | null;
   },
   ctx: z.RefinementCtx
@@ -395,13 +394,6 @@ function refineTaskToolAgentArgs(
         code: z.ZodIssueCode.custom,
         message: "Workspace tasks do not support n or variants yet",
         path: args.n != null ? ["n"] : ["variants"],
-      });
-    }
-    if (args.sticky === true) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Workspace tasks do not accept sticky; full workspaces already persist by default",
-        path: ["sticky"],
       });
     }
     if ((args.workspace?.mode ?? "new") === "fork") {
@@ -479,14 +471,13 @@ const taskToolBaseShape = {
   agentId: TaskAgentIdSchema.nullish(),
   subagent_type: SubagentTypeSchema.nullish(),
   prompt: z.string().min(1),
-  title: z.string().min(1),
-  run_in_background: z.boolean().default(false),
-  sticky: z
-    .boolean()
-    .nullish()
+  title: z
+    .string()
+    .min(1)
     .describe(
-      "Require an explicit lifecycle decision for this sub-agent. Ordinary sub-agents already persist after reporting; an unarchived sticky child blocks ancestor archive and must be archived or removed explicitly before its parent can be archived."
+      "Parent-chosen durable title for the child workspace. Name the sub-agent's long-term area of expertise, not the current one-off assignment."
     ),
+  run_in_background: z.boolean().default(false),
   n: TaskToolBestOfCountSchema.nullish().describe(
     "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
   ),
@@ -494,7 +485,7 @@ const taskToolBaseShape = {
     `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
   ),
   workspace: WorkspaceTaskTargetSchema.nullish().describe(
-    'Workspace target for kind="workspace". Omit for a new full workspace; use mode="existing" with workspaceId only for workspaces previously created by this caller.'
+    'Workspace target for kind="workspace". Omit for a new full workspace; use mode="existing" with workspaceId only for a workspace previously created by this caller.'
   ),
   model: TaskToolModelSchema.nullish().describe(
     "Optional model override for the sub-agent, parsed with the same alias logic as the UI (an alias or a full 'provider:model' string). Omit this unless the user explicitly instructed a specific model — by default the sub-agent inherits the parent's model. Do not assume any particular model is available."
@@ -1024,6 +1015,13 @@ const TaskSendMessageToolQueuedResultSchema = z
   })
   .strict();
 
+const TaskSendMessageToolReactivatedResultSchema = z
+  .object({
+    status: z.literal("reactivated"),
+    taskId: z.string(),
+  })
+  .strict();
+
 const TaskSendMessageToolNotFoundResultSchema = z
   .object({
     status: z.literal("not_found"),
@@ -1066,11 +1064,92 @@ const TaskSendMessageToolErrorResultSchema = z
 export const TaskSendMessageToolResultSchema = z.discriminatedUnion("status", [
   TaskSendMessageToolAcceptedResultSchema,
   TaskSendMessageToolQueuedResultSchema,
+  TaskSendMessageToolReactivatedResultSchema,
   TaskSendMessageToolNotFoundResultSchema,
   TaskSendMessageToolInvalidScopeResultSchema,
   TaskSendMessageToolNotActiveResultSchema,
   TaskSendMessageToolErrorResultSchema,
 ]);
+
+// -----------------------------------------------------------------------------
+// task_stop (non-destructively stop tasks/processes)
+// -----------------------------------------------------------------------------
+export const TaskStopToolArgsSchema = z
+  .object({
+    task_ids: z.array(z.string().min(1)).min(1).describe("Task IDs to stop."),
+  })
+  .strict();
+
+const TaskStopToolStoppedResultSchema = z
+  .object({
+    status: z.literal("stopped"),
+    taskId: z.string(),
+    stoppedTaskIds: z.array(z.string()).optional(),
+    note: z.string().optional(),
+  })
+  .strict();
+
+const TaskStopToolAlreadyInactiveResultSchema = z
+  .object({
+    status: z.literal("already_inactive"),
+    taskId: z.string(),
+  })
+  .strict();
+
+const TaskStopToolNotFoundResultSchema = z
+  .object({ status: z.literal("not_found"), taskId: z.string() })
+  .strict();
+const TaskStopToolInvalidScopeResultSchema = z
+  .object({ status: z.literal("invalid_scope"), taskId: z.string() })
+  .strict();
+const TaskStopToolErrorResultSchema = z
+  .object({ status: z.literal("error"), taskId: z.string(), error: z.string() })
+  .strict();
+
+export const TaskStopToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskStopToolStoppedResultSchema,
+        TaskStopToolAlreadyInactiveResultSchema,
+        TaskStopToolNotFoundResultSchema,
+        TaskStopToolInvalidScopeResultSchema,
+        TaskStopToolErrorResultSchema,
+      ])
+    ),
+  })
+  .strict();
+
+// -----------------------------------------------------------------------------
+// task_remove (irreversibly remove inactive child workspaces)
+// -----------------------------------------------------------------------------
+export const TaskRemoveToolArgsSchema = z
+  .object({
+    task_ids: z.array(z.string().min(1)).min(1).describe("Inactive child task IDs to remove."),
+  })
+  .strict();
+
+const TaskRemoveToolBaseResultSchema = z.object({
+  taskId: z.string(),
+  workspaceId: z.string().optional(),
+  descendantTaskIds: z.array(z.string()).optional(),
+  error: z.string().optional(),
+});
+
+export const TaskRemoveToolResultSchema = z
+  .object({
+    results: z.array(
+      z.discriminatedUnion("status", [
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("removed") }).strict(),
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("already_removed") }).strict(),
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("active") }).strict(),
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("not_found") }).strict(),
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("invalid_scope") }).strict(),
+        TaskRemoveToolBaseResultSchema.extend({ status: z.literal("error") }).strict(),
+      ])
+    ),
+  })
+  .strict();
 
 // -----------------------------------------------------------------------------
 // task_terminate (terminate sub-agent/bash tasks, interrupt workflow runs)
@@ -1149,7 +1228,12 @@ export const TaskTerminateToolResultSchema = z
 // task_workspace_lifecycle (parent-owned workspace cleanup)
 // -----------------------------------------------------------------------------
 
-export const TaskWorkspaceLifecycleActionSchema = z.enum(["archive", "delete_worktree", "remove"]);
+export const TaskWorkspaceLifecycleActionSchema = z.enum([
+  "archive",
+  "unarchive",
+  "delete_worktree",
+  "remove",
+]);
 
 export const TaskWorkspaceLifecycleTargetSchema = z
   .object({
@@ -1172,7 +1256,7 @@ export const TaskWorkspaceLifecycleTargetSchema = z
 export const TaskWorkspaceLifecycleToolArgsSchema = z
   .object({
     action: TaskWorkspaceLifecycleActionSchema.describe(
-      'Lifecycle action to perform: "archive" is the safe default, "delete_worktree" reclaims disk after archive, and "remove" irreversibly deletes archived workspace metadata/session state.'
+      'Lifecycle action to perform: "archive" hides and suspends without deleting state, "unarchive" restores visibility, "delete_worktree" reclaims disk after archive, and "remove" irreversibly deletes archived workspace metadata/session state.'
     ),
     targets: z
       .array(TaskWorkspaceLifecycleTargetSchema)
@@ -1216,6 +1300,10 @@ const TaskWorkspaceLifecycleBaseResultSchema = z.object({
 export const TaskWorkspaceLifecycleToolTargetResultSchema = z.discriminatedUnion("status", [
   TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("archived") }).strict(),
   TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("already_archived") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("unarchived") }).strict(),
+  TaskWorkspaceLifecycleBaseResultSchema.extend({
+    status: z.literal("already_unarchived"),
+  }).strict(),
   TaskWorkspaceLifecycleBaseResultSchema.extend({ status: z.literal("deleted_worktree") }).strict(),
   TaskWorkspaceLifecycleBaseResultSchema.extend({
     status: z.literal("already_transcript_only"),
@@ -1272,7 +1360,7 @@ export const TaskListToolArgsSchema = z
       .boolean()
       .nullish()
       .describe(
-        "Whether to include archived child workspace tasks. Defaults to false, hiding archived non-actionable child workspace work."
+        "Compatibility option for archived workspace-turn and bash records. Legacy archived sub-agents remain listable as inactive children regardless."
       ),
   })
   .strict();
@@ -1290,7 +1378,6 @@ export const TaskListToolTaskSchema = z
     workspaceId: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
-    sticky: z.boolean().optional(),
     workflowProgress: WorkflowProgressSummarySchema.optional(),
     depth: z.number().int().min(0),
   })
@@ -1606,7 +1693,7 @@ export const TOOL_DEFINITIONS = {
                 "or processes requiring real-time output (use foreground with larger timeout instead). " +
                 "Returns immediately with a taskId (bash:<processId>) and backgroundProcessId. " +
                 "Read output with task_await (returns only new output since last check). " +
-                "Terminate with task_terminate using the taskId. " +
+                "Stop with task_stop using the taskId. " +
                 "List active tasks with task_list. " +
                 "Process persists until timeout_secs expires, terminated, or workspace is removed." +
                 "\\n\\nFor long-running tasks like builds or compilations, prefer background mode to continue productive work in parallel. " +
@@ -2187,27 +2274,19 @@ export const TOOL_DEFINITIONS = {
   },
   task_send_message: {
     description:
-      "Send updated guidance to a running descendant sub-agent without terminating or recreating it. " +
-      "If the child is busy, the message is queued for the requested boundary; tool-end is the default so corrections can take effect after the child's next tool call. Queued tasks have the guidance appended to their durable launch prompt. " +
-      "Use this when a new user message corrects or refines work that an active sub-agent is already performing. " +
-      "This tool only accepts sub-agent task IDs in the current workspace's descendant tree; it does not target bash tasks, workflow runs, or workspace-turn handles.",
+      "Send guidance to a descendant sub-agent. Queued/running work is interrupted or queued at the requested boundary so the child can incorporate the update. An inactive child is reawakened in the same persistent workspace under a fresh internal execution. " +
+      "The stable sub-agent task ID and durable title remain unchanged. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
-  task_terminate: {
+  task_stop: {
     description:
-      "Terminate one or more tasks immediately (sub-agent tasks, background bash tasks, or workflow runs). " +
-      "Use this for active/in-progress sub-agents whose work should be discarded, not as cleanup for completed persistent sub-agents; archive completed child workspaces with task_workspace_lifecycle instead. " +
-      "For sub-agent tasks, this stops their AI streams and deletes their workspaces (best-effort); no report will be delivered, any in-progress work is discarded, and descendant sub-agent tasks are terminated too. " +
-      "For workflow runs (wfr_... IDs), this interrupts the run instead: durable state is preserved and the run can be resumed later with workflow_resume.",
-    schema: TaskTerminateToolArgsSchema,
+      "Stop one or more tasks without removing persistent child workspaces. Sub-agent trees are stopped leaf-first and become inactive; workspace turns and workflow runs are interrupted; bash processes are terminated. Stopping an already-inactive task is idempotent.",
+    schema: TaskStopToolArgsSchema,
   },
-  task_workspace_lifecycle: {
+  task_remove: {
     description:
-      'Archive, delete the managed worktree for, or remove child workspaces owned by the current workspace, including persistent sub-agents and task(kind="workspace") turns. ' +
-      "This tool is parent-scoped and cannot act on arbitrary user workspaces. A completed sub-agent remains available after its report; after integrating the report and artifacts, keep it if follow-up access may be useful or archive it when the child workspace is no longer needed. " +
-      'Use action="archive" as the normal safe cleanup action. Use delete_worktree only after archive to reclaim disk while preserving transcript metadata. ' +
-      "Use remove only for explicit irreversible cleanup of already archived owned workspaces, and remove nested descendants deepest-first because a parent with remaining descendants cannot be removed. Active workspace turns are refused unless interrupt_active is true; active sub-agents must be discarded with task_terminate. Force never bypasses ownership, archive, descendant, or confirmation checks.",
-    schema: TaskWorkspaceLifecycleToolArgsSchema,
+      "Irreversibly remove inactive child task workspaces owned by the current workspace. Removed sub-agents cannot be restored or reawakened. Active targets are rejected; descendants must be removed first, so nested batches are processed deepest-first.",
+    schema: TaskRemoveToolArgsSchema,
   },
   task_list: {
     description:
@@ -2216,7 +2295,7 @@ export const TOOL_DEFINITIONS = {
       "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks, inactive persistent sub-agents, and resumable workflow runs. The default statuses find unfinished work; request `reported` explicitly for completed persistent sub-agents. " +
       "When recovering an uncertain workflow_run, omit statuses first or include pending/running/backgrounded as well as interrupted/failed/completed; terminal-only filters can hide unfinished workflow runs. Pending runs may need workflow_resume because no runner may be active yet. " +
       "Workflow rows may include compact `workflowProgress` so callers can see the latest phase before deciding whether to await, resume, or leave the run alone. " +
-      "Archived non-actionable child workspace tasks are hidden by default; pass includeArchived: true to inspect them. " +
+      "The legacy includeArchived option only affects archived workspace-turn and bash records; sub-agents remain one inactive/active task identity. " +
       "This is a discovery tool, NOT a waiting mechanism. If the current request actually depends on a task's output, call task_await with the specific task IDs you need; do not await all active tasks just because they appear here.",
     schema: TaskListToolArgsSchema,
   },
@@ -2237,7 +2316,7 @@ export const TOOL_DEFINITIONS = {
   },
   workflow_resume: {
     description:
-      "Resume an existing durable workflow run by run ID (wfr_...). Use this for runs that were interrupted (by the user, task_terminate, or an app crash/restart) — " +
+      "Resume an existing durable workflow run by run ID (wfr_...). Use this for runs that were interrupted (by the user, task_stop, or an app crash/restart) — " +
       "resume replays the durable event log and continues from the last checkpoint without re-executing completed steps. " +
       "Discover resumable runs with task_list (statuses pending/interrupted/failed). Pending runs left by post-create aborts and interrupted runs can be resumed in default mode; running/backgrounded workflows do not need resume, await them with task_await. " +
       "For failed runs, pass mode='retry_from_checkpoint' explicitly; it re-executes work after the last checkpoint, so only use it when that is acceptable, and start a fresh workflow_run when it is rejected as unsafe. " +
@@ -2493,7 +2572,7 @@ export const TOOL_DEFINITIONS = {
   },
   bash_background_terminate: {
     description:
-      "DEPRECATED: use task_terminate instead. " +
+      "DEPRECATED: use task_stop instead. " +
       "Terminate a background process started with bash(run_in_background=true). " +
       "Use process_id from the original bash response or from bash_background_list. " +
       "Sends SIGTERM, waits briefly, then SIGKILL if needed. " +
@@ -3066,8 +3145,8 @@ export type BridgeableToolName =
   | "task_apply_git_patch"
   | "task_list"
   | "task_send_message"
-  | "task_terminate"
-  | "task_workspace_lifecycle"
+  | "task_stop"
+  | "task_remove"
   | "heartbeat"
   | "memory";
 
@@ -3094,8 +3173,8 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_apply_git_patch: TaskApplyGitPatchToolResultSchema,
   task_list: TaskListToolResultSchema,
   task_send_message: TaskSendMessageToolResultSchema,
-  task_terminate: TaskTerminateToolResultSchema,
-  task_workspace_lifecycle: TaskWorkspaceLifecycleToolResultSchema,
+  task_stop: TaskStopToolResultSchema,
+  task_remove: TaskRemoveToolResultSchema,
   heartbeat: HeartbeatToolResultSchema,
   memory: MemoryToolResultSchema,
 };
@@ -3209,8 +3288,8 @@ export function getAvailableTools(
     "task_await",
     "task_apply_git_patch",
     "task_send_message",
-    "task_terminate",
-    "task_workspace_lifecycle",
+    "task_stop",
+    "task_remove",
     "task_list",
     ...(enableDynamicWorkflows ? ["workflow_run", "workflow_resume"] : []),
     ...(enableAgentReport ? ["agent_report"] : []),

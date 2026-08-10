@@ -20,7 +20,7 @@ tools:
     # Plan should not apply sub-agent patches.
     - task_apply_git_patch
     # Plan should not perform destructive workspace cleanup.
-    - task_workspace_lifecycle
+    - task_remove
     # Global config and catalog tools stay out of general-purpose agents
     - mux_agents_.*
     - agent_skill_write

@@ -1113,9 +1113,13 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
                         : null
                     }
                     isPinned={isPinned}
-                    onArchiveChat={(anchorEl) => {
-                      void onArchiveWorkspace(workspaceId, anchorEl);
-                    }}
+                    onArchiveChat={
+                      isSubAgentRow
+                        ? null
+                        : (anchorEl) => {
+                            void onArchiveWorkspace(workspaceId, anchorEl);
+                          }
+                    }
                     onCloseMenu={() => ctxMenu.close()}
                   />
                   {!isSelected && !isUnread && (

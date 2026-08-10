@@ -252,9 +252,15 @@ export const WorkspaceMetadataSchema = z.object({
       'Workspace isolation for an agent task. "none" shares an ancestor checkout and must never be treated as an independently managed worktree.',
   }),
   taskSticky: z.boolean().optional().meta({
-    description:
-      "Strong retention for an agent task. An unarchived sticky child blocks ancestor archive and requires its own archive or remove action.",
+    description: "Legacy ignored retention marker kept for on-disk downgrade compatibility.",
   }),
+  taskExecutionId: z.string().optional().meta({
+    description: "Latest internal execution handle for a reawakened persistent sub-agent.",
+  }),
+  taskExecutionStatus: z
+    .enum(["queued", "starting", "running", "completed", "interrupted", "error"])
+    .optional()
+    .meta({ description: "Status of the latest internal reawakened sub-agent execution." }),
   archivedAt: z.string().optional().meta({
     description:
       "ISO 8601 timestamp when workspace was last archived. Workspace is considered archived if archivedAt > unarchivedAt (or unarchivedAt is absent).",

@@ -103,7 +103,6 @@ describe("task_list tool", () => {
 
     expect(result).toEqual({ tasks: [] });
     expect(listDescendantAgentTasks).toHaveBeenCalledWith("root-workspace", {
-      statuses: ["queued", "starting", "running", "awaiting_report"],
       excludeWorkflowTasks: true,
     });
   });
@@ -123,7 +122,6 @@ describe("task_list tool", () => {
 
     expect(result).toEqual({ tasks: [] });
     expect(listDescendantAgentTasks).toHaveBeenCalledWith("root-workspace", {
-      statuses: ["running"],
       excludeWorkflowTasks: true,
     });
   });
@@ -143,7 +141,6 @@ describe("task_list tool", () => {
         createdAt: "2025-01-01T00:00:00.000Z",
         modelString: "anthropic:claude-haiku-4-5",
         thinkingLevel: "low",
-        sticky: true,
         depth: 1,
       },
     ]);
@@ -165,7 +162,6 @@ describe("task_list tool", () => {
           createdAt: "2025-01-01T00:00:00.000Z",
           modelString: "anthropic:claude-haiku-4-5",
           thinkingLevel: "low",
-          sticky: true,
           depth: 1,
         },
       ],
@@ -225,7 +221,10 @@ describe("task_list tool", () => {
     );
 
     expect(taskIds(result)).toEqual([
+      "archived-reported",
       "archived-running",
+      "archived-interrupted",
+      "ancestor-archived-child",
       "open-reported",
       "unarchived-reported",
       "missing-reported",
@@ -267,12 +266,133 @@ describe("task_list tool", () => {
       tool.execute!({ statuses: ["reported"], includeArchived: true }, mockToolCallOptions)
     );
 
-    expect(taskIds(defaultResult)).toEqual(["open-reported"]);
+    expect(taskIds(defaultResult)).toEqual([
+      "archived-reported",
+      "ancestor-archived-child",
+      "open-reported",
+    ]);
     expect(taskIds(includeArchivedResult)).toEqual([
       "archived-reported",
       "ancestor-archived-child",
       "open-reported",
     ]);
+  });
+
+  it("overlays a reawakened execution onto the stable child task row", async () => {
+    using tempDir = new TestTempDir("test-task-list-reactivated-child");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const taskService = {
+      listDescendantAgentTasks: mock(() => [
+        {
+          taskId: "child-agent",
+          status: "reported" as const,
+          parentWorkspaceId: "root-workspace",
+          title: "React lifecycle expert",
+          executionTaskId: "wst_internal",
+          depth: 1,
+        },
+      ]),
+      getWorkspaceTurnSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "workspace_turn" as const,
+          handleId: "wst_internal",
+          ownerWorkspaceId: "root-workspace",
+          workspaceId: "child-agent",
+          turnId: "turn",
+          status: "running" as const,
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-10T00:00:00.000Z",
+          createdWorkspace: false,
+          disposableWorkspace: false,
+        })
+      ),
+      listWorkspaceTurnTasks: mock(() =>
+        Promise.resolve([
+          {
+            kind: "workspace_turn" as const,
+            handleId: "wst_internal",
+            ownerWorkspaceId: "root-workspace",
+            workspaceId: "child-agent",
+            turnId: "turn",
+            status: "running" as const,
+            createdAt: "2026-08-10T00:00:00.000Z",
+            updatedAt: "2026-08-10T00:00:00.000Z",
+            createdWorkspace: false,
+            disposableWorkspace: false,
+          },
+        ])
+      ),
+    } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    expect(
+      await Promise.resolve(tool.execute!({ statuses: ["running"] }, mockToolCallOptions))
+    ).toEqual({
+      tasks: [
+        {
+          taskId: "child-agent",
+          status: "running",
+          parentWorkspaceId: "root-workspace",
+          title: "React lifecycle expert",
+          depth: 1,
+        },
+      ],
+    });
+  });
+
+  it("never exposes settled continuation handles for descendant agent workspaces", async () => {
+    using tempDir = new TestTempDir("test-task-list-hidden-continuation-handles");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const listDescendantAgentTasks = mock(() => [
+      {
+        taskId: "child-agent",
+        status: "reported" as const,
+        parentWorkspaceId: "root-workspace",
+        title: "React lifecycle expert",
+        executionTaskId: "wst_current",
+        depth: 1,
+      },
+    ]);
+    const listWorkspaceTurnTasks = mock(() =>
+      Promise.resolve([
+        {
+          kind: "workspace_turn" as const,
+          handleId: "wst_previous",
+          ownerWorkspaceId: "root-workspace",
+          workspaceId: "child-agent",
+          turnId: "turn-previous",
+          status: "completed" as const,
+          createdAt: "2026-08-09T00:00:00.000Z",
+          updatedAt: "2026-08-09T00:00:01.000Z",
+          createdWorkspace: false,
+          disposableWorkspace: false,
+        },
+        {
+          kind: "workspace_turn" as const,
+          handleId: "wst_current",
+          ownerWorkspaceId: "root-workspace",
+          workspaceId: "child-agent",
+          turnId: "turn-current",
+          status: "completed" as const,
+          createdAt: "2026-08-10T00:00:00.000Z",
+          updatedAt: "2026-08-10T00:00:01.000Z",
+          createdWorkspace: false,
+          disposableWorkspace: false,
+        },
+      ])
+    );
+    const taskService = {
+      listDescendantAgentTasks,
+      isDescendantAgentTask: mock((_ancestorWorkspaceId: string, candidateWorkspaceId: string) =>
+        Promise.resolve(candidateWorkspaceId === "child-agent")
+      ),
+      listWorkspaceTurnTasks,
+    } as unknown as TaskService;
+    const tool = createTaskListTool({ ...baseConfig, taskService });
+
+    expect(
+      await Promise.resolve(tool.execute!({ statuses: ["completed"] }, mockToolCallOptions))
+    ).toEqual({ tasks: [] });
   });
 
   it("lists workspace-turn handles with workspace metadata", async () => {

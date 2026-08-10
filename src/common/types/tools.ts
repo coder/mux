@@ -30,6 +30,10 @@ import type {
   TaskAwaitToolResultSchema,
   TaskApplyGitPatchToolResultSchema,
   TaskListToolResultSchema,
+  TaskStopToolResultSchema,
+  TaskRemoveToolResultSchema,
+  TaskTerminateToolArgsSchema,
+  TaskWorkspaceLifecycleToolArgsSchema,
   TaskTerminateToolResultSchema,
   TaskWorkspaceLifecycleToolResultSchema,
   TimelineEventToolResultSchema,
@@ -279,15 +283,21 @@ export type TaskSendMessageToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_send_
 
 export type TaskSendMessageToolSuccessResult = z.infer<typeof TaskSendMessageToolResultSchema>;
 
+// Task Stop Tool Types
+export type TaskStopToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_stop.schema>;
+export type TaskStopToolSuccessResult = z.infer<typeof TaskStopToolResultSchema>;
+
+// Task Remove Tool Types
+export type TaskRemoveToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_remove.schema>;
+export type TaskRemoveToolSuccessResult = z.infer<typeof TaskRemoveToolResultSchema>;
+
 // Task Terminate Tool Types
-export type TaskTerminateToolArgs = z.infer<typeof TOOL_DEFINITIONS.task_terminate.schema>;
+export type TaskTerminateToolArgs = z.infer<typeof TaskTerminateToolArgsSchema>;
 
 export type TaskTerminateToolSuccessResult = z.infer<typeof TaskTerminateToolResultSchema>;
 
 // Task Workspace Lifecycle Tool Types (parent-owned archive/delete_worktree/remove)
-export type TaskWorkspaceLifecycleToolArgs = z.infer<
-  typeof TOOL_DEFINITIONS.task_workspace_lifecycle.schema
->;
+export type TaskWorkspaceLifecycleToolArgs = z.infer<typeof TaskWorkspaceLifecycleToolArgsSchema>;
 
 // Success shape is `{ results: [...] }` (no top-level `success`); a thrown execute()
 // surfaces as ToolErrorResult, so the renderable result is the union of both.

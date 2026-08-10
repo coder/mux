@@ -79,7 +79,7 @@ Use this rubric to avoid blind spots:
 
 ## Clean up delegated review work
 
-After consolidating the findings, remember that completed review sub-agents remain as persistent child workspaces. Keep any child that still needs follow-up; otherwise archive completed review children in one `task_workspace_lifecycle` batch. Do not use `task_terminate` to clean up completed reviews.
+After consolidating the findings, remember that completed review sub-agents remain as inactive child workspaces. Keep any child that still needs follow-up; otherwise remove completed review children in one deepest-first `task_remove` batch. Use `task_stop` only for review work that is still active but no longer needed.
 
 ## Anti-patterns
 

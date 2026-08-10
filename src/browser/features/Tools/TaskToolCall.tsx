@@ -42,6 +42,10 @@ import type {
   TaskListToolSuccessResult,
   TaskSendMessageToolArgs,
   TaskSendMessageToolSuccessResult,
+  TaskStopToolArgs,
+  TaskStopToolSuccessResult,
+  TaskRemoveToolArgs,
+  TaskRemoveToolSuccessResult,
   TaskTerminateToolArgs,
   TaskTerminateToolSuccessResult,
   ToolErrorResult,
@@ -1778,6 +1782,102 @@ export const TaskSendMessageToolCall: React.FC<TaskSendMessageToolCallProps> = (
   );
 };
 
+interface TaskStopToolCallProps {
+  args: TaskStopToolArgs;
+  result?: TaskStopToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskStopToolCall: React.FC<TaskStopToolCallProps> = (props) => {
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+  const results = props.result?.results ?? [];
+  const displayResults: Array<{ taskId: string; status?: string; note?: string; error?: string }> =
+    results.length > 0 ? results : props.args.task_ids.map((taskId) => ({ taskId }));
+  const stopped = results.filter((result) => result.status === "stopped").length;
+  const inactive = results.filter((result) => result.status === "already_inactive").length;
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_stop" />
+        <ToolName>task_stop</ToolName>
+        <span className="text-interrupted text-[10px]">
+          {stopped > 0 || inactive > 0
+            ? `${stopped} stopped${inactive > 0 ? `, ${inactive} already inactive` : ""}`
+            : `${props.args.task_ids.length} to stop`}
+        </span>
+        <StatusIndicator status={props.status ?? "pending"}>
+          {getStatusDisplay(props.status ?? "pending")}
+        </StatusIndicator>
+      </ToolHeader>
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 space-y-2 rounded-md p-3">
+            {displayResults.map((result, index) => (
+              <div key={result.taskId ?? index} className="bg-code-bg rounded-sm p-2">
+                <TaskId id={result.taskId} />
+                {result.status != null && <TaskStatusBadge status={result.status} />}
+                {result.note != null && (
+                  <div className="text-muted mt-1 text-[11px]">{result.note}</div>
+                )}
+                {result.error != null && (
+                  <div className="text-danger mt-1 text-[11px]">{result.error}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
+
+interface TaskRemoveToolCallProps {
+  args: TaskRemoveToolArgs;
+  result?: TaskRemoveToolSuccessResult;
+  status?: ToolStatus;
+}
+
+export const TaskRemoveToolCall: React.FC<TaskRemoveToolCallProps> = (props) => {
+  const { expanded, toggleExpanded } = useToolExpansion(false);
+  const results = props.result?.results ?? [];
+  const displayResults: Array<{ taskId: string; status?: string; error?: string }> =
+    results.length > 0 ? results : props.args.task_ids.map((taskId) => ({ taskId }));
+  const removed = results.filter((result) => result.status === "removed").length;
+  return (
+    <ToolContainer expanded={expanded}>
+      <ToolHeader onClick={toggleExpanded}>
+        <ExpandIcon expanded={expanded}>▶</ExpandIcon>
+        <TaskIcon toolName="task_remove" />
+        <ToolName>task_remove</ToolName>
+        <span className="text-danger text-[10px]">
+          {removed > 0 ? `${removed} removed` : `${props.args.task_ids.length} to remove`}
+        </span>
+        <StatusIndicator status={props.status ?? "pending"}>
+          {getStatusDisplay(props.status ?? "pending")}
+        </StatusIndicator>
+      </ToolHeader>
+      {expanded && (
+        <ToolDetails>
+          <div className="task-surface mt-1 space-y-2 rounded-md p-3">
+            {displayResults.map((result, index) => (
+              <div key={result.taskId ?? index} className="bg-code-bg rounded-sm p-2">
+                <TaskId id={result.taskId} />
+                {result.status != null && <TaskStatusBadge status={result.status} />}
+                {result.error != null && (
+                  <div className="text-danger mt-1 text-[11px]">{result.error}</div>
+                )}
+              </div>
+            ))}
+          </div>
+        </ToolDetails>
+      )}
+    </ToolContainer>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// LEGACY TASK TERMINATE TOOL CALL
 // ═══════════════════════════════════════════════════════════════════════════════
 // TASK TERMINATE TOOL CALL
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -13,6 +13,7 @@ import { SetGoalToolCall } from "../SetGoalToolCall";
 import { WorkflowResumeToolCall, WorkflowRunToolCall } from "../WorkflowRunToolCall";
 import { GetGoalToolCall } from "../GetGoalToolCall";
 import { HeartbeatToolCall } from "../HeartbeatToolCall";
+import { TaskRemoveToolCall, TaskStopToolCall } from "../TaskToolCall";
 import { ToolSearchToolCall } from "../ToolSearchToolCall";
 import { getToolComponent } from "./getToolComponent";
 
@@ -20,6 +21,11 @@ describe("getToolComponent", () => {
   test("falls back to generic rendering for removed workflow discovery tools", () => {
     expect(getToolComponent("workflow_list", {})).toBe(GenericToolCall);
     expect(getToolComponent("workflow_read", { name: "deep-research" })).toBe(GenericToolCall);
+  });
+
+  test("routes the simplified task lifecycle tools", () => {
+    expect(getToolComponent("task_stop", { task_ids: ["child"] })).toBe(TaskStopToolCall);
+    expect(getToolComponent("task_remove", { task_ids: ["child"] })).toBe(TaskRemoveToolCall);
   });
 
   test("returns WorkflowRunToolCall for workflow_run", () => {

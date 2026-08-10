@@ -29,13 +29,15 @@ export const createTaskSendMessageTool: ToolFactory = (config: ToolConfiguration
           TaskSendMessageToolResultSchema,
           result.data.delivery === "accepted"
             ? { status: "accepted", taskId: args.task_id }
-            : {
-                status: "queued",
-                taskId: args.task_id,
-                ...(result.data.queueDispatchMode != null
-                  ? { queueDispatchMode: result.data.queueDispatchMode }
-                  : {}),
-              },
+            : result.data.delivery === "reactivated"
+              ? { status: "reactivated", taskId: args.task_id }
+              : {
+                  status: "queued",
+                  taskId: args.task_id,
+                  ...(result.data.queueDispatchMode != null
+                    ? { queueDispatchMode: result.data.queueDispatchMode }
+                    : {}),
+                },
           "task_send_message"
         );
       }

@@ -767,11 +767,15 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
                   : null
               }
               isPinned={workspaceEntry ? isWorkspacePinned(workspaceEntry) : false}
-              onArchiveChat={(anchorEl) => {
-                // handleArchiveChat runs preflight and opens a confirmation dialog
-                // when streaming or untracked files are detected.
-                void handleArchiveChat(anchorEl);
-              }}
+              onArchiveChat={
+                workspaceEntry?.parentWorkspaceId != null
+                  ? null
+                  : (anchorEl) => {
+                      // handleArchiveChat runs preflight and opens a confirmation dialog
+                      // when streaming or untracked files are detected.
+                      void handleArchiveChat(anchorEl);
+                    }
+              }
               onCloseMenu={() => setMoreMenuOpen(false)}
               shortcutClassName="mobile-hide-shortcut-hints"
               configureMcpTestId="workspace-mcp-button"

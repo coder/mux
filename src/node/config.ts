@@ -1003,6 +1003,13 @@ export class Config {
           };
           configModified = true;
         }
+        if (parsed.taskSettings?.preserveSubagentsUntilArchive !== true) {
+          parsed.taskSettings = {
+            ...(parsed.taskSettings ?? {}),
+            preserveSubagentsUntilArchive: true,
+          };
+          configModified = true;
+        }
         const taskSettings = normalizeTaskSettings(parsed.taskSettings);
 
         const muxGatewayEnabled = parseOptionalBoolean(parsed.muxGatewayEnabled);
@@ -1934,6 +1941,8 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               taskIsolation: workspace.taskIsolation,
               taskSticky: workspace.taskSticky,
+              taskExecutionId: workspace.taskExecutionId,
+              taskExecutionStatus: workspace.taskExecutionStatus,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               pinnedAt: workspace.pinnedAt,
@@ -2148,6 +2157,8 @@ export class Config {
               taskTrunkBranch: workspace.taskTrunkBranch,
               taskIsolation: workspace.taskIsolation,
               taskSticky: workspace.taskSticky,
+              taskExecutionId: workspace.taskExecutionId,
+              taskExecutionStatus: workspace.taskExecutionStatus,
               archivedAt: workspace.archivedAt,
               unarchivedAt: workspace.unarchivedAt,
               pinnedAt: workspace.pinnedAt,
@@ -2214,6 +2225,8 @@ export class Config {
             taskTrunkBranch: workspace.taskTrunkBranch,
             taskIsolation: workspace.taskIsolation,
             taskSticky: workspace.taskSticky,
+            taskExecutionId: workspace.taskExecutionId,
+            taskExecutionStatus: workspace.taskExecutionStatus,
             projects: workspaceProjects,
             subProjectPath: workspace.subProjectPath,
           };
@@ -2309,6 +2322,8 @@ export class Config {
         taskTrunkBranch: metadata.taskTrunkBranch,
         taskIsolation: metadata.taskIsolation,
         taskSticky: metadata.taskSticky,
+        taskExecutionId: metadata.taskExecutionId,
+        taskExecutionStatus: metadata.taskExecutionStatus,
         archivedAt: metadata.archivedAt,
         unarchivedAt: metadata.unarchivedAt,
         pinnedAt: metadata.pinnedAt,

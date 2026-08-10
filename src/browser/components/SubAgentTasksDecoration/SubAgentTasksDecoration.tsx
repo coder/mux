@@ -22,7 +22,12 @@ const ACTIVE_SUBAGENT_STATUSES = new Set<FrontendWorkspaceMetadata["taskStatus"]
 ]);
 
 export function isSubAgentActive(workspace: FrontendWorkspaceMetadata): boolean {
-  return ACTIVE_SUBAGENT_STATUSES.has(workspace.taskStatus);
+  return (
+    workspace.taskExecutionStatus === "queued" ||
+    workspace.taskExecutionStatus === "starting" ||
+    workspace.taskExecutionStatus === "running" ||
+    ACTIVE_SUBAGENT_STATUSES.has(workspace.taskStatus)
+  );
 }
 
 /**
@@ -75,6 +80,18 @@ function getStatusPresentation(workspace: FrontendWorkspaceMetadata): {
   icon: typeof Clock3;
   iconClassName: string;
 } {
+  if (
+    workspace.taskExecutionStatus === "queued" ||
+    workspace.taskExecutionStatus === "starting" ||
+    workspace.taskExecutionStatus === "running"
+  ) {
+    return {
+      label: workspace.taskExecutionStatus === "queued" ? "Queued" : "Running",
+      icon: workspace.taskExecutionStatus === "queued" ? Clock3 : LoaderCircle,
+      iconClassName:
+        workspace.taskExecutionStatus === "queued" ? "text-muted" : "text-success animate-spin",
+    };
+  }
   switch (workspace.taskStatus) {
     case "queued":
       return { label: "Queued", icon: Clock3, iconClassName: "text-muted" };

@@ -3,10 +3,7 @@ import { tool } from "ai";
 import { getErrorMessage } from "@/common/utils/errors";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
-import {
-  TaskTerminateToolResultSchema,
-  TOOL_DEFINITIONS,
-} from "@/common/utils/tools/toolDefinitions";
+import { TaskStopToolResultSchema, TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 
 import { TASK_TERMINATION_TOOL_TIMEOUT_MS } from "@/constants/terminationTimeouts";
 import { log } from "@/node/services/log";
@@ -20,8 +17,8 @@ import {
   requireWorkspaceId,
 } from "./toolUtils";
 
-const WORKFLOW_INTERRUPTED_NOTE =
-  "Workflow run interrupted. Durable state is preserved; resume it later with workflow_resume.";
+const WORKFLOW_STOPPED_NOTE =
+  "Workflow run stopped. Durable state is preserved; resume it later with workflow_resume.";
 
 /**
  * Workflow runs are interrupted (resumable) rather than terminated: the durable event log is
@@ -61,7 +58,7 @@ async function interruptWorkflowRun(
 
   if (run.status === "interrupted") {
     // Idempotent: re-interrupting an interrupted run is a no-op success.
-    return { status: "interrupted" as const, taskId, note: WORKFLOW_INTERRUPTED_NOTE };
+    return { status: "already_inactive" as const, taskId };
   }
   if (run.status === "completed" || run.status === "failed") {
     return {
@@ -76,22 +73,22 @@ async function interruptWorkflowRun(
   } catch (error: unknown) {
     return { status: "error" as const, taskId, error: getErrorMessage(error) };
   }
-  return { status: "interrupted" as const, taskId, note: WORKFLOW_INTERRUPTED_NOTE };
+  return { status: "stopped" as const, taskId, note: WORKFLOW_STOPPED_NOTE };
 }
 
-export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) => {
+export const createTaskStopTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
-    description: TOOL_DEFINITIONS.task_terminate.description,
-    inputSchema: TOOL_DEFINITIONS.task_terminate.schema,
+    description: TOOL_DEFINITIONS.task_stop.description,
+    inputSchema: TOOL_DEFINITIONS.task_stop.schema,
     execute: async (args, { abortSignal }): Promise<unknown> => {
-      const workspaceId = requireWorkspaceId(config, "task_terminate");
-      const taskService = requireTaskService(config, "task_terminate");
+      const workspaceId = requireWorkspaceId(config, "task_stop");
+      const taskService = requireTaskService(config, "task_stop");
 
       const uniqueTaskIds = dedupeStrings(args.task_ids);
 
       const results = await Promise.all(
         uniqueTaskIds.map(async (taskId) => {
-          // A pre-aborted call must not start destructive termination work at all.
+          // A pre-aborted call must not start stop work at all.
           if (abortSignal?.aborted) {
             return {
               status: "error" as const,
@@ -118,9 +115,9 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
                   return { status: "error" as const, taskId, error: msg };
                 }
                 return {
-                  status: "interrupted" as const,
+                  status: "stopped" as const,
                   taskId,
-                  note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+                  note: "Workspace turn stopped. The workspace is preserved for future messages.",
                 };
               }
 
@@ -157,38 +154,33 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
                 }
 
                 return {
-                  status: "terminated" as const,
+                  status: "stopped" as const,
                   taskId,
-                  terminatedTaskIds: [taskId],
+                  stoppedTaskIds: [taskId],
                 };
               }
 
-              const terminateResult = await taskService.terminateDescendantAgentTask(
-                workspaceId,
-                taskId
-              );
-              if (!terminateResult.success) {
-                const msg = terminateResult.error;
-                const activeDescendantIds =
-                  taskService.listActiveDescendantAgentTaskIds(workspaceId);
-                const activeTaskIds =
-                  activeDescendantIds.length > 0 ? activeDescendantIds : undefined;
+              const stopResult = await taskService.stopDescendantAgentTask(workspaceId, taskId);
+              if (!stopResult.success) {
+                const msg = stopResult.error;
                 // Exact-match the canonical scope errors: aggregated cleanup failures
                 // may mention "descendant" or "not found" and must stay actionable errors.
                 if (msg === "Task not found") {
-                  return { status: "not_found" as const, taskId, activeTaskIds };
+                  return { status: "not_found" as const, taskId };
                 }
                 if (msg === "Task is not a descendant of this workspace") {
-                  return { status: "invalid_scope" as const, taskId, activeTaskIds };
+                  return { status: "invalid_scope" as const, taskId };
                 }
                 return { status: "error" as const, taskId, error: msg };
               }
 
-              return {
-                status: "terminated" as const,
-                taskId,
-                terminatedTaskIds: terminateResult.data.terminatedTaskIds,
-              };
+              return stopResult.data.stoppedTaskIds.length === 0
+                ? { status: "already_inactive" as const, taskId }
+                : {
+                    status: "stopped" as const,
+                    taskId,
+                    stoppedTaskIds: stopResult.data.stoppedTaskIds,
+                  };
             } catch (error: unknown) {
               return { status: "error" as const, taskId, error: getErrorMessage(error) };
             }
@@ -216,7 +208,7 @@ export const createTaskTerminateTool: ToolFactory = (config: ToolConfiguration) 
         })
       );
 
-      return parseToolResult(TaskTerminateToolResultSchema, { results }, "task_terminate");
+      return parseToolResult(TaskStopToolResultSchema, { results }, "task_stop");
     },
   });
 };

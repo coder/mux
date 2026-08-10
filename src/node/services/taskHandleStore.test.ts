@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -42,6 +42,39 @@ describe("TaskHandleStore", () => {
 
     const listed = await store.listWorkspaceTurns("owner", { statuses: ["running"] });
     expect(listed.map((item) => item.handleId)).toEqual([`${WORKSPACE_TURN_TASK_ID_PREFIX}abc`]);
+  });
+
+  it("listAllWorkspaceTurns skips one unreadable owner session", async () => {
+    const { config } = await createTempConfig("task-handle-store-owner-isolation");
+    const store = new TaskHandleStore(config);
+    await store.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: `${WORKSPACE_TURN_TASK_ID_PREFIX}good`,
+      ownerWorkspaceId: "good-owner",
+      workspaceId: "child",
+      turnId: "turn-good",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:00.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+    await fsPromises.mkdir(config.getSessionDir("bad-owner"), { recursive: true });
+
+    const original = store.listWorkspaceTurns.bind(store);
+    const listWorkspaceTurns = spyOn(store, "listWorkspaceTurns").mockImplementation(
+      (ownerWorkspaceId, options) =>
+        ownerWorkspaceId === "bad-owner"
+          ? Promise.reject(new Error("permission denied"))
+          : original(ownerWorkspaceId, options)
+    );
+    try {
+      expect((await store.listAllWorkspaceTurns()).map((record) => record.handleId)).toEqual([
+        `${WORKSPACE_TURN_TASK_ID_PREFIX}good`,
+      ]);
+    } finally {
+      listWorkspaceTurns.mockRestore();
+    }
   });
 
   it("rejects unsafe handle IDs before composing paths", async () => {

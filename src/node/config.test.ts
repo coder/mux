@@ -104,7 +104,7 @@ describe("Config", () => {
       expect(persisted.migrations?.persistentSubagentsDefaulted).toBe(true);
     });
 
-    it("does not overwrite an explicit value after the one-time default migration", async () => {
+    it("canonicalizes an explicit legacy false value after the migration", async () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
@@ -116,14 +116,14 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.taskSettings?.preserveSubagentsUntilArchive).toBe(false);
+      expect(loaded.taskSettings?.preserveSubagentsUntilArchive).toBe(true);
 
       await flushConfigEdits();
 
       const persisted = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
         taskSettings?: { preserveSubagentsUntilArchive?: boolean };
       };
-      expect(persisted.taskSettings?.preserveSubagentsUntilArchive).toBe(false);
+      expect(persisted.taskSettings?.preserveSubagentsUntilArchive).toBe(true);
     });
   });
 

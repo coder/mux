@@ -6,7 +6,11 @@
  */
 import type { ComponentType } from "react";
 import { z, type ZodSchema } from "zod";
-import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import {
+  TaskTerminateToolArgsSchema,
+  TaskWorkspaceLifecycleToolArgsSchema,
+  TOOL_DEFINITIONS,
+} from "@/common/utils/tools/toolDefinitions";
 
 import { AnalyticsQueryToolCall } from "../analyticsQuery/AnalyticsQueryToolCall";
 import { AttachFileToolCall } from "../AttachFileToolCall";
@@ -42,6 +46,8 @@ import {
   TaskAwaitToolCall,
   TaskListToolCall,
   TaskSendMessageToolCall,
+  TaskStopToolCall,
+  TaskRemoveToolCall,
   TaskTerminateToolCall,
 } from "../TaskToolCall";
 import { TaskApplyGitPatchToolCall } from "../TaskApplyGitPatchToolCall";
@@ -197,9 +203,17 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
     component: TaskSendMessageToolCall,
     schema: TOOL_DEFINITIONS.task_send_message.schema,
   },
+  task_stop: {
+    component: TaskStopToolCall,
+    schema: TOOL_DEFINITIONS.task_stop.schema,
+  },
+  task_remove: {
+    component: TaskRemoveToolCall,
+    schema: TOOL_DEFINITIONS.task_remove.schema,
+  },
   task_terminate: {
     component: TaskTerminateToolCall,
-    schema: TOOL_DEFINITIONS.task_terminate.schema,
+    schema: TaskTerminateToolArgsSchema,
   },
   task_apply_git_patch: {
     component: TaskApplyGitPatchToolCall,
@@ -207,7 +221,7 @@ const TOOL_REGISTRY: Record<string, ToolRegistryEntry> = {
   },
   task_workspace_lifecycle: {
     component: WorkspaceLifecycleToolCall,
-    schema: TOOL_DEFINITIONS.task_workspace_lifecycle.schema,
+    schema: TaskWorkspaceLifecycleToolArgsSchema,
   },
   workflow_run: {
     component: WorkflowRunToolCall,

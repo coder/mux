@@ -204,7 +204,19 @@ export class TaskHandleStore {
     const recordsByOwner = await Promise.all(
       entries
         .filter((entry) => entry.isDirectory())
-        .map((entry) => this.listWorkspaceTurns(entry.name, options))
+        .map(async (entry) => {
+          try {
+            return await this.listWorkspaceTurns(entry.name, options);
+          } catch (error: unknown) {
+            // Startup reconciliation is best-effort: one unreadable session must not prevent every
+            // other workspace (or the app itself) from loading.
+            log.warn("Skipping unreadable workspace-turn handle directory", {
+              ownerWorkspaceId: entry.name,
+              error,
+            });
+            return [];
+          }
+        })
     );
     return recordsByOwner.flat().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }

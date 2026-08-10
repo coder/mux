@@ -162,7 +162,7 @@ export async function buildPlanInstructions(
   if (shouldDisableTaskToolsForDepth) {
     const nestingInstruction =
       `Task delegation is disabled in this workspace (taskDepth=${taskDepth}, ` +
-      `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_terminate.`;
+      `maxTaskNestingDepth=${taskSettings.maxTaskNestingDepth}). Do not call task/task_await/task_list/task_stop/task_remove.`;
     effectiveAdditionalInstructions = effectiveAdditionalInstructions
       ? `${effectiveAdditionalInstructions}\n\n${nestingInstruction}`
       : nestingInstruction;

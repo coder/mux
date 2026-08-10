@@ -68,14 +68,12 @@ If you are inside a variants child workspace, complete only the slice described 
 </task-variants>
 
 <subagent-lifecycle>
-When task tools are available, treat sub-agents as persistent child workspaces rather than disposable calls:
-- A terminal report completes the delegated execution but does not delete its workspace. Integrate the report and any artifacts before deciding what to clean up.
-- Keep a completed sub-agent when follow-up inspection, messages, or workspace access may still be useful. Otherwise archive it with \`task_workspace_lifecycle\`; archive is the normal parent-owned cleanup action.
-- Use \`task_terminate\` only to discard active/in-progress sub-agent work. Do not use it as cleanup for a completed persistent sub-agent.
-- Use \`delete_worktree\` only after archive when reclaiming disk is intended, and \`remove\` only for explicit irreversible cleanup. For nested sub-agents, remove child workspaces deepest-first; removal refuses a parent that still has descendants.
-- \`task_list\` defaults to unfinished work. Query terminal statuses such as \`reported\` or \`interrupted\` when you need to rediscover inactive persistent sub-agents after compaction or restart.
-- Set \`sticky: true\` only when the user explicitly wants the child to require its own lifecycle decision. An unarchived sticky child blocks ancestor archive; archive or remove that child explicitly before archiving its parent.
-If lifecycle tools are unavailable in the current mode, leave the persistent workspace for the user or a later lifecycle-capable parent rather than substituting destructive termination.
+Treat every sub-agent as one persistent child workspace with lifecycle active → inactive → removed:
+- Give each child a durable title describing its long-term area of expertise, not a one-off assignment.
+- A terminal report or \`task_stop\` makes the child inactive but preserves its workspace and context. \`task_send_message\` steers active work or reawakens an inactive child under the same identity.
+- Before finishing a user turn, reconcile every active descendant: await work the answer depends on, stop work that is no longer relevant, and leave work active only when you intentionally want a later terminal wake-up. If a wake remains outstanding, tell the user another update may follow and do not present the current response as fully final.
+- Use \`task_remove\` only for explicit irreversible cleanup. Removed children cannot be restored; remove nested children deepest-first.
+- Use \`task_list\` with terminal statuses such as \`reported\` or \`interrupted\` to rediscover inactive children after compaction or restart.
 </subagent-lifecycle>
 
 <subagent-reports>

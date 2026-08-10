@@ -37,6 +37,7 @@ import {
   ScanEye,
   Square,
   Target,
+  Trash2,
   Wrench,
 } from "lucide-react";
 import { EmojiIcon } from "@/browser/components/icons/EmojiIcon/EmojiIcon";
@@ -277,6 +278,8 @@ export const TOOL_NAME_TO_ICON: Partial<Record<string, LucideIcon>> = {
   review_pane_update: Sparkles,
   review_pane_get: ScanEye,
   analytics_query: Database,
+  task_stop: Square,
+  task_remove: Trash2,
   task_send_message: MessageSquareMore,
   task_apply_git_patch: GitCommit,
   // Layers (stacked planes) reads as "manage the stack of child workspaces" — matches the

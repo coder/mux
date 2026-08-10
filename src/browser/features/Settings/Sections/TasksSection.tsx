@@ -295,8 +295,7 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
   return (
     a.maxParallelAgentTasks === b.maxParallelAgentTasks &&
     a.maxTaskNestingDepth === b.maxTaskNestingDepth &&
-    a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory &&
-    a.preserveSubagentsUntilArchive === b.preserveSubagentsUntilArchive
+    a.proposePlanImplementReplacesChatHistory === b.proposePlanImplementReplacesChatHistory
   );
 }
 

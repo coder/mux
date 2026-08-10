@@ -128,6 +128,8 @@ const PRESERVE_OUTPUT_TOOLS = new Set([
   "task",
   "task_await",
   "task_list",
+  "task_stop",
+  "task_remove",
   "task_terminate",
   "task_apply_git_patch",
 ]);

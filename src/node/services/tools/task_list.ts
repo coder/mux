@@ -45,13 +45,6 @@ function isAgentTaskStatus(status: string): status is AgentTaskStatus {
   return (AGENT_TASK_STATUSES as readonly string[]).includes(status);
 }
 
-const ACTIONABLE_AGENT_TASK_STATUSES = new Set<AgentTaskStatus>([
-  "queued",
-  "starting",
-  "running",
-  "awaiting_report",
-]);
-
 const ACTIONABLE_WORKSPACE_TURN_STATUSES = new Set<WorkspaceTurnTaskStatus>([
   "queued",
   "starting",
@@ -170,17 +163,6 @@ function createWorkspaceArchiveLookup(
   };
 }
 
-function shouldHideArchivedAgentTask(
-  task: { taskId: string; status: AgentTaskStatus },
-  archiveLookup: WorkspaceArchiveLookup | null
-): boolean {
-  return (
-    archiveLookup != null &&
-    !ACTIONABLE_AGENT_TASK_STATUSES.has(task.status) &&
-    archiveLookup.isArchivedInScope(task.taskId)
-  );
-}
-
 function shouldHideArchivedBackgroundProcess(
   proc: { status: "running" | "exited" | "killed" | "failed"; workspaceId: string },
   archiveLookup: WorkspaceArchiveLookup | null
@@ -217,19 +199,65 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       const archiveLookup = includeArchived
         ? null
         : createWorkspaceArchiveLookup(config, workspaceId);
+      const workspaceTurnStatuses = statuses.filter(
+        (
+          status
+        ): status is "queued" | "starting" | "running" | "interrupted" | "completed" | "failed" =>
+          status === "queued" ||
+          status === "starting" ||
+          status === "running" ||
+          status === "interrupted" ||
+          status === "completed" ||
+          status === "failed"
+      );
+      const isDescendantAgentWorkspace = async (candidateWorkspaceId: string): Promise<boolean> => {
+        const checker = (
+          taskService as unknown as {
+            isDescendantAgentTask?: (
+              ancestorWorkspaceId: string,
+              taskId: string
+            ) => Promise<boolean>;
+          }
+        ).isDescendantAgentTask;
+        return checker != null
+          ? await checker.call(taskService, workspaceId, candidateWorkspaceId)
+          : false;
+      };
       const agentStatuses = statuses.filter(isAgentTaskStatus);
 
       const allAgentTasks =
         agentStatuses.length > 0
           ? taskService.listDescendantAgentTasks(workspaceId, {
-              statuses: agentStatuses,
               excludeWorkflowTasks: true,
             })
           : [];
-      const agentTasks = allAgentTasks.filter(
-        (task) => !shouldHideArchivedAgentTask(task, archiveLookup)
-      );
-      const tasks: TaskListToolSuccessResult["tasks"] = [...agentTasks];
+      // Legacy archived sub-agents are still part of the public inactive state and remain listable.
+      // Reactivated executions use internal workspace-turn handles, but the public row keeps the
+      // stable child task ID and overlays the current execution status.
+      const internalExecutionIds = new Set<string>();
+      const tasks: TaskListToolSuccessResult["tasks"] = [];
+      for (const task of allAgentTasks) {
+        let status = task.status;
+        if (task.executionTaskId != null) {
+          internalExecutionIds.add(task.executionTaskId);
+          const execution = await taskService.getWorkspaceTurnSnapshot(
+            workspaceId,
+            task.executionTaskId
+          );
+          if (
+            execution?.status === "queued" ||
+            execution?.status === "starting" ||
+            execution?.status === "running"
+          ) {
+            status = execution.status;
+          }
+        }
+        if (!agentStatuses.includes(status)) {
+          continue;
+        }
+        const { executionTaskId: _executionTaskId, ...publicTask } = task;
+        tasks.push({ ...publicTask, status });
+      }
 
       // Workflow runs are workspace-scoped (not parent/child workspaces), so they surface as
       // depth-1 entries. interrupted/failed runs stay listable here because they are the
@@ -258,17 +286,6 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         }
       }
 
-      const workspaceTurnStatuses = statuses.filter(
-        (
-          status
-        ): status is "queued" | "starting" | "running" | "interrupted" | "completed" | "failed" =>
-          status === "queued" ||
-          status === "starting" ||
-          status === "running" ||
-          status === "interrupted" ||
-          status === "completed" ||
-          status === "failed"
-      );
       if (workspaceTurnStatuses.length > 0 && taskService.listWorkspaceTurnTasks != null) {
         const storeStatuses = workspaceTurnStatuses.map((status) =>
           status === "failed" ? "error" : status
@@ -277,6 +294,12 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
           statuses: storeStatuses,
         });
         for (const turn of workspaceTurns) {
+          if (
+            internalExecutionIds.has(turn.handleId) ||
+            (await isDescendantAgentWorkspace(turn.workspaceId))
+          ) {
+            continue;
+          }
           if (shouldHideArchivedWorkspaceTurn(turn, archiveLookup)) {
             continue;
           }

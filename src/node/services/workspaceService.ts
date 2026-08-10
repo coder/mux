@@ -14,7 +14,6 @@ import {
 } from "@/common/utils/pin";
 import { SCRATCH_PROJECT_CONFIG_KEY } from "@/common/constants/scratch";
 import { MULTI_PROJECT_CONFIG_KEY } from "@/common/constants/multiProject";
-import { normalizeTaskSettings } from "@/common/types/tasks";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Config } from "@/node/config";
 import type { ProjectsConfig, Workspace } from "@/common/types/project";
@@ -551,10 +550,8 @@ const POST_COMPACTION_METADATA_REFRESH_DEBOUNCE_MS = 100;
 
 const DESCENDANT_WORKSPACE_REMOVE_ERROR =
   "This workspace has descendant sub-agent workspaces. Remove those descendants deepest-first before removing their parent.";
-const STICKY_DESCENDANT_ARCHIVE_ERROR =
-  "This workspace has unarchived sticky sub-agent workspaces. Archive or remove those sub-agents explicitly before archiving their parent.";
-const STICKY_DESCENDANT_REMOVE_ERROR =
-  "This workspace has sticky sub-agent workspaces. Remove those sub-agents explicitly before removing their parent.";
+const ACTIVE_DESCENDANT_ARCHIVE_ERROR =
+  "This workspace has active descendant sub-agents. Stop them before archiving their parent.";
 const MULTI_PROJECT_WORKSPACES_DISABLED_ERROR = "Multi-project workspaces experiment is disabled";
 
 function normalizeRepoRootProjectPath(projectPath: string | null | undefined): string {
@@ -4768,42 +4765,6 @@ export class WorkspaceService extends EventEmitter {
 
     // Try to remove from runtime (filesystem)
     try {
-      if (this.taskService?.hasStickyDescendants?.(workspaceId) === true) {
-        return Err(STICKY_DESCENDANT_REMOVE_ERROR);
-      }
-
-      if (!force) {
-        const config = this.config.loadConfigOrDefault();
-        const taskSettings = normalizeTaskSettings(config.taskSettings);
-        if (
-          taskSettings.preserveSubagentsUntilArchive &&
-          this.taskService?.hasCompletedDescendants?.(workspaceId)
-        ) {
-          const persistedWorkspaceEntry = findWorkspaceEntry(config, workspaceId);
-          const isArchived =
-            persistedWorkspaceEntry != null &&
-            isWorkspaceArchived(
-              persistedWorkspaceEntry.workspace.archivedAt,
-              persistedWorkspaceEntry.workspace.unarchivedAt
-            );
-
-          // Keep the whole parentWorkspaceId chain intact while completed descendants still exist.
-          // Unarchived ancestors must be archived first so descendant cleanup can safely walk that lineage.
-          if (!isArchived) {
-            return Err(
-              "This workspace has preserved completed sub-agent workspaces. Archive the workspace first to trigger cleanup, then try removing it."
-            );
-          }
-
-          // Archived parents can still retain completed descendants while cleanup waits on
-          // prerequisites like pending patch artifacts. Keep removal blocked until that cleanup
-          // finishes so descendants do not lose the archived ancestor that makes them eligible.
-          return Err(
-            "This workspace still has completed sub-agent workspaces pending cleanup. Wait for cleanup to finish, or force-remove the workspace."
-          );
-        }
-      }
-
       if (this.taskService?.hasDescendantAgentTasks?.(workspaceId) === true) {
         return Err(DESCENDANT_WORKSPACE_REMOVE_ERROR);
       }
@@ -6714,12 +6675,13 @@ export class WorkspaceService extends EventEmitter {
    */
   async preflightArchive(workspaceId: string): Promise<Result<ArchivePreflightResult>> {
     try {
+      if (this.taskService?.hasActiveDescendantAgentTasksForWorkspace(workspaceId) === true) {
+        return Err(ACTIVE_DESCENDANT_ARCHIVE_ERROR);
+      }
+
       const workspace = this.config.findWorkspace(workspaceId);
       if (!workspace) {
         return Err("Workspace not found");
-      }
-      if (this.taskService?.hasUnarchivedStickyDescendants?.(workspaceId) === true) {
-        return Err(STICKY_DESCENDANT_ARCHIVE_ERROR);
       }
 
       const worktreeArchiveBehavior = this.getWorktreeArchiveBehavior();
@@ -6777,8 +6739,8 @@ export class WorkspaceService extends EventEmitter {
       if (!workspace) {
         return Err("Workspace not found");
       }
-      if (this.taskService?.hasUnarchivedStickyDescendants?.(workspaceId) === true) {
-        return Err(STICKY_DESCENDANT_ARCHIVE_ERROR);
+      if (this.taskService?.hasActiveDescendantAgentTasksForWorkspace(workspaceId) === true) {
+        return Err(ACTIVE_DESCENDANT_ARCHIVE_ERROR);
       }
       const initState = this.initStateManager.getInitState(workspaceId);
       if (initState?.status === "running") {
@@ -6996,13 +6958,6 @@ export class WorkspaceService extends EventEmitter {
           });
           await this.emitCurrentWorkspaceMetadata(workspaceId);
         }
-      }
-
-      // Best-effort cleanup of preserved completed descendants after archive persistence succeeds.
-      try {
-        await this.taskService?.cleanupReportedDescendantsAfterArchive?.(workspaceId);
-      } catch (error) {
-        log.error("Failed to cleanup reported descendants after archive", { workspaceId, error });
       }
 
       // Dream trigger (PRD #3534): final consolidation pass — last chance to

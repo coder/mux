@@ -22,8 +22,8 @@ export const DEFAULT_TASK_SETTINGS: TaskSettings = {
   maxParallelAgentTasks: TASK_SETTINGS_LIMITS.maxParallelAgentTasks.default,
   maxTaskNestingDepth: TASK_SETTINGS_LIMITS.maxTaskNestingDepth.default,
   proposePlanImplementReplacesChatHistory: false,
-  // Completed user-spawned sub-agents are durable workspace records. The parent decides when to
-  // archive them after consuming their result; workflow-owned tasks keep their transient cleanup.
+  // Completed user-spawned sub-agents are durable workspace records. Archive is reversible;
+  // explicit remove owns irreversible cleanup. Workflow-owned tasks keep their transient cleanup.
   preserveSubagentsUntilArchive: true,
 };
 
@@ -124,10 +124,9 @@ export function normalizeTaskSettings(raw: unknown): TaskSettings {
       ? record.proposePlanImplementReplacesChatHistory
       : (DEFAULT_TASK_SETTINGS.proposePlanImplementReplacesChatHistory ?? false);
 
-  const preserveSubagentsUntilArchive =
-    typeof record.preserveSubagentsUntilArchive === "boolean"
-      ? record.preserveSubagentsUntilArchive
-      : DEFAULT_TASK_SETTINGS.preserveSubagentsUntilArchive;
+  // Legacy compatibility field: modern user-owned sub-agents always persist until explicit remove.
+  // Keep writing true so older builds choose their most conservative retention behavior.
+  const preserveSubagentsUntilArchive = true;
 
   const result: TaskSettings = {
     maxParallelAgentTasks,

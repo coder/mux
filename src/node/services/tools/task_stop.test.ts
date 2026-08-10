@@ -2,7 +2,7 @@
 import { describe, it, expect, mock } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
-import { createTaskTerminateTool } from "./task_terminate";
+import { createTaskStopTool } from "./task_stop";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 import type { TaskService } from "@/node/services/taskService";
 import { Err, Ok, type Result } from "@/common/types/result";
@@ -13,27 +13,27 @@ const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   context: undefined,
 };
 
-describe("task_terminate tool", () => {
+describe("task_stop tool", () => {
   it("returns not_found when the task does not exist", async () => {
     using tempDir = new TestTempDir("test-task-terminate-not-found");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["child-task"]),
-      terminateDescendantAgentTask: mock(
-        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+      stopDescendantAgentTask: mock(
+        (): Promise<Result<{ stoppedTaskIds: string[] }, string>> =>
           Promise.resolve(Err("Task not found"))
       ),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
       tool.execute!({ task_ids: ["missing-task"] }, mockToolCallOptions)
     );
 
     expect(result).toEqual({
-      results: [{ status: "not_found", taskId: "missing-task", activeTaskIds: ["child-task"] }],
+      results: [{ status: "not_found", taskId: "missing-task" }],
     });
   });
 
@@ -43,20 +43,20 @@ describe("task_terminate tool", () => {
 
     const taskService = {
       listActiveDescendantAgentTaskIds: mock(() => ["child-task"]),
-      terminateDescendantAgentTask: mock(
-        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+      stopDescendantAgentTask: mock(
+        (): Promise<Result<{ stoppedTaskIds: string[] }, string>> =>
           Promise.resolve(Err("Task is not a descendant of this workspace"))
       ),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
       tool.execute!({ task_ids: ["other-task"] }, mockToolCallOptions)
     );
 
     expect(result).toEqual({
-      results: [{ status: "invalid_scope", taskId: "other-task", activeTaskIds: ["child-task"] }],
+      results: [{ status: "invalid_scope", taskId: "other-task" }],
     });
   });
 
@@ -68,14 +68,14 @@ describe("task_terminate tool", () => {
       "Skipped removing task workspace (parent-task): a descendant task workspace was not removed";
 
     const taskService = {
-      terminateDescendantAgentTask: mock(
-        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
+      stopDescendantAgentTask: mock(
+        (): Promise<Result<{ stoppedTaskIds: string[] }, string>> =>
           Promise.resolve(Err(cleanupError))
       ),
       listActiveDescendantAgentTaskIds: mock(() => []),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
       tool.execute!({ task_ids: ["parent-task"] }, mockToolCallOptions)
@@ -86,18 +86,18 @@ describe("task_terminate tool", () => {
     });
   });
 
-  it("returns terminated with terminatedTaskIds on success", async () => {
+  it("returns terminated with stoppedTaskIds on success", async () => {
     using tempDir = new TestTempDir("test-task-terminate-ok");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const taskService = {
-      terminateDescendantAgentTask: mock(
-        (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
-          Promise.resolve(Ok({ terminatedTaskIds: ["child-task", "parent-task"] }))
+      stopDescendantAgentTask: mock(
+        (): Promise<Result<{ stoppedTaskIds: string[] }, string>> =>
+          Promise.resolve(Ok({ stoppedTaskIds: ["child-task", "parent-task"] }))
       ),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
       tool.execute!({ task_ids: ["parent-task"] }, mockToolCallOptions)
@@ -106,9 +106,9 @@ describe("task_terminate tool", () => {
     expect(result).toEqual({
       results: [
         {
-          status: "terminated",
+          status: "stopped",
           taskId: "parent-task",
-          terminatedTaskIds: ["child-task", "parent-task"],
+          stoppedTaskIds: ["child-task", "parent-task"],
         },
       ],
     });
@@ -120,19 +120,19 @@ describe("task_terminate tool", () => {
     const controller = new AbortController();
 
     const taskService = {
-      terminateDescendantAgentTask: mock(
+      stopDescendantAgentTask: mock(
         (
           _workspaceId: string,
           taskId: string
-        ): Promise<Result<{ terminatedTaskIds: string[] }, string>> => {
+        ): Promise<Result<{ stoppedTaskIds: string[] }, string>> => {
           if (taskId === "stuck-task") {
             return new Promise(() => undefined);
           }
-          return Promise.resolve(Ok({ terminatedTaskIds: [taskId] }));
+          return Promise.resolve(Ok({ stoppedTaskIds: [taskId] }));
         }
       ),
     } as unknown as TaskService;
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const resultPromise = Promise.resolve(
       tool.execute!(
@@ -152,9 +152,9 @@ describe("task_terminate tool", () => {
           error: "Termination interrupted; cleanup continues in the background",
         },
         {
-          status: "terminated",
+          status: "stopped",
           taskId: "finished-task",
-          terminatedTaskIds: ["finished-task"],
+          stoppedTaskIds: ["finished-task"],
         },
       ],
     });
@@ -170,12 +170,12 @@ describe("task_terminate tool", () => {
     );
     const taskService = {
       interruptWorkspaceTurn,
-      terminateDescendantAgentTask: mock(() => {
+      stopDescendantAgentTask: mock(() => {
         throw new Error("workspace turn IDs must not reach agent task termination");
       }),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({ ...baseConfig, taskService });
+    const tool = createTaskStopTool({ ...baseConfig, taskService });
 
     const result: unknown = await Promise.resolve(
       tool.execute!({ task_ids: ["wst_turn"] }, mockToolCallOptions)
@@ -185,9 +185,9 @@ describe("task_terminate tool", () => {
     expect(result).toEqual({
       results: [
         {
-          status: "interrupted",
+          status: "stopped",
           taskId: "wst_turn",
-          note: "Workspace turn interrupted. The full workspace is preserved for inspection and future prompts.",
+          note: "Workspace turn stopped. The workspace is preserved for future messages.",
         },
       ],
     });
@@ -219,12 +219,12 @@ describe("task_terminate tool", () => {
     const getRun = mock(() => Promise.resolve(buildWorkflowRun("running")));
     const interruptRun = mock(() => Promise.resolve(buildWorkflowRun("interrupted")));
     const taskService = {
-      terminateDescendantAgentTask: mock(() => {
+      stopDescendantAgentTask: mock(() => {
         throw new Error("workflow IDs must not reach agent task termination");
       }),
     } as unknown as TaskService;
 
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService,
       workflowService: {
@@ -245,7 +245,7 @@ describe("task_terminate tool", () => {
     expect(result).toEqual({
       results: [
         {
-          status: "interrupted",
+          status: "stopped",
           taskId: "wfr_run_1",
           note: expect.stringContaining("workflow_resume"),
         },
@@ -259,13 +259,13 @@ describe("task_terminate tool", () => {
     const controller = new AbortController();
     controller.abort();
 
-    const terminateDescendantAgentTask = mock(
-      (): Promise<Result<{ terminatedTaskIds: string[] }, string>> =>
-        Promise.resolve(Ok({ terminatedTaskIds: ["child-task"] }))
+    const stopDescendantAgentTask = mock(
+      (): Promise<Result<{ stoppedTaskIds: string[] }, string>> =>
+        Promise.resolve(Ok({ stoppedTaskIds: ["child-task"] }))
     );
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
-      taskService: { terminateDescendantAgentTask } as unknown as TaskService,
+      taskService: { stopDescendantAgentTask } as unknown as TaskService,
     });
 
     const result: unknown = await Promise.resolve(
@@ -275,7 +275,7 @@ describe("task_terminate tool", () => {
       )
     );
 
-    expect(terminateDescendantAgentTask).not.toHaveBeenCalled();
+    expect(stopDescendantAgentTask).not.toHaveBeenCalled();
     expect(result).toEqual({
       results: [
         {
@@ -291,7 +291,7 @@ describe("task_terminate tool", () => {
     using tempDir = new TestTempDir("test-task-terminate-workflow-throws");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
@@ -314,7 +314,7 @@ describe("task_terminate tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const interruptRun = mock(() => Promise.reject(new Error("must not re-interrupt")));
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
@@ -331,9 +331,8 @@ describe("task_terminate tool", () => {
     expect(result).toEqual({
       results: [
         {
-          status: "interrupted",
+          status: "already_inactive",
           taskId: "wfr_run_1",
-          note: expect.stringContaining("workflow_resume"),
         },
       ],
     });
@@ -344,7 +343,7 @@ describe("task_terminate tool", () => {
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
     const interruptRun = mock(() => Promise.reject(new Error("must not interrupt terminal runs")));
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
@@ -373,7 +372,7 @@ describe("task_terminate tool", () => {
     using tempDir = new TestTempDir("test-task-terminate-workflow-not-found");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService: {} as unknown as TaskService,
       workflowService: {
@@ -395,7 +394,7 @@ describe("task_terminate tool", () => {
     using tempDir = new TestTempDir("test-task-terminate-workflow-no-service");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
 
-    const tool = createTaskTerminateTool({
+    const tool = createTaskStopTool({
       ...baseConfig,
       taskService: {} as unknown as TaskService,
     });

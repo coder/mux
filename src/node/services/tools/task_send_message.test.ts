@@ -47,6 +47,28 @@ describe("task_send_message tool", () => {
     });
   });
 
+  it("maps inactive child reawakening without exposing the internal execution handle", async () => {
+    using tempDir = new TestTempDir("task-send-message-reactivated");
+    const sendMessageToDescendantAgentTask = mock(
+      (): Promise<Result<SendAgentTaskMessageResult, SendAgentTaskMessageError>> =>
+        Promise.resolve(Ok({ delivery: "reactivated", executionTaskId: "wst_internal_execution" }))
+    );
+    const taskService = { sendMessageToDescendantAgentTask } as unknown as TaskService;
+    const tool = createTaskSendMessageTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "parent" }),
+      taskService,
+    });
+
+    expect(
+      await Promise.resolve(
+        tool.execute!(
+          { task_id: "child", message: "Investigate the new failure." },
+          toolCallOptions
+        )
+      )
+    ).toEqual({ status: "reactivated", taskId: "child" });
+  });
+
   it("maps scope and task-state failures to actionable results", async () => {
     using tempDir = new TestTempDir("task-send-message-errors");
     const outcomes: SendAgentTaskMessageError[] = [
