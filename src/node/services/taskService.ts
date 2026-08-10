@@ -3666,6 +3666,15 @@ export class TaskService {
     if (!parentWorkspaceId) {
       return Err("Task.create: parentWorkspaceId is required");
     }
+    return await this.withTaskTreeLifecycleLock(parentWorkspaceId, async () =>
+      this.createUnderTaskTreeLifecycleLock(args, parentWorkspaceId)
+    );
+  }
+
+  private async createUnderTaskTreeLifecycleLock(
+    args: TaskCreateArgs,
+    parentWorkspaceId: string
+  ): Promise<Result<TaskCreateResult, string>> {
     if (args.kind !== "agent") {
       return Err("Task.create: unsupported kind");
     }
@@ -3736,6 +3745,12 @@ export class TaskService {
     const cfg = this.config.loadConfigOrDefault();
     const taskSettings = cfg.taskSettings ?? DEFAULT_TASK_SETTINGS;
     const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+    if (
+      parentEntry != null &&
+      isWorkspaceArchived(parentEntry.workspace.archivedAt, parentEntry.workspace.unarchivedAt)
+    ) {
+      return Err("Task.create: parent workspace is archived");
+    }
     const parentIsScratch = parentEntry?.workspace.kind === "scratch";
     const configProjectPath = parentIsScratch
       ? SCRATCH_PROJECT_CONFIG_KEY

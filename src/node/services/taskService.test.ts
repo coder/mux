@@ -10842,6 +10842,44 @@ describe("TaskService", () => {
     expect(await taskService.listWorkspaceTurnTasks(parentWorkspaceId)).toHaveLength(1);
   });
 
+  test("task creation waits for ancestor lifecycle changes and rejects an archived parent", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const { workspaceService, create } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    let releaseArchive: (() => void) | undefined;
+    const archiveGate = new Promise<void>((resolve) => {
+      releaseArchive = resolve;
+    });
+    let archiveEntered: (() => void) | undefined;
+    const archiveStarted = new Promise<void>((resolve) => {
+      archiveEntered = resolve;
+    });
+    const archiveOperation = taskService.withTaskTreeLifecycleLock(parentId, async () => {
+      archiveEntered?.();
+      await archiveGate;
+    });
+    await archiveStarted;
+
+    const creation = createAgentTask(taskService, parentId, "Inspect the archived parent race");
+    await Promise.resolve();
+    expect(create).not.toHaveBeenCalled();
+    await config.editConfig((cfg) => {
+      const parent = cfg.projects
+        .get(projectPath)
+        ?.workspaces.find((workspace) => workspace.id === parentId);
+      assert(parent, "parent workspace must exist");
+      parent.archivedAt = "2026-08-10T00:00:00.000Z";
+      return cfg;
+    });
+    releaseArchive?.();
+
+    expect(await creation).toEqual(Err("Task.create: parent workspace is archived"));
+    await archiveOperation;
+    expect(create).not.toHaveBeenCalled();
+  });
+
   test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
