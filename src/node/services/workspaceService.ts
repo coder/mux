@@ -9500,6 +9500,19 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Whether the session is preparing a turn (PREPARING phase), excluding queued
+   * messages and pending auto-retries. In-session context recovery marks the
+   * turn PREPARING before resolving the stream-error recovery decision, so this
+   * is the precise "a recovery retry actually started" signal for callers that
+   * must not count unrelated queued work (e.g. child-task stream-error
+   * settlement).
+   */
+  isPreparingTurn(workspaceId: string): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    return session?.isPreparingTurn() ?? false;
+  }
+
+  /**
    * Best-effort delete of plan files (new + legacy paths) for a workspace.
    *
    * Why best-effort: plan files may not exist yet, or deletion may fail due to permissions.

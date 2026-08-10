@@ -707,7 +707,7 @@ function isSelfHealEligibleSettledWorkspaceTurn(
  * A workspace-turn stream error may resolve without parent intervention when
  * the child can still make progress on its own. The caller must still confirm
  * a retry/continuation is actually in flight
- * (hasRecoverableStreamRetryInFlight) before leaving the handle running;
+ * (hasRecoverableWorkspaceTurnRetryInFlight) before leaving the handle running;
  * exhausted or user-disabled auto-retry settles the handle terminally.
  *
  * Gating on isNonRetryableStreamError (instead of a narrow allowlist) keeps
@@ -9857,7 +9857,7 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
-  private async hasRecoverableStreamRetryInFlight(
+  private async hasRecoverableWorkspaceTurnRetryInFlight(
     workspaceId: string,
     options: { requireAutoRetry: boolean }
   ): Promise<boolean> {
@@ -9888,7 +9888,7 @@ export class TaskService {
     if (
       event.errorType != null &&
       isWorkspaceTurnRecoverableStreamError(event.errorType) &&
-      (await this.hasRecoverableStreamRetryInFlight(record.workspaceId, {
+      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
         requireAutoRetry: !explicitRecovery,
       }))
     ) {
@@ -9975,7 +9975,17 @@ export class TaskService {
       // racing it. When no retry started, the turn failed terminally without a
       // later stream-end, so leaving the task `running` would block the
       // parent's waitForAgentReport until timeout.
-      if (await this.hasRecoverableStreamRetryInFlight(workspaceId, { requireAutoRetry: false })) {
+      //
+      // Streaming/preparing is the precise "recovery started" signal: the
+      // in-session context recovery paths mark the turn PREPARING before
+      // resolving the decision. Queued messages must NOT count — the terminal
+      // error path does not dispatch the queue, so an unrelated queued message
+      // would otherwise leave the task running forever.
+      await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+      if (
+        this.aiService.isStreaming(workspaceId) ||
+        this.workspaceService.isPreparingTurn(workspaceId)
+      ) {
         return;
       }
       log.error("Task hit context_exceeded and in-session recovery declined; interrupting task", {
