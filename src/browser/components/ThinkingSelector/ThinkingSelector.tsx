@@ -174,7 +174,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
               <span
                 data-thinking-pro-status
                 className={cn(
-                  "border-border-medium text-muted rounded-[3px] border bg-transparent px-1 text-[9px] leading-[14px] font-semibold tracking-wide",
+                  "border-border-medium text-muted ml-0.5 rounded-[3px] border bg-transparent px-1 text-[9px] leading-[14px] font-semibold tracking-wide",
                   COMPOSER_PRO_HIDE_CLASS
                 )}
               >
@@ -270,7 +270,7 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
                   data-component="FastModeToggle"
                   aria-pressed={fastModeActive}
                   disabled={fastModeSaving}
-                  className="hover:bg-hover disabled:text-muted flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors disabled:cursor-wait"
+                  className="hover:bg-hover disabled:text-muted flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left transition-colors disabled:cursor-default"
                   onClick={() => {
                     handleFastModeToggle().catch(() => undefined);
                   }}
