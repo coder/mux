@@ -290,9 +290,11 @@ export const WorkflowRunGroups: AppStory = {
       if (!named || !fallback) {
         throw new Error("Expected two workflow run group headers");
       }
-      // Active runs default to expanded: the completed claims task stays visible.
-      if (!canvasElement.querySelector('[aria-label="Select workspace Extract claims"]')) {
-        throw new Error("Expected expanded workflow run to show its completed member");
+      if (canvasElement.querySelector('[aria-label="Select workspace Extract claims"]')) {
+        throw new Error("Expected completed workflow members to stay out of the left sidebar");
+      }
+      if (!canvasElement.querySelector('[aria-label="Select workspace Verify claims"]')) {
+        throw new Error("Expected the active workflow member to remain visible");
       }
     });
   },

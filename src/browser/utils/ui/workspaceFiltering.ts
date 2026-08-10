@@ -159,6 +159,18 @@ export function isSidebarSubAgentActive(workspace: FrontendWorkspaceMetadata): b
   );
 }
 
+function isSidebarSubAgentRunning(
+  workspace: FrontendWorkspaceMetadata,
+  options: DelegatedActivityOptions
+): boolean {
+  return (
+    workspace.taskExecutionStatus === "starting" ||
+    workspace.taskExecutionStatus === "running" ||
+    isRunningOrStartingTaskStatus(workspace.taskStatus) ||
+    getIsWorkspaceLiveActive(workspace.id, options)
+  );
+}
+
 export function isActionableTaskExecutionStatus(
   status: FrontendWorkspaceMetadata["taskExecutionStatus"]
 ): boolean {
@@ -330,7 +342,7 @@ export interface AgentRowRenderMeta {
 /**
  * Keep only active sub-agent rows in the left sidebar. Inactive persistent children remain
  * accessible through the transcript's sub-agent decoration, which is the canonical hierarchy UI.
- * Child visibility is inherited from ancestors so hidden parents also hide descendants.
+ * Active descendants remain visible even when an intermediate persistent parent is inactive.
  */
 export function filterVisibleAgentRows(
   flattenedWorkspaces: FrontendWorkspaceMetadata[],
@@ -376,10 +388,8 @@ export function filterVisibleAgentRows(
       return true;
     }
 
-    const parentVisible = isVisible(parent);
     const visible =
-      parentVisible &&
-      (isSidebarSubAgentActive(workspace) || getIsWorkspaceLiveActive(workspace.id, options));
+      isSidebarSubAgentActive(workspace) || getIsWorkspaceLiveActive(workspace.id, options);
 
     visiting.delete(workspace.id);
     visibilityById.set(workspace.id, visible);
@@ -394,23 +404,37 @@ export function filterVisibleAgentRows(
  */
 export function computeAgentRowRenderMeta(
   flattenedWorkspaces: FrontendWorkspaceMetadata[],
-  depthByWorkspaceId: Record<string, number>,
+  _depthByWorkspaceId: Record<string, number>,
   expandedParentIds: ReadonlySet<string> = new Set(),
   options: DelegatedActivityOptions = {}
 ): Map<string, AgentRowRenderMeta> {
   const visibleRows = filterVisibleAgentRows(flattenedWorkspaces, expandedParentIds, options);
-
+  const workspaceById = new Map(
+    flattenedWorkspaces.map((workspace) => [workspace.id, workspace] as const)
+  );
+  const visibleWorkspaceIds = new Set(visibleRows.map((workspace) => workspace.id));
   const visibleChildrenByParent = new Map<string, FrontendWorkspaceMetadata[]>();
   const visibleWorkspaceById = new Map<string, FrontendWorkspaceMetadata>();
+  const effectiveParentByWorkspaceId = new Map<string, string>();
 
   for (const workspace of visibleRows) {
     visibleWorkspaceById.set(workspace.id, workspace);
 
-    const parentId = workspace.parentWorkspaceId;
-    if (!parentId) {
+    let parentId = workspace.parentWorkspaceId;
+    const visitedParentIds = new Set<string>();
+    while (parentId != null && !visibleWorkspaceIds.has(parentId)) {
+      if (visitedParentIds.has(parentId)) {
+        parentId = undefined;
+        break;
+      }
+      visitedParentIds.add(parentId);
+      parentId = workspaceById.get(parentId)?.parentWorkspaceId;
+    }
+    if (parentId == null) {
       continue;
     }
 
+    effectiveParentByWorkspaceId.set(workspace.id, parentId);
     const siblings = visibleChildrenByParent.get(parentId) ?? [];
     siblings.push(workspace);
     visibleChildrenByParent.set(parentId, siblings);
@@ -419,7 +443,8 @@ export function computeAgentRowRenderMeta(
   const metadataByWorkspaceId = new Map<string, AgentRowRenderMeta>();
 
   for (const workspace of visibleRows) {
-    const rowKind = workspace.parentWorkspaceId ? "subagent" : "primary";
+    const effectiveParentId = effectiveParentByWorkspaceId.get(workspace.id);
+    const rowKind = effectiveParentId != null ? "subagent" : "primary";
 
     let connectorPosition: AgentRowRenderMeta["connectorPosition"] = "single";
     let connectorStartsAtParent = false;
@@ -427,8 +452,8 @@ export function computeAgentRowRenderMeta(
     let sharedTrunkActiveBelowRow = false;
     let ancestorTrunks: AgentRowRenderMeta["ancestorTrunks"] = [];
 
-    if (workspace.parentWorkspaceId) {
-      const siblings = visibleChildrenByParent.get(workspace.parentWorkspaceId) ?? [];
+    if (effectiveParentId != null) {
+      const siblings = visibleChildrenByParent.get(effectiveParentId) ?? [];
       const siblingIndex = siblings.findIndex((sibling) => sibling.id === workspace.id);
       if (siblings.length > 1) {
         connectorPosition = siblings[siblings.length - 1]?.id === workspace.id ? "last" : "middle";
@@ -439,7 +464,8 @@ export function computeAgentRowRenderMeta(
 
         let lastRunningSiblingIndex = -1;
         for (let index = siblings.length - 1; index >= 0; index -= 1) {
-          if (isRunningOrStartingTaskStatus(siblings[index]?.taskStatus)) {
+          const sibling = siblings[index];
+          if (sibling != null && isSidebarSubAgentRunning(sibling, options)) {
             lastRunningSiblingIndex = index;
             break;
           }
@@ -455,12 +481,12 @@ export function computeAgentRowRenderMeta(
 
       const continuingAncestorTrunks: Array<{ depth: number; active: boolean }> = [];
       const visitedAncestorIds = new Set<string>();
-      let ancestorId: string | undefined = workspace.parentWorkspaceId;
+      let ancestorId: string | undefined = effectiveParentId;
       while (ancestorId && !visitedAncestorIds.has(ancestorId)) {
         visitedAncestorIds.add(ancestorId);
 
         const ancestorMeta = metadataByWorkspaceId.get(ancestorId);
-        const ancestorDepth = depthByWorkspaceId[ancestorId] ?? 0;
+        const ancestorDepth = ancestorMeta?.depth ?? 0;
         if (ancestorDepth > 0 && ancestorMeta?.connectorPosition === "middle") {
           continuingAncestorTrunks.push({
             depth: ancestorDepth,
@@ -468,19 +494,22 @@ export function computeAgentRowRenderMeta(
           });
         }
 
-        const ancestorWorkspace = visibleWorkspaceById.get(ancestorId);
-        if (!ancestorWorkspace) {
+        if (!visibleWorkspaceById.has(ancestorId)) {
           break;
         }
-        ancestorId = ancestorWorkspace.parentWorkspaceId;
+        ancestorId = effectiveParentByWorkspaceId.get(ancestorId);
       }
 
       continuingAncestorTrunks.sort((left, right) => left.depth - right.depth);
       ancestorTrunks = continuingAncestorTrunks;
     }
 
+    const effectiveDepth =
+      effectiveParentId != null
+        ? (metadataByWorkspaceId.get(effectiveParentId)?.depth ?? 0) + 1
+        : 0;
     metadataByWorkspaceId.set(workspace.id, {
-      depth: depthByWorkspaceId[workspace.id] ?? 0,
+      depth: effectiveDepth,
       rowKind,
       connectorPosition,
       connectorStartsAtParent,

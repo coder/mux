@@ -1026,6 +1026,32 @@ describe("sub-agent row render metadata", () => {
     expect(metadataByWorkspaceId.get("parent")?.visibleCompletedChildrenCount).toBe(0);
   });
 
+  it("promotes active descendants through inactive persistent parents", () => {
+    const flattened = [
+      createWorkspace("root"),
+      createWorkspace("inactive-parent", {
+        parentWorkspaceId: "root",
+        taskStatus: "reported",
+      }),
+      createWorkspace("active-grandchild", {
+        parentWorkspaceId: "inactive-parent",
+        taskStatus: "running",
+      }),
+    ];
+
+    expect(filterVisibleAgentRows(flattened).map((workspace) => workspace.id)).toEqual([
+      "root",
+      "active-grandchild",
+    ]);
+    const depthByWorkspaceId = computeWorkspaceDepthMap(flattened);
+    const metadataByWorkspaceId = computeAgentRowRenderMeta(flattened, depthByWorkspaceId);
+    expect(metadataByWorkspaceId.get("active-grandchild")).toMatchObject({
+      depth: 1,
+      rowKind: "subagent",
+      connectorStartsAtParent: true,
+    });
+  });
+
   it("keeps running children with stale reportedAt visible and out of completed counts", () => {
     const flattened = [
       createWorkspace("parent"),

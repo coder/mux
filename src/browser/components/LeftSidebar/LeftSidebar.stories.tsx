@@ -663,9 +663,8 @@ export const VariantSubagents: AppStory = {
 };
 
 /**
- * Regression test: when all workspaces are older than 1 day, they should still
- * appear under the "Older than 1 day" tier instead of being forced into recent.
- * Also verifies expanded parent rows can reveal both active and completed sub-agents.
+ * Regression test: when active workspaces are older than 1 day, they still appear under the
+ * "Older than 1 day" tier. Inactive persistent children remain out of the left sidebar.
  */
 export const SingleOldWorkspaceInOlderTier: AppStory = {
   render: () => (
@@ -730,12 +729,6 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
         // Keep this regression deterministic even when Storybook reuses localStorage
         // across stories/runs and a prior interaction expanded an old-age tier.
         localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
-        // Pre-expand completed children so this regression also covers nested reported rows.
-        localStorage.setItem(
-          "expandedCompletedSubAgents",
-          JSON.stringify({ [oldWorkspace.id]: true })
-        );
-
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -751,8 +744,8 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
 
     await waitFor(() => {
       const tierToggle = getTierToggle();
-      if (!tierToggle.textContent?.includes("(4)")) {
-        throw new Error("Expected older-than-1-day tier count to be 4");
+      if (!tierToggle.textContent?.includes("(2)")) {
+        throw new Error("Expected older-than-1-day tier count to include only active rows");
       }
     });
 
@@ -769,12 +762,7 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
       }
     });
 
-    for (const workspaceId of [
-      "ws-old-only",
-      "ws-old-active-subagent",
-      "ws-old-completed-subagent-1",
-      "ws-old-completed-subagent-2",
-    ]) {
+    for (const workspaceId of ["ws-old-only", "ws-old-active-subagent"]) {
       if (canvasElement.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
         throw new Error(`Workspace ${workspaceId} rendered before expanding old tier`);
       }
@@ -783,12 +771,7 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
     await userEvent.click(getTierToggle());
 
     await waitFor(() => {
-      for (const workspaceId of [
-        "ws-old-only",
-        "ws-old-active-subagent",
-        "ws-old-completed-subagent-1",
-        "ws-old-completed-subagent-2",
-      ]) {
+      for (const workspaceId of ["ws-old-only", "ws-old-active-subagent"]) {
         const row = canvasElement.querySelector<HTMLElement>(
           `[data-workspace-id="${workspaceId}"]`
         );
@@ -797,12 +780,17 @@ export const SingleOldWorkspaceInOlderTier: AppStory = {
         }
       }
     });
+    for (const workspaceId of ["ws-old-completed-subagent-1", "ws-old-completed-subagent-2"]) {
+      if (canvasElement.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
+        throw new Error(`Inactive workspace ${workspaceId} should stay out of the left sidebar`);
+      }
+    }
   },
 };
 
 /**
- * Regression variant: mirrors SingleOldWorkspaceInOlderTier, but the parent agent
- * is less than 1 day old so the full hierarchy should render in the recent section.
+ * Regression variant: the parent and active child are less than 1 day old, so they render in the
+ * recent section while inactive persistent children remain available only in the transcript.
  */
 export const SingleRecentWorkspaceInTopTier: AppStory = {
   render: () => (
@@ -864,10 +852,6 @@ export const SingleRecentWorkspaceInTopTier: AppStory = {
         ];
 
         expandProjects([projectPath]);
-        localStorage.setItem(
-          "expandedCompletedSubAgents",
-          JSON.stringify({ [recentWorkspace.id]: true })
-        );
 
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -887,12 +871,7 @@ export const SingleRecentWorkspaceInTopTier: AppStory = {
     });
 
     await waitFor(() => {
-      for (const workspaceId of [
-        "ws-recent-only",
-        "ws-recent-active-subagent",
-        "ws-recent-completed-subagent-1",
-        "ws-recent-completed-subagent-2",
-      ]) {
+      for (const workspaceId of ["ws-recent-only", "ws-recent-active-subagent"]) {
         const row = canvasElement.querySelector<HTMLElement>(
           `[data-workspace-id="${workspaceId}"]`
         );
@@ -901,6 +880,14 @@ export const SingleRecentWorkspaceInTopTier: AppStory = {
         }
       }
     });
+    for (const workspaceId of [
+      "ws-recent-completed-subagent-1",
+      "ws-recent-completed-subagent-2",
+    ]) {
+      if (canvasElement.querySelector(`[data-workspace-id="${workspaceId}"]`)) {
+        throw new Error(`Inactive workspace ${workspaceId} should stay out of the left sidebar`);
+      }
+    }
   },
 };
 
@@ -954,11 +941,6 @@ export const FlatListWhenAgeGroupingDisabled: AppStory = {
         updatePersistedState(SIDEBAR_AGE_GROUPING_KEY, false);
         // Grouping is off, so no tier should need expansion for rows to show.
         localStorage.setItem("expandedOldWorkspaces", JSON.stringify({}));
-        localStorage.setItem(
-          "expandedCompletedSubAgents",
-          JSON.stringify({ [oldWorkspace.id]: true })
-        );
-
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
           workspaces,
@@ -968,11 +950,7 @@ export const FlatListWhenAgeGroupingDisabled: AppStory = {
   ),
   play: async ({ canvasElement }) => {
     await waitFor(() => {
-      for (const workspaceId of [
-        "ws-flat-old",
-        "ws-flat-old-active-subagent",
-        "ws-flat-old-completed-subagent",
-      ]) {
+      for (const workspaceId of ["ws-flat-old", "ws-flat-old-active-subagent"]) {
         const row = canvasElement.querySelector<HTMLElement>(
           `[data-workspace-id="${workspaceId}"]`
         );
@@ -981,6 +959,10 @@ export const FlatListWhenAgeGroupingDisabled: AppStory = {
         }
       }
     });
+
+    if (canvasElement.querySelector('[data-workspace-id="ws-flat-old-completed-subagent"]')) {
+      throw new Error("Inactive sub-agent should stay out of the flat left-sidebar list");
+    }
 
     const tierToggle = within(canvasElement).queryByRole("button", {
       name: /workspaces older than/i,

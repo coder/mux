@@ -509,6 +509,12 @@ describe("TOOL_DEFINITIONS", () => {
     );
   });
 
+  it("scopes friendly role names to sub-agents while preserving workspace chat titles", () => {
+    const description = buildTaskToolDescription(RUNTIME_MODE.WORKTREE);
+    expect(description).toContain("For sub-agents");
+    expect(description).toContain("For kind=workspace, use a normal work-specific chat title");
+  });
+
   it("accepts workspace turn queue dispatch mode", () => {
     const parsed = TOOL_DEFINITIONS.task.schema.safeParse({
       kind: "workspace",

@@ -319,7 +319,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
-    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. Use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary or ordinary chat title. " +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. For sub-agents, use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary. For kind=workspace, use a normal work-specific chat title. " +
     `Use n when you want several agents to try the same prompt independently. Use variants when you want several agents to run the same prompt template with a different ${TASK_VARIANT_PLACEHOLDER} substituted into each run. ` +
     "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
     `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
@@ -477,7 +477,7 @@ const taskToolBaseShape = {
     .string()
     .min(1)
     .describe(
-      'Parent-chosen short, friendly role name for the persistent child, such as "Reviewer" or "Simplicity Auditor". Name reusable expertise, not the current assignment; avoid task-summary titles such as "Analyze lifecycle semantics".'
+      'Parent-chosen title. For a persistent sub-agent, use a short, friendly reusable role name such as "Reviewer" or "Simplicity Auditor", not the current assignment. For kind="workspace", use a normal work-specific chat title.'
     ),
   run_in_background: z.boolean().default(false),
   n: TaskToolBestOfCountSchema.nullish().describe(
