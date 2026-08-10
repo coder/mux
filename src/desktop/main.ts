@@ -715,8 +715,8 @@ async function loadServices(): Promise<void> {
     const [serverPort] = event.ports;
     // Use Object.defineProperties to copy all property descriptors from
     // orpcContext as own-properties (required by oRPC's internal property
-    // enumeration) while preserving getters like onePasswordService that
-    // must resolve lazily rather than being snapshotted at construction.
+    // enumeration) while preserving any getters that must resolve lazily
+    // rather than being snapshotted at construction.
     const messagePortContext = Object.defineProperties(
       {} as typeof orpcContext & { headers: { authorization: string } },
       {

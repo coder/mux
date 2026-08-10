@@ -9,7 +9,6 @@ import type { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthSe
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CopilotOauthService } from "@/node/services/copilotOauthService";
 import type { BackupService } from "@/node/services/backup/backupService";
-import type { OnePasswordService } from "@/node/services/onePasswordService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { TerminalService } from "@/node/services/terminalService";
 import type { EditorService } from "@/node/services/editorService";
@@ -61,7 +60,6 @@ export interface ORPCContext {
   codexOauthService: CodexOauthService;
   copilotOauthService: CopilotOauthService;
   backupService: BackupService;
-  onePasswordService?: OnePasswordService | null;
   terminalService: TerminalService;
   editorService: EditorService;
   windowService: WindowService;

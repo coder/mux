@@ -12,7 +12,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
-import { isOpReference } from "@/common/utils/opRef";
 import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
@@ -22,7 +21,6 @@ import type {
   MuxGatewayProviderConfig,
   OpenAIProviderConfig,
 } from "@/common/config/schemas/providersConfig";
-import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 
@@ -169,14 +167,9 @@ export type ProviderRequirementError =
       code: "api_key_file_unreadable";
       path: string;
       reason: "missing" | "not_file" | "too_large" | "empty" | "read_failed";
-    }
-  | {
-      code: "op_resolution_failed";
-      ref: string;
-      reason: "unavailable" | "unresolved" | "threw";
     };
 
-export type CustomProviderCredentialSource = "inline" | "file" | "op" | "none";
+export type CustomProviderCredentialSource = "inline" | "file" | "none";
 
 export type ResolvedCustomProviderCredentials =
   | {
@@ -380,11 +373,10 @@ function customCredentialSourceFromApiKeySource(
   return source === "file" ? "file" : "inline";
 }
 
-export async function resolveCustomProviderCredentials(
+export function resolveCustomProviderCredentials(
   providerId: string,
-  providerConfig: BaseProviderConfig,
-  opResolver?: ExternalSecretResolver
-): Promise<ResolvedCustomProviderCredentials> {
+  providerConfig: BaseProviderConfig
+): ResolvedCustomProviderCredentials {
   const baseURL = resolveConfigBaseUrl(providerConfig);
   if (!baseURL) {
     return {
@@ -411,50 +403,12 @@ export async function resolveCustomProviderCredentials(
     return { ok: true, baseURL, resolvedFrom: "none" };
   }
 
-  const rawApiKey = apiKeyResult.apiKey;
-  if (!isOpReference(rawApiKey)) {
-    return {
-      ok: true,
-      apiKey: rawApiKey,
-      baseURL,
-      resolvedFrom: customCredentialSourceFromApiKeySource(apiKeyResult.source),
-    };
-  }
-
-  if (!opResolver) {
-    return {
-      ok: false,
-      baseURL,
-      resolvedFrom: "op",
-      error: { code: "op_resolution_failed", ref: rawApiKey, reason: "unavailable" },
-    };
-  }
-
-  try {
-    const resolvedApiKey = await opResolver(rawApiKey);
-    if (!hasNonEmptyString(resolvedApiKey)) {
-      return {
-        ok: false,
-        baseURL,
-        resolvedFrom: "op",
-        error: { code: "op_resolution_failed", ref: rawApiKey, reason: "unresolved" },
-      };
-    }
-
-    return {
-      ok: true,
-      apiKey: resolvedApiKey,
-      baseURL,
-      resolvedFrom: "op",
-    };
-  } catch {
-    return {
-      ok: false,
-      baseURL,
-      resolvedFrom: "op",
-      error: { code: "op_resolution_failed", ref: rawApiKey, reason: "threw" },
-    };
-  }
+  return {
+    ok: true,
+    apiKey: apiKeyResult.apiKey,
+    baseURL,
+    resolvedFrom: customCredentialSourceFromApiKeySource(apiKeyResult.source),
+  };
 }
 
 /**

@@ -226,11 +226,6 @@ export const AWSCredentialStatusSchema = z.object({
 
 export const ProviderConfigInfoSchema = z.object({
   apiKeySet: z.boolean(),
-  apiKeyIsOpRef: z.boolean().optional(),
-  /** Non-secret op:// reference URI when apiKey points to 1Password. */
-  apiKeyOpRef: z.string().optional(),
-  /** Human-readable label for apiKeyOpRef to display in the UI. */
-  apiKeyOpLabel: z.string().optional(),
   /** Whether this provider is enabled for model requests */
   isEnabled: z.boolean().default(true),
   /** Whether this provider is configured and ready to use */
@@ -2237,7 +2232,6 @@ export const config = {
       heartbeatDefaultPrompt: z.string().optional(),
       heartbeatDefaultIntervalMs: z.number().optional(),
       goalDefaults: GoalDefaultsConfigSchema,
-      onePasswordAccountName: z.string().nullish(),
     }),
   },
   saveConfig: {
@@ -2307,14 +2301,6 @@ export const config = {
       .object({
         coderWorkspaceArchiveBehavior: z.enum(CODER_ARCHIVE_BEHAVIORS),
         worktreeArchiveBehavior: z.enum(WORKTREE_ARCHIVE_BEHAVIORS),
-      })
-      .strict(),
-    output: z.void(),
-  },
-  updateOnePasswordAccountName: {
-    input: z
-      .object({
-        onePasswordAccountName: z.string().nullish(),
       })
       .strict(),
     output: z.void(),

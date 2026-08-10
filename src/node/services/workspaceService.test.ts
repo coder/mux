@@ -177,7 +177,6 @@ function createWorkspaceServiceForTest(options: {
   telemetryService?: WorkspaceServiceArgs[8];
   experimentsService?: WorkspaceServiceArgs[9];
   sessionTimingService?: WorkspaceServiceArgs[10];
-  opResolver?: WorkspaceServiceArgs[11];
 }): WorkspaceService {
   // Test helpers often don't exercise HistoryService; use a narrow stub for those cases.
   // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
@@ -193,8 +192,7 @@ function createWorkspaceServiceForTest(options: {
     options.policyService,
     options.telemetryService,
     options.experimentsService,
-    options.sessionTimingService,
-    options.opResolver
+    options.sessionTimingService
   );
 }
 

@@ -259,7 +259,7 @@ import type { WorktreeArchiveSnapshotService } from "@/node/services/worktreeArc
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { createBashTool } from "@/node/services/tools/bash";
 import type { AskUserQuestionToolSuccessResult, BashToolResult } from "@/common/types/tools";
-import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { secretsToRecord } from "@/common/types/secrets";
 
 import {
   copyPlanFileAcrossRuntimes,
@@ -1967,8 +1967,7 @@ export class WorkspaceService extends EventEmitter {
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
     experimentsService?: ExperimentsService,
-    sessionTimingService?: SessionTimingService,
-    private readonly opResolver?: ExternalSecretResolver
+    sessionTimingService?: SessionTimingService
   ) {
     super();
     this.bashMonitorWakeStore = new BashMonitorWakeStore(config);
@@ -4198,10 +4197,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      const createEnv = await secretsToRecord(
-        this.config.getEffectiveSecrets(owningProjectPath),
-        this.opResolver
-      );
+      const createEnv = await secretsToRecord(this.config.getEffectiveSecrets(owningProjectPath));
 
       for (let attempt = 0; attempt <= MAX_WORKSPACE_NAME_COLLISION_RETRIES; attempt++) {
         createResult = await runtime.createWorkspace({
@@ -4305,10 +4301,7 @@ export class WorkspaceService extends EventEmitter {
       session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
 
       // Background init: run postCreateSetup (if present) then initWorkspace
-      const secrets = await secretsToRecord(
-        this.config.getEffectiveSecrets(owningProjectPath),
-        this.opResolver
-      );
+      const secrets = await secretsToRecord(this.config.getEffectiveSecrets(owningProjectPath));
       // Background init: postCreateSetup (provisioning) + initWorkspace (sync/checkout/hook)
       //
       // If the user cancelled creation while create() was still in flight, avoid spawning
@@ -4552,8 +4545,7 @@ export class WorkspaceService extends EventEmitter {
         );
 
         const createEnv = await secretsToRecord(
-          this.config.getEffectiveSecrets(projectRuntimeEntry.project.projectPath),
-          this.opResolver
+          this.config.getEffectiveSecrets(projectRuntimeEntry.project.projectPath)
         );
 
         const createResult = await projectRuntimeEntry.runtime.createWorkspace({
@@ -4672,8 +4664,7 @@ export class WorkspaceService extends EventEmitter {
 
             try {
               const secrets = await secretsToRecord(
-                this.config.getEffectiveSecrets(createdWorkspace.project.projectPath),
-                this.opResolver
+                this.config.getEffectiveSecrets(createdWorkspace.project.projectPath)
               );
 
               const initResult = await runFullInit(createdWorkspace.runtime, {
@@ -7995,8 +7986,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         const projectEnv = await secretsToRecord(
-          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
-          this.opResolver
+          this.config.getEffectiveSecrets(normalizedRuntimeProjectPath)
         );
         projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
         return projectEnv;
@@ -10520,7 +10510,7 @@ export class WorkspaceService extends EventEmitter {
       const bashTool = createBashTool({
         cwd: cwdForExecution,
         runtime,
-        secrets: await secretsToRecord(projectSecrets, this.opResolver),
+        secrets: await secretsToRecord(projectSecrets),
         runtimeTempDir: tempDir.path,
         overflow_policy: "truncate",
         trusted: isWorkspaceTrustedForSharedExecution(metadata, configSnapshot.projects),

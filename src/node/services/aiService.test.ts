@@ -132,7 +132,6 @@ function createBasicAIService(
     undefined,
     undefined,
     options?.devToolsService,
-    undefined,
     options?.experimentsService
   );
   return { config, historyService, initStateManager, providerService, service };

@@ -14,7 +14,6 @@ import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { BackupService } from "@/node/services/backup/backupService";
 import { createBackupGitRepo, createBackupPayloadStore } from "@/node/services/backup/adapters";
-import { OnePasswordService } from "@/node/services/onePasswordService";
 import { EditorService } from "@/node/services/editorService";
 import { WindowService } from "@/node/services/windowService";
 import { UpdateService } from "@/node/services/updateService";
@@ -77,7 +76,6 @@ import { DesktopBridgeServer } from "@/node/services/desktop/DesktopBridgeServer
 import { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
 import { DesktopTokenManager } from "@/node/services/desktop/DesktopTokenManager";
 import type { ORPCContext } from "@/node/orpc/context";
-import type { ExternalSecretResolver } from "@/common/types/secrets";
 /**
  * ServiceContainer - Central dependency container for all backend services.
  *
@@ -109,8 +107,6 @@ export class ServiceContainer {
   public readonly codexOauthService: CodexOauthService;
   public readonly copilotOauthService: CopilotOauthService;
   public readonly backupService: BackupService;
-  private _onePasswordService: OnePasswordService | null | undefined = undefined;
-  private _onePasswordServiceAccountName: string | undefined;
   public readonly terminalService: TerminalService;
   public readonly editorService: EditorService;
   public readonly windowService: WindowService;
@@ -172,17 +168,6 @@ export class ServiceContainer {
     // the persistent config rather than creating a default with an ephemeral one.
     this.workspaceMcpOverridesService = new WorkspaceMcpOverridesService(config);
 
-    // 1Password integration — resolve references lazily so config updates are picked
-    // up without requiring an app restart.
-    const opResolver: ExternalSecretResolver = async (ref: string) => {
-      const service = this.onePasswordService;
-      if (!service) {
-        return undefined;
-      }
-
-      return service.resolve(ref);
-    };
-
     const core = createCoreServices({
       config,
       extensionMetadataPath: path.join(config.rootDir, "extensionMetadata.json"),
@@ -193,7 +178,6 @@ export class ServiceContainer {
       experimentsService: this.experimentsService,
       sessionTimingService: this.sessionTimingService,
       devToolsService: this.devToolsService,
-      opResolver,
     });
 
     // Spread core services into class fields
@@ -318,7 +302,7 @@ export class ServiceContainer {
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
-    this.terminalService = new TerminalService(config, this.ptyService, opResolver);
+    this.terminalService = new TerminalService(config, this.ptyService);
     // Wire terminal service to workspace service for cleanup on removal
     this.workspaceService.setTerminalService(this.terminalService);
     this.workspaceService.setDesktopSessionManager(this.desktopSessionManager);
@@ -355,12 +339,7 @@ export class ServiceContainer {
     );
     this.serverService = new ServerService();
     this.menuEventService = new MenuEventService();
-    this.voiceService = new VoiceService(
-      config,
-      this.providerService,
-      this.policyService,
-      opResolver
-    );
+    this.voiceService = new VoiceService(config, this.providerService, this.policyService);
     this.coderService = coderService;
 
     this.serverAuthService = new ServerAuthService(config);
@@ -500,27 +479,6 @@ export class ServiceContainer {
     });
   }
 
-  get onePasswordService(): OnePasswordService | null {
-    const opAccountName = this.config.loadConfigOrDefault().onePasswordAccountName;
-
-    if (!opAccountName) {
-      this._onePasswordService = null;
-      this._onePasswordServiceAccountName = undefined;
-      return null;
-    }
-
-    if (
-      this._onePasswordService === undefined ||
-      this._onePasswordService === null ||
-      this._onePasswordServiceAccountName !== opAccountName
-    ) {
-      this._onePasswordService = new OnePasswordService(opAccountName);
-      this._onePasswordServiceAccountName = opAccountName;
-    }
-
-    return this._onePasswordService;
-  }
-
   async initialize(): Promise<void> {
     const startupStartedAt = Date.now();
     const stepDurationsMs: Record<string, number> = {};
@@ -594,8 +552,6 @@ export class ServiceContainer {
    * (desktop/main.ts, cli/server.ts) don't duplicate a 30-field spread.
    */
   toORPCContext(): Omit<ORPCContext, "headers"> {
-    const resolveOnePasswordService = () => this.onePasswordService;
-
     return {
       workflowRuntimeFactory: this.workflowRuntimeFactory,
       config: this.config,
@@ -609,9 +565,6 @@ export class ServiceContainer {
       codexOauthService: this.codexOauthService,
       copilotOauthService: this.copilotOauthService,
       backupService: this.backupService,
-      get onePasswordService() {
-        return resolveOnePasswordService();
-      },
       terminalService: this.terminalService,
       editorService: this.editorService,
       windowService: this.windowService,

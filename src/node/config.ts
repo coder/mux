@@ -6,12 +6,7 @@ import { EventEmitter } from "events";
 import writeFileAtomic from "write-file-atomic";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
-import {
-  isSecretReferenceValue,
-  isOpSecretValue,
-  type Secret,
-  type SecretsConfig,
-} from "@/common/types/secrets";
+import { isSecretReferenceValue, type Secret, type SecretsConfig } from "@/common/types/secrets";
 import type {
   Workspace,
   ProjectConfig,
@@ -1211,7 +1206,6 @@ export class Config {
           settingsBackup: SettingsBackupSchema.optional()
             .catch(undefined)
             .parse(parsed.settingsBackup),
-          onePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       }
     } catch (error) {
@@ -1500,11 +1494,6 @@ export class Config {
 
       if (config.settingsBackup) {
         data.settingsBackup = config.settingsBackup;
-      }
-
-      const onePasswordAccountName = parseOptionalNonEmptyString(config.onePasswordAccountName);
-      if (onePasswordAccountName) {
-        data.onePasswordAccountName = onePasswordAccountName;
       }
 
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
@@ -2528,7 +2517,7 @@ ${jsonString}`;
       return true;
     }
 
-    return isSecretReferenceValue(value) || isOpSecretValue(value);
+    return isSecretReferenceValue(value);
   }
 
   private static isSecret(value: unknown): value is Secret {
@@ -2711,7 +2700,7 @@ ${jsonString}`;
       try {
         const raw = globalRawByKey.get(key);
 
-        if (typeof raw === "string" || isOpSecretValue(raw)) {
+        if (typeof raw === "string") {
           globalResolved.set(key, raw);
           return raw;
         }

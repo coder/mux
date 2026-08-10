@@ -155,8 +155,6 @@ export interface MockORPCClientOptions {
   runtimeEnablement?: Record<string, boolean>;
   /** Initial default runtime for config.getConfig (global) */
   defaultRuntime?: RuntimeEnablementId | null;
-  /** Initial 1Password account name for config.getConfig */
-  onePasswordAccountName?: string | null;
   /** Initial global heartbeat default prompt for config.getConfig */
   heartbeatDefaultPrompt?: string;
   /** Initial global heartbeat default interval for config.getConfig */
@@ -398,7 +396,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
     chatTranscriptFullWidth: initialChatTranscriptFullWidth = false,
     runtimeEnablement: initialRuntimeEnablement,
     defaultRuntime: initialDefaultRuntime,
-    onePasswordAccountName: initialOnePasswordAccountName = null,
     heartbeatDefaultPrompt: initialHeartbeatDefaultPrompt,
     heartbeatDefaultIntervalMs: initialHeartbeatDefaultIntervalMs,
     goalDefaults: initialGoalDefaults,
@@ -543,7 +540,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
   };
 
   let defaultRuntime: RuntimeEnablementId | null = initialDefaultRuntime ?? null;
-  let onePasswordAccountName: string | null = initialOnePasswordAccountName;
   let heartbeatDefaultPrompt = initialHeartbeatDefaultPrompt;
   let heartbeatDefaultIntervalMs = initialHeartbeatDefaultIntervalMs;
   let goalDefaults = normalizeGoalDefaults(initialGoalDefaults ?? DEFAULT_GOAL_DEFAULTS);
@@ -781,7 +777,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           agentAiDefaults,
           subagentAiDefaults,
           muxGovernorUrl,
-          onePasswordAccountName,
           heartbeatDefaultPrompt,
           heartbeatDefaultIntervalMs,
           goalDefaults,
@@ -876,11 +871,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       }) => {
         coderWorkspaceArchiveBehavior = input.coderWorkspaceArchiveBehavior;
         worktreeArchiveBehavior = input.worktreeArchiveBehavior;
-        notifyConfigChanged();
-        return Promise.resolve(undefined);
-      },
-      updateOnePasswordAccountName: (input: { onePasswordAccountName?: string | null }) => {
-        onePasswordAccountName = input.onePasswordAccountName ?? null;
         notifyConfigChanged();
         return Promise.resolve(undefined);
       },
@@ -1033,13 +1023,6 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
       getConfig: () => Promise.resolve(providersConfig),
       setProviderConfig: () => Promise.resolve({ success: true, data: undefined }),
       setModels: () => Promise.resolve({ success: true, data: undefined }),
-    },
-    onePassword: {
-      isAvailable: () => Promise.resolve({ available: false }),
-      listVaults: () => Promise.resolve([]),
-      listItems: () => Promise.resolve([]),
-      getItemFields: () => Promise.resolve([]),
-      buildReference: () => Promise.resolve({ reference: "", label: "" }),
     },
     muxGateway: {
       getAccountStatus: () =>

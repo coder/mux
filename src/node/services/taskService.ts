@@ -135,7 +135,7 @@ import {
   readSubagentFailureArtifactsFile,
   upsertSubagentFailureArtifact,
 } from "@/node/services/subagentFailureArtifacts";
-import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { secretsToRecord } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
 import type { StreamErrorType } from "@/common/types/errors";
@@ -1653,7 +1653,6 @@ export class TaskService {
     private readonly aiService: AIService,
     private readonly workspaceService: WorkspaceService,
     private readonly initStateManager: InitStateManager,
-    private readonly opResolver?: ExternalSecretResolver,
     private readonly sessionUsageService?: SessionUsageService,
     private readonly workspaceGoalService?: WorkspaceGoalService
   ) {
@@ -1982,8 +1981,7 @@ export class TaskService {
       }
 
       const projectEnv = await secretsToRecord(
-        this.config.getEffectiveSecrets(normalizedRuntimeProjectPath),
-        this.opResolver
+        this.config.getEffectiveSecrets(normalizedRuntimeProjectPath)
       );
       projectEnvCache.set(normalizedRuntimeProjectPath, projectEnv);
       return projectEnv;
@@ -3130,8 +3128,7 @@ export class TaskService {
       initLogger.logComplete(0);
     } else {
       const secrets = await secretsToRecord(
-        this.config.getEffectiveSecrets(plan.parentMeta.projectPath),
-        this.opResolver
+        this.config.getEffectiveSecrets(plan.parentMeta.projectPath)
       );
       runBackgroundInit(
         runtimeForTaskWorkspace,
@@ -4024,8 +4021,7 @@ export class TaskService {
     // mutate the live parent workspace — skip it entirely.
     if (!useSharedWorkspace) {
       const secrets = await secretsToRecord(
-        this.config.getEffectiveSecrets(parentMeta.projectPath),
-        this.opResolver
+        this.config.getEffectiveSecrets(parentMeta.projectPath)
       );
       runBackgroundInit(
         runtimeForTaskWorkspace,

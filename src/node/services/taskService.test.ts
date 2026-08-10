@@ -564,7 +564,6 @@ function createTaskServiceHarness(
     aiService,
     workspaceService,
     initStateManager,
-    undefined,
     overrides?.sessionUsageService,
     overrides?.workspaceGoalService
   );

@@ -33,7 +33,6 @@ import { MemoryService } from "@/node/services/memoryService";
 import { MemoryConsolidationService } from "@/node/services/memoryConsolidationService";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
 import type { SessionTimingService } from "@/node/services/sessionTimingService";
-import type { ExternalSecretResolver } from "@/common/types/secrets";
 import type { DevToolsService } from "@/node/services/devToolsService";
 
 export interface CoreServicesOptions {
@@ -50,7 +49,6 @@ export interface CoreServicesOptions {
   goalServiceOptions?: WorkspaceGoalServiceOptions;
   experimentsService?: ExperimentsService;
   sessionTimingService?: SessionTimingService;
-  opResolver?: ExternalSecretResolver;
   devToolsService?: DevToolsService;
 }
 
@@ -112,7 +110,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService,
     opts.telemetryService,
     opts.devToolsService,
-    opts.opResolver,
     opts.experimentsService
   );
 
@@ -164,8 +161,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService,
     opts.telemetryService,
     opts.experimentsService,
-    opts.sessionTimingService,
-    opts.opResolver
+    opts.sessionTimingService
   );
   aiService.setWorkspaceHeartbeatService(workspaceService);
   // Tool-started workflows share the same sidebar activity cache as ORPC-started workflows,
@@ -207,7 +203,6 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     aiService,
     workspaceService,
     initStateManager,
-    opts.opResolver,
     sessionUsageService,
     workspaceGoalService
   );

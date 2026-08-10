@@ -26,7 +26,6 @@ import {
   validateCustomProviderId,
   type ProvidersConfigWithProviderType,
 } from "@/common/utils/providers/customProviders";
-import { isOpReference } from "@/common/utils/opRef";
 import {
   getProviderModelEntryId,
   normalizeProviderModelEntries,
@@ -69,16 +68,12 @@ function buildCustomProviderConfigInfo(
     normalizeProviderModelEntries(config.models),
     policy?.allowedModels ?? null
   );
-  const apiKeyIsOpRef = isOpReference(config.apiKey);
   const apiKeySet = typeof config.apiKey === "string" && config.apiKey.trim().length > 0;
   const apiKeyFile = typeof config.apiKeyFile === "string" ? config.apiKeyFile : undefined;
   const isEnabled = !isProviderDisabledInConfig(config);
 
   return {
     apiKeySet,
-    apiKeyIsOpRef: apiKeyIsOpRef || undefined,
-    apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
-    apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
     apiKeyFile,
     apiKeySource: apiKeySet ? "config" : apiKeyFile ? "file" : "keyless",
     baseUrl,
@@ -300,7 +295,6 @@ export class ProviderService {
       const config = (providersConfig[provider] ?? {}) as {
         apiKey?: string;
         apiKeyFile?: string;
-        apiKeyOpLabel?: string;
         baseUrl?: string;
         baseURL?: string;
         models?: unknown[];
@@ -340,7 +334,6 @@ export class ProviderService {
 
       const codexOauthSet =
         provider === "openai" && parseCodexOauthAuth(config.codexOauth) !== null;
-      const apiKeyIsOpRef = isOpReference(config.apiKey);
       let isEnabled = !isProviderDisabledInConfig(config);
       if (provider === "mux-gateway" && mainConfig.muxGatewayEnabled === false) {
         isEnabled = false;
@@ -350,9 +343,6 @@ export class ProviderService {
 
       const providerInfo: ProviderConfigInfo = {
         apiKeySet: !!config.apiKey,
-        apiKeyIsOpRef: apiKeyIsOpRef || undefined,
-        apiKeyOpRef: apiKeyIsOpRef ? config.apiKey : undefined,
-        apiKeyOpLabel: apiKeyIsOpRef ? config.apiKeyOpLabel : undefined,
         // Users can disable providers without removing credentials from providers.jsonc.
         isEnabled,
         isConfigured: false, // computed below

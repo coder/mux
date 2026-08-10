@@ -249,8 +249,8 @@ describe("resolveProviderCredentials base URL source", () => {
 });
 
 describe("resolveCustomProviderCredentials", () => {
-  it("succeeds with no API key when only baseUrl is set", async () => {
-    const result = await resolveCustomProviderCredentials("local-vllm", {
+  it("succeeds with no API key when only baseUrl is set", () => {
+    const result = resolveCustomProviderCredentials("local-vllm", {
       providerType: "openai-compatible",
       baseUrl: "http://localhost:8000/v1",
     });
@@ -262,8 +262,8 @@ describe("resolveCustomProviderCredentials", () => {
     });
   });
 
-  it("returns a typed missing_base_url error without a base URL", async () => {
-    const result = await resolveCustomProviderCredentials("local-vllm", {
+  it("returns a typed missing_base_url error without a base URL", () => {
+    const result = resolveCustomProviderCredentials("local-vllm", {
       providerType: "openai-compatible",
     });
 
@@ -273,8 +273,8 @@ describe("resolveCustomProviderCredentials", () => {
     }
   });
 
-  it("resolves inline apiKey from config", async () => {
-    const result = await resolveCustomProviderCredentials("local-vllm", {
+  it("resolves inline apiKey from config", () => {
+    const result = resolveCustomProviderCredentials("local-vllm", {
       providerType: "openai-compatible",
       baseUrl: "http://localhost:8000/v1",
       apiKey: "sk-test",
@@ -288,13 +288,13 @@ describe("resolveCustomProviderCredentials", () => {
     });
   });
 
-  it("resolves apiKeyFile", async () => {
+  it("resolves apiKeyFile", () => {
     const tmpDir = mkdtempSync(path.join(os.tmpdir(), "mux-test-"));
     const keyFilePath = path.join(tmpDir, "api-key");
     writeFileSync(keyFilePath, "sk-from-file\n", "utf-8");
 
     try {
-      const result = await resolveCustomProviderCredentials("local-vllm", {
+      const result = resolveCustomProviderCredentials("local-vllm", {
         providerType: "openai-compatible",
         baseUrl: "http://localhost:8000/v1",
         apiKeyFile: keyFilePath,
@@ -309,26 +309,6 @@ describe("resolveCustomProviderCredentials", () => {
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
-  });
-
-  it("resolves op references with the provided resolver", async () => {
-    const opRef = "op://Personal/Local vLLM/api-key";
-    const result = await resolveCustomProviderCredentials(
-      "local-vllm",
-      {
-        providerType: "openai-compatible",
-        baseUrl: "http://localhost:8000/v1",
-        apiKey: opRef,
-      },
-      (ref) => Promise.resolve(ref === opRef ? "sk-from-op" : undefined)
-    );
-
-    expect(result).toEqual({
-      ok: true,
-      apiKey: "sk-from-op",
-      baseURL: "http://localhost:8000/v1",
-      resolvedFrom: "op",
-    });
   });
 });
 describe("resolveProviderCredentials - apiKeyFile", () => {

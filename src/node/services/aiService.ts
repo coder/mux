@@ -48,7 +48,7 @@ import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
-import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { secretsToRecord } from "@/common/types/secrets";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { MuxToolScope } from "@/common/types/toolScope";
@@ -436,7 +436,6 @@ export class AIService extends EventEmitter {
   private mcpServerManager?: MCPServerManager;
   private readonly policyService?: PolicyService;
   private readonly telemetryService?: TelemetryService;
-  private readonly opResolver?: ExternalSecretResolver;
   private readonly initStateManager: InitStateManager;
   private mockModeEnabled: boolean;
   private mockAiStreamPlayer?: MockAiStreamPlayer;
@@ -493,7 +492,6 @@ export class AIService extends EventEmitter {
     policyService?: PolicyService,
     telemetryService?: TelemetryService,
     devToolsService?: DevToolsService,
-    opResolver?: ExternalSecretResolver,
     experimentsService?: ExperimentsService
   ) {
     super();
@@ -509,7 +507,6 @@ export class AIService extends EventEmitter {
     this.sessionUsageService = sessionUsageService;
     this.policyService = policyService;
     this.telemetryService = telemetryService;
-    this.opResolver = opResolver;
     this.experimentsService = experimentsService;
     this.providerService = providerService;
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
@@ -521,8 +518,7 @@ export class AIService extends EventEmitter {
       providerService,
       policyService,
       undefined,
-      devToolsService,
-      opResolver
+      devToolsService
     );
     void this.ensureSessionsDir();
     this.setupStreamEventForwarding();
@@ -1750,7 +1746,7 @@ export class AIService extends EventEmitter {
             workspacePath,
             trusted: projectTrusted,
             overrides: mcpOverrides,
-            projectSecrets: await secretsToRecord(projectSecrets, this.opResolver),
+            projectSecrets: await secretsToRecord(projectSecrets),
             agentPlugins: agentPluginsMcpContext,
           });
 
@@ -2078,7 +2074,7 @@ export class AIService extends EventEmitter {
         cwd: workspacePath,
         runtime,
         projects: getProjects(metadata),
-        secrets: await secretsToRecord(projectSecrets, this.opResolver),
+        secrets: await secretsToRecord(projectSecrets),
         muxEnv,
         runtimeTempDir,
         ...(advisorToolEligible

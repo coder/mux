@@ -203,7 +203,4 @@ export interface ProjectsConfig {
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;
 
   settingsBackup?: SettingsBackup;
-
-  /** Optional 1Password account name used for desktop SDK account selection. */
-  onePasswordAccountName?: string;
 }

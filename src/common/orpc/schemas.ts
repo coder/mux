@@ -195,9 +195,6 @@ export {
 
 export { backup } from "./schemas/backup";
 
-// 1Password schemas
-export { onePassword } from "./schemas/onePassword";
-
 // UI Layouts schemas
 export {
   KeybindSchema,

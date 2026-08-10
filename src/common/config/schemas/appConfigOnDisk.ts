@@ -158,7 +158,6 @@ export const AppConfigOnDiskSchema = z
     // `.catch`: an unusable stored value must not fail the whole config parse. Degrading to
     // "not configured" keeps every other setting loadable and lets the user re-enter this one.
     settingsBackup: SettingsBackupSchema.optional().catch(undefined),
-    onePasswordAccountName: z.string().optional(),
   })
   .passthrough();
 

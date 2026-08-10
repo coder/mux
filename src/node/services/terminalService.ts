@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { spawn } from "child_process";
-import { secretsToRecord, type ExternalSecretResolver } from "@/common/types/secrets";
+import { secretsToRecord } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
 import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import type { PTYService } from "@/node/services/ptyService";
@@ -71,11 +71,7 @@ export class TerminalService {
   private readonly noOscIdleFallbacks = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly activityChangeEmitter = new EventEmitter();
 
-  constructor(
-    config: Config,
-    ptyService: PTYService,
-    private readonly opResolver?: ExternalSecretResolver
-  ) {
+  constructor(config: Config, ptyService: PTYService) {
     this.config = config;
     this.ptyService = ptyService;
   }
@@ -153,10 +149,7 @@ export class TerminalService {
       // Secrets are local/worktree only. Remote/docker-style transports would expose env via command args
       // unless we add a dedicated secure propagation path.
       const secrets = shouldInjectLocalEnv
-        ? await secretsToRecord(
-            this.config.getEffectiveSecrets(workspaceMetadata.projectPath),
-            this.opResolver
-          )
+        ? await secretsToRecord(this.config.getEffectiveSecrets(workspaceMetadata.projectPath))
         : {};
 
       // Any process launched from this terminal inherits these variables.

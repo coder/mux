@@ -21,8 +21,6 @@ import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
 import type { Config, ProviderConfig, ProvidersConfig } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import type { ServiceTier, XAIServiceTier } from "@/common/config/schemas/providersConfig";
-import type { ExternalSecretResolver } from "@/common/types/secrets";
-import { isOpReference } from "@/common/utils/opRef";
 import { resolveConfigBaseUrl } from "@/common/utils/providers/baseUrl";
 import { isProviderDisabledInConfig } from "@/common/utils/providers/isProviderDisabled";
 import {
@@ -890,18 +888,6 @@ function formatCustomProviderRequirementError(
         raw: `Failed to read API key file for ${provider} at ${error.path}: ${reason}.`,
       };
     }
-    case "op_resolution_failed": {
-      const reason =
-        error.reason === "unavailable"
-          ? "1Password resolution is unavailable"
-          : error.reason === "unresolved"
-            ? "the reference did not resolve to a secret"
-            : "the resolver failed while reading the secret";
-      return {
-        type: "unknown",
-        raw: `Failed to resolve API key reference ${error.ref} for ${provider}: ${reason}.`,
-      };
-    }
   }
 }
 
@@ -927,25 +913,13 @@ export class ProviderModelFactory {
     providerService: ProviderService,
     policyService?: PolicyService,
     codexOauthService?: CodexOauthService,
-    devToolsService?: DevToolsService,
-    private readonly opResolver?: ExternalSecretResolver
+    devToolsService?: DevToolsService
   ) {
     this.config = config;
     this.providerService = providerService;
     this.policyService = policyService;
     this.codexOauthService = codexOauthService;
     this.devToolsService = devToolsService;
-  }
-
-  /**
-   * Resolve an API key that may be a 1Password op:// reference.
-   * Returns the original key for non-op:// values, or the resolved secret for op:// refs.
-   * Returns undefined if the reference cannot be resolved.
-   */
-  private async resolveApiKey(apiKey: string | undefined): Promise<string | undefined> {
-    if (!apiKey || !isOpReference(apiKey)) return apiKey;
-    if (!this.opResolver) return undefined;
-    return this.opResolver(apiKey);
   }
 
   private isProviderAvailableForRouting(
@@ -1160,11 +1134,7 @@ export class ProviderModelFactory {
       };
 
       if (providerIsCustomOpenAICompatible) {
-        const credentials = await resolveCustomProviderCredentials(
-          providerName,
-          providerConfig,
-          this.opResolver
-        );
+        const credentials = resolveCustomProviderCredentials(providerName, providerConfig);
         if (!credentials.ok) {
           return Err(formatCustomProviderRequirementError(providerName, credentials.error));
         }
@@ -1192,15 +1162,9 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
-        // Resolve op:// reference if API key is a 1Password reference
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
-
         // Build config with resolved credentials
-        const configWithApiKey = resolvedApiKey
-          ? { ...providerConfig, apiKey: resolvedApiKey }
+        const configWithApiKey = creds.apiKey
+          ? { ...providerConfig, apiKey: creds.apiKey }
           : providerConfig;
 
         // Normalize base URL to ensure /v1 suffix (SDK expects it)
@@ -1281,22 +1245,8 @@ export class ProviderModelFactory {
           return codexOauthDefaultAuth === "oauth";
         })();
 
-        // Only resolve op:// references when this request will use API-key auth.
         // OAuth requests use a placeholder key and override auth headers in fetch().
-        const resolvedApiKey = shouldRouteThroughCodexOauth
-          ? undefined
-          : await this.resolveApiKey(creds.apiKey);
-
-        // Defer op:// key failure until after OAuth routing is evaluated —
-        // OAuth-eligible models can proceed without an API key.
-        const opRefFailed =
-          !shouldRouteThroughCodexOauth &&
-          creds.apiKey != null &&
-          isOpReference(creds.apiKey) &&
-          !resolvedApiKey;
-        if (opRefFailed) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
+        const resolvedApiKey = shouldRouteThroughCodexOauth ? undefined : creds.apiKey;
 
         if (!shouldRouteThroughCodexOauth && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
@@ -1519,10 +1469,7 @@ export class ProviderModelFactory {
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
+        const resolvedApiKey = creds.apiKey;
 
         const baseFetch = getProviderFetch(providerConfig);
         const { apiKey: _apiKey, baseURL, headers, ...extraOptions } = providerConfig;
@@ -1598,10 +1545,7 @@ export class ProviderModelFactory {
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
+        const resolvedApiKey = creds.apiKey;
         const baseFetch = getProviderFetch(providerConfig);
 
         // Extract standard provider settings and Mux-local metadata before building extraBody.
@@ -1850,10 +1794,7 @@ export class ProviderModelFactory {
         if (!creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
+        const resolvedApiKey = creds.apiKey;
 
         const availableModels = getConfiguredProviderModelIds(providerConfig);
         if (!isCopilotModelAccessible(modelId, availableModels)) {
@@ -1976,10 +1917,7 @@ export class ProviderModelFactory {
         if (providerDef.requiresApiKey && !creds.isConfigured) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-        const resolvedApiKey = await this.resolveApiKey(creds.apiKey);
-        if (creds.apiKey && isOpReference(creds.apiKey) && !resolvedApiKey) {
-          return Err({ type: "api_key_not_found", provider: providerName });
-        }
+        const resolvedApiKey = creds.apiKey;
 
         // Lazy-load and create provider using factoryName from definition
         const providerModule = (await providerDef.import()) as unknown as Record<

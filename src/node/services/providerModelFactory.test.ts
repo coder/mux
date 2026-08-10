@@ -448,42 +448,6 @@ describe("ProviderModelFactory.createModel", () => {
     });
   });
 
-  it("returns the op reference when custom provider secret resolution fails", async () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-provider-model-factory-"));
-    try {
-      const config = new Config(tmpDir);
-      const providerService = new ProviderService(config);
-      const opRef = "op://Personal/Local/api-key";
-      const factory = new ProviderModelFactory(
-        config,
-        providerService,
-        undefined,
-        undefined,
-        undefined,
-        () => Promise.resolve(undefined)
-      );
-      config.saveProvidersConfig({
-        "local-vllm": {
-          providerType: "openai-compatible",
-          baseUrl: "http://localhost:8000/v1",
-          apiKey: opRef,
-          models: ["qwen3-coder"],
-        },
-      });
-
-      const result = await factory.createModel("local-vllm:qwen3-coder");
-
-      expect(result.success).toBe(false);
-      if (!result.success && result.error.type === "unknown") {
-        expect(result.error.raw).toContain(opRef);
-        expect(result.error.raw).toContain("did not resolve");
-        expect(result.error.raw).not.toContain("threw");
-      }
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
   it("returns provider_not_supported for unknown provider entries without a custom provider type", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({
