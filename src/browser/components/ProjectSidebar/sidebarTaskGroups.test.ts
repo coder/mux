@@ -298,6 +298,32 @@ describe("computeTaskGroupMemberRowMeta", () => {
     ]);
   });
 
+  test("uses live activity for interrupted grouped-member connector state", () => {
+    const first = workflowChild("first", "wfr_live", { taskStatus: "reported" });
+    const interrupted = workflowChild("interrupted", "wfr_live", {
+      taskStatus: "interrupted",
+    });
+    const rows = [parent, first, interrupted];
+    const group = computeSidebarTaskGroups({
+      rows,
+      allRows: rows,
+      isWorkspaceLiveActive: (workspaceId) => workspaceId === interrupted.id,
+    }).groupsByStorageKey.get("workflow:parent:wfr_live");
+    expect(group).toBeDefined();
+
+    const meta = computeTaskGroupMemberRowMeta({
+      group: group!,
+      headerMeta: headerMetaBase,
+      headerDepth: 1,
+      isWorkspaceLiveActive: (workspaceId) => workspaceId === interrupted.id,
+    });
+
+    expect(meta.get("first")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(meta.get("first")?.sharedTrunkActiveBelowRow).toBe(true);
+    expect(meta.get("interrupted")?.sharedTrunkActiveThroughRow).toBe(true);
+    expect(meta.get("interrupted")?.sharedTrunkActiveBelowRow).toBe(false);
+  });
+
   test("does not add a pass-through trunk when the header is the last sibling", () => {
     const only = workflowChild("only", "wfr_alpha");
     const rows = [parent, only];

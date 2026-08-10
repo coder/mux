@@ -420,6 +420,7 @@ export function computeTaskGroupMemberRowMeta(params: {
   group: SidebarTaskGroupModel;
   headerMeta: AgentRowRenderMeta;
   headerDepth: number;
+  isWorkspaceLiveActive?: (workspaceId: string) => boolean;
 }): Map<string, AgentRowRenderMeta> {
   const members = params.group.displayMembers;
   const memberDepth = getTaskGroupMemberDepth(params.headerDepth);
@@ -427,7 +428,12 @@ export function computeTaskGroupMemberRowMeta(params: {
   let lastRunningMemberIndex = -1;
   for (let index = members.length - 1; index >= 0; index -= 1) {
     const member = members[index];
-    if (member != null && isSidebarSubAgentRunning(member)) {
+    if (
+      member != null &&
+      isSidebarSubAgentRunning(member, {
+        isWorkspaceLiveActive: params.isWorkspaceLiveActive,
+      })
+    ) {
       lastRunningMemberIndex = index;
       break;
     }

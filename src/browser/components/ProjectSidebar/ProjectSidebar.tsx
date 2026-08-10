@@ -2892,6 +2892,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     group,
                                     headerMeta,
                                     headerDepth: headerMeta.depth,
+                                    isWorkspaceLiveActive,
                                   })) {
                                     memberMetaByWorkspaceId.set(memberId, memberMeta);
                                   }
