@@ -103,6 +103,83 @@ describe("task_await tool", () => {
     });
   });
 
+  it("awaits a nested child continuation through its recorded owner", async () => {
+    using tempDir = new TestTempDir("test-task-await-nested-continuation-owner");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
+    const continuation = {
+      kind: "workspace_turn",
+      handleId: "wst_nested",
+      ownerWorkspaceId: "parent-task",
+      workspaceId: "child-task",
+      turnId: "turn-nested",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    } as const;
+    const waitForWorkspaceTurn = mock(
+      (
+        _handleId: string,
+        _options: {
+          timeoutMs?: number;
+          abortSignal?: AbortSignal;
+          requestingWorkspaceId: string;
+          ownerWorkspaceId?: string;
+          backgroundOnMessageQueued?: boolean;
+        }
+      ) => Promise.resolve({ workspaceId: "child-task", reportMarkdown: "Nested work completed" })
+    );
+    const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      getAgentTaskExecutionId: mock(() => "wst_nested"),
+      getDescendantAgentTaskExecutionSnapshot: mock(() =>
+        Promise.resolve({ ownerWorkspaceId: "parent-task", record: continuation })
+      ),
+      getWorkspaceTurnSnapshot: mock(() => {
+        throw new Error("requester-owned snapshot lookup should not be used");
+      }),
+      waitForWorkspaceTurn,
+      markWorkspaceTurnTerminalAttentionConsumed,
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result: unknown = await Promise.resolve(
+      tool.execute!({ task_ids: ["child-task"] }, mockToolCallOptions)
+    );
+
+    expect(result).toEqual({
+      results: [
+        {
+          status: "completed",
+          taskId: "child-task",
+          reportMarkdown: "Nested work completed",
+          title: undefined,
+          messageId: undefined,
+          finalMessageRef: undefined,
+          note: COMPLETED_REPORT_REFETCH_NOTE,
+        },
+      ],
+    });
+    expect(waitForWorkspaceTurn).toHaveBeenCalledTimes(1);
+    const [observedHandleId, observedOptions] = waitForWorkspaceTurn.mock.calls[0];
+    expect(observedHandleId).toBe("wst_nested");
+    expect(observedOptions).toMatchObject({
+      timeoutMs: 600_000,
+      requestingWorkspaceId: "root-workspace",
+      ownerWorkspaceId: "parent-task",
+      backgroundOnMessageQueued: true,
+    });
+    expect(observedOptions.abortSignal).toBeInstanceOf(AbortSignal);
+    expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
+      ownerWorkspaceId: "parent-task",
+      handleId: "wst_nested",
+      status: "completed",
+    });
+  });
+
   it("does not mark active workspace-turn awaits consumed", async () => {
     using tempDir = new TestTempDir("test-task-await-active-workspace-turn-consumption");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });

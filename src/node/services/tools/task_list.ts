@@ -45,6 +45,22 @@ function isAgentTaskStatus(status: string): status is AgentTaskStatus {
   return (AGENT_TASK_STATUSES as readonly string[]).includes(status);
 }
 
+type TaskListStatus = TaskListToolSuccessResult["tasks"][number]["status"];
+
+function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListStatus {
+  switch (status) {
+    case "queued":
+    case "starting":
+    case "running":
+    case "interrupted":
+      return status;
+    case "completed":
+      return "reported";
+    case "error":
+      return "failed";
+  }
+}
+
 const ACTIONABLE_WORKSPACE_TURN_STATUSES = new Set<WorkspaceTurnTaskStatus>([
   "queued",
   "starting",
@@ -195,6 +211,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
 
       const statuses =
         args.statuses && args.statuses.length > 0 ? args.statuses : [...DEFAULT_STATUSES];
+      const requestedStatusSet = new Set<TaskListStatus>(statuses);
       const includeArchived = args.includeArchived ?? false;
       const archiveLookup = includeArchived
         ? null
@@ -226,7 +243,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       const agentStatuses = statuses.filter(isAgentTaskStatus);
 
       const allAgentTasks =
-        agentStatuses.length > 0
+        agentStatuses.length > 0 || requestedStatusSet.has("failed")
           ? taskService.listDescendantAgentTasks(workspaceId, {
               excludeWorkflowTasks: true,
             })
@@ -234,28 +251,46 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       // Legacy archived sub-agents are still part of the public inactive state and remain listable.
       // Reactivated executions use internal workspace-turn handles, but the public row keeps the
       // stable child task ID and overlays the current execution status.
+      const resolveAgentExecution = (
+        taskService as unknown as {
+          getDescendantAgentTaskExecutionSnapshot?: (
+            ancestorWorkspaceId: string,
+            agentTaskId: string
+          ) => Promise<{
+            ownerWorkspaceId: string;
+            record: { status: WorkspaceTurnTaskStatus };
+          } | null>;
+        }
+      ).getDescendantAgentTaskExecutionSnapshot;
       const internalExecutionIds = new Set<string>();
       const tasks: TaskListToolSuccessResult["tasks"] = [];
       for (const task of allAgentTasks) {
-        let status = task.status;
+        let status: TaskListStatus = task.status;
+        let executionStatus = task.executionStatus;
         if (task.executionTaskId != null) {
           internalExecutionIds.add(task.executionTaskId);
-          const execution = await taskService.getWorkspaceTurnSnapshot(
-            workspaceId,
-            task.executionTaskId
-          );
-          if (
-            execution?.status === "queued" ||
-            execution?.status === "starting" ||
-            execution?.status === "running"
-          ) {
-            status = execution.status;
-          }
+          const resolvedExecution =
+            resolveAgentExecution != null
+              ? await resolveAgentExecution.call(taskService, workspaceId, task.taskId)
+              : null;
+          const execution =
+            resolvedExecution?.record ??
+            (resolveAgentExecution == null
+              ? await taskService.getWorkspaceTurnSnapshot(workspaceId, task.executionTaskId)
+              : null);
+          executionStatus = execution?.status ?? executionStatus;
         }
-        if (!agentStatuses.includes(status)) {
+        if (executionStatus != null) {
+          status = taskListStatusFromExecution(executionStatus);
+        }
+        if (!requestedStatusSet.has(status)) {
           continue;
         }
-        const { executionTaskId: _executionTaskId, ...publicTask } = task;
+        const {
+          executionTaskId: _executionTaskId,
+          executionStatus: _executionStatus,
+          ...publicTask
+        } = task;
         tasks.push({ ...publicTask, status });
       }
 

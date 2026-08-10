@@ -3140,6 +3140,61 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
   });
 
+  test("resolves a nested child execution through the ancestor that owns its handle", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-execution-owner";
+    const parentTaskId = "parent-execution-owner";
+    const childTaskId = "child-execution-owner";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "parent", parentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: parentTaskId,
+          taskStatus: "reported",
+          taskExecutionId: "wst_nested_execution",
+          taskExecutionStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_nested_execution",
+      ownerWorkspaceId: parentTaskId,
+      workspaceId: childTaskId,
+      turnId: "turn-nested-execution",
+      status: "running",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      updatedAt: "2026-08-10T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+    });
+
+    const execution = await taskService.getDescendantAgentTaskExecutionSnapshot(
+      rootWorkspaceId,
+      childTaskId
+    );
+
+    expect(execution?.ownerWorkspaceId).toBe(parentTaskId);
+    expect(execution?.record).toMatchObject({
+      handleId: "wst_nested_execution",
+      workspaceId: childTaskId,
+      status: "running",
+    });
+  });
+
   test("initialize recovers terminal notify workspace turns without pending notification", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId } = await saveLocalParentWorkspace(config, rootDir);

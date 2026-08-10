@@ -611,6 +611,7 @@ export interface DescendantAgentTaskInfo {
   title?: string;
   createdAt?: string;
   executionTaskId?: string;
+  executionStatus?: WorkspaceTurnTaskStatus;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
   depth: number;
@@ -6233,6 +6234,7 @@ export class TaskService {
       timeoutMs?: number;
       abortSignal?: AbortSignal;
       requestingWorkspaceId: string;
+      ownerWorkspaceId?: string;
       backgroundOnMessageQueued?: boolean;
     }
   ): Promise<WorkspaceTurnWaitResult> {
@@ -6243,6 +6245,8 @@ export class TaskService {
     );
     const timeoutMs = options.timeoutMs ?? 120_000;
     assert(Number.isFinite(timeoutMs) && timeoutMs > 0, "waitForWorkspaceTurn: timeoutMs invalid");
+    const ownerWorkspaceId = options.ownerWorkspaceId ?? options.requestingWorkspaceId;
+    assert(ownerWorkspaceId.length > 0, "waitForWorkspaceTurn: ownerWorkspaceId must be non-empty");
 
     this.markTaskForegroundRelevant(handleId);
 
@@ -6327,10 +6331,7 @@ export class TaskService {
       );
 
       void (async () => {
-        const record = await this.taskHandleStore.getWorkspaceTurn(
-          options.requestingWorkspaceId,
-          handleId
-        );
+        const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
         if (settled) return;
         if (record == null) {
           waiterEntry.reject(new Error("Workspace turn not found or out of scope"));
@@ -7043,6 +7044,46 @@ export class TaskService {
     assert(taskId.length > 0, "getAgentTaskExecutionId: taskId must be non-empty");
     const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), taskId);
     return entry?.workspace.taskExecutionId ?? null;
+  }
+
+  async getDescendantAgentTaskExecutionSnapshot(
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): Promise<{
+    ownerWorkspaceId: string;
+    record: WorkspaceTurnTaskHandleRecord;
+  } | null> {
+    assert(
+      ancestorWorkspaceId.length > 0,
+      "getDescendantAgentTaskExecutionSnapshot: ancestorWorkspaceId must be non-empty"
+    );
+    assert(taskId.length > 0, "getDescendantAgentTaskExecutionSnapshot: taskId must be non-empty");
+
+    const cfg = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(cfg);
+    if (!this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId)) {
+      return null;
+    }
+
+    const executionTaskId = index.byId.get(taskId)?.taskExecutionId;
+    if (!isWorkspaceTurnTaskId(executionTaskId)) {
+      return null;
+    }
+
+    // A continuation is owned by whichever ancestor reawakened the child, not necessarily by the
+    // ancestor currently listing or awaiting it. Search the child's ancestry, then return the
+    // actual owner so subsequent reads and terminal-attention updates use the correct session.
+    for (const ownerWorkspaceId of this.listAncestorWorkspaceIdsUsingParentById(
+      index.parentById,
+      taskId
+    )) {
+      const record = await this.getWorkspaceTurnSnapshot(ownerWorkspaceId, executionTaskId);
+      if (record?.workspaceId === taskId) {
+        return { ownerWorkspaceId, record };
+      }
+    }
+
+    return null;
   }
 
   getAgentTaskStatus(taskId: string): AgentTaskStatus | null {
@@ -8271,6 +8312,7 @@ export class TaskService {
           title: entry.title,
           createdAt: entry.createdAt,
           executionTaskId: entry.taskExecutionId,
+          executionStatus: entry.taskExecutionStatus,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
           depth: next.depth,
