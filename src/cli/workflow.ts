@@ -223,7 +223,6 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
     programmaticToolCallingExclusive: experimentIds.includes(
       EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
     ),
-    execSubagentHardRestart: experimentIds.includes(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
     // Invoking `mux workflow` is an explicit opt-in, so the dynamic-workflows
     // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,

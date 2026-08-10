@@ -282,7 +282,6 @@ export interface TaskCreateArgs {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
   };
 }
@@ -9951,9 +9950,9 @@ export class TaskService {
     // rather than "all non-retryable":
     // - `aborted` is a steerable user pause, not a terminal failure.
     // - `context_exceeded` has in-session recovery (compaction retry, post-compaction
-    //   retry, exec-subagent hard restart in AgentSession.handleStreamError) listening
-    //   on the same error event; settling here would race that recovery and interrupt
-    //   a child that was about to continue.
+    //   retry in AgentSession.handleStreamError) listening on the same error event;
+    //   settling here would race that recovery and interrupt a child that was about
+    //   to continue.
     const settlesRunningTask =
       event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
 

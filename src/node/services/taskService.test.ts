@@ -19370,8 +19370,8 @@ describe("TaskService", () => {
     });
 
     // context_exceeded is non-retryable but has in-session recovery (compaction
-    // retry / exec-subagent hard restart) racing on the same error event;
-    // settling here would interrupt a child that was about to continue.
+    // retry) racing on the same error event; settling here would interrupt a
+    // child that was about to continue.
     await internal.handleTaskStreamError({
       type: "error",
       workspaceId: childId,

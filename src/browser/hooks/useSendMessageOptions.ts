@@ -59,9 +59,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
     EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
   );
   const advisorTool = useExperimentOverrideValue(EXPERIMENT_IDS.ADVISOR_TOOL);
-  const execSubagentHardRestart = useExperimentOverrideValue(
-    EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART
-  );
   const dynamicWorkflows = useExperimentOverrideValue(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS);
   const memory = useExperimentOverrideValue(EXPERIMENT_IDS.MEMORY);
   const toolSearch = useExperimentOverrideValue(EXPERIMENT_IDS.TOOL_SEARCH);
@@ -84,7 +81,6 @@ export function useSendMessageOptions(workspaceId: string): SendMessageOptionsWi
       programmaticToolCalling,
       programmaticToolCallingExclusive,
       advisorTool,
-      execSubagentHardRestart,
       dynamicWorkflows,
       memory,
       toolSearch,

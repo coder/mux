@@ -277,7 +277,6 @@ export interface ToolConfiguration {
     programmaticToolCalling?: boolean;
     programmaticToolCallingExclusive?: boolean;
     advisorTool?: boolean;
-    execSubagentHardRestart?: boolean;
     dynamicWorkflows?: boolean;
     memory?: boolean;
     timeline?: boolean;

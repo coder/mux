@@ -9,7 +9,6 @@ export const EXPERIMENT_IDS = {
   PROGRAMMATIC_TOOL_CALLING: "programmatic-tool-calling",
   PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE: "programmatic-tool-calling-exclusive",
   CONFIGURABLE_BIND_URL: "configurable-bind-url",
-  EXEC_SUBAGENT_HARD_RESTART: "exec-subagent-hard-restart",
   MUX_GOVERNOR: "mux-governor",
   MULTI_PROJECT_WORKSPACES: "multi-project-workspaces",
   AGENT_BROWSER: "agent-browser",
@@ -71,13 +70,6 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Expose API server on LAN/VPN",
     description:
       "Allow mux to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your mux API. HTTP only; use only on trusted networks (Tailscale recommended).",
-    enabledByDefault: false,
-    showInSettings: true,
-  },
-  [EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART]: {
-    id: EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART,
-    name: "Exec sub-agent hard restart",
-    description: "Hard-restart exec sub-agents on context overflow",
     enabledByDefault: false,
     showInSettings: true,
   },

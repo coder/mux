@@ -543,18 +543,6 @@ describe("mapChatEventToTimeline", () => {
     expect(second.drafts[0].source.key).toBeUndefined();
   });
 
-  test("records a history clear announced outside replaceHistory", () => {
-    const cleared = map({
-      type: "history-cleared",
-      workspaceId: "ws-1",
-      reason: "exec sub-agent hard restart",
-    });
-
-    expect(cleared.drafts).toMatchObject([
-      { kind: "history.cleared", data: { reason: "exec sub-agent hard restart" } },
-    ]);
-  });
-
   test("leaves a child-caused budget limit to the goal service to avoid a duplicate row", () => {
     const base = {
       type: "goal-budget-limited" as const,

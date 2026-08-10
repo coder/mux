@@ -511,20 +511,6 @@ export function mapChatEventToTimeline(
         state,
       };
 
-    case "history-cleared":
-      return {
-        drafts: [
-          {
-            ts: receivedAt,
-            kind: "history.cleared",
-            source: { system: "chat", key: eventKey("history-cleared", receivedAt) },
-            status: "completed",
-            data: { reason: event.reason },
-          },
-        ],
-        state,
-      };
-
     case "goal-budget-limited":
       // WorkspaceGoalService records every transition into budget_limited, including the ones child
       // attribution causes. Mapping this event too would put a second row on the same transition.

@@ -97,7 +97,6 @@ export function getSendOptionsFromStorage(workspaceId: string): SendMessageOptio
         EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
       ),
       advisorTool: isExperimentEnabled(EXPERIMENT_IDS.ADVISOR_TOOL),
-      execSubagentHardRestart: isExperimentEnabled(EXPERIMENT_IDS.EXEC_SUBAGENT_HARD_RESTART),
       dynamicWorkflows: isExperimentEnabled(EXPERIMENT_IDS.DYNAMIC_WORKFLOWS),
       memory: isExperimentEnabled(EXPERIMENT_IDS.MEMORY),
       toolSearch: isExperimentEnabled(EXPERIMENT_IDS.TOOL_SEARCH),

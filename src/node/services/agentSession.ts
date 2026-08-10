@@ -19,7 +19,6 @@ import type {
   WorkspaceChatMessage,
   SendMessageOptions,
   FilePart,
-  DeleteMessage,
   OnChatMode,
   OnChatCursor,
   ProvidersConfigMap,
@@ -79,11 +78,7 @@ import {
 import {
   createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
-  type WorkspaceRuntimeContext,
 } from "@/node/runtime/runtimeHelpers";
-import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
-import { readAgentDefinition } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { resolveAgentInheritanceChain } from "@/node/services/agentDefinitions/resolveAgentInheritanceChain";
 import { MessageQueue } from "./messageQueue";
 import {
   copyStreamLifecycleSnapshot,
@@ -385,10 +380,6 @@ interface AgentSessionOptions {
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
   workspaceGoalService?: WorkspaceGoalService;
-  /** Destructive clear coordinator used by exec hard restart. */
-  clearHistoryForHardRestart?: (options: {
-    monitorHistoryLockHeld: boolean;
-  }) => Promise<Result<number[]>>;
   /** When true, skip terminating background processes on dispose/compaction (for bench/CI) */
   keepBackgroundProcesses?: boolean;
   /** Called when compaction completes (e.g., to clear idle compaction pending state) */
@@ -421,9 +412,6 @@ export class AgentSession {
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly workspaceGoalService?: WorkspaceGoalService;
-  private readonly clearHistoryForHardRestart?: (options: {
-    monitorHistoryLockHeld: boolean;
-  }) => Promise<Result<number[]>>;
   private readonly keepBackgroundProcesses: boolean;
   private readonly onPostCompactionStateChange?: () => void;
   private readonly emitter = new EventEmitter();
@@ -529,9 +517,6 @@ export class AgentSession {
   /** Track user message ids that already retried without post-compaction injection. */
   private readonly postCompactionRetryAttempts = new Set<string>();
 
-  /** Track user message ids that already hard-restarted for exec-like subagents. */
-  private readonly execSubagentHardRestartAttempts = new Set<string>();
-
   /** Backend start time for the current stream, used to avoid charging goals created mid-stream. */
   private activeStreamStartedAtMs?: number;
 
@@ -598,7 +583,6 @@ export class AgentSession {
     agentInitiated?: boolean;
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
-    monitorHistoryLockHeld?: boolean;
     goalKind?: GoalSyntheticMessageKind;
   };
 
@@ -620,7 +604,6 @@ export class AgentSession {
       telemetryService,
       backgroundProcessManager,
       workspaceGoalService,
-      clearHistoryForHardRestart,
       keepBackgroundProcesses,
       onCompactionComplete,
       onIdleCompactionOutcome,
@@ -638,7 +621,6 @@ export class AgentSession {
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.workspaceGoalService = workspaceGoalService;
-    this.clearHistoryForHardRestart = clearHistoryForHardRestart;
     this.keepBackgroundProcesses = keepBackgroundProcesses ?? false;
     this.onPostCompactionStateChange = onPostCompactionStateChange;
 
@@ -2441,7 +2423,6 @@ export class AgentSession {
       startStreamInBackground?: boolean;
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
-      monitorHistoryLockState?: { held: boolean };
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
@@ -3177,8 +3158,7 @@ export class AgentSession {
           agentInitiated,
           preparedTurnAbortController.signal,
           goalKind,
-          turnThinkingOverride,
-          internal?.monitorHistoryLockState?.held === true
+          turnThinkingOverride
         );
         if (streamResult.success && preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -3842,8 +3822,7 @@ export class AgentSession {
     // Session-owned per-turn holder for mid-turn thinking changes. Passed
     // explicitly (not read from the field) so a preempted turn can never pick
     // up its replacement's holder. Absent for internal retry paths.
-    activeTurnThinkingOverride?: ActiveTurnThinkingOverride,
-    monitorHistoryLockHeld = false
+    activeTurnThinkingOverride?: ActiveTurnThinkingOverride
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -3866,7 +3845,6 @@ export class AgentSession {
       agentInitiated,
       openaiTruncationModeOverride,
       ...(goalKind != null ? { goalKind } : {}),
-      monitorHistoryLockHeld,
       providersConfig,
     };
     this.activeStreamUserMessageId = undefined;
@@ -4380,342 +4358,6 @@ export class AgentSession {
     return true;
   }
 
-  private async maybeHardRestartExecSubagentOnContextExceeded(data: {
-    messageId: string;
-    errorType?: string;
-  }): Promise<boolean> {
-    if (data.errorType !== "context_exceeded") {
-      return false;
-    }
-
-    // Only enabled via experiment (and only when we still have a valid retry context).
-    const context = this.activeStreamContext;
-    const requestId = this.activeStreamUserMessageId;
-    const experimentEnabled = context?.options?.experiments?.execSubagentHardRestart === true;
-    if (!experimentEnabled || !context || !requestId) {
-      return false;
-    }
-
-    // Guardrail: don't hard-restart after any meaningful output.
-    // This is intended to recover from "prompt too long" cases before the model starts streaming.
-    if (this.activeStreamHadAnyDelta) {
-      return false;
-    }
-
-    if (this.execSubagentHardRestartAttempts.has(requestId)) {
-      return false;
-    }
-
-    // Guard for test mocks that may not implement getWorkspaceMetadata.
-    if (typeof this.aiService.getWorkspaceMetadata !== "function") {
-      return false;
-    }
-
-    const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
-    if (!metadataResult.success) {
-      return false;
-    }
-
-    const metadata = metadataResult.data;
-    if (!metadata.parentWorkspaceId) {
-      return false;
-    }
-
-    const agentIdCandidates = [
-      ...resolvePersistedAgentIdCandidates(metadata),
-      WORKSPACE_DEFAULTS.agentId,
-    ].filter((agentId, index, candidates) => candidates.indexOf(agentId) === index);
-    let resolvedAgentIdForLog = agentIdCandidates[0] ?? WORKSPACE_DEFAULTS.agentId;
-
-    const metadataCandidates: Array<typeof metadata> = [metadata];
-
-    try {
-      const parentMetadataResult = await this.aiService.getWorkspaceMetadata(
-        metadata.parentWorkspaceId
-      );
-      if (parentMetadataResult.success) {
-        metadataCandidates.push(parentMetadataResult.data);
-      }
-    } catch {
-      // Ignore: child discovery still handles built-in agents.
-    }
-
-    const discoveryContexts: WorkspaceRuntimeContext[] = [];
-    for (const agentMetadata of metadataCandidates) {
-      try {
-        const { runtime, workspacePath } = createRuntimeContextForWorkspace(agentMetadata);
-        discoveryContexts.push({
-          runtime,
-          workspacePath:
-            context.options?.disableWorkspaceAgents === true
-              ? agentMetadata.projectPath
-              : workspacePath,
-        });
-      } catch {
-        // Ignore: try the next metadata source.
-      }
-    }
-
-    let chain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-    for (const candidateAgentId of agentIdCandidates) {
-      let fallbackChain: Awaited<ReturnType<typeof resolveAgentInheritanceChain>> | undefined;
-      let fallbackAgentId: string | undefined;
-      for (const discovery of discoveryContexts) {
-        try {
-          const agentDefinition = await readAgentDefinition(
-            discovery.runtime,
-            discovery.workspacePath,
-            candidateAgentId
-          );
-          const candidateChain = await resolveAgentInheritanceChain({
-            runtime: discovery.runtime,
-            workspacePath: discovery.workspacePath,
-            agentId: agentDefinition.id,
-            agentDefinition,
-            workspaceId: this.workspaceId,
-          });
-
-          if (agentDefinition.scope === "project") {
-            chain = candidateChain;
-            resolvedAgentIdForLog = agentDefinition.id;
-            break;
-          }
-          fallbackChain ??= candidateChain;
-          fallbackAgentId ??= agentDefinition.id;
-        } catch {
-          // Try the next discovery context before moving to the next persisted agent id.
-        }
-      }
-
-      if (chain != null) {
-        break;
-      }
-      if (fallbackChain != null) {
-        chain = fallbackChain;
-        resolvedAgentIdForLog = fallbackAgentId ?? resolvedAgentIdForLog;
-        break;
-      }
-    }
-
-    if (!chain) {
-      // If we fail to resolve tool policy/inheritance, treat as non-exec-like.
-      return false;
-    }
-
-    if (!isExecLikeEditingCapableInResolvedChain(chain)) {
-      return false;
-    }
-
-    this.execSubagentHardRestartAttempts.add(requestId);
-
-    const continuationNotice =
-      "Context limit reached. Mux restarted this agent's chat history and will replay your original prompt below. " +
-      "Continue using only the current workspace state (files, git history, command output); " +
-      "re-inspect the repo as needed.";
-
-    log.info("Exec-like subagent hit context limit; hard-restarting history and retrying", {
-      workspaceId: this.workspaceId,
-      requestId,
-      model: context.modelString,
-      agentId: resolvedAgentIdForLog,
-    });
-
-    // Only need the current compaction epoch — if compaction already happened, the
-    // original task prompt is summarized in the boundary and pre-boundary messages
-    // aren't useful for replaying.
-    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
-    if (!historyResult.success) {
-      return false;
-    }
-
-    const messages = historyResult.data;
-
-    const firstPromptIndex = messages.findIndex(
-      (msg) => msg.role === "user" && msg.metadata?.synthetic !== true
-    );
-    if (firstPromptIndex === -1) {
-      return false;
-    }
-
-    // Include any synthetic snapshots that were persisted immediately before the task prompt.
-    let seedStartIndex = firstPromptIndex;
-    for (let i = firstPromptIndex - 1; i >= 0; i -= 1) {
-      const msg = messages[i];
-      const isSnapshot =
-        msg.role === "user" &&
-        msg.metadata?.synthetic === true &&
-        (msg.metadata?.fileAtMentionSnapshot ?? msg.metadata?.agentSkillSnapshot);
-      if (!isSnapshot) {
-        break;
-      }
-      seedStartIndex = i;
-    }
-
-    const seedMessages = messages.slice(seedStartIndex, firstPromptIndex + 1);
-    if (seedMessages.length === 0) {
-      return false;
-    }
-
-    // Best-effort: discard pending post-compaction state so we don't immediately re-inject it.
-    this.postCompactionLoadedSkills = [];
-    try {
-      await this.compactionHandler.discardPendingState("execSubagentHardRestart");
-      this.onPostCompactionStateChange?.();
-    } catch (error) {
-      log.warn("Failed to discard pending post-compaction state before hard restart", {
-        workspaceId: this.workspaceId,
-        error: getErrorMessage(error),
-      });
-    }
-
-    // Abort the failed assistant placeholder and clean up partial/history state.
-    this.activeCompactionRequest = undefined;
-    this.resetActiveStreamState();
-    if (!this.disposed) {
-      this.clearQueue();
-    }
-
-    this.emitChatEvent({
-      type: "stream-abort",
-      workspaceId: this.workspaceId,
-      messageId: data.messageId,
-    });
-
-    const partialDeleteResult = await this.historyService.deletePartial(this.workspaceId);
-    if (!partialDeleteResult.success) {
-      log.warn("Failed to delete partial before exec subagent hard restart", {
-        workspaceId: this.workspaceId,
-        error: partialDeleteResult.error,
-      });
-    }
-
-    this.clearUsageState();
-    const clearResult = this.clearHistoryForHardRestart
-      ? await this.clearHistoryForHardRestart({
-          monitorHistoryLockHeld: context.monitorHistoryLockHeld === true,
-        })
-      : await this.historyService.clearHistory(this.workspaceId);
-    if (!clearResult.success) {
-      log.warn("Failed to clear history for exec subagent hard restart", {
-        workspaceId: this.workspaceId,
-        error: clearResult.error,
-      });
-      return false;
-    }
-
-    // This clear bypasses WorkspaceService.replaceHistory, so announce it on the chat funnel the
-    // timeline already consumes: a log that cannot explain missing history defeats its purpose.
-    this.emitChatEvent({
-      type: "history-cleared",
-      workspaceId: this.workspaceId,
-      reason: "exec sub-agent hard restart",
-    });
-
-    const deletedSequences = clearResult.data;
-    if (deletedSequences.length > 0) {
-      const deleteMessage: DeleteMessage = {
-        type: "delete",
-        historySequences: deletedSequences,
-      };
-      this.emitChatEvent(deleteMessage);
-    }
-
-    const cloneForAppend = (msg: MuxMessage): MuxMessage => {
-      const metadataCopy = msg.metadata ? { ...msg.metadata } : undefined;
-      if (metadataCopy) {
-        metadataCopy.historySequence = undefined;
-        metadataCopy.partial = undefined;
-        metadataCopy.error = undefined;
-        metadataCopy.errorType = undefined;
-      }
-
-      return {
-        ...msg,
-        metadata: metadataCopy,
-        parts: [...msg.parts],
-      };
-    };
-
-    const continuationMessage = createMuxMessage(
-      createUserMessageId(),
-      "user",
-      continuationNotice,
-      {
-        timestamp: Date.now(),
-        synthetic: true,
-        uiVisible: true,
-      }
-    );
-
-    const messagesToAppend = [continuationMessage, ...seedMessages.map(cloneForAppend)];
-    for (const message of messagesToAppend) {
-      const appendResult = await this.historyService.appendToHistory(this.workspaceId, message);
-      if (!appendResult.success) {
-        log.error("Failed to append message during exec subagent hard restart", {
-          workspaceId: this.workspaceId,
-          messageId: message.id,
-          error: appendResult.error,
-        });
-        return false;
-      }
-
-      // Add type: "message" for discriminated union (MuxMessage doesn't have it)
-      this.emitChatEvent({
-        ...message,
-        type: "message" as const,
-      });
-    }
-
-    const existingInstructions = context.options?.additionalSystemInstructions;
-    const mergedAdditionalSystemInstructions = existingInstructions
-      ? `${continuationNotice}\n\n${existingInstructions}`
-      : continuationNotice;
-
-    const retryOptions: SendMessageOptions | undefined = context.options
-      ? {
-          ...context.options,
-          additionalSystemInstructions: mergedAdditionalSystemInstructions,
-        }
-      : {
-          model: context.modelString,
-          agentId: WORKSPACE_DEFAULTS.agentId,
-          additionalSystemInstructions: mergedAdditionalSystemInstructions,
-          experiments: {
-            execSubagentHardRestart: true,
-          },
-        };
-
-    this.setAutoRetryResumeState(retryOptions, context.agentInitiated, context.goalKind);
-    this.setTurnPhase(TurnPhase.PREPARING);
-    this.resolveStreamErrorRecoveryDecision();
-    let retryResult: Result<void, SendMessageError>;
-    try {
-      retryResult = await this.streamWithHistory(
-        context.modelString,
-        retryOptions,
-        context.openaiTruncationModeOverride,
-        undefined,
-        context.agentInitiated,
-        undefined,
-        context.goalKind
-      );
-    } finally {
-      if (this.turnPhase === TurnPhase.PREPARING) {
-        this.setTurnPhase(TurnPhase.IDLE);
-      }
-    }
-
-    if (!retryResult.success) {
-      log.error("Exec subagent hard restart retry failed to start", {
-        workspaceId: this.workspaceId,
-        error: retryResult.error,
-      });
-      return false;
-    }
-
-    return true;
-  }
-
   private async previewGoalAccountingFromUsage(input: {
     model: string;
     usage: LanguageModelV2Usage | undefined;
@@ -4836,15 +4478,6 @@ export class AgentSession {
 
     if (
       await this.maybeRetryWithoutPostCompactionOnContextExceeded({
-        messageId: data.messageId,
-        errorType: data.errorType,
-      })
-    ) {
-      return; // retry set PREPARING
-    }
-
-    if (
-      await this.maybeHardRestartExecSubagentOnContextExceeded({
         messageId: data.messageId,
         errorType: data.errorType,
       })
@@ -5496,7 +5129,6 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
-      monitorHistoryLockState?: { held: boolean };
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }

@@ -93,12 +93,6 @@ export const RuntimeStatusEventSchema = z.object({
   detail: z.string().optional(), // Human-readable status like "Starting Coder workspace..."
 });
 
-export const HistoryClearedEventSchema = z.object({
-  type: z.literal("history-cleared"),
-  workspaceId: z.string(),
-  reason: z.string(),
-});
-
 export const AutoCompactionTriggeredEventSchema = z.object({
   type: z.literal("auto-compaction-triggered"),
   reason: z.enum(["on-send", "mid-stream", "idle"]),
@@ -685,7 +679,6 @@ export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   SessionUsageDeltaEventSchema,
   QueuedMessageChangedEventSchema,
   RestoreToInputEventSchema,
-  HistoryClearedEventSchema,
   // Auto-compaction status events
   AutoCompactionTriggeredEventSchema,
   AutoCompactionCompletedEventSchema,
@@ -741,7 +734,6 @@ export const ExperimentsSchema = z.object({
   programmaticToolCallingExclusive: z.boolean().optional(),
   advisorTool: z.boolean().optional(),
   dynamicWorkflows: z.boolean().optional(),
-  execSubagentHardRestart: z.boolean().optional(),
   memory: z.boolean().optional(),
   timeline: z.boolean().optional(),
   workspaceHeartbeats: z.boolean().optional(),

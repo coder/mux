@@ -7,7 +7,6 @@ export interface ExperimentValues {
   programmaticToolCalling: boolean | undefined;
   programmaticToolCallingExclusive: boolean | undefined;
   advisorTool: boolean | undefined;
-  execSubagentHardRestart: boolean | undefined;
   dynamicWorkflows: boolean | undefined;
   memory: boolean | undefined;
   toolSearch: boolean | undefined;
