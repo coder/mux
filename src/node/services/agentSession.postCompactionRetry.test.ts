@@ -162,8 +162,10 @@ describe("AgentSession post-compaction context retry", () => {
 
     // Codex fast-retry scenario: a waiter that arrives only after the retry
     // already started (and possibly finished) must still see the recorded
-    // "retry-started" outcome instead of sampling live phase flags.
-    expect(await session.waitForPendingStreamErrorRecoveryDecision()).toBe("retry-started");
+    // "retry-started" outcome for this attempt instead of sampling live flags.
+    expect(await session.waitForPendingStreamErrorRecoveryDecision("assistant-ctx-exceeded")).toBe(
+      "retry-started"
+    );
 
     // With the options bag, arg[0] is the StreamMessageOptions object.
     const firstOpts = (streamMessage as ReturnType<typeof mock>).mock.calls[0][0] as Record<
@@ -309,10 +311,12 @@ describe("AgentSession post-compaction context retry", () => {
 
     let decidedOutcome: string | undefined;
     let decided = false;
-    const decision = session.waitForPendingStreamErrorRecoveryDecision().then((outcome) => {
-      decided = true;
-      decidedOutcome = outcome;
-    });
+    const decision = session
+      .waitForPendingStreamErrorRecoveryDecision("assistant-ctx-exceeded")
+      .then((outcome) => {
+        decided = true;
+        decidedOutcome = outcome;
+      });
 
     // Retry startup still in flight: the decision must stay pending so waiters
     // cannot observe a transient PREPARING as a started recovery.
@@ -330,6 +334,133 @@ describe("AgentSession post-compaction context retry", () => {
     expect(decided).toBe(true);
     expect(decidedOutcome).toBe("terminal");
     expect(session.isPreparingTurn()).toBe(false);
+    expect(callCount).toBe(2);
+
+    session.dispose();
+  });
+
+  // Overlapping recovery episodes: a retry stream can emit its own error
+  // before the original retry path resumes. Each error event must get its own
+  // per-attempt decision — folding them into one would let the first
+  // episode's "retry-started" mask the second's "terminal", leaving task
+  // settlement convinced the (dead) retry is still carrying the turn.
+  test("a retry that starts and then fails terminally records separate per-attempt outcomes", async () => {
+    const workspaceId = "ws-overlap";
+    const sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-agentSession-"));
+    await createPersistedPostCompactionState({
+      filePath: path.join(sessionDir, "post-compaction.json"),
+      diffs: [{ path: "/tmp/foo.ts", diff: "@@ -1 +1 @@\n-foo\n+bar\n", truncated: false }],
+    });
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory(workspaceId, {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+      metadata: { timestamp: 1100 },
+    });
+
+    const aiEmitter = new EventEmitter();
+    let callCount = 0;
+    const streamMessage = mock((..._args: unknown[]) => {
+      callCount += 1;
+      if (callCount === 1) {
+        aiEmitter.emit("error", {
+          workspaceId,
+          messageId: "assistant-attempt-1",
+          error: "Context length exceeded",
+          errorType: "context_exceeded",
+        });
+        return Promise.resolve({ success: true as const, data: undefined });
+      }
+      // The retry's startup succeeds, but the stream dies immediately with a
+      // terminal error — emitted before the original retry path resumes.
+      aiEmitter.emit("error", {
+        workspaceId,
+        messageId: "assistant-attempt-2",
+        error: "The model refused to continue",
+        errorType: "model_refusal",
+      });
+      return Promise.resolve({ success: true as const, data: undefined });
+    });
+
+    const aiService: AIService = {
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        aiEmitter.on(String(eventName), listener);
+        return this;
+      },
+      off(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        aiEmitter.off(String(eventName), listener);
+        return this;
+      },
+      streamMessage,
+      getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "nope" })),
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+      isStreaming: mock(() => false),
+    } as unknown as AIService;
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      setMessageQueued: mock(() => undefined),
+      cleanup: mock(() => Promise.resolve()),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => sessionDir),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const options: SendMessageOptions = {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    } as unknown as SendMessageOptions;
+
+    await (
+      session as unknown as {
+        streamWithHistory: (m: string, o: SendMessageOptions) => Promise<unknown>;
+      }
+    ).streamWithHistory(options.model, options);
+
+    const withTimeout = <T>(promise: Promise<T>, label: string): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<T>((_, reject) =>
+          setTimeout(() => reject(new Error(`${label} timeout`)), 1000)
+        ),
+      ]);
+
+    // Attempt 1's recovery started a retry; attempt 2 (the retry's own death)
+    // is terminal. A settlement waiter keyed to attempt 2 must see terminal.
+    expect(
+      await withTimeout(
+        session.waitForPendingStreamErrorRecoveryDecision("assistant-attempt-1"),
+        "attempt-1 decision"
+      )
+    ).toBe("retry-started");
+    expect(
+      await withTimeout(
+        session.waitForPendingStreamErrorRecoveryDecision("assistant-attempt-2"),
+        "attempt-2 decision"
+      )
+    ).toBe("terminal");
     expect(callCount).toBe(2);
 
     session.dispose();

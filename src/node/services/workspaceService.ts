@@ -9415,10 +9415,11 @@ export class WorkspaceService extends EventEmitter {
   }
 
   async waitForPendingStreamErrorRecoveryDecision(
-    workspaceId: string
+    workspaceId: string,
+    messageId: string
   ): Promise<StreamErrorRecoveryOutcome | undefined> {
     const session = this.sessions.get(workspaceId.trim());
-    return session?.waitForPendingStreamErrorRecoveryDecision();
+    return session?.waitForPendingStreamErrorRecoveryDecision(messageId);
   }
 
   async waitForIdle(workspaceId: string): Promise<void> {

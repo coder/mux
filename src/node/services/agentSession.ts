@@ -572,13 +572,23 @@ export class AgentSession {
    */
   private activeStreamFailureHandled = false;
 
-  private streamErrorRecoveryDecision: {
-    promise: Promise<StreamErrorRecoveryOutcome>;
-    resolve: (outcome: StreamErrorRecoveryOutcome) => void;
-  } | null = null;
-
-  /** Outcome of the most recently resolved stream-error recovery decision. */
-  private lastStreamErrorRecoveryOutcome?: StreamErrorRecoveryOutcome;
+  /**
+   * Stream-error recovery decisions keyed by the failed assistant messageId.
+   * Per-attempt tracking (not a single shared decision) because recovery
+   * episodes can overlap: a retry stream can emit its own error before the
+   * original retry path resumes, and folding both into one decision would let
+   * one episode's "retry-started" mask the other's "terminal". Resolved
+   * outcomes are retained so waiters queued behind workspace event locks can
+   * read the decision after the fact.
+   */
+  private readonly streamErrorRecoveryDecisions = new Map<
+    string,
+    {
+      promise: Promise<StreamErrorRecoveryOutcome>;
+      resolve: (outcome: StreamErrorRecoveryOutcome) => void;
+      outcome?: StreamErrorRecoveryOutcome;
+    }
+  >();
 
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
@@ -890,32 +900,44 @@ export class AgentSession {
     this.emitChatEvent(event);
   }
 
-  private beginStreamErrorRecoveryDecision(): void {
-    // Reuse a pending decision: an error emitted while a recovery retry is
-    // still starting belongs to the same recovery episode. Replacing the
-    // pending promise would orphan its waiters forever.
-    if (this.streamErrorRecoveryDecision != null) {
+  private beginStreamErrorRecoveryDecision(messageId: string): void {
+    // Duplicate error events for the same attempt share one decision.
+    if (this.streamErrorRecoveryDecisions.has(messageId)) {
       return;
     }
-    this.lastStreamErrorRecoveryOutcome = undefined;
+
+    // Bound retention: evict oldest resolved decisions (insertion order),
+    // never pending ones — deleting a pending decision would orphan waiters.
+    const maxRetainedDecisions = 8;
+    for (const [key, entry] of this.streamErrorRecoveryDecisions) {
+      if (this.streamErrorRecoveryDecisions.size < maxRetainedDecisions) {
+        break;
+      }
+      if (entry.outcome != null) {
+        this.streamErrorRecoveryDecisions.delete(key);
+      }
+    }
+
     let resolveDecision!: (outcome: StreamErrorRecoveryOutcome) => void;
     const promise = new Promise<StreamErrorRecoveryOutcome>((resolve) => {
       resolveDecision = resolve;
     });
-    this.streamErrorRecoveryDecision = { promise, resolve: resolveDecision };
+    this.streamErrorRecoveryDecisions.set(messageId, { promise, resolve: resolveDecision });
   }
 
-  private resolveStreamErrorRecoveryDecision(outcome: StreamErrorRecoveryOutcome): void {
-    const decision = this.streamErrorRecoveryDecision;
-    if (decision == null) {
+  private resolveStreamErrorRecoveryDecision(
+    messageId: string,
+    outcome: StreamErrorRecoveryOutcome
+  ): void {
+    const decision = this.streamErrorRecoveryDecisions.get(messageId);
+    // First resolution per attempt wins: the errorHandler's terminal safety
+    // net must not overwrite a "retry-started" already recorded for the same
+    // attempt.
+    if (decision == null || decision.outcome != null) {
       return;
     }
 
-    this.streamErrorRecoveryDecision = null;
-    // Retain the outcome so late waiters (e.g. task settlement queued behind a
-    // workspace event lock while a fast retry already started and finished)
-    // still observe the recorded decision instead of sampling live state.
-    this.lastStreamErrorRecoveryOutcome = outcome;
+    decision.outcome = outcome;
     decision.resolve(outcome);
   }
 
@@ -4299,7 +4321,7 @@ export class AgentSession {
     // streamWithHistory resolves once stream startup completed (the stream is
     // registered, so isStreaming is true); resolve the recovery decision only
     // now so waiters observe the actual retry outcome, not a pre-stream state.
-    this.resolveStreamErrorRecoveryDecision("retry-started");
+    this.resolveStreamErrorRecoveryDecision(data.messageId, "retry-started");
     return true;
   }
 
@@ -4392,7 +4414,7 @@ export class AgentSession {
 
     // Resolve only after startup completed so waiters observe the actual
     // retry outcome (see maybeRetryCompactionOnContextExceeded).
-    this.resolveStreamErrorRecoveryDecision("retry-started");
+    this.resolveStreamErrorRecoveryDecision(data.messageId, "retry-started");
     return true;
   }
 
@@ -4542,7 +4564,7 @@ export class AgentSession {
       message: data.error,
     });
     await this.updateStartupAutoRetryAbandonFromFailure(failureType, failedUserMessageId);
-    this.resolveStreamErrorRecoveryDecision("terminal");
+    this.resolveStreamErrorRecoveryDecision(data.messageId, "terminal");
 
     this.emitChatEvent(streamErrorMessage);
     this.setTurnPhase(TurnPhase.IDLE);
@@ -4979,16 +5001,20 @@ export class AgentSession {
       }
       const data = raw as StreamErrorPayload & { workspaceId: string };
       this.activeStreamErrorEventReceived = true;
-      this.beginStreamErrorRecoveryDecision();
+      // Begin synchronously at event emission so settlement waiters (which
+      // observe the same AIService error event) always find this attempt's
+      // decision when they run.
+      this.beginStreamErrorRecoveryDecision(data.messageId);
       void this.handleStreamError({
         messageId: data.messageId,
         error: data.error,
         errorType: data.errorType,
       })
         // Safety net for exceptions inside handleStreamError: a successful
-        // retry already resolved "retry-started" (no-op here); an unwound
-        // handler means no retry survived, so record terminal.
-        .finally(() => this.resolveStreamErrorRecoveryDecision("terminal"));
+        // retry already resolved "retry-started" for this attempt (no-op
+        // here); an unwound handler means no retry survived, so record
+        // terminal.
+        .finally(() => this.resolveStreamErrorRecoveryDecision(data.messageId, "terminal"));
     };
 
     this.aiListeners.push({ event: "error", handler: errorHandler });
@@ -5379,19 +5405,19 @@ export class AgentSession {
   }
 
   /**
-   * Waits for the in-flight stream-error recovery decision and returns its
-   * outcome. Late callers receive the retained outcome of the most recent
-   * decision; undefined means no stream error has been handled (or the
-   * session was recreated).
+   * Waits for the stream-error recovery decision of one failed attempt
+   * (keyed by the error event's assistant messageId) and returns its outcome.
+   * Late callers receive the retained outcome; undefined means no decision
+   * was recorded for that attempt (e.g. the session was recreated).
    */
-  async waitForPendingStreamErrorRecoveryDecision(): Promise<
-    StreamErrorRecoveryOutcome | undefined
-  > {
-    const pending = this.streamErrorRecoveryDecision;
-    if (pending != null) {
-      return pending.promise;
+  async waitForPendingStreamErrorRecoveryDecision(
+    messageId: string
+  ): Promise<StreamErrorRecoveryOutcome | undefined> {
+    const decision = this.streamErrorRecoveryDecisions.get(messageId);
+    if (decision == null) {
+      return undefined;
     }
-    return this.lastStreamErrorRecoveryOutcome;
+    return decision.outcome ?? decision.promise;
   }
 
   hasPendingAutoRetry(): boolean {

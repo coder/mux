@@ -4830,7 +4830,10 @@ describe("TaskService", () => {
       errorType: "context_exceeded",
     });
 
-    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith("childworkspace");
+    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith(
+      "childworkspace",
+      "msg_1"
+    );
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
       status: "running",
@@ -4867,7 +4870,10 @@ describe("TaskService", () => {
       errorType: "stream_truncated",
     });
 
-    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith("childworkspace");
+    expect(waitForPendingStreamErrorRecoveryDecision).toHaveBeenCalledWith(
+      "childworkspace",
+      "msg_truncated"
+    );
     expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
       status: "running",
       workspaceId: "childworkspace",

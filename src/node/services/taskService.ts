@@ -9859,13 +9859,17 @@ export class TaskService {
 
   private async hasRecoverableWorkspaceTurnRetryInFlight(
     workspaceId: string,
+    errorMessageId: string,
     options: { requireAutoRetry: boolean }
   ): Promise<boolean> {
-    const recoveryOutcome =
-      await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
-    // The recorded outcome survives a fast retry that already finished
-    // streaming by the time this waiter (queued behind the workspace event
-    // lock) runs; isStreaming alone would misread that success as terminal.
+    const recoveryOutcome = await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(
+      workspaceId,
+      errorMessageId
+    );
+    // The recorded per-attempt outcome survives a fast retry that already
+    // finished streaming by the time this waiter (queued behind the workspace
+    // event lock) runs; isStreaming alone would misread that success as
+    // terminal.
     if (recoveryOutcome === "retry-started") {
       return true;
     }
@@ -9895,7 +9899,7 @@ export class TaskService {
     if (
       event.errorType != null &&
       isWorkspaceTurnRecoverableStreamError(event.errorType) &&
-      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
+      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, event.messageId, {
         requireAutoRetry: !explicitRecovery,
       }))
     ) {
@@ -9983,18 +9987,28 @@ export class TaskService {
       // later stream-end, so leaving the task `running` would block the
       // parent's waitForAgentReport until timeout.
       //
-      // Act on the recorded outcome, not live phase flags: a fast successful
-      // retry can start AND finish before this handler (queued behind the
-      // workspace event lock) gets here, so sampling isStreaming would
-      // misread a successful recovery as declined. "retry-started" means the
-      // retry completed stream startup; its own stream events settle the task
-      // later. Anything else means the error settled terminally with no
-      // retry. Queued messages must NOT count as recovery — the terminal
-      // error path does not dispatch the queue, so an unrelated queued
-      // message would otherwise leave the task running forever.
-      const recoveryOutcome =
-        await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+      // Act on the recorded per-attempt outcome, not live phase flags: a fast
+      // successful retry can start AND finish before this handler (queued
+      // behind the workspace event lock) gets here, so sampling isStreaming
+      // would misread a successful recovery as declined. "retry-started"
+      // means this attempt's recovery completed stream startup; that retry's
+      // own stream events (including a possible follow-up error event, which
+      // gets its own decision) settle the task later. "terminal" means the
+      // error settled with no retry. Queued messages must NOT count as
+      // recovery — the terminal error path does not dispatch the queue, so an
+      // unrelated queued message would otherwise leave the task running
+      // forever.
+      const recoveryOutcome = await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(
+        workspaceId,
+        event.messageId
+      );
       if (recoveryOutcome === "retry-started") {
+        return;
+      }
+      // No recorded decision means the session is gone or was recreated
+      // (e.g. restart recovery); a live stream then belongs to a real
+      // continuing turn, so leave settlement to its stream events.
+      if (recoveryOutcome === undefined && this.aiService.isStreaming(workspaceId)) {
         return;
       }
       log.error("Task hit context_exceeded and in-session recovery declined; interrupting task", {
