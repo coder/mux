@@ -323,6 +323,8 @@ export function computeDelegatedActivityByWorkspaceId(
 
 export interface AgentRowRenderMeta {
   depth: number;
+  /** Nearest visible ancestor after inactive intermediate sub-agents are removed. */
+  visibleParentWorkspaceId?: string;
   rowKind: "primary" | "subagent";
   connectorPosition: "single" | "middle" | "last";
   // Sub-agent trunks should render as a single continuous line, so each row
@@ -510,6 +512,7 @@ export function computeAgentRowRenderMeta(
         : 0;
     metadataByWorkspaceId.set(workspace.id, {
       depth: effectiveDepth,
+      ...(effectiveParentId != null ? { visibleParentWorkspaceId: effectiveParentId } : {}),
       rowKind,
       connectorPosition,
       connectorStartsAtParent,

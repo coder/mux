@@ -2855,7 +2855,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   }
                                   rowNodes.push({
                                     id: workspace.id,
-                                    parentId: workspace.parentWorkspaceId,
+                                    parentId:
+                                      baseRowMeta.visibleParentWorkspaceId ??
+                                      workspace.parentWorkspaceId,
                                     depth: baseRowMeta.depth,
                                     isRunning: isRunningOrStartingTaskStatus(workspace.taskStatus),
                                     baseMeta: baseRowMeta,

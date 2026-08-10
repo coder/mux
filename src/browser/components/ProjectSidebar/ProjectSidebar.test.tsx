@@ -330,6 +330,9 @@ function installProjectSidebarTestDoubles() {
         <div
           data-testid={agentItemTestId(metadata.id)}
           data-depth={String(props.depth ?? -1)}
+          data-visible-parent={props.rowRenderMeta?.visibleParentWorkspaceId ?? ""}
+          data-shared-through={String(props.rowRenderMeta?.sharedTrunkActiveThroughRow ?? false)}
+          data-shared-below={String(props.rowRenderMeta?.sharedTrunkActiveBelowRow ?? false)}
           data-row-kind={props.rowRenderMeta?.rowKind ?? "unknown"}
           data-connector-layout={props.subAgentConnectorLayout ?? "default"}
           data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
@@ -882,6 +885,49 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.queryByTestId(agentItemTestId("completed-child"))).toBeNull();
     expect(view.queryByTestId(agentItemTestId("interrupted-child"))).toBeNull();
     expect(view.queryByRole("button", { name: toggleButtonLabel("parent") })).toBeNull();
+  });
+
+  test("keeps promoted active descendants in the visible ancestor connector group", () => {
+    const root = createWorkspace("root", { title: "Root workspace" });
+    const queuedChild = createWorkspace("queued-child", {
+      parentWorkspaceId: "root",
+      taskStatus: "queued",
+      title: "Reviewer",
+    });
+    const inactiveIntermediate = createWorkspace("inactive-intermediate", {
+      parentWorkspaceId: "root",
+      taskStatus: "reported",
+      title: "Researcher",
+    });
+    const runningGrandchild = createWorkspace("running-grandchild", {
+      parentWorkspaceId: "inactive-intermediate",
+      taskStatus: "running",
+      title: "Verifier",
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([
+            [
+              "/projects/demo-project",
+              [root, queuedChild, inactiveIntermediate, runningGrandchild],
+            ],
+          ])
+        }
+        workspaceRecency={{}}
+      />
+    );
+
+    expect(view.queryByTestId(agentItemTestId("inactive-intermediate"))).toBeNull();
+    const queuedRow = view.getByTestId(agentItemTestId("queued-child"));
+    const promotedRow = view.getByTestId(agentItemTestId("running-grandchild"));
+    expect(promotedRow.dataset.visibleParent).toBe("root");
+    expect(promotedRow.dataset.depth).toBe("1");
+    expect(queuedRow.dataset.sharedThrough).toBe("true");
+    expect(queuedRow.dataset.sharedBelow).toBe("true");
   });
 
   test("coalesces best-of sub-agents into a single sidebar row until expanded", async () => {

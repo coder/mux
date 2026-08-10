@@ -254,7 +254,7 @@ describe("Workspace sidebar completed sub-agent expansion (UI)", () => {
         title: parentDisplayTitle,
       });
       fireEvent.click(parentActionsButton);
-      await findMenuItem("Mark unread");
+      await findMenuItem("Generate new title");
       const menuLabels = Array.from(document.querySelectorAll("button")).map(
         (button) => button.textContent ?? ""
       );
