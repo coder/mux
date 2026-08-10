@@ -166,10 +166,11 @@ export function collectActiveWorkflowGroupKeys(
   const keys = new Set<string>();
   for (const workspace of workspaces) {
     const key = getWorkflowGroupStorageKey(workspace);
-    if (key == null || keys.has(key) || hasCompletedAgentReport(workspace)) {
+    if (key == null || keys.has(key)) {
       continue;
     }
     if (
+      workspace.taskExecutionStatus === "queued" ||
       workspace.taskStatus === "queued" ||
       isWorkspaceDelegatedActivityActive(workspace, options)
     ) {

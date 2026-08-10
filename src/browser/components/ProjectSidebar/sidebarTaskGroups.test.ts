@@ -205,6 +205,22 @@ describe("workflow group session stickiness", () => {
     expect(keys.has("workflow:parent:wfr_gamma")).toBe(true);
   });
 
+  test("retains workflow groups for reawakened children before consulting retained reports", () => {
+    const running = workflowChild("reawakened-running", "wfr_running", {
+      taskStatus: "reported",
+      taskExecutionStatus: "running",
+    });
+    const queued = workflowChild("reawakened-queued", "wfr_queued", {
+      taskStatus: "reported",
+      taskExecutionStatus: "queued",
+    });
+
+    const keys = collectActiveWorkflowGroupKeys([parent, running, queued]);
+
+    expect(keys.has("workflow:parent:wfr_running")).toBe(true);
+    expect(keys.has("workflow:parent:wfr_queued")).toBe(true);
+  });
+
   test("re-includes hidden members of session-active runs so the group never unmounts", () => {
     // Step gap: the only member is terminal and hidden by completed-sub-agent
     // filtering, but the run was active earlier this session.
