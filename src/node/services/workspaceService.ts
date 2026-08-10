@@ -24,7 +24,7 @@ import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
-import { AgentSession } from "@/node/services/agentSession";
+import { AgentSession, type StreamErrorRecoveryOutcome } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -9414,9 +9414,11 @@ export class WorkspaceService extends EventEmitter {
     return this.sessions.get(workspaceId.trim())?.hasQueuedMessages(dispatchMode) ?? false;
   }
 
-  async waitForPendingStreamErrorRecoveryDecision(workspaceId: string): Promise<void> {
+  async waitForPendingStreamErrorRecoveryDecision(
+    workspaceId: string
+  ): Promise<StreamErrorRecoveryOutcome | undefined> {
     const session = this.sessions.get(workspaceId.trim());
-    await session?.waitForPendingStreamErrorRecoveryDecision();
+    return session?.waitForPendingStreamErrorRecoveryDecision();
   }
 
   async waitForIdle(workspaceId: string): Promise<void> {
@@ -9497,18 +9499,6 @@ export class WorkspaceService extends EventEmitter {
   hasPendingAutoRetry(workspaceId: string): boolean {
     const session = this.sessions.get(workspaceId.trim());
     return session?.hasPendingAutoRetry() ?? false;
-  }
-
-  /**
-   * Whether the session is preparing a turn (PREPARING phase), excluding queued
-   * messages and pending auto-retries. Used by child-task stream-error
-   * settlement as a conservative "a turn is actively starting" guard alongside
-   * isStreaming; unlike hasPendingQueuedOrPreparingTurn it must not count
-   * unrelated queued work.
-   */
-  isPreparingTurn(workspaceId: string): boolean {
-    const session = this.sessions.get(workspaceId.trim());
-    return session?.isPreparingTurn() ?? false;
   }
 
   /**

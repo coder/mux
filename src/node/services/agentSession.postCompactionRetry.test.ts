@@ -160,6 +160,11 @@ describe("AgentSession post-compaction context retry", () => {
 
     expect(streamMessage).toHaveBeenCalledTimes(2);
 
+    // Codex fast-retry scenario: a waiter that arrives only after the retry
+    // already started (and possibly finished) must still see the recorded
+    // "retry-started" outcome instead of sampling live phase flags.
+    expect(await session.waitForPendingStreamErrorRecoveryDecision()).toBe("retry-started");
+
     // With the options bag, arg[0] is the StreamMessageOptions object.
     const firstOpts = (streamMessage as ReturnType<typeof mock>).mock.calls[0][0] as Record<
       string,
@@ -302,9 +307,11 @@ describe("AgentSession post-compaction context retry", () => {
       new Promise((_, reject) => setTimeout(() => reject(new Error("retry never started")), 1000)),
     ]);
 
+    let decidedOutcome: string | undefined;
     let decided = false;
-    const decision = session.waitForPendingStreamErrorRecoveryDecision().then(() => {
+    const decision = session.waitForPendingStreamErrorRecoveryDecision().then((outcome) => {
       decided = true;
+      decidedOutcome = outcome;
     });
 
     // Retry startup still in flight: the decision must stay pending so waiters
@@ -318,9 +325,10 @@ describe("AgentSession post-compaction context retry", () => {
       new Promise((_, reject) => setTimeout(() => reject(new Error("decision timeout")), 1000)),
     ]);
 
-    // Startup failed pre-stream: by resolution time the session must be
-    // settle-able (no preparing turn), so task settlement can interrupt it.
+    // Startup failed pre-stream: the recorded outcome must be terminal so
+    // task settlement can interrupt the child instead of waiting forever.
     expect(decided).toBe(true);
+    expect(decidedOutcome).toBe("terminal");
     expect(session.isPreparingTurn()).toBe(false);
     expect(callCount).toBe(2);
 

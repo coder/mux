@@ -9861,7 +9861,14 @@ export class TaskService {
     workspaceId: string,
     options: { requireAutoRetry: boolean }
   ): Promise<boolean> {
-    await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+    const recoveryOutcome =
+      await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+    // The recorded outcome survives a fast retry that already finished
+    // streaming by the time this waiter (queued behind the workspace event
+    // lock) runs; isStreaming alone would misread that success as terminal.
+    if (recoveryOutcome === "retry-started") {
+      return true;
+    }
     if (this.aiService.isStreaming(workspaceId)) {
       return true;
     }
@@ -9976,21 +9983,18 @@ export class TaskService {
       // later stream-end, so leaving the task `running` would block the
       // parent's waitForAgentReport until timeout.
       //
-      // The recovery paths resolve the decision only once the retry startup
-      // outcome is known: streaming on success, idle after the terminal path
-      // on pre-stream failure — so isStreaming is the authoritative signal and
-      // a transient PREPARING can never masquerade as a started recovery.
-      // isPreparingTurn stays as a conservative guard: a turn already
-      // PREPARING at resolution time (e.g. a queued dispatch) is a real
-      // continuing turn whose own stream events settle the task later. Queued
-      // messages must NOT count — the terminal error path does not dispatch
-      // the queue, so an unrelated queued message would otherwise leave the
-      // task running forever.
-      await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
-      if (
-        this.aiService.isStreaming(workspaceId) ||
-        this.workspaceService.isPreparingTurn(workspaceId)
-      ) {
+      // Act on the recorded outcome, not live phase flags: a fast successful
+      // retry can start AND finish before this handler (queued behind the
+      // workspace event lock) gets here, so sampling isStreaming would
+      // misread a successful recovery as declined. "retry-started" means the
+      // retry completed stream startup; its own stream events settle the task
+      // later. Anything else means the error settled terminally with no
+      // retry. Queued messages must NOT count as recovery — the terminal
+      // error path does not dispatch the queue, so an unrelated queued
+      // message would otherwise leave the task running forever.
+      const recoveryOutcome =
+        await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
+      if (recoveryOutcome === "retry-started") {
         return;
       }
       log.error("Task hit context_exceeded and in-session recovery declined; interrupting task", {

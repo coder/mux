@@ -386,7 +386,6 @@ function createWorkspaceServiceMocks(
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
     hasPendingBashMonitorWakeContinuation: ReturnType<typeof mock>;
     hasPendingAutoRetry: ReturnType<typeof mock>;
-    isPreparingTurn: ReturnType<typeof mock>;
     waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
     waitForIdle: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
@@ -416,7 +415,6 @@ function createWorkspaceServiceMocks(
   waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   hasPendingAutoRetry: ReturnType<typeof mock>;
-  isPreparingTurn: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   archive: ReturnType<typeof mock>;
   deleteWorktree: ReturnType<typeof mock>;
@@ -447,7 +445,6 @@ function createWorkspaceServiceMocks(
   const hasPendingBashMonitorWakeContinuation =
     overrides?.hasPendingBashMonitorWakeContinuation ?? mock(() => false);
   const hasPendingAutoRetry = overrides?.hasPendingAutoRetry ?? mock(() => false);
-  const isPreparingTurn = overrides?.isPreparingTurn ?? mock(() => false);
   const waitForIdleAndNoQueuedMessages =
     overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
   const waitForIdle = overrides?.waitForIdle ?? mock((): Promise<void> => Promise.resolve());
@@ -495,7 +492,6 @@ function createWorkspaceServiceMocks(
       hasPendingQueuedOrPreparingTurn,
       hasPendingBashMonitorWakeContinuation,
       hasPendingAutoRetry,
-      isPreparingTurn,
       waitForIdleAndNoQueuedMessages,
       waitForIdle,
       waitForPendingStreamErrorRecoveryDecision,
@@ -521,7 +517,6 @@ function createWorkspaceServiceMocks(
     isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
     hasPendingAutoRetry,
-    isPreparingTurn,
     waitForIdleAndNoQueuedMessages,
     waitForIdle,
     waitForPendingStreamErrorRecoveryDecision,
@@ -19357,11 +19352,10 @@ describe("TaskService", () => {
       testTaskSettings(1, 3)
     );
 
-    // In-session context recovery (compaction retry) is in flight for the
-    // context_exceeded event below (retry turn is PREPARING), so the task must
-    // keep running.
+    // In-session context recovery recorded a started retry for the
+    // context_exceeded event below, so the task must keep running.
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
-      isPreparingTurn: mock(() => true),
+      waitForPendingStreamErrorRecoveryDecision: mock(() => Promise.resolve("retry-started")),
     });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
@@ -19432,11 +19426,12 @@ describe("TaskService", () => {
       testTaskSettings(1, 3)
     );
 
-    // Recovery decision resolves with no retry in flight: not streaming and no
-    // PREPARING turn, i.e. compaction retries declined and the turn failed
-    // terminally. An unrelated queued message on the child must NOT keep the
-    // task running — the terminal error path never dispatches the queue.
+    // Recovery decision resolved terminal: compaction retries declined and the
+    // turn failed with no later stream-end. An unrelated queued message on the
+    // child must NOT keep the task running — the terminal error path never
+    // dispatches the queue.
     const { workspaceService, sendMessage, resumeStream } = createWorkspaceServiceMocks({
+      waitForPendingStreamErrorRecoveryDecision: mock(() => Promise.resolve("terminal")),
       hasQueuedMessages: mock((workspaceId: string) => workspaceId === childId),
       hasPendingQueuedOrPreparingTurn: mock((workspaceId: string) => workspaceId === childId),
     });
