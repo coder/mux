@@ -609,6 +609,7 @@ export class AgentSession {
     openaiTruncationModeOverride?: "auto" | "disabled";
     providersConfig: ProvidersConfigMap | null;
     goalKind?: GoalSyntheticMessageKind;
+    workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
   };
 
   private activeCompactionRequest?: {
@@ -3765,6 +3766,7 @@ export class AgentSession {
         agentInitiated: streamContext.agentInitiated,
         goalKind: streamContext.goalKind,
         modelForStream: streamContext.modelString,
+        muxMetadata: streamContext.workspaceTurnMetadata,
       });
       const autoCompactionRequest = this.buildAutoCompactionRequest({
         followUpContent,
@@ -4027,6 +4029,12 @@ export class AgentSession {
           : retryMuxMetadata?.type === "bash-monitor-wake"
             ? inheritOpenWorkspaceTurnMetadata(historyResult.data)
             : undefined;
+    // Mid-stream compaction runs after the original send options have already been resolved against
+    // history (notably bash-monitor wakes). Persist the actual correlation used by this stream so the
+    // post-compaction continuation remains the same delegated workspace turn.
+    if (this.activeStreamContext != null) {
+      this.activeStreamContext.workspaceTurnMetadata = streamMuxMetadata;
+    }
     const acpPromptId =
       normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(optionsMuxMetadata);
     const delegatedToolNames =

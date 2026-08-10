@@ -1101,10 +1101,21 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       getThreshold: mock(() => 0.85),
     } as unknown as CompactionMonitor;
 
-    const result = await session.sendMessage("hello", {
-      model: "openai:gpt-4o",
-      agentId: "exec",
-    });
+    const workspaceTurnMetadata = {
+      type: "workspace-turn-task",
+      taskHandleId: "wst_mid_stream_compaction",
+      ownerWorkspaceId: "parent-mid-stream-compaction",
+      turnId: "turn-mid-stream-compaction",
+    } as const;
+    const result = await session.sendMessage(
+      "hello",
+      {
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        muxMetadata: workspaceTurnMetadata,
+      },
+      { agentInitiated: true }
+    );
 
     expect(result.success).toBe(true);
 
@@ -1120,6 +1131,16 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
       .find((message) => message.metadata?.muxMetadata?.type === "compaction-request");
 
     expect(compactionRequestMessage).toBeDefined();
+
+    const compactionRequestMetadata = compactionRequestMessage?.metadata?.muxMetadata;
+    expect(compactionRequestMetadata?.type).toBe("compaction-request");
+    if (compactionRequestMetadata?.type !== "compaction-request") {
+      throw new Error("Expected a persisted mid-stream compaction request");
+    }
+    expect(compactionRequestMetadata.parsed.followUpContent?.muxMetadata).toEqual(
+      workspaceTurnMetadata
+    );
+    expect(compactionRequestMetadata.parsed.followUpContent?.agentInitiated).toBe(true);
 
     const compactionRequestText =
       compactionRequestMessage?.parts.find((part) => part.type === "text")?.text ?? "";
