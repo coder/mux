@@ -1,6 +1,6 @@
 import { getTaskGroupMemberDepth } from "@/browser/components/sidebarItemLayout";
 import {
-  isRunningOrStartingTaskStatus,
+  isSidebarSubAgentRunning,
   isWorkspaceDelegatedActivityActive,
   type AgentRowRenderMeta,
 } from "@/browser/utils/ui/workspaceFiltering";
@@ -424,7 +424,8 @@ export function computeTaskGroupMemberRowMeta(params: {
 
   let lastRunningMemberIndex = -1;
   for (let index = members.length - 1; index >= 0; index -= 1) {
-    if (isRunningOrStartingTaskStatus(members[index]?.taskStatus)) {
+    const member = members[index];
+    if (member != null && isSidebarSubAgentRunning(member)) {
       lastRunningMemberIndex = index;
       break;
     }

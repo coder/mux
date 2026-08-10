@@ -61,7 +61,7 @@ import {
   getSectionTierKey,
   orderMultiProjectSectionRows,
   resolveEffectiveSectionId,
-  isRunningOrStartingTaskStatus,
+  isSidebarSubAgentRunning,
   computeRowMetaForVisibleNodes,
   type AgentRowRenderMeta,
   type SidebarVisibleRowNode,
@@ -2825,13 +2825,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       continue;
                                     }
                                     seenGroupKeys.add(group.storageKey);
+                                    const anchorMeta = baseRowMetaByWorkspaceId.get(workspace.id);
                                     const headerDepth =
-                                      baseRowMetaByWorkspaceId.get(workspace.id)?.depth ??
-                                      depthByWorkspaceId[workspace.id] ??
-                                      0;
+                                      anchorMeta?.depth ?? depthByWorkspaceId[workspace.id] ?? 0;
                                     rowNodes.push({
                                       id: group.storageKey,
-                                      parentId: group.parentWorkspaceId,
+                                      parentId:
+                                        anchorMeta?.visibleParentWorkspaceId ??
+                                        group.parentWorkspaceId,
                                       depth: headerDepth,
                                       isRunning: group.runningCount > 0,
                                       baseMeta: {
@@ -2859,7 +2860,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       baseRowMeta.visibleParentWorkspaceId ??
                                       workspace.parentWorkspaceId,
                                     depth: baseRowMeta.depth,
-                                    isRunning: isRunningOrStartingTaskStatus(workspace.taskStatus),
+                                    isRunning: isSidebarSubAgentRunning(workspace, {
+                                      isWorkspaceLiveActive,
+                                    }),
                                     baseMeta: baseRowMeta,
                                   });
                                 }

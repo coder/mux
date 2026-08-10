@@ -659,6 +659,7 @@ function createWorkspace(
   id: string,
   opts?: {
     parentWorkspaceId?: string;
+    taskExecutionStatus?: FrontendWorkspaceMetadata["taskExecutionStatus"];
     taskStatus?: FrontendWorkspaceMetadata["taskStatus"];
     title?: string;
     bestOf?: FrontendWorkspaceMetadata["bestOf"];
@@ -680,6 +681,7 @@ function createWorkspace(
     subProjectPath: opts?.subProjectPath,
     runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     parentWorkspaceId: opts?.parentWorkspaceId,
+    taskExecutionStatus: opts?.taskExecutionStatus,
     taskStatus: opts?.taskStatus,
     bestOf: opts?.bestOf,
     workflowTask: opts?.workflowTask,
@@ -928,6 +930,128 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(promotedRow.dataset.depth).toBe("1");
     expect(queuedRow.dataset.sharedThrough).toBe("true");
     expect(queuedRow.dataset.sharedBelow).toBe("true");
+  });
+
+  test("keeps promoted workflow groups in the visible ancestor connector run", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const root = {
+      ...createWorkspace("group-root", { title: "Root workspace" }),
+      projects: singleProjectRefs,
+    };
+    const queuedChild = {
+      ...createWorkspace("group-queued-child", {
+        parentWorkspaceId: "group-root",
+        taskStatus: "queued",
+        title: "Reviewer",
+      }),
+      projects: singleProjectRefs,
+    };
+    const inactiveIntermediate = {
+      ...createWorkspace("group-inactive-parent", {
+        parentWorkspaceId: "group-root",
+        taskStatus: "reported",
+        title: "Researcher",
+      }),
+      projects: singleProjectRefs,
+    };
+    const runningWorkflowGrandchild = {
+      ...createWorkspace("group-running-grandchild", {
+        parentWorkspaceId: "group-inactive-parent",
+        taskStatus: "running",
+        title: "Verifier",
+        workflowTask: { runId: "wfr_promoted", stepId: "verify" },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([
+            [
+              "/projects/demo-project",
+              [root, queuedChild, inactiveIntermediate, runningWorkflowGrandchild],
+            ],
+          ])
+        }
+        workspaceRecency={{
+          "group-root": Date.now(),
+          "group-queued-child": Date.now(),
+          "group-inactive-parent": Date.now(),
+          "group-running-grandchild": Date.now(),
+        }}
+      />
+    );
+
+    expect(view.queryByTestId(agentItemTestId("group-inactive-parent"))).toBeNull();
+    expect(view.getByTestId("task-group-wfr_promoted")).toBeTruthy();
+    const queuedRow = view.getByTestId(agentItemTestId("group-queued-child"));
+    expect(queuedRow.dataset.sharedThrough).toBe("true");
+    expect(queuedRow.dataset.sharedBelow).toBe("true");
+  });
+
+  test("keeps continuation-backed children active in final connector layout", () => {
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const root = {
+      ...createWorkspace("continuation-root", { title: "Root workspace" }),
+      projects: singleProjectRefs,
+    };
+    const queuedChild = {
+      ...createWorkspace("continuation-queued-child", {
+        parentWorkspaceId: "continuation-root",
+        taskStatus: "queued",
+        title: "Reviewer",
+      }),
+      projects: singleProjectRefs,
+    };
+    const reawakenedChild = {
+      ...createWorkspace("continuation-running-child", {
+        parentWorkspaceId: "continuation-root",
+        taskStatus: "reported",
+        taskExecutionStatus: "running",
+        title: "Simplicity Auditor",
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [root, queuedChild, reawakenedChild]]])
+        }
+        workspaceRecency={{
+          "continuation-root": Date.now(),
+          "continuation-queued-child": Date.now(),
+          "continuation-running-child": Date.now(),
+        }}
+      />
+    );
+
+    const queuedRow = view.getByTestId(agentItemTestId("continuation-queued-child"));
+    const continuationRow = view.getByTestId(agentItemTestId("continuation-running-child"));
+    expect(queuedRow.dataset.sharedThrough).toBe("true");
+    expect(queuedRow.dataset.sharedBelow).toBe("true");
+    expect(continuationRow.dataset.rowKind).toBe("subagent");
   });
 
   test("coalesces best-of sub-agents into a single sidebar row until expanded", async () => {

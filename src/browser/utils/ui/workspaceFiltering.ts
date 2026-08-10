@@ -159,9 +159,9 @@ export function isSidebarSubAgentActive(workspace: FrontendWorkspaceMetadata): b
   );
 }
 
-function isSidebarSubAgentRunning(
+export function isSidebarSubAgentRunning(
   workspace: FrontendWorkspaceMetadata,
-  options: DelegatedActivityOptions
+  options: DelegatedActivityOptions = {}
 ): boolean {
   return (
     workspace.taskExecutionStatus === "starting" ||
