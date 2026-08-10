@@ -707,7 +707,7 @@ function isSelfHealEligibleSettledWorkspaceTurn(
  * A workspace-turn stream error may resolve without parent intervention when
  * the child can still make progress on its own. The caller must still confirm
  * a retry/continuation is actually in flight
- * (hasRecoverableWorkspaceTurnRetryInFlight) before leaving the handle running;
+ * (hasRecoverableStreamRetryInFlight) before leaving the handle running;
  * exhausted or user-disabled auto-retry settles the handle terminally.
  *
  * Gating on isNonRetryableStreamError (instead of a narrow allowlist) keeps
@@ -726,9 +726,10 @@ function isWorkspaceTurnRecoverableStreamError(errorType: StreamErrorType): bool
 /**
  * Provider-terminal stream errors that settle a child task even while it is
  * still `running` (before it owes its completion tool). Subset of
- * NON_RETRYABLE_STREAM_ERRORS: errors with in-session recovery
- * (context_exceeded) or user intent (aborted) must not terminally settle a
- * running task.
+ * NON_RETRYABLE_STREAM_ERRORS: user intent (aborted) must never terminally
+ * settle a running task, and errors with in-session recovery
+ * (context_exceeded) settle only after that recovery declines (see
+ * handleTaskStreamError).
  */
 const RUNNING_TASK_TERMINAL_STREAM_ERRORS: ReadonlySet<StreamErrorType> = new Set([
   "model_refusal",
@@ -9856,7 +9857,7 @@ export class TaskService {
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
   }
 
-  private async hasRecoverableWorkspaceTurnRetryInFlight(
+  private async hasRecoverableStreamRetryInFlight(
     workspaceId: string,
     options: { requireAutoRetry: boolean }
   ): Promise<boolean> {
@@ -9887,7 +9888,7 @@ export class TaskService {
     if (
       event.errorType != null &&
       isWorkspaceTurnRecoverableStreamError(event.errorType) &&
-      (await this.hasRecoverableWorkspaceTurnRetryInFlight(record.workspaceId, {
+      (await this.hasRecoverableStreamRetryInFlight(record.workspaceId, {
         requireAutoRetry: !explicitRecovery,
       }))
     ) {
@@ -9951,8 +9952,7 @@ export class TaskService {
     // - `aborted` is a steerable user pause, not a terminal failure.
     // - `context_exceeded` has in-session recovery (compaction retry, post-compaction
     //   retry in AgentSession.handleStreamError) listening on the same error event;
-    //   settling here would race that recovery and interrupt a child that was about
-    //   to continue.
+    //   it settles below only after that recovery declines.
     const settlesRunningTask =
       event.errorType != null && RUNNING_TASK_TERMINAL_STREAM_ERRORS.has(event.errorType);
 
@@ -9965,6 +9965,25 @@ export class TaskService {
       });
       await this.failAgentTaskTerminally(workspaceId, entry, {
         errorType: event.errorType ?? "unknown",
+        errorMessage: event.error,
+      });
+      return;
+    }
+
+    if (status === "running" && event.errorType === "context_exceeded") {
+      // Wait for AgentSession.handleStreamError's recovery decision instead of
+      // racing it. When no retry started, the turn failed terminally without a
+      // later stream-end, so leaving the task `running` would block the
+      // parent's waitForAgentReport until timeout.
+      if (await this.hasRecoverableStreamRetryInFlight(workspaceId, { requireAutoRetry: false })) {
+        return;
+      }
+      log.error("Task hit context_exceeded and in-session recovery declined; interrupting task", {
+        workspaceId,
+        error: event.error,
+      });
+      await this.failAgentTaskTerminally(workspaceId, entry, {
+        errorType: event.errorType,
         errorMessage: event.error,
       });
       return;
