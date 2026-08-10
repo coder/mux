@@ -143,6 +143,7 @@ import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import {
   TaskHandleStore,
   WORKSPACE_TURN_TASK_ID_PREFIX,
+  isActiveWorkspaceTurnTaskStatus,
   isWorkspaceTurnTaskId,
   type WorkspaceTurnFinalMessageRef,
   type WorkspaceTurnTaskHandleRecord,
@@ -2141,11 +2142,7 @@ export class TaskService {
         { allowMissing: true }
       );
       await this.emitWorkspaceMetadata(task.id);
-      if (
-        normalized.status === "queued" ||
-        normalized.status === "starting" ||
-        normalized.status === "running"
-      ) {
+      if (isActiveWorkspaceTurnTaskStatus(normalized.status)) {
         this.activeWorkspaceTurnHandleByWorkspaceId.set(task.id, {
           handleId: normalized.handleId,
           ownerWorkspaceId: normalized.ownerWorkspaceId,
@@ -4360,10 +4357,7 @@ export class TaskService {
             ? ((await this.getDescendantAgentTaskExecutionSnapshot(ancestorWorkspaceId, taskId))
                 ?.record ?? null)
             : null;
-        const continuationActive =
-          currentExecution?.status === "queued" ||
-          currentExecution?.status === "starting" ||
-          currentExecution?.status === "running";
+        const continuationActive = isActiveWorkspaceTurnTaskStatus(currentExecution?.status);
         const legacyArchived = isWorkspaceArchived(
           entry.workspace.archivedAt,
           entry.workspace.unarchivedAt
@@ -6100,7 +6094,7 @@ export class TaskService {
           }
           return;
         }
-        if (status === "queued" || status === "starting" || status === "running") {
+        if (isActiveWorkspaceTurnTaskStatus(status)) {
           workspace.taskExecutionId = handleId;
           workspace.taskExecutionStatus = status;
           return;
@@ -6458,10 +6452,7 @@ export class TaskService {
             ) ?? null;
         }
       }
-      const continuationActive =
-        continuationRecord?.status === "queued" ||
-        continuationRecord?.status === "starting" ||
-        continuationRecord?.status === "running";
+      const continuationActive = isActiveWorkspaceTurnTaskStatus(continuationRecord?.status);
       if (hasCompletedAgentReport(childEntry.workspace) && !continuationActive) {
         throw new Error("agent_report cannot send updates after the sub-agent has completed");
       }
@@ -7304,7 +7295,7 @@ export class TaskService {
     }
 
     if (
-      (record.status === "queued" || record.status === "starting" || record.status === "running") &&
+      isActiveWorkspaceTurnTaskStatus(record.status) &&
       !(await this.isLiveWorkspaceTurn(record))
     ) {
       await this.settleStaleWorkspaceTurn(record);
@@ -8269,32 +8260,26 @@ export class TaskService {
     resolved: ResolvedWorkspaceLifecycleTarget,
     interruptActive: boolean
   ): Promise<WorkspaceLifecycleResult | null> {
+    const activeRecords = (
+      await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
+        statuses: ["queued", "starting", "running"],
+      })
+    ).filter((record) => record.workspaceId === resolved.workspaceId);
+    const activeWorkspaceTurnTaskIds = activeRecords.map((record) => record.handleId);
+
     if (resolved.targetKind === "agent_task") {
       const activeTaskIds = this.listActiveDescendantAgentTaskIds(resolved.workspaceId);
       const taskStatus = resolved.metadata?.taskStatus;
       if (
         (taskStatus != null && ACTIVE_AGENT_TASK_STATUSES.has(taskStatus)) ||
-        this.aiService.isStreaming(resolved.workspaceId)
+        this.aiService.isStreaming(resolved.workspaceId) ||
+        isActiveWorkspaceTurnTaskStatus(resolved.metadata?.taskExecutionStatus)
       ) {
         activeTaskIds.unshift(resolved.workspaceId);
       }
-      if (
-        resolved.metadata?.taskExecutionStatus === "queued" ||
-        resolved.metadata?.taskExecutionStatus === "starting" ||
-        resolved.metadata?.taskExecutionStatus === "running"
-      ) {
-        activeTaskIds.unshift(resolved.workspaceId);
-      }
-      const activeContinuationHandles = (
-        await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
-          statuses: ["queued", "starting", "running"],
-        })
-      )
-        .filter((record) => record.workspaceId === resolved.workspaceId)
-        .map((record) => record.handleId);
 
       const uniqueActiveTaskIds = Array.from(
-        new Set([...activeTaskIds, ...activeContinuationHandles])
+        new Set([...activeTaskIds, ...activeWorkspaceTurnTaskIds])
       );
       if (uniqueActiveTaskIds.length === 0) {
         return null;
@@ -8309,13 +8294,7 @@ export class TaskService {
       };
     }
 
-    const activeRecords = (
-      await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
-        statuses: ["queued", "starting", "running"],
-      })
-    ).filter((record) => record.workspaceId === resolved.workspaceId);
-    const activeTaskIds = activeRecords.map((record) => record.handleId);
-    if (activeTaskIds.length === 0) {
+    if (activeWorkspaceTurnTaskIds.length === 0) {
       return null;
     }
     if (!interruptActive) {
@@ -8323,18 +8302,18 @@ export class TaskService {
         status: "active",
         action: resolved.action,
         ...this.lifecycleTargetFields(resolved),
-        activeTaskIds,
+        activeTaskIds: activeWorkspaceTurnTaskIds,
       };
     }
 
-    for (const activeTaskId of activeTaskIds) {
+    for (const activeTaskId of activeWorkspaceTurnTaskIds) {
       const interruptResult = await this.interruptWorkspaceTurn(ownerWorkspaceId, activeTaskId);
       if (!interruptResult.success) {
         return {
           status: "error",
           action: resolved.action,
           ...this.lifecycleTargetFields(resolved),
-          activeTaskIds,
+          activeTaskIds: activeWorkspaceTurnTaskIds,
           error: interruptResult.error,
         };
       }
@@ -8698,9 +8677,7 @@ export class TaskService {
     if (record.status === "running" && this.isForegroundAwaiting(record.workspaceId)) {
       return false;
     }
-    return (
-      record.status === "queued" || record.status === "starting" || record.status === "running"
-    );
+    return isActiveWorkspaceTurnTaskStatus(record.status);
   }
 
   private async hasActiveWorkspaceTurnForWorkspace(
@@ -8768,7 +8745,7 @@ export class TaskService {
   }
 
   private async settleStaleWorkspaceTurn(record: WorkspaceTurnTaskHandleRecord): Promise<void> {
-    if (record.status !== "queued" && record.status !== "starting" && record.status !== "running") {
+    if (!isActiveWorkspaceTurnTaskStatus(record.status)) {
       return;
     }
     const recovered = await this.recoverTerminalWorkspaceTurnFromHistory(record);
@@ -8854,11 +8831,7 @@ export class TaskService {
     const records = await this.taskHandleStore.listWorkspaceTurns(ownerWorkspaceId);
     const taskIds: string[] = [];
     for (const record of records) {
-      if (
-        record.status === "queued" ||
-        record.status === "starting" ||
-        record.status === "running"
-      ) {
+      if (isActiveWorkspaceTurnTaskStatus(record.status)) {
         if (!(await this.isLiveWorkspaceTurn(record))) {
           await this.settleStaleWorkspaceTurn(record);
           continue;
@@ -8877,12 +8850,7 @@ export class TaskService {
         const latest = await this.reconcileSettledWorkspaceTurn(record, {
           repairFromHistory: false,
         });
-        if (
-          latest != null &&
-          (latest.status === "queued" ||
-            latest.status === "starting" ||
-            latest.status === "running")
-        ) {
+        if (latest != null && isActiveWorkspaceTurnTaskStatus(latest.status)) {
           taskIds.push(latest.handleId);
         }
       }
@@ -8997,11 +8965,7 @@ export class TaskService {
   }
 
   private isActiveAgentTaskEntry(task: AgentTaskWorkspaceEntry): boolean {
-    if (
-      task.taskExecutionStatus === "queued" ||
-      task.taskExecutionStatus === "starting" ||
-      task.taskExecutionStatus === "running"
-    ) {
+    if (isActiveWorkspaceTurnTaskStatus(task.taskExecutionStatus)) {
       return true;
     }
     const status: AgentTaskStatus = task.taskStatus ?? "running";
@@ -9027,9 +8991,7 @@ export class TaskService {
       // workspace-turn count. Charging its mirrored execution status here would count one task twice.
       if (
         isWorkspaceTurnTaskId(task.taskExecutionId) &&
-        (task.taskExecutionStatus === "queued" ||
-          task.taskExecutionStatus === "starting" ||
-          task.taskExecutionStatus === "running")
+        isActiveWorkspaceTurnTaskStatus(task.taskExecutionStatus)
       ) {
         continue;
       }

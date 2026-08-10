@@ -14,7 +14,10 @@ import type { AgentTaskStatus } from "@/node/services/taskService";
 import type { Workspace as WorkspaceConfigEntry } from "@/node/config";
 import { Config } from "@/node/config";
 import { log } from "@/node/services/log";
-import type { WorkspaceTurnTaskStatus } from "@/node/services/taskHandleStore";
+import {
+  isActiveWorkspaceTurnTaskStatus,
+  type WorkspaceTurnTaskStatus,
+} from "@/node/services/taskHandleStore";
 
 import { buildWorkflowProgressSummary } from "./workflowProgress";
 import { toBashTaskId } from "./taskId";
@@ -60,12 +63,6 @@ function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListS
       return "failed";
   }
 }
-
-const ACTIONABLE_WORKSPACE_TURN_STATUSES = new Set<WorkspaceTurnTaskStatus>([
-  "queued",
-  "starting",
-  "running",
-]);
 
 const MAX_ARCHIVE_ANCESTOR_DEPTH = 32;
 
@@ -196,7 +193,7 @@ function shouldHideArchivedWorkspaceTurn(
 ): boolean {
   return (
     archiveLookup != null &&
-    !ACTIONABLE_WORKSPACE_TURN_STATUSES.has(turn.status) &&
+    !isActiveWorkspaceTurnTaskStatus(turn.status) &&
     archiveLookup.isArchivedInScope(turn.workspaceId)
   );
 }
@@ -228,17 +225,8 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
           status === "failed"
       );
       const isDescendantAgentWorkspace = async (candidateWorkspaceId: string): Promise<boolean> => {
-        const checker = (
-          taskService as unknown as {
-            isDescendantAgentTask?: (
-              ancestorWorkspaceId: string,
-              taskId: string
-            ) => Promise<boolean>;
-          }
-        ).isDescendantAgentTask;
-        return checker != null
-          ? await checker.call(taskService, workspaceId, candidateWorkspaceId)
-          : false;
+        const checker = taskService.isDescendantAgentTask?.bind(taskService);
+        return checker != null ? await checker(workspaceId, candidateWorkspaceId) : false;
       };
       const agentStatuses = statuses.filter(isAgentTaskStatus);
 
@@ -251,17 +239,8 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
       // Legacy archived sub-agents are still part of the public inactive state and remain listable.
       // Reactivated executions use internal workspace-turn handles, but the public row keeps the
       // stable child task ID and overlays the current execution status.
-      const resolveAgentExecution = (
-        taskService as unknown as {
-          getDescendantAgentTaskExecutionSnapshot?: (
-            ancestorWorkspaceId: string,
-            agentTaskId: string
-          ) => Promise<{
-            ownerWorkspaceId: string;
-            record: { status: WorkspaceTurnTaskStatus };
-          } | null>;
-        }
-      ).getDescendantAgentTaskExecutionSnapshot;
+      const resolveAgentExecution =
+        taskService.getDescendantAgentTaskExecutionSnapshot?.bind(taskService);
       const internalExecutionIds = new Set<string>();
       const tasks: TaskListToolSuccessResult["tasks"] = [];
       for (const task of allAgentTasks) {
@@ -271,7 +250,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
           internalExecutionIds.add(task.executionTaskId);
           const resolvedExecution =
             resolveAgentExecution != null
-              ? await resolveAgentExecution.call(taskService, workspaceId, task.taskId)
+              ? await resolveAgentExecution(workspaceId, task.taskId)
               : null;
           const execution =
             resolvedExecution?.record ??

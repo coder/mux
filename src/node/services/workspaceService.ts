@@ -4744,12 +4744,17 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  async remove(workspaceId: string, force = false): Promise<Result<void>> {
+  private async withTaskTreeLifecycleLock<T>(
+    workspaceId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
     const taskService = this.taskService;
-    if (taskService?.withTaskTreeLifecycleLock == null) {
-      return await this.removeUnlocked(workspaceId, force);
-    }
-    return await taskService.withTaskTreeLifecycleLock(workspaceId, async () =>
+    const withLock = taskService?.withTaskTreeLifecycleLock?.bind(taskService);
+    return withLock == null ? await operation() : await withLock(workspaceId, operation);
+  }
+
+  async remove(workspaceId: string, force = false): Promise<Result<void>> {
+    return await this.withTaskTreeLifecycleLock(workspaceId, async () =>
       this.removeUnlocked(workspaceId, force)
     );
   }
@@ -6737,11 +6742,7 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     acknowledgedUntrackedPaths?: string[]
   ): Promise<Result<ArchiveWorkspaceResult>> {
-    const taskService = this.taskService;
-    if (taskService?.withTaskTreeLifecycleLock == null) {
-      return await this.archiveUnlocked(workspaceId, acknowledgedUntrackedPaths);
-    }
-    return await taskService.withTaskTreeLifecycleLock(workspaceId, async () =>
+    return await this.withTaskTreeLifecycleLock(workspaceId, async () =>
       this.archiveUnlocked(workspaceId, acknowledgedUntrackedPaths)
     );
   }

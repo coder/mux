@@ -31,6 +31,23 @@ export type WorkspaceTurnTaskStatus =
   | "interrupted"
   | "error";
 
+export type ActiveWorkspaceTurnTaskStatus = Extract<
+  WorkspaceTurnTaskStatus,
+  "queued" | "starting" | "running"
+>;
+
+const ACTIVE_WORKSPACE_TURN_TASK_STATUSES = new Set<WorkspaceTurnTaskStatus>([
+  "queued",
+  "starting",
+  "running",
+]);
+
+export function isActiveWorkspaceTurnTaskStatus(
+  status: WorkspaceTurnTaskStatus | null | undefined
+): status is ActiveWorkspaceTurnTaskStatus {
+  return status != null && ACTIVE_WORKSPACE_TURN_TASK_STATUSES.has(status);
+}
+
 export interface WorkspaceTurnTaskHandleRecord {
   kind: "workspace_turn";
   handleId: string;

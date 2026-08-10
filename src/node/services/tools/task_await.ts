@@ -26,6 +26,7 @@ import {
 } from "./toolUtils";
 import { getErrorMessage } from "@/common/utils/errors";
 import {
+  isActiveWorkspaceTurnTaskStatus,
   isWorkspaceTurnTaskId,
   type WorkspaceTurnTaskHandleRecord,
   type WorkspaceTurnTaskStatus,
@@ -58,10 +59,6 @@ function isAgentTaskActiveStatus(status: AgentTaskStatus | null): status is Agen
     status === "running" ||
     status === "awaiting_report"
   );
-}
-
-function isWorkspaceTurnActiveStatus(status: WorkspaceTurnTaskStatus): boolean {
-  return status === "queued" || status === "starting" || status === "running";
 }
 
 function coerceTimeoutMs(timeoutSecs: unknown): number | undefined {
@@ -354,14 +351,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           !isWorkflowRunTaskId(taskId) &&
           !isWorkspaceTurnTaskId(taskId)
       );
-      const bulkFilter = (
-        taskService as unknown as {
-          filterDescendantAgentTaskIds?: (
-            ancestorWorkspaceId: string,
-            taskIds: string[]
-          ) => Promise<string[]>;
-        }
-      ).filterDescendantAgentTaskIds;
+      const bulkFilter = taskService.filterDescendantAgentTaskIds?.bind(taskService);
 
       // Read patch artifacts lazily (after waiting) to avoid stale results. Patch generation
       // runs asynchronously (started in `finalizeAgentTaskReport` before waiters resolve), so
@@ -378,7 +368,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
       const descendantAgentTaskIds =
         typeof bulkFilter === "function"
-          ? await bulkFilter.call(taskService, workspaceId, agentTaskIds)
+          ? await bulkFilter(workspaceId, agentTaskIds)
           : (
               await Promise.all(
                 agentTaskIds.map(async (taskId) =>
@@ -546,30 +536,17 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        const getAgentTaskExecutionId = (
-          taskService as unknown as {
-            getAgentTaskExecutionId?: (agentTaskId: string) => string | null;
-          }
-        ).getAgentTaskExecutionId;
+        const getAgentTaskExecutionId = taskService.getAgentTaskExecutionId?.bind(taskService);
         const workspaceTurnTaskId = isWorkspaceTurnTaskId(taskId)
           ? taskId
-          : getAgentTaskExecutionId?.call(taskService, taskId);
+          : getAgentTaskExecutionId?.(taskId);
         if (workspaceTurnTaskId != null) {
           const isAgentContinuation = workspaceTurnTaskId !== taskId;
-          const resolveAgentExecution = (
-            taskService as unknown as {
-              getDescendantAgentTaskExecutionSnapshot?: (
-                ancestorWorkspaceId: string,
-                agentTaskId: string
-              ) => Promise<{
-                ownerWorkspaceId: string;
-                record: WorkspaceTurnTaskHandleRecord;
-              } | null>;
-            }
-          ).getDescendantAgentTaskExecutionSnapshot;
+          const resolveAgentExecution =
+            taskService.getDescendantAgentTaskExecutionSnapshot?.bind(taskService);
           const resolvedExecution =
             isAgentContinuation && resolveAgentExecution != null
-              ? await resolveAgentExecution.call(taskService, workspaceId, taskId)
+              ? await resolveAgentExecution(workspaceId, taskId)
               : null;
           const workspaceTurnOwnerId = resolvedExecution?.ownerWorkspaceId ?? workspaceId;
           const snapshot =
@@ -618,7 +595,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             finalMessageRef: record.finalMessageRef,
             note: COMPLETED_REPORT_REFETCH_NOTE,
           });
-          if (timeoutMs === 0 || !isWorkspaceTurnActiveStatus(snapshot.status)) {
+          if (timeoutMs === 0 || !isActiveWorkspaceTurnTaskStatus(snapshot.status)) {
             if (snapshot.status === "completed") {
               await markWorkspaceTurnTerminalAttentionConsumed(snapshot.status);
               return completedWorkspaceTurnResult(snapshot);
@@ -676,8 +653,8 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 workspaceTurnTaskId
               );
               const status =
-                latest != null && isWorkspaceTurnActiveStatus(latest.status)
-                  ? (latest.status as "queued" | "starting" | "running")
+                latest != null && isActiveWorkspaceTurnTaskStatus(latest.status)
+                  ? latest.status
                   : ("running" as const);
               return {
                 status,
