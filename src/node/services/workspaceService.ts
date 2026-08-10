@@ -9501,11 +9501,10 @@ export class WorkspaceService extends EventEmitter {
 
   /**
    * Whether the session is preparing a turn (PREPARING phase), excluding queued
-   * messages and pending auto-retries. In-session context recovery marks the
-   * turn PREPARING before resolving the stream-error recovery decision, so this
-   * is the precise "a recovery retry actually started" signal for callers that
-   * must not count unrelated queued work (e.g. child-task stream-error
-   * settlement).
+   * messages and pending auto-retries. Used by child-task stream-error
+   * settlement as a conservative "a turn is actively starting" guard alongside
+   * isStreaming; unlike hasPendingQueuedOrPreparingTurn it must not count
+   * unrelated queued work.
    */
   isPreparingTurn(workspaceId: string): boolean {
     const session = this.sessions.get(workspaceId.trim());

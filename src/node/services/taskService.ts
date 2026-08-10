@@ -9976,11 +9976,16 @@ export class TaskService {
       // later stream-end, so leaving the task `running` would block the
       // parent's waitForAgentReport until timeout.
       //
-      // Streaming/preparing is the precise "recovery started" signal: the
-      // in-session context recovery paths mark the turn PREPARING before
-      // resolving the decision. Queued messages must NOT count — the terminal
-      // error path does not dispatch the queue, so an unrelated queued message
-      // would otherwise leave the task running forever.
+      // The recovery paths resolve the decision only once the retry startup
+      // outcome is known: streaming on success, idle after the terminal path
+      // on pre-stream failure — so isStreaming is the authoritative signal and
+      // a transient PREPARING can never masquerade as a started recovery.
+      // isPreparingTurn stays as a conservative guard: a turn already
+      // PREPARING at resolution time (e.g. a queued dispatch) is a real
+      // continuing turn whose own stream events settle the task later. Queued
+      // messages must NOT count — the terminal error path does not dispatch
+      // the queue, so an unrelated queued message would otherwise leave the
+      // task running forever.
       await this.workspaceService.waitForPendingStreamErrorRecoveryDecision(workspaceId);
       if (
         this.aiService.isStreaming(workspaceId) ||

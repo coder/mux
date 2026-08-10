@@ -188,4 +188,142 @@ describe("AgentSession post-compaction context retry", () => {
 
     session.dispose();
   });
+
+  // Waiters (task/workspace-turn stream-error settlement) treat the resolved
+  // decision as "the retry outcome is known". Resolving while retry startup is
+  // still in flight would let a pre-stream startup failure (no further error
+  // event) leave a child task running until the parent times out.
+  test("recovery decision resolves only after the context retry startup outcome is known", async () => {
+    const workspaceId = "ws-decision";
+    const sessionDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-agentSession-"));
+    await createPersistedPostCompactionState({
+      filePath: path.join(sessionDir, "post-compaction.json"),
+      diffs: [{ path: "/tmp/foo.ts", diff: "@@ -1 +1 @@\n-foo\n+bar\n", truncated: false }],
+    });
+
+    const { historyService, cleanup } = await createTestHistoryService();
+    historyCleanup = cleanup;
+    await historyService.appendToHistory(workspaceId, {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Continue" }],
+      metadata: { timestamp: 1100 },
+    });
+
+    const aiEmitter = new EventEmitter();
+    let releaseRetryStartup!: () => void;
+    const retryStartupGate = new Promise<void>((resolve) => {
+      releaseRetryStartup = resolve;
+    });
+    let retryStartupInvoked!: () => void;
+    const retryStartupStarted = new Promise<void>((resolve) => {
+      retryStartupInvoked = resolve;
+    });
+
+    let callCount = 0;
+    const streamMessage = mock(async (..._args: unknown[]) => {
+      callCount += 1;
+      if (callCount === 1) {
+        aiEmitter.emit("error", {
+          workspaceId,
+          messageId: "assistant-ctx-exceeded",
+          error: "Context length exceeded",
+          errorType: "context_exceeded",
+        });
+        return { success: true as const, data: undefined };
+      }
+      // Retry startup in flight: hold it until the test releases, then fail
+      // pre-stream (e.g. commitPartial / history read failure).
+      retryStartupInvoked();
+      await retryStartupGate;
+      return {
+        success: false as const,
+        error: { type: "unknown" as const, raw: "startup failed before stream" },
+      };
+    });
+
+    const aiService: AIService = {
+      on(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        aiEmitter.on(String(eventName), listener);
+        return this;
+      },
+      off(eventName: string | symbol, listener: (...args: unknown[]) => void) {
+        aiEmitter.off(String(eventName), listener);
+        return this;
+      },
+      streamMessage,
+      getWorkspaceMetadata: mock(() => Promise.resolve({ success: false as const, error: "nope" })),
+      stopStream: mock(() => Promise.resolve({ success: true as const, data: undefined })),
+      isStreaming: mock(() => false),
+    } as unknown as AIService;
+
+    const initStateManager: InitStateManager = {
+      on() {
+        return this;
+      },
+      off() {
+        return this;
+      },
+    } as unknown as InitStateManager;
+
+    const backgroundProcessManager: BackgroundProcessManager = {
+      setMessageQueued: mock(() => undefined),
+      cleanup: mock(() => Promise.resolve()),
+    } as unknown as BackgroundProcessManager;
+
+    const config: Config = {
+      srcDir: "/tmp",
+      getSessionDir: mock(() => sessionDir),
+    } as unknown as Config;
+
+    const session = new AgentSession({
+      workspaceId,
+      config,
+      historyService,
+      aiService,
+      initStateManager,
+      backgroundProcessManager,
+    });
+
+    const options: SendMessageOptions = {
+      model: "openai:gpt-4o",
+      agentId: "exec",
+    } as unknown as SendMessageOptions;
+
+    await (
+      session as unknown as {
+        streamWithHistory: (m: string, o: SendMessageOptions) => Promise<unknown>;
+      }
+    ).streamWithHistory(options.model, options);
+
+    // The error event began a recovery decision and kicked off the retry.
+    await Promise.race([
+      retryStartupStarted,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("retry never started")), 1000)),
+    ]);
+
+    let decided = false;
+    const decision = session.waitForPendingStreamErrorRecoveryDecision().then(() => {
+      decided = true;
+    });
+
+    // Retry startup still in flight: the decision must stay pending so waiters
+    // cannot observe a transient PREPARING as a started recovery.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(decided).toBe(false);
+
+    releaseRetryStartup();
+    await Promise.race([
+      decision,
+      new Promise((_, reject) => setTimeout(() => reject(new Error("decision timeout")), 1000)),
+    ]);
+
+    // Startup failed pre-stream: by resolution time the session must be
+    // settle-able (no preparing turn), so task settlement can interrupt it.
+    expect(decided).toBe(true);
+    expect(session.isPreparingTurn()).toBe(false);
+    expect(callCount).toBe(2);
+
+    session.dispose();
+  });
 });

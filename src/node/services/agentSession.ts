@@ -4242,7 +4242,6 @@ export class AgentSession {
     await this.finalizeCompactionRetry(data.messageId);
     this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
     this.setTurnPhase(TurnPhase.PREPARING);
-    this.resolveStreamErrorRecoveryDecision();
     let retryResult: Result<void, SendMessageError>;
     try {
       retryResult = await this.streamWithHistory(
@@ -4260,6 +4259,10 @@ export class AgentSession {
       }
     }
     if (!retryResult.success) {
+      // Leave the recovery decision pending: the terminal path in
+      // handleStreamError resolves it once settlement state is final, so
+      // waiters (task/workspace-turn settlement) never observe a transient
+      // "retry preparing" that already failed before stream startup.
       log.error("Compaction retry failed to start", {
         workspaceId: this.workspaceId,
         error: retryResult.error,
@@ -4267,6 +4270,10 @@ export class AgentSession {
       return false;
     }
 
+    // streamWithHistory resolves once stream startup completed (the stream is
+    // registered, so isStreaming is true); resolve the recovery decision only
+    // now so waiters observe the actual retry outcome, not a pre-stream state.
+    this.resolveStreamErrorRecoveryDecision();
     return true;
   }
 
@@ -4329,7 +4336,6 @@ export class AgentSession {
 
     // Retry the same request, but without post-compaction injection.
     this.setTurnPhase(TurnPhase.PREPARING);
-    this.resolveStreamErrorRecoveryDecision();
     let retryResult: Result<void, SendMessageError>;
     try {
       retryResult = await this.streamWithHistory(
@@ -4348,6 +4354,9 @@ export class AgentSession {
     }
 
     if (!retryResult.success) {
+      // Leave the recovery decision pending: the terminal path in
+      // handleStreamError resolves it once settlement state is final (see
+      // maybeRetryCompactionOnContextExceeded).
       log.error("Post-compaction retry failed to start", {
         workspaceId: this.workspaceId,
         error: retryResult.error,
@@ -4355,6 +4364,9 @@ export class AgentSession {
       return false;
     }
 
+    // Resolve only after startup completed so waiters observe the actual
+    // retry outcome (see maybeRetryCompactionOnContextExceeded).
+    this.resolveStreamErrorRecoveryDecision();
     return true;
   }
 
