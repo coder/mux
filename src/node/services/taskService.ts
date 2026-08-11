@@ -5438,7 +5438,15 @@ export class TaskService {
           const updatedRecord: WorkspaceTurnTaskHandleRecord =
             current.attentionPolicy === "notify_on_terminal"
               ? current
-              : { ...current, attentionPolicy: "notify_on_terminal", updatedAt: getIsoNow() };
+              : {
+                  ...current,
+                  attentionPolicy: "notify_on_terminal",
+                  // Policy-only writes after settlement must not mint a new terminal outcome
+                  // generation or invalidate direct-parent delivery keyed by status + updatedAt.
+                  ...(this.isTerminalWorkspaceTurnStatus(current.status)
+                    ? {}
+                    : { updatedAt: getIsoNow() }),
+                };
           if (updatedRecord !== current) {
             await this.taskHandleStore.upsertWorkspaceTurn(updatedRecord);
           }

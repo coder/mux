@@ -3010,6 +3010,40 @@ describe("TaskService", () => {
     expect(childConfig?.taskStatus).toBeUndefined();
   });
 
+  test("terminal notify policy updates preserve the terminal outcome version", async () => {
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest();
+    const terminal: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "completed",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      reportMarkdown: "Terminal result",
+    };
+    const taskHandleStore = new TaskHandleStore(config);
+    await taskHandleStore.upsertWorkspaceTurn(terminal);
+
+    await taskService.markBackgroundWorkNotifyOnTerminal(terminal.handleId, parentId);
+
+    const updated = await taskHandleStore.getWorkspaceTurn(parentId, terminal.handleId);
+    expect(updated).toMatchObject({
+      status: "completed",
+      updatedAt: terminal.updatedAt,
+      attentionPolicy: "notify_on_terminal",
+    });
+    const attentionId = TerminalAttentionStore.notificationId(
+      "workspace_turn",
+      terminal.handleId,
+      `${terminal.handleId}:${terminal.status}:${terminal.updatedAt}`
+    );
+    expect(await new TerminalAttentionStore(config).get(parentId, attentionId)).not.toBeNull();
+  });
+
   test("notify_on_terminal workspace turn wakes the owner via task_await on completion", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["handle", "turn"]);
