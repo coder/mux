@@ -33,7 +33,10 @@ import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataServi
 import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
-import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
+import {
+  TerminalAttentionStore,
+  type TerminalAttentionOutcome,
+} from "@/node/services/terminalAttentionStore";
 import {
   TaskHandleStore,
   type WorkspaceTurnTaskHandleRecord,
@@ -2065,6 +2068,101 @@ describe("TaskService", () => {
     } finally {
       replay.mockRestore();
     }
+  });
+
+  test("terminal recovery versions corrected workspace-turn attention past a legacy tombstone", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+    const record: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId: "wst_corrected_attention_recovery",
+      ownerWorkspaceId: parentId,
+      workspaceId: parentId,
+      turnId: "corrected-attention-recovery",
+      status: "completed",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:02.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+      reportMarkdown: "Corrected recovered result",
+    };
+    const taskHandleStore = new TaskHandleStore(config);
+    await taskHandleStore.upsertWorkspaceTurn(record);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const legacy = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: record.handleId,
+      terminalOutcome: "error",
+    });
+    assert(legacy, "legacy workspace-turn attention must exist");
+    await terminalAttentionStore.markDelivered(parentId, legacy.id);
+
+    const recovered = await (
+      taskService as unknown as {
+        recoverTerminalWorkspaceTurnAttentionNotifications: () => Promise<number>;
+      }
+    ).recoverTerminalWorkspaceTurnAttentionNotifications();
+    expect(recovered).toBe(1);
+
+    const versionedId = TerminalAttentionStore.notificationId(
+      "workspace_turn",
+      record.handleId,
+      `${record.handleId}:${record.status}:${record.updatedAt}`
+    );
+    expect(await terminalAttentionStore.get(parentId, versionedId)).not.toBeNull();
+    expect(
+      (await taskHandleStore.getWorkspaceTurn(parentId, record.handleId))
+        ?.terminalAttentionNotifiedAt
+    ).toBeDefined();
+  });
+
+  test("terminal recovery contains per-record attention persistence failures", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+    const taskHandleStore = new TaskHandleStore(config);
+    for (const [index, handleId] of ["wst_attention_failure", "wst_attention_success"].entries()) {
+      await taskHandleStore.upsertWorkspaceTurn({
+        kind: "workspace_turn",
+        handleId,
+        ownerWorkspaceId: parentId,
+        workspaceId: parentId,
+        turnId: `attention-recovery-${index}`,
+        status: "completed",
+        createdAt: "2026-08-11T00:00:00.000Z",
+        updatedAt: `2026-08-11T00:00:0${index + 1}.000Z`,
+        createdWorkspace: false,
+        disposableWorkspace: false,
+        attentionPolicy: "notify_on_terminal",
+        reportMarkdown: `Recovered result ${index}`,
+      });
+    }
+    const internal = taskService as unknown as {
+      enqueueTerminalAttention: (params: {
+        ownerWorkspaceId: string;
+        sourceKind: "workspace_turn";
+        terminalOutcome: TerminalAttentionOutcome;
+        sourceId: string;
+        generationId?: string;
+      }) => Promise<void>;
+      recoverTerminalWorkspaceTurnAttentionNotifications: () => Promise<number>;
+    };
+    const enqueueTerminalAttention = internal.enqueueTerminalAttention.bind(taskService);
+    const enqueue = spyOn(internal, "enqueueTerminalAttention")
+      .mockRejectedValueOnce(new Error("read-only attention store"))
+      .mockImplementation(enqueueTerminalAttention);
+
+    try {
+      expect(await internal.recoverTerminalWorkspaceTurnAttentionNotifications()).toBe(1);
+      expect(enqueue).toHaveBeenCalledTimes(2);
+    } finally {
+      enqueue.mockRestore();
+    }
+    const records = await taskHandleStore.listWorkspaceTurns(parentId);
+    expect(records.filter((record) => record.terminalAttentionNotifiedAt != null)).toHaveLength(1);
   });
 
   test("higher-ancestor waiters do not suppress continuation delivery to the direct parent", async () => {

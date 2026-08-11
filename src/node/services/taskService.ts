@@ -5563,30 +5563,45 @@ export class TaskService {
       ) {
         continue;
       }
-      await this.enqueueTerminalAttention({
-        ownerWorkspaceId: record.ownerWorkspaceId,
-        sourceKind: "workspace_turn",
-        terminalOutcome: terminalAttentionOutcome(record.status),
-        sourceId: record.handleId,
-      });
-      await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
-        const current = await this.taskHandleStore.getWorkspaceTurn(
-          record.ownerWorkspaceId,
-          record.handleId
-        );
-        if (
-          current != null &&
-          this.isTerminalWorkspaceTurnStatus(current.status) &&
-          resolveBackgroundWorkAttentionPolicy(current.attentionPolicy) === "notify_on_terminal" &&
-          current.terminalAttentionNotifiedAt == null
-        ) {
-          await this.taskHandleStore.upsertWorkspaceTurn({
-            ...current,
-            terminalAttentionNotifiedAt: getIsoNow(),
-          });
-        }
-      });
-      recoveredCount += 1;
+      try {
+        // Recovery may be repairing a corrected self-healed outcome while a delivered legacy
+        // tombstone still exists. Use the exact outcome version so that stale ID cannot suppress it.
+        await this.enqueueTerminalAttention({
+          ownerWorkspaceId: record.ownerWorkspaceId,
+          sourceKind: "workspace_turn",
+          terminalOutcome: terminalAttentionOutcome(record.status),
+          sourceId: record.handleId,
+          generationId: this.workspaceTurnTerminalAttentionGenerationId(record),
+        });
+        await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
+          const current = await this.taskHandleStore.getWorkspaceTurn(
+            record.ownerWorkspaceId,
+            record.handleId
+          );
+          if (
+            current != null &&
+            current.status === record.status &&
+            current.updatedAt === record.updatedAt &&
+            resolveBackgroundWorkAttentionPolicy(current.attentionPolicy) ===
+              "notify_on_terminal" &&
+            current.terminalAttentionNotifiedAt == null
+          ) {
+            await this.taskHandleStore.upsertWorkspaceTurn({
+              ...current,
+              terminalAttentionNotifiedAt: getIsoNow(),
+            });
+          }
+        });
+        recoveredCount += 1;
+      } catch (error: unknown) {
+        // Startup recovery is best-effort: one read-only/corrupt owner session must not block the app.
+        log.warn("Failed to recover workspace-turn terminal attention", {
+          ownerWorkspaceId: record.ownerWorkspaceId,
+          workspaceId: record.workspaceId,
+          handleId: record.handleId,
+          error: getErrorMessage(error),
+        });
+      }
     }
     return recoveredCount;
   }
