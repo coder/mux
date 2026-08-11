@@ -7832,6 +7832,38 @@ export class TaskService {
     return record;
   }
 
+  /**
+   * Record that a terminal snapshot is being returned directly to the persistent child's parent.
+   * Caller must hold workspaceTurnSettlementLocks for the handle so post-settlement delivery cannot
+   * append the same outcome between this marker write and the consuming task_await snapshot.
+   */
+  private async markDirectParentWorkspaceTurnResultConsumedUnlocked(
+    record: WorkspaceTurnTaskHandleRecord | null,
+    consumingWorkspaceId: string | undefined
+  ): Promise<WorkspaceTurnTaskHandleRecord | null> {
+    if (
+      record == null ||
+      consumingWorkspaceId == null ||
+      record.directParentResultDeliveryRequiredAt == null ||
+      record.directParentResultDeliveredAt != null ||
+      !this.workspaceTurnRequiresDirectParentDelivery(record)
+    ) {
+      return record;
+    }
+
+    const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
+    if (childEntry?.workspace.parentWorkspaceId !== consumingWorkspaceId) {
+      return record;
+    }
+
+    const consumed = {
+      ...record,
+      directParentResultDeliveredAt: getIsoNow(),
+    };
+    await this.taskHandleStore.upsertWorkspaceTurn(consumed);
+    return consumed;
+  }
+
   private async persistRepairedSettledWorkspaceTurn(
     record: WorkspaceTurnTaskHandleRecord,
     recovered: WorkspaceTurnTaskHandleRecord,
@@ -7850,7 +7882,12 @@ export class TaskService {
         current.status !== record.status ||
         current.updatedAt !== record.updatedAt
       ) {
-        return current;
+        // If this direct parent's task_await will return that concurrent terminal winner,
+        // consume it here so its post-lock delivery cannot append the same outcome too.
+        return await this.markDirectParentWorkspaceTurnResultConsumedUnlocked(
+          current,
+          options.consumingWorkspaceId
+        );
       }
       if (this.workspaceTurnRequiresDirectParentDelivery(recovered)) {
         await this.deletePersistentChildWorkspaceTurnAttention(current);
@@ -7965,30 +8002,13 @@ export class TaskService {
     }
     const record = await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
       const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
-      if (
-        current == null ||
-        options.consumingWorkspaceId == null ||
-        current.directParentResultDeliveryRequiredAt == null ||
-        current.directParentResultDeliveredAt != null ||
-        !this.workspaceTurnRequiresDirectParentDelivery(current)
-      ) {
-        return current;
-      }
-
-      const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), current.workspaceId);
-      if (childEntry?.workspace.parentWorkspaceId !== options.consumingWorkspaceId) {
-        return current;
-      }
-
       // A terminal task_await by the direct parent owns this result. Persist that fact while
       // holding the same lock as continuation delivery, before returning the snapshot, so a
       // late await cannot race the post-settlement history append and receive the output twice.
-      const consumed = {
-        ...current,
-        directParentResultDeliveredAt: getIsoNow(),
-      };
-      await this.taskHandleStore.upsertWorkspaceTurn(consumed);
-      return consumed;
+      return await this.markDirectParentWorkspaceTurnResultConsumedUnlocked(
+        current,
+        options.consumingWorkspaceId
+      );
     });
     if (record == null) {
       return null;

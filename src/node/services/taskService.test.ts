@@ -5123,6 +5123,88 @@ describe("TaskService", () => {
     ).toBeNull();
   });
 
+  test("direct-parent repair consumption marks a concurrent terminal winner before replay", async () => {
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const child = Array.from(cfg.projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = parentId;
+      child.agentId = "explore";
+      child.agentType = "explore";
+      child.taskStatus = "reported";
+      return cfg;
+    });
+    const staleRecord: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
+      error: "Stream error: provider overloaded",
+    };
+    const concurrentWinner: WorkspaceTurnTaskHandleRecord = {
+      ...staleRecord,
+      status: "completed",
+      updatedAt: "2026-06-19T00:00:02.000Z",
+      reportMarkdown: "Concurrent corrected result",
+      messageId: "msg_concurrent_corrected",
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:02.000Z",
+    };
+    delete concurrentWinner.directParentResultDeliveredAt;
+    delete concurrentWinner.error;
+    const taskHandleStore = new TaskHandleStore(config);
+    await taskHandleStore.upsertWorkspaceTurn(concurrentWinner);
+
+    const internal = taskService as unknown as {
+      persistRepairedSettledWorkspaceTurn: (
+        record: WorkspaceTurnTaskHandleRecord,
+        recovered: WorkspaceTurnTaskHandleRecord,
+        options: { consumingWorkspaceId?: string }
+      ) => Promise<WorkspaceTurnTaskHandleRecord | null>;
+      deliverPersistentChildWorkspaceTurnResult: (
+        record: WorkspaceTurnTaskHandleRecord,
+        waiterWorkspaceIds: ReadonlySet<string>
+      ) => Promise<void>;
+    };
+    const observed = await internal.persistRepairedSettledWorkspaceTurn(
+      staleRecord,
+      {
+        ...staleRecord,
+        status: "completed",
+        updatedAt: "2026-06-19T00:00:03.000Z",
+        reportMarkdown: "Losing history repair",
+      },
+      { consumingWorkspaceId: parentId }
+    );
+    expect(observed).toMatchObject({
+      status: "completed",
+      messageId: "msg_concurrent_corrected",
+      reportMarkdown: "Concurrent corrected result",
+    });
+    expect(observed?.directParentResultDeliveredAt).toBeDefined();
+
+    await internal.deliverPersistentChildWorkspaceTurnResult(concurrentWinner, new Set());
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(parentHistory.success).toBe(true);
+    expect(JSON.stringify(parentHistory)).not.toContain("Concurrent corrected result");
+    const generationId = `${concurrentWinner.handleId}:${concurrentWinner.status}:${concurrentWinner.updatedAt}`;
+    expect(
+      await new TerminalAttentionStore(config).get(
+        parentId,
+        TerminalAttentionStore.notificationId("agent_task", "childworkspace", generationId)
+      )
+    ).toBeNull();
+  });
+
   test("getWorkspaceTurnSnapshot revives an interrupted handle while the child retries the same turn", async () => {
     const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
