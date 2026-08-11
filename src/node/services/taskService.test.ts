@@ -62,7 +62,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   buildWorkflowRunCardMessage,
@@ -102,20 +102,20 @@ function findWorkspaceInConfig(config: Config, workspaceId: string) {
     .find((workspace) => workspace.id === workspaceId);
 }
 
-function compactionRequestMetadata(withFollowUp = true): MuxMessageMetadata {
-  return {
-    type: "compaction-request",
-    rawCommand: "/compact",
-    parsed: withFollowUp
-      ? {
-          followUpContent: {
-            text: "Continue",
-            model: "anthropic:claude-sonnet-4-6",
-            agentId: "exec",
-          },
-        }
-      : {},
-  };
+function compactionSummaryMessage(id: string): MuxMessage {
+  return createMuxMessage(id, "assistant", "Compacted context", {
+    compactionBoundary: true,
+    compactionEpoch: 1,
+    compacted: "user",
+    muxMetadata: {
+      type: "compaction-summary",
+      pendingFollowUp: {
+        text: "Continue",
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "exec",
+      },
+    },
+  });
 }
 
 function createWorkspaceTurnMetadata(projectPath: string): WorkspaceMetadata {
@@ -3987,7 +3987,11 @@ describe("TaskService", () => {
     // On-send compaction can consume a monitor-wake continuation mid-turn; the
     // compact turn's own stream-end is uncorrelated and must not supersede the
     // still-running delegated turn.
-    const { parentId, taskService, created } = await startWorkspaceTurnForTest();
+    const { parentId, taskService, created, historyService } = await startWorkspaceTurnForTest();
+    await historyService.appendToHistory(
+      created.workspaceId,
+      compactionSummaryMessage("workspace-turn-compaction-summary")
+    );
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
@@ -4000,7 +4004,6 @@ describe("TaskService", () => {
         model: "anthropic:claude-opus-4-6",
         agentId: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted context" }],
     });
@@ -4031,12 +4034,18 @@ describe("TaskService", () => {
     );
     const waitForPendingCompactionCompletionDecision = mock(
       (_workspaceId: string, messageId: string): Promise<boolean> =>
-        Promise.resolve(messageId !== "failed-child-compaction")
+        Promise.resolve(
+          messageId === "child-compaction-agent-id" || messageId === "child-compaction-mode"
+        )
     );
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
       waitForPendingCompactionCompletionDecision,
     });
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    await historyService.appendToHistory(
+      childTaskId,
+      compactionSummaryMessage("persistent-child-compaction-summary")
+    );
 
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
@@ -4046,7 +4055,6 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         agentId: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted child context" }],
     });
@@ -4058,7 +4066,6 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         mode: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted child context" }],
     });
@@ -4084,7 +4091,6 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         agentId: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(false),
       },
       parts: [{ type: "text", text: "Standalone compacted child context" }],
     });
@@ -4111,7 +4117,6 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         agentId: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Rejected compacted child context" }],
     });
@@ -12154,7 +12159,7 @@ describe("TaskService", () => {
       return Ok(undefined);
     });
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
-    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const reactivated = await taskService.sendMessageToDescendantAgentTask(
       parentWorkspaceId,
@@ -12172,6 +12177,10 @@ describe("TaskService", () => {
     const activeRecord = await taskHandleStore.getWorkspaceTurn(parentWorkspaceId, handleId);
     assert(activeRecord, "reactivated workspace-turn record is required");
 
+    await historyService.appendToHistory(
+      childTaskId,
+      compactionSummaryMessage("reactivated-compaction-boundary")
+    );
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,
@@ -12181,7 +12190,6 @@ describe("TaskService", () => {
         agentId: "compact",
         mode: "compact",
         finishReason: "stop",
-        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted specialist context" }],
     });

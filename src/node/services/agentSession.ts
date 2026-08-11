@@ -5452,10 +5452,15 @@ export class AgentSession {
   }
 
   async waitForPendingCompactionCompletionDecision(messageId: string): Promise<boolean> {
-    this.beginCompactionCompletionDecision(messageId);
+    if (!this.compactionCompletionDecisions.has(messageId)) {
+      if (this.activeCompactionRequest == null) return false;
+      this.beginCompactionCompletionDecision(messageId);
+    }
     const decision = this.compactionCompletionDecisions.get(messageId);
     assert(decision, "compaction completion decision must exist");
-    return decision.outcome ?? decision.promise;
+    const handled = await (decision.outcome ?? decision.promise);
+    this.compactionCompletionDecisions.delete(messageId);
+    return handled;
   }
 
   /**

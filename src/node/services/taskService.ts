@@ -64,12 +64,7 @@ import {
   type BackgroundWorkAttentionPolicy,
 } from "@/common/types/backgroundWorkAttention";
 
-import {
-  createMuxMessage,
-  getCompactionFollowUpContent,
-  type MuxMessage,
-  type MuxMessageMetadata,
-} from "@/common/types/message";
+import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -10289,19 +10284,26 @@ export class TaskService {
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const isCompaction = event.metadata.agentId === "compact" || event.metadata.mode === "compact";
-    const compactionMetadata = event.metadata.muxMetadata;
-    // A compact turn only defers child settlement when it durably staged the next turn. Bare
-    // /compact has no follow-up, so normal stream-end recovery must still run for idle children.
     if (
       isCompaction &&
-      compactionMetadata?.type === "compaction-request" &&
-      getCompactionFollowUpContent(compactionMetadata) != null &&
       (await this.workspaceService.waitForPendingCompactionCompletionDecision(
         event.workspaceId,
         event.messageId
       )) === true
     ) {
-      return;
+      const history = await this.historyService.getHistoryFromLatestBoundary(event.workspaceId);
+      const summary = history.success
+        ? history.data.findLast((message) => message.metadata?.compactionBoundary === true)
+        : undefined;
+      const summaryMetadata = summary?.metadata?.muxMetadata;
+      // Defer only when successful compaction durably staged the next child turn. Bare /compact and
+      // rejected compactions must continue through normal completion recovery.
+      if (
+        summaryMetadata?.type === "compaction-summary" &&
+        summaryMetadata.pendingFollowUp != null
+      ) {
+        return;
+      }
     }
 
     const workspaceId = event.workspaceId;
