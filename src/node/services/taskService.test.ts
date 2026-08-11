@@ -11388,6 +11388,17 @@ describe("TaskService", () => {
 
     expect(await creation).toEqual(Err("Task.create: parent workspace is archived"));
     await archiveOperation;
+    expect(
+      await taskService.createMany([
+        {
+          parentWorkspaceId: parentId,
+          kind: "agent",
+          agentId: "explore",
+          prompt: "Inspect the archived parent race in bulk",
+          title: "Archived bulk task",
+        },
+      ])
+    ).toEqual(Err("Task.createMany: parent workspace is archived"));
     expect(create).not.toHaveBeenCalled();
   });
 

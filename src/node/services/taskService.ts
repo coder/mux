@@ -2687,6 +2687,12 @@ export class TaskService {
       }
       const parentMeta = parentMetaResult.data;
       const parentEntry = findWorkspaceEntry(cfg, parentWorkspaceId);
+      if (
+        parentEntry != null &&
+        isWorkspaceArchived(parentEntry.workspace.archivedAt, parentEntry.workspace.unarchivedAt)
+      ) {
+        return Err("Task.createMany: parent workspace is archived");
+      }
       const parentIsScratch = parentEntry?.workspace.kind === "scratch";
       const configProjectPath = parentIsScratch
         ? SCRATCH_PROJECT_CONFIG_KEY
