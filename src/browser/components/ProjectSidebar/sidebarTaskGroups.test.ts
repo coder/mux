@@ -7,7 +7,6 @@ import {
   collectActiveWorkflowGroupKeys,
   computeSidebarTaskGroups,
   computeTaskGroupMemberRowMeta,
-  ensureWorkflowGroupMembersVisible,
   shortenWorkflowRunId,
 } from "./sidebarTaskGroups";
 
@@ -219,54 +218,6 @@ describe("workflow group session stickiness", () => {
 
     expect(keys.has("workflow:parent:wfr_running")).toBe(true);
     expect(keys.has("workflow:parent:wfr_queued")).toBe(true);
-  });
-
-  test("re-includes hidden members of session-active runs so the group never unmounts", () => {
-    // Step gap: the only member is terminal and hidden by completed-sub-agent
-    // filtering, but the run was active earlier this session.
-    const done = workflowChild("done", "wfr_alpha", { taskStatus: "reported" });
-    const other = createWorkspace("other", { parentWorkspaceId: "parent" });
-    const allRows = [parent, done, other];
-    const visibleRows = [parent, other];
-
-    const result = ensureWorkflowGroupMembersVisible({
-      allRows,
-      visibleRows,
-      sessionActiveGroupKeys: new Set(["workflow:parent:wfr_alpha"]),
-    });
-
-    // Original order preserved.
-    expect(result.map((w) => w.id)).toEqual(["parent", "done", "other"]);
-
-    // Non-sticky runs stay hidden.
-    const untouched = ensureWorkflowGroupMembersVisible({
-      allRows,
-      visibleRows,
-      sessionActiveGroupKeys: new Set(["workflow:parent:wfr_other"]),
-    });
-    expect(untouched.map((w) => w.id)).toEqual(["parent", "other"]);
-  });
-
-  test("never resurrects members whose parent is hidden or that have their own subtree", () => {
-    const done = workflowChild("done", "wfr_alpha", { taskStatus: "reported" });
-    const grandchild = createWorkspace("grandchild", { parentWorkspaceId: "done" });
-    const sticky = new Set(["workflow:parent:wfr_alpha"]);
-
-    // Member has children (leaf-only rule) => not re-included.
-    const withSubtree = ensureWorkflowGroupMembersVisible({
-      allRows: [parent, done, grandchild],
-      visibleRows: [parent],
-      sessionActiveGroupKeys: sticky,
-    });
-    expect(withSubtree.map((w) => w.id)).toEqual(["parent"]);
-
-    // Parent itself hidden => member stays hidden.
-    const parentHidden = ensureWorkflowGroupMembersVisible({
-      allRows: [parent, done],
-      visibleRows: [],
-      sessionActiveGroupKeys: sticky,
-    });
-    expect(parentHidden).toEqual([]);
   });
 });
 

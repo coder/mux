@@ -156,8 +156,8 @@ export function getWorkflowGroupStorageKey(workspace: FrontendWorkspaceMetadata)
 
 /**
  * Collect workflow groups that currently have a non-terminal member. The
- * sidebar accumulates these per session so a run's group stays mounted across
- * step gaps (see ensureWorkflowGroupMembersVisible).
+ * sidebar caches their run-level group model per session so a header can stay
+ * mounted across step gaps after transient worker workspaces are deleted.
  */
 export function collectActiveWorkflowGroupKeys(
   workspaces: FrontendWorkspaceMetadata[],
@@ -178,57 +178,6 @@ export function collectActiveWorkflowGroupKeys(
     }
   }
   return keys;
-}
-
-/**
- * Keep workflow-run groups mounted for the entire run. Between sequential
- * steps every member of a run can be terminal, and completed-sub-agent
- * filtering would hide them all - flashing the group out of the sidebar and
- * back when the next step's task spawns. Re-include hidden leaf members of
- * session-active runs (in their original order) so the group header keeps a
- * stable anchor row.
- */
-export function ensureWorkflowGroupMembersVisible(params: {
-  /** Unfiltered rows in render order. */
-  allRows: FrontendWorkspaceMetadata[];
-  /** Rows that survived completed-sub-agent filtering, in the same order. */
-  visibleRows: FrontendWorkspaceMetadata[];
-  sessionActiveGroupKeys: ReadonlySet<string>;
-}): FrontendWorkspaceMetadata[] {
-  if (params.sessionActiveGroupKeys.size === 0) {
-    return params.visibleRows;
-  }
-
-  const visibleIds = new Set(params.visibleRows.map((workspace) => workspace.id));
-  const parentIdsWithChildren = new Set<string>();
-  for (const workspace of params.allRows) {
-    if (workspace.parentWorkspaceId) {
-      parentIdsWithChildren.add(workspace.parentWorkspaceId);
-    }
-  }
-
-  let changed = false;
-  const result: FrontendWorkspaceMetadata[] = [];
-  for (const workspace of params.allRows) {
-    if (visibleIds.has(workspace.id)) {
-      result.push(workspace);
-      continue;
-    }
-    const key = getWorkflowGroupStorageKey(workspace);
-    if (
-      key != null &&
-      params.sessionActiveGroupKeys.has(key) &&
-      // Leaf-only rule (D4): members with their own subtree are not grouped.
-      !parentIdsWithChildren.has(workspace.id) &&
-      workspace.parentWorkspaceId != null &&
-      // Never resurrect rows whose parent chain is itself hidden.
-      visibleIds.has(workspace.parentWorkspaceId)
-    ) {
-      result.push(workspace);
-      changed = true;
-    }
-  }
-  return changed ? result : params.visibleRows;
 }
 
 function sortBestOfMembers(members: FrontendWorkspaceMetadata[]): FrontendWorkspaceMetadata[] {

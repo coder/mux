@@ -158,6 +158,8 @@ let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
 
+let activeWorkflowRunCountByWorkspaceId = new Map<string, number>();
+
 function setupProjectSidebarDom(projectPath = "/projects/demo-project") {
   cleanupDom = installDom();
   window.localStorage.clear();
@@ -166,6 +168,7 @@ function setupProjectSidebarDom(projectPath = "/projects/demo-project") {
   projectContextValue = createProjectContextValue({
     userProjects: new Map([[projectPath, { workspaces: [] }]]),
   });
+  activeWorkflowRunCountByWorkspaceId = new Map();
   installProjectSidebarTestDoubles();
 }
 
@@ -547,11 +550,12 @@ function installProjectSidebarTestDoubles() {
     () =>
       ({
         getWorkspaceMetadata: () => undefined,
-        getWorkspaceSidebarState: () => ({
+        getWorkspaceSidebarState: (workspaceId: string) => ({
           canInterrupt: false,
           isStarting: false,
           awaitingUserQuestion: false,
           lastAbortReason: null,
+          activeWorkflowRunCount: activeWorkflowRunCountByWorkspaceId.get(workspaceId) ?? 0,
         }),
         getAggregator: () => undefined,
         subscribeKey: () => () => undefined,
@@ -1670,22 +1674,29 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       projects: singleProjectRefs,
     });
 
-    const renderProps = (child: FrontendWorkspaceMetadata) =>
+    const renderProps = (child?: FrontendWorkspaceMetadata) =>
       ({
         collapsed: false,
         onToggleCollapsed: () => undefined,
-        sortedWorkspacesByProject: new Map([["/projects/demo-project", [parentWorkspace, child]]]),
+        sortedWorkspacesByProject: new Map([
+          ["/projects/demo-project", [parentWorkspace, ...(child ? [child] : [])]],
+        ]),
         workspaceRecency: { parent: Date.now(), "step-1": Date.now() },
       }) as const;
 
+    activeWorkflowRunCountByWorkspaceId.set("parent", 1);
     const view = render(<ProjectSidebar {...renderProps(step("running"))} />);
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
 
-    view.rerender(<ProjectSidebar {...renderProps(step("reported"))} />);
+    // Workflow-owned workers are deleted after reporting, so the inter-step render contains only
+    // the parent workspace. The cached run-level descriptor keeps the header mounted independently.
+    view.rerender(<ProjectSidebar {...renderProps()} />);
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
-    // The terminal member only anchors the workflow header during the inter-step gap; inactive
-    // sub-agent rows remain absent from the left sidebar.
     expect(view.queryByTestId(agentItemTestId("step-1"))).toBeNull();
+
+    activeWorkflowRunCountByWorkspaceId.set("parent", 0);
+    view.rerender(<ProjectSidebar {...renderProps()} />);
+    expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
   });
 
   test("does not reinsert selected inactive workflow members into the sidebar", () => {
