@@ -5534,8 +5534,21 @@ export class TaskService {
     });
     let recoveredCount = 0;
     for (const record of terminalRecords) {
-      if (record.directParentResultDeliveredAt == null) {
-        await this.deliverPersistentChildWorkspaceTurnResult(record, new Set());
+      if (
+        record.directParentResultDeliveryRequiredAt != null &&
+        record.directParentResultDeliveredAt == null
+      ) {
+        try {
+          await this.deliverPersistentChildWorkspaceTurnResult(record, new Set());
+        } catch (error: unknown) {
+          // Startup recovery is best-effort: one read-only/corrupt session must not block the app.
+          log.warn("Failed to recover direct-parent continuation delivery", {
+            ownerWorkspaceId: record.ownerWorkspaceId,
+            workspaceId: record.workspaceId,
+            handleId: record.handleId,
+            error: getErrorMessage(error),
+          });
+        }
       }
       if (
         resolveBackgroundWorkAttentionPolicy(record.attentionPolicy) !== "notify_on_terminal" ||
@@ -6290,6 +6303,18 @@ export class TaskService {
     }
   }
 
+  private workspaceTurnRequiresDirectParentDelivery(
+    record: WorkspaceTurnTaskHandleRecord
+  ): boolean {
+    if (record.status !== "completed" && record.status !== "error") {
+      return false;
+    }
+    const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
+    return (
+      childEntry?.workspace.parentWorkspaceId != null && childEntry.workspace.workflowTask == null
+    );
+  }
+
   private async deliverPersistentChildWorkspaceTurnResult(
     record: WorkspaceTurnTaskHandleRecord,
     foregroundWaiterWorkspaceIds: ReadonlySet<string>
@@ -6298,7 +6323,10 @@ export class TaskService {
       return;
     }
 
-    if (record.directParentResultDeliveredAt != null) {
+    if (
+      record.directParentResultDeliveryRequiredAt == null ||
+      record.directParentResultDeliveredAt != null
+    ) {
       return;
     }
     const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
@@ -6502,6 +6530,12 @@ export class TaskService {
             nextStatus: nextRecord.status,
           });
           delete nextRecord.terminalAttentionNotifiedAt;
+        }
+        if (this.workspaceTurnRequiresDirectParentDelivery(nextRecord)) {
+          nextRecord.directParentResultDeliveryRequiredAt = getIsoNow();
+          if (resettleStaleTerminal) {
+            delete nextRecord.directParentResultDeliveredAt;
+          }
         }
         await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
         await this.updateAgentTaskExecutionState(
@@ -7813,6 +7847,8 @@ export class TaskService {
       // The revived turn's next terminal transition is a new outcome; re-arm its wake-up.
       // The notification tombstone must go too: enqueueIfAbsent would otherwise treat the
       // stale settlement's delivered wake-up as "already notified" and swallow the new one.
+      delete next.directParentResultDeliveryRequiredAt;
+      delete next.directParentResultDeliveredAt;
       delete next.terminalAttentionNotifiedAt;
       await this.terminalAttentionStore.delete(
         record.ownerWorkspaceId,

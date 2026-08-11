@@ -34,7 +34,10 @@ import { SessionUsageService } from "@/node/services/sessionUsageService";
 import { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import { IdleDispatcher } from "@/node/services/idleDispatcher";
 import { TerminalAttentionStore } from "@/node/services/terminalAttentionStore";
-import { TaskHandleStore } from "@/node/services/taskHandleStore";
+import {
+  TaskHandleStore,
+  type WorkspaceTurnTaskHandleRecord,
+} from "@/node/services/taskHandleStore";
 import { TaskService, ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { log } from "@/node/services/log";
@@ -1941,6 +1944,69 @@ describe("TaskService", () => {
       (await taskHandleStore.getWorkspaceTurn(parentId, created.data.taskId))
         ?.directParentResultDeliveredAt
     ).toBeDefined();
+  });
+
+  test("terminal recovery skips legacy delivery records and contains per-record replay failures", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-terminal-delivery-recovery";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+        })
+      );
+      return cfg;
+    });
+    const { taskService } = createTaskServiceHarness(config);
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const baseRecord = {
+      kind: "workspace_turn" as const,
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      status: "completed" as const,
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Recovered result",
+    };
+    await taskHandleStore.upsertWorkspaceTurn({
+      ...baseRecord,
+      handleId: "wst_legacy_delivery",
+      turnId: "legacy-delivery",
+    });
+    await taskHandleStore.upsertWorkspaceTurn({
+      ...baseRecord,
+      handleId: "wst_required_delivery",
+      turnId: "required-delivery",
+      directParentResultDeliveryRequiredAt: "2026-08-11T00:00:01.000Z",
+    });
+    const internal = taskService as unknown as {
+      deliverPersistentChildWorkspaceTurnResult: (
+        record: WorkspaceTurnTaskHandleRecord,
+        waiterWorkspaceIds: ReadonlySet<string>
+      ) => Promise<void>;
+      recoverTerminalWorkspaceTurnAttentionNotifications: () => Promise<number>;
+    };
+    const replay = spyOn(
+      internal,
+      "deliverPersistentChildWorkspaceTurnResult"
+    ).mockRejectedValueOnce(new Error("read-only session"));
+
+    try {
+      await internal.recoverTerminalWorkspaceTurnAttentionNotifications();
+      expect(replay).toHaveBeenCalledTimes(1);
+      expect(replay.mock.calls[0]?.[0].handleId).toBe("wst_required_delivery");
+    } finally {
+      replay.mockRestore();
+    }
   });
 
   test("higher-ancestor waiters do not suppress continuation delivery to the direct parent", async () => {
@@ -4505,7 +4571,18 @@ describe("TaskService", () => {
   });
 
   test("correlated stream-end corrects a stale error settlement after self-healed retry", async () => {
-    const { config, parentId, taskService } = await startWorkspaceTurnForTest();
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const child = Array.from(cfg.projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = parentId;
+      child.agentId = "explore";
+      child.agentType = "explore";
+      child.taskStatus = "reported";
+      return cfg;
+    });
     await new TaskHandleStore(config).upsertWorkspaceTurn({
       kind: "workspace_turn",
       handleId: "wst_handle",
@@ -4517,6 +4594,8 @@ describe("TaskService", () => {
       updatedAt: "2026-06-19T00:00:01.000Z",
       createdWorkspace: true,
       disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
       error: "Stream error: provider overloaded",
       terminalAttentionNotifiedAt: "2026-06-19T00:00:02.000Z",
     });
@@ -4549,6 +4628,11 @@ describe("TaskService", () => {
       messageId: "msg_retry_final",
       reportMarkdown: "Recovered after retry",
     });
+    expect(snapshot?.directParentResultDeliveryRequiredAt).toBeDefined();
+    expect(snapshot?.directParentResultDeliveredAt).toBeDefined();
+    expect(snapshot?.directParentResultDeliveredAt).not.toBe("2026-06-19T00:00:01.750Z");
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(JSON.stringify(parentHistory)).toContain("Recovered after retry");
     expect(snapshot?.error).toBeUndefined();
     expect(snapshot?.terminalAttentionNotifiedAt).toBeUndefined();
   });
@@ -4867,6 +4951,8 @@ describe("TaskService", () => {
       updatedAt: "2026-06-19T00:00:01.000Z",
       createdWorkspace: true,
       disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
       error: "Workspace turn interrupted after restart",
       terminalAttentionNotifiedAt: "2026-06-19T00:00:02.000Z",
     });
@@ -4889,6 +4975,8 @@ describe("TaskService", () => {
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({ status: "running", workspaceId: "childworkspace" });
+    expect(snapshot?.directParentResultDeliveryRequiredAt).toBeUndefined();
+    expect(snapshot?.directParentResultDeliveredAt).toBeUndefined();
     expect(snapshot?.error).toBeUndefined();
     expect(snapshot?.terminalAttentionNotifiedAt).toBeUndefined();
     expect(await terminalAttentionStore.get(parentId, "workspace_turn:wst_handle")).toBeNull();
