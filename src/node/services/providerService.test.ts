@@ -1,5 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
+import * as fsPromises from "fs/promises";
 import { writeFile } from "node:fs/promises";
 import * as os from "os";
 import * as path from "path";
@@ -1433,6 +1434,94 @@ describe("ProviderService denied keyPath segments", () => {
         error: 'Denied key path segment: "__proto__"',
       });
       expect(config.loadProvidersConfig()).toBeNull();
+    });
+  });
+
+  it("updateConfigValue rejects __proto__ in keyPath", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.updateConfigValue("openai", ["auth", "__proto__"], () => ({
+        value: "x",
+      }));
+
+      expect(result).toEqual({
+        success: false,
+        error: 'Denied key path segment: "__proto__"',
+      });
+      expect(config.loadProvidersConfig()).toBeNull();
+    });
+  });
+});
+
+describe("ProviderService.updateConfigValue", () => {
+  it("writes when the predicate accepts and skips when it returns null", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({ coder: { coderOauth: { refresh: "rt_a" } } });
+
+      // Predicate matches: write applies.
+      const applied = await service.updateConfigValue("coder", ["coderOauth"], (current) =>
+        (current as { refresh?: string } | undefined)?.refresh === "rt_a"
+          ? { value: { refresh: "rt_b" } }
+          : null
+      );
+      expect(applied).toEqual({ success: true, data: { applied: true } });
+      expect(
+        (config.loadProvidersConfig()?.coder?.coderOauth as { refresh?: string })?.refresh
+      ).toBe("rt_b");
+
+      // Predicate no longer matches (rt_a was replaced): compare-and-set skips.
+      const skipped = await service.updateConfigValue("coder", ["coderOauth"], (current) =>
+        (current as { refresh?: string } | undefined)?.refresh === "rt_a"
+          ? { value: undefined }
+          : null
+      );
+      expect(skipped).toEqual({ success: true, data: { applied: false } });
+      expect(
+        (config.loadProvidersConfig()?.coder?.coderOauth as { refresh?: string })?.refresh
+      ).toBe("rt_b");
+    });
+  });
+
+  it("serializes concurrent updates so no write is lost", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({ coder: { coderOauth: { generation: 0 } } });
+
+      // Both updates read-modify-write the same value; the lock must serialize
+      // them so both increments land.
+      const increment = () =>
+        service.updateConfigValue("coder", ["coderOauth"], (current) => ({
+          value: {
+            generation: ((current as { generation?: number } | undefined)?.generation ?? 0) + 1,
+          },
+        }));
+      const [a, b] = await Promise.all([increment(), increment()]);
+      expect(a.success && b.success).toBe(true);
+      expect(
+        (config.loadProvidersConfig()?.coder?.coderOauth as { generation?: number })?.generation
+      ).toBe(2);
+    });
+  });
+
+  it("breaks stale locks left by crashed processes", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({ coder: {} });
+      // Simulate a crashed process: lock dir exists with an old mtime.
+      const lockPath = path.join(config.rootDir, "providers.jsonc.lock");
+      await fsPromises.mkdir(lockPath);
+      const past = new Date(Date.now() - 60_000);
+      await fsPromises.utimes(lockPath, past, past);
+
+      const result = await service.updateConfigValue("coder", ["coderOauth"], () => ({
+        value: { refresh: "rt_after_crash" },
+      }));
+      expect(result).toEqual({ success: true, data: { applied: true } });
+      // Lock released after the write.
+      let lockExists = true;
+      try {
+        await fsPromises.access(lockPath);
+      } catch {
+        lockExists = false;
+      }
+      expect(lockExists).toBe(false);
     });
   });
 });

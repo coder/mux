@@ -726,10 +726,30 @@ export class CoderOauthService {
 
     // Coder rotates the refresh token on every use: persist the new tokens
     // BEFORE handing them to the caller so a crash cannot strand us with a
-    // consumed (now invalid) refresh token on disk.
-    const persistResult = await this.persistAuth(result.auth);
+    // consumed (now invalid) refresh token on disk. The write is conditional:
+    // it lands only while the credential we consumed is still the stored one.
+    // If a re-login (possibly to another deployment) or a disconnect finished
+    // while the token endpoint round-trip was in flight, overwriting would
+    // clobber the newer state with a blob from the old generation.
+    const persistResult = await this.persistRotatedAuth(result.auth, current.refresh);
     if (!persistResult.success) {
       return Err(persistResult.error);
+    }
+
+    if (!persistResult.data.applied) {
+      // Our rotation lost: revoke the now-orphaned tokens (nothing references
+      // them) and defer to whatever credential replaced ours.
+      await this.revokeTokens(result.auth.deploymentUrl, result.auth);
+      const stored = this.readStoredAuth();
+      if (stored) {
+        log.debug("[Coder OAuth] Refresh superseded by a newer login; adopting it");
+        if (!isCoderOauthAuthExpired(stored)) {
+          return Ok(stored);
+        }
+        // Bounded: recursion only happens when the on-disk credential changed.
+        return this.refreshTokens(stored);
+      }
+      return Err("Coder OAuth was disconnected. Use 'Login with Coder' in Settings to reconnect.");
     }
 
     return Ok(result.auth);
@@ -918,11 +938,40 @@ export class CoderOauthService {
     return auth;
   }
 
+  /** Unconditional credential write (logins): the newest login always wins. */
   private async persistAuth(auth: CoderOauthAuth): Promise<Result<void, string>> {
-    const result = await this.providerService.setConfigValue("coder", ["coderOauth"], auth);
+    // Route through updateConfigValue so every coderOauth write shares the
+    // cross-process providers.jsonc lock with the CAS paths.
+    const result = await this.providerService.updateConfigValue("coder", ["coderOauth"], () => ({
+      value: auth,
+    }));
     // Invalidate cache so the next readStoredAuth() picks up the persisted value from disk.
-    // We clear rather than set because setConfigValue may have side-effects (e.g. file-write
+    // We clear rather than set because the write may have side-effects (e.g. file-write
     // failures) and we want the next read to be authoritative.
+    this.cachedAuth = null;
+    return result.success ? Ok(undefined) : Err(result.error);
+  }
+
+  /**
+   * Compare-and-swap credential write (refreshes): persists `auth` only while
+   * the stored blob still holds `expectedRefresh` — the token this refresh
+   * consumed. Skipped means a newer login/disconnect superseded the refresh.
+   */
+  private async persistRotatedAuth(
+    auth: CoderOauthAuth,
+    expectedRefresh: string
+  ): Promise<Result<{ applied: boolean }, string>> {
+    const result = await this.providerService.updateConfigValue(
+      "coder",
+      ["coderOauth"],
+      (current) => {
+        const stored = parseCoderOauthAuth(current);
+        if (stored?.refresh !== expectedRefresh) {
+          return null;
+        }
+        return { value: auth };
+      }
+    );
     this.cachedAuth = null;
     return result;
   }

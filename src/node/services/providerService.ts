@@ -1025,39 +1025,80 @@ export class ProviderService {
   /**
    * Conditionally update a provider config value: `update` receives the
    * current value at `keyPath` and returns `{ value }` to write or null to
-   * skip. The read, the predicate, and the file write all run in one
-   * synchronous block (setConfigValue does not await before saving), so no
-   * other in-process caller can interleave between compare and write. This is
-   * the compare-and-set used for credential writes that race concurrent
-   * logins/refreshes (e.g. Coder OAuth token rotation).
+   * skip. The read, the predicate, and the file write run while holding the
+   * cross-process providers.jsonc lock (see Config.withProvidersFileLock), so
+   * neither another in-process caller nor another mux process going through
+   * this method can interleave between compare and write. This is the
+   * compare-and-set used for credential writes that race concurrent
+   * logins/refreshes (e.g. Coder OAuth token rotation across the desktop app
+   * and `mux run`/`mux workflow`).
    *
-   * Note: writes from OTHER processes sharing providers.jsonc can still land
-   * between the read and the write; true cross-process atomicity would need
-   * file locking, which no provider credential path currently has.
+   * Unlike setConfigValue, this path skips policy gating: it is an internal
+   * credential-management primitive (clearing dead tokens, persisting
+   * rotations), not a user-driven config edit.
    */
   public async updateConfigValue(
     provider: string,
     keyPath: string[],
     update: (current: unknown) => { value: unknown } | null
   ): Promise<Result<{ applied: boolean }, string>> {
-    const providersConfig = this.config.loadProvidersConfig() ?? {};
-    let current: unknown = providersConfig[provider];
-    for (const key of keyPath) {
-      current =
-        current !== null && typeof current === "object"
-          ? (current as Record<string, unknown>)[key]
-          : undefined;
+    const deniedSegment = keyPath.find((segment) => DENIED_KEY_PATH_SEGMENTS.has(segment));
+    if (deniedSegment) {
+      return { success: false, error: `Denied key path segment: "${deniedSegment}"` };
+    }
+    if (keyPath.length === 0) {
+      return { success: false, error: "updateConfigValue requires a non-empty key path" };
     }
 
-    const decision = update(current);
-    if (!decision) {
-      return { success: true, data: { applied: false } };
-    }
+    try {
+      const applied = await this.config.withProvidersFileLock(() => {
+        // Load, decide, and write under the lock — no awaits in between, so
+        // the predicate result cannot be invalidated by any cooperating writer.
+        const providersConfig = this.config.loadProvidersConfig() ?? {};
+        let current: unknown = providersConfig[provider];
+        for (const key of keyPath) {
+          current =
+            current !== null && typeof current === "object"
+              ? (current as Record<string, unknown>)[key]
+              : undefined;
+        }
 
-    // Synchronous handoff: setConfigValue re-reads and writes without awaiting
-    // in between, so the predicate result cannot be invalidated in-process.
-    const result = await this.setConfigValue(provider, keyPath, decision.value);
-    return result.success ? { success: true, data: { applied: true } } : result;
+        const decision = update(current);
+        if (!decision) {
+          return false;
+        }
+
+        if (!providersConfig[provider]) {
+          providersConfig[provider] = {};
+        }
+        let target = providersConfig[provider] as Record<string, unknown>;
+        for (let i = 0; i < keyPath.length - 1; i++) {
+          const key = keyPath[i];
+          if (!(key in target) || typeof target[key] !== "object" || target[key] === null) {
+            target[key] = {};
+          }
+          target = target[key] as Record<string, unknown>;
+        }
+        const lastKey = keyPath[keyPath.length - 1];
+        if (decision.value === undefined) {
+          delete target[lastKey];
+        } else {
+          target[lastKey] = decision.value;
+        }
+
+        this.config.saveProvidersConfig(providersConfig);
+        return true;
+      });
+
+      if (applied) {
+        this.notifyFromMutation();
+        await this.syncGatewayLifecycle(provider);
+      }
+      return { success: true, data: { applied } };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to update provider config: ${message}` };
+    }
   }
 
   public async setConfig(

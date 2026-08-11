@@ -363,6 +363,52 @@ describe("CoderOauthService", () => {
       }
     });
 
+    it("does not overwrite a newer login with a refresh result from the old generation", async () => {
+      const expired = expiredAuth({ refresh: "rt_old" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expired } };
+
+      const newerLogin = validAuth({ access: "at_new_login", refresh: "rt_new_login" });
+      let revokeBody: URLSearchParams | null = null;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          // A re-login completes while the refresh round-trip is in flight.
+          deps.providersConfig = {
+            coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: newerLogin },
+          };
+          return Promise.resolve(
+            jsonResponse({
+              access_token: "at_stale_rotation",
+              refresh_token: "rt_stale_rotation",
+              expires_in: 86400,
+              token_type: "Bearer",
+            })
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      // The newer login wins; the stale rotation is never persisted.
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.access).toBe("at_new_login");
+      }
+      const staleWrite = deps.setConfigValueCalls.find(
+        (c) =>
+          c.keyPath[0] === "coderOauth" &&
+          (c.value as CoderOauthAuth | undefined)?.access === "at_stale_rotation"
+      );
+      expect(staleWrite).toBeUndefined();
+      // The orphaned rotation was revoked best-effort.
+      expect(revokeBody).not.toBeNull();
+      expect(revokeBody!.get("token")).toBe("rt_stale_rotation");
+    });
+
     it("adopts a concurrently rotated credential instead of clearing it on invalid_grant", async () => {
       // The refresh mutex is process-local: another process (desktop vs CLI)
       // can consume our refresh token and persist the rotated one. Losing that
@@ -841,15 +887,16 @@ describe("CoderOauthService", () => {
         ProviderService,
         "setConfigValue" | "setModels" | "updateConfigValue"
       > = {
-        setConfigValue: async (provider, keyPath, value) => {
-          if (keyPath[0] === "coderOauth" && value !== undefined) {
+        setConfigValue: (provider, keyPath, value) =>
+          mockSetConfigValue(deps, provider, keyPath, value),
+        updateConfigValue: async (provider, keyPath, update) => {
+          // Gate credential writes (login persists route through updateConfigValue).
+          if (keyPath[0] === "coderOauth") {
             persistStarted();
             await persistGate;
           }
-          return mockSetConfigValue(deps, provider, keyPath, value);
+          return mockUpdateConfigValue(deps, provider, keyPath, update);
         },
-        updateConfigValue: (provider, keyPath, update) =>
-          mockUpdateConfigValue(deps, provider, keyPath, update),
         setModels: (provider, models) => {
           deps.setModelsCalls.push({ provider, models });
           return Ok(undefined);

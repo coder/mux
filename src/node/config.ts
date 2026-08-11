@@ -2516,6 +2516,64 @@ export class Config {
   }
 
   /**
+   * Advisory cross-process lock for providers.jsonc read-modify-write cycles.
+   *
+   * Multiple mux processes (desktop app, `mux run`, `mux workflow`) share
+   * providers.jsonc, and OAuth credential rotation requires compare-and-set
+   * semantics across them. Exclusive directory creation is atomic on all
+   * platforms, so `<providersFile>.lock/` serves as the mutex. Locks orphaned
+   * by crashed processes are broken after a staleness timeout.
+   */
+  async withProvidersFileLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    const lockPath = `${this.providersFile}.lock`;
+    const ACQUIRE_TIMEOUT_MS = 5_000;
+    const STALE_LOCK_MS = 10_000;
+    const RETRY_DELAY_MS = 25;
+    const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
+
+    if (!fs.existsSync(this.rootDir)) {
+      ensurePrivateDirSync(this.rootDir);
+    }
+
+    for (;;) {
+      try {
+        fs.mkdirSync(lockPath);
+        break;
+      } catch {
+        // Held by another process (or a crashed one): break stale locks.
+        let stale = false;
+        try {
+          stale = Date.now() - fs.statSync(lockPath).mtimeMs > STALE_LOCK_MS;
+        } catch {
+          continue; // Lock released between mkdir and stat; retry immediately.
+        }
+        if (stale) {
+          try {
+            fs.rmdirSync(lockPath);
+          } catch {
+            // Another process broke it first; retry.
+          }
+          continue;
+        }
+        if (Date.now() > deadline) {
+          throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
+        }
+        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      }
+    }
+
+    try {
+      return await fn();
+    } finally {
+      try {
+        fs.rmdirSync(lockPath);
+      } catch (error) {
+        log.debug("Failed to release providers config lock:", error);
+      }
+    }
+  }
+
+  /**
    * Save providers configuration to JSONC file
    * @param config The providers configuration to save
    */
