@@ -4833,10 +4833,21 @@ describe("TaskService", () => {
       parts: [{ type: "text", text: "Recovered after retry" }],
     });
 
-    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+    const corrected = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(corrected).toMatchObject({
       status: "completed",
       reportMarkdown: "Recovered after retry",
     });
+    assert(corrected, "corrected workspace-turn record must exist");
+    const correctedAttentionId = TerminalAttentionStore.notificationId(
+      "workspace_turn",
+      corrected.handleId,
+      `${corrected.handleId}:${corrected.status}:${corrected.updatedAt}`
+    );
+    // A stale drain completing after replacement can only transition the legacy ID; the corrected
+    // generation remains independently persisted and therefore cannot be swallowed.
+    await terminalAttentionStore.markDelivered(parentId, "workspace_turn:wst_handle");
+    expect(await terminalAttentionStore.get(parentId, correctedAttentionId)).not.toBeNull();
   });
 
   test("duplicate correlated stream-end replay keeps a settled error handle unchanged", async () => {
@@ -5481,6 +5492,7 @@ describe("TaskService", () => {
       ownerWorkspaceId: rootWorkspaceId,
       consumingWorkspaceId: directParentTaskId,
       handleId: terminal.handleId,
+      updatedAt: terminal.updatedAt,
       status: terminal.status,
     });
     expect(

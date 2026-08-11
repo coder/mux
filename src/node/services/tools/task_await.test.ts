@@ -101,6 +101,7 @@ describe("task_await tool", () => {
       consumingWorkspaceId: "parent-workspace",
       handleId: "wst_done",
       status: "completed",
+      updatedAt: "2026-06-19T00:00:10.000Z",
     });
   });
 
@@ -129,7 +130,12 @@ describe("task_await tool", () => {
           ownerWorkspaceId?: string;
           backgroundOnMessageQueued?: boolean;
         }
-      ) => Promise.resolve({ workspaceId: "child-task", reportMarkdown: "Nested work completed" })
+      ) =>
+        Promise.resolve({
+          workspaceId: "child-task",
+          updatedAt: "2026-08-10T00:00:01.000Z",
+          reportMarkdown: "Nested work completed",
+        })
     );
     const markWorkspaceTurnTerminalAttentionConsumed = mock(() => Promise.resolve());
     const taskService = {
@@ -179,6 +185,7 @@ describe("task_await tool", () => {
       consumingWorkspaceId: "root-workspace",
       handleId: "wst_nested",
       status: "completed",
+      updatedAt: "2026-08-10T00:00:01.000Z",
     });
   });
 
@@ -331,7 +338,11 @@ describe("task_await tool", () => {
       markWorkspaceTurnTerminalAttentionConsumed,
       waitForWorkspaceTurn: mock((_taskId: string, options: { timeoutMs?: number }) => {
         observedTimeoutMs = options.timeoutMs;
-        return Promise.resolve({ workspaceId: "child-running", reportMarkdown: "Done" });
+        return Promise.resolve({
+          workspaceId: "child-running",
+          updatedAt: "2026-06-19T00:00:01.000Z",
+          reportMarkdown: "Done",
+        });
       }),
     } as unknown as TaskService;
 
@@ -345,6 +356,7 @@ describe("task_await tool", () => {
       consumingWorkspaceId: "parent-workspace",
       handleId: "wst_running",
       status: "completed",
+      updatedAt: "2026-06-19T00:00:01.000Z",
     });
     expect(observedTimeoutMs).toBe(600_000);
   });
@@ -407,6 +419,7 @@ describe("task_await tool", () => {
       consumingWorkspaceId: "parent-workspace",
       handleId: "wst_race",
       status: "completed",
+      updatedAt: "2026-06-19T00:00:01.000Z",
     });
   });
 
@@ -460,6 +473,7 @@ describe("task_await tool", () => {
       consumingWorkspaceId: "parent-workspace",
       handleId: "wst_failed",
       status: "error",
+      updatedAt: "2026-06-19T00:00:01.000Z",
     });
   });
 

@@ -574,14 +574,16 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             isAgentContinuation
               ? {}
               : { handleKind: "workspace_turn" as const, workspaceId: targetWorkspaceId };
-          const markWorkspaceTurnTerminalAttentionConsumed = async (
-            status: WorkspaceTurnTaskStatus
-          ): Promise<void> => {
+          const markWorkspaceTurnTerminalAttentionConsumed = async (record: {
+            status: WorkspaceTurnTaskStatus;
+            updatedAt: string;
+          }): Promise<void> => {
             await taskService.markWorkspaceTurnTerminalAttentionConsumed?.({
               ownerWorkspaceId: workspaceTurnOwnerId,
               consumingWorkspaceId: workspaceId,
               handleId: workspaceTurnTaskId,
-              status,
+              status: record.status,
+              updatedAt: record.updatedAt,
             });
           };
           // task_await returns the terminal "completed" workspace-turn result from
@@ -601,11 +603,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           });
           if (timeoutMs === 0 || !isActiveWorkspaceTurnTaskStatus(snapshot.status)) {
             if (snapshot.status === "completed") {
-              await markWorkspaceTurnTerminalAttentionConsumed(snapshot.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
               return completedWorkspaceTurnResult(snapshot);
             }
             if (snapshot.status === "interrupted") {
-              await markWorkspaceTurnTerminalAttentionConsumed(snapshot.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
               return {
                 status: "interrupted" as const,
                 taskId,
@@ -614,7 +616,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               };
             }
             if (snapshot.status === "error") {
-              await markWorkspaceTurnTerminalAttentionConsumed(snapshot.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
               return {
                 status: "error" as const,
                 taskId,
@@ -638,7 +640,10 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               ownerWorkspaceId: workspaceTurnOwnerId,
               backgroundOnMessageQueued: true,
             });
-            await markWorkspaceTurnTerminalAttentionConsumed("completed");
+            await markWorkspaceTurnTerminalAttentionConsumed({
+              status: "completed",
+              updatedAt: report.updatedAt,
+            });
             return {
               status: "completed" as const,
               taskId,
@@ -673,11 +678,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               const latest = await getWorkspaceTurnSnapshotForAwait();
               if (latest == null) return { status: "not_found" as const, taskId };
               if (latest.status === "completed") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return completedWorkspaceTurnResult(latest);
               }
               if (latest.status === "error") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return {
                   status: "error" as const,
                   taskId,
@@ -685,7 +690,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 };
               }
               if (latest.status === "interrupted") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return {
                   status: "interrupted" as const,
                   taskId,
@@ -704,11 +709,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               const latest = await getWorkspaceTurnSnapshotForAwait();
               if (latest == null) return { status: "not_found" as const, taskId };
               if (latest.status === "completed") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return completedWorkspaceTurnResult(latest);
               }
               if (latest.status === "error") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return {
                   status: "error" as const,
                   taskId,
@@ -716,7 +721,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
                 };
               }
               if (latest.status === "interrupted") {
-                await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+                await markWorkspaceTurnTerminalAttentionConsumed(latest);
                 return {
                   status: "interrupted" as const,
                   taskId,
@@ -735,11 +740,11 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             }
             const latest = await getWorkspaceTurnSnapshotForAwait().catch(() => null);
             if (latest?.status === "completed") {
-              await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(latest);
               return completedWorkspaceTurnResult(latest);
             }
             if (latest?.status === "error") {
-              await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(latest);
               return {
                 status: "error" as const,
                 taskId,
@@ -747,7 +752,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               };
             }
             if (latest?.status === "interrupted") {
-              await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
+              await markWorkspaceTurnTerminalAttentionConsumed(latest);
               return {
                 status: "interrupted" as const,
                 taskId,
