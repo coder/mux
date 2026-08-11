@@ -2705,7 +2705,10 @@ export class TaskService {
         return Err("Task.createMany: cannot spawn new tasks after task_stop");
       }
 
-      if (parentEntry?.workspace.taskStatus === "reported") {
+      if (
+        parentEntry?.workspace.taskStatus === "reported" &&
+        !isActiveWorkspaceTurnTaskStatus(parentEntry.workspace.taskExecutionStatus)
+      ) {
         return Err("Task.createMany: cannot spawn new tasks after agent_report");
       }
 
@@ -3857,7 +3860,10 @@ export class TaskService {
       return Err("Task.create: cannot spawn new tasks after task_stop");
     }
 
-    if (parentEntry?.workspace.taskStatus === "reported") {
+    if (
+      parentEntry?.workspace.taskStatus === "reported" &&
+      !isActiveWorkspaceTurnTaskStatus(parentEntry.workspace.taskExecutionStatus)
+    ) {
       return Err("Task.create: cannot spawn new tasks after agent_report");
     }
 

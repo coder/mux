@@ -11509,24 +11509,34 @@ describe("TaskService", () => {
     ).toHaveLength(0);
   });
 
-  test("reawakened interrupted agents with active continuations can create children", async () => {
+  test("reawakened terminal agents with active continuations can create children", async () => {
     const config = await createTestConfig(rootDir);
-    stubStableIds(config, ["nestedafterwake"]);
+    stubStableIds(config, ["afterinterrupted", "afterreporteda", "afterreportedb"]);
     const projectPath = path.join(rootDir, "repo");
     const parentWorkspaceId = "parent-reawakened-create";
-    const reawakenedTaskId = "child-reawakened-create";
+    const interruptedTaskId = "child-interrupted-reawakened-create";
+    const reportedTaskId = "child-reported-reawakened-create";
     const activeSiblingId = "sibling-reawakened-create";
     await saveWorkspaces(
       config,
       projectPath,
       [
         projectWorkspace(projectPath, "parent", parentWorkspaceId),
-        projectWorkspace(projectPath, "reawakened", reawakenedTaskId, {
+        projectWorkspace(projectPath, "interrupted", interruptedTaskId, {
           parentWorkspaceId,
           agentId: "explore",
           agentType: "explore",
           taskStatus: "interrupted",
-          taskExecutionId: "wst_reawakened_create",
+          taskExecutionId: "wst_interrupted_reawakened_create",
+          taskExecutionStatus: "running",
+        }),
+        projectWorkspace(projectPath, "reported", reportedTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-11T00:00:00.000Z",
+          taskExecutionId: "wst_reported_reawakened_create",
           taskExecutionStatus: "running",
         }),
         projectWorkspace(projectPath, "sibling", activeSiblingId, {
@@ -11540,18 +11550,41 @@ describe("TaskService", () => {
     );
     const { taskService } = createTaskServiceHarness(config);
 
-    const result = await createAgentTask(
+    const afterInterrupted = await createAgentTask(
       taskService,
-      reawakenedTaskId,
-      "Delegate from the active continuation"
+      interruptedTaskId,
+      "Delegate from the stopped continuation"
     );
+    const afterReported = await createAgentTask(
+      taskService,
+      reportedTaskId,
+      "Delegate from the reported continuation"
+    );
+    const bulkAfterReported = await taskService.createMany([
+      {
+        parentWorkspaceId: reportedTaskId,
+        kind: "agent",
+        agentId: "explore",
+        prompt: "Delegate a workflow worker from the reported continuation",
+        title: "Nested workflow worker",
+      },
+    ]);
 
-    expect(result).toMatchObject({ success: true, data: { status: "queued" } });
-    expect(
-      Array.from(config.loadConfigOrDefault().projects.values())
-        .flatMap((project) => project.workspaces)
-        .find((workspace) => workspace.parentWorkspaceId === reawakenedTaskId)
-    ).toMatchObject({ taskStatus: "queued" });
+    expect(afterInterrupted).toMatchObject({ success: true, data: { status: "queued" } });
+    expect(afterReported).toMatchObject({ success: true, data: { status: "queued" } });
+    expect(bulkAfterReported).toMatchObject({
+      success: true,
+      data: [{ status: "queued" }],
+    });
+    const nestedTasks = Array.from(config.loadConfigOrDefault().projects.values())
+      .flatMap((project) => project.workspaces)
+      .filter(
+        (workspace) =>
+          workspace.parentWorkspaceId === interruptedTaskId ||
+          workspace.parentWorkspaceId === reportedTaskId
+      );
+    expect(nestedTasks).toHaveLength(3);
+    expect(nestedTasks.every((workspace) => workspace.taskStatus === "queued")).toBe(true);
   });
 
   test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
