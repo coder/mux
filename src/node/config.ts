@@ -145,13 +145,59 @@ function parseOptionalNonEmptyString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+export interface LegacyTaskVariantGroup {
+  groupId: string;
+  index: number;
+  total: number;
+  kind: "variants";
+  label?: string;
+}
+
+export interface LegacyTaskVariantWorkspace {
+  id: string;
+  projectPath: string;
+  parentWorkspaceId?: string;
+  agentId?: string;
+  agentType?: string;
+  title?: string;
+  createdAt?: string;
+  taskStatus?: Workspace["taskStatus"];
+  bestOf: LegacyTaskVariantGroup;
+}
+
+function parseLegacyTaskVariantGroup(value: unknown): LegacyTaskVariantGroup | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const groupId = parseOptionalNonEmptyString(record.groupId);
+  const label = parseOptionalNonEmptyString(record.label);
+  const index = record.index;
+  const total = record.total;
+  if (
+    record.kind !== "variants" ||
+    !groupId ||
+    !Number.isInteger(index) ||
+    (index as number) < 0 ||
+    !Number.isInteger(total) ||
+    (total as number) < 2 ||
+    (index as number) >= (total as number)
+  ) {
+    return undefined;
+  }
+
+  return {
+    groupId,
+    index: index as number,
+    total: total as number,
+    kind: "variants",
+    ...(label ? { label } : {}),
+  };
+}
+
 function isLegacyTaskVariantGroup(value: unknown): boolean {
-  return (
-    value != null &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    (value as Record<string, unknown>).kind === "variants"
-  );
+  return parseLegacyTaskVariantGroup(value) != null;
 }
 
 function normalizeWorkspaceBestOf(value: unknown): WorkspaceMetadata["bestOf"] | undefined {
@@ -793,6 +839,11 @@ export class Config {
   private readonly providersFile: string;
   private readonly secretsFile: string;
   private readonly emitter = new EventEmitter();
+  /**
+   * Legacy variant grouping is hidden from the current runtime but retained here so unrelated
+   * config writes remain downgrade-safe. Entries are keyed by stable child workspace ID.
+   */
+  private readonly legacyTaskVariantGroups = new Map<string, LegacyTaskVariantWorkspace>();
   /** Serializes editConfig calls; see editConfig for why. */
   private editConfigQueue: Promise<void> = Promise.resolve();
   /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
@@ -805,6 +856,53 @@ export class Config {
     this.configFile = path.join(this.rootDir, "config.json");
     this.providersFile = path.join(this.rootDir, "providers.jsonc");
     this.secretsFile = path.join(this.rootDir, "secrets.json");
+  }
+
+  private rememberLegacyTaskVariantWorkspace(projectPath: string, value: unknown): void {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return;
+    }
+
+    const record = value as Record<string, unknown>;
+    const id = parseOptionalNonEmptyString(record.id);
+    const bestOf = parseLegacyTaskVariantGroup(record.bestOf);
+    if (!id || !bestOf) {
+      return;
+    }
+
+    const taskStatus = record.taskStatus;
+    const parsedTaskStatus =
+      taskStatus === "queued" ||
+      taskStatus === "starting" ||
+      taskStatus === "running" ||
+      taskStatus === "awaiting_report" ||
+      taskStatus === "interrupted" ||
+      taskStatus === "reported"
+        ? taskStatus
+        : undefined;
+
+    this.legacyTaskVariantGroups.set(id, {
+      id,
+      projectPath: stripTrailingSlashes(projectPath),
+      parentWorkspaceId: parseOptionalNonEmptyString(record.parentWorkspaceId),
+      agentId: parseOptionalNonEmptyString(record.agentId),
+      agentType: parseOptionalNonEmptyString(record.agentType),
+      title: parseOptionalNonEmptyString(record.title),
+      createdAt: parseOptionalNonEmptyString(record.createdAt),
+      taskStatus: parsedTaskStatus,
+      bestOf,
+    });
+  }
+
+  getLegacyTaskVariantGroup(workspaceId: string): LegacyTaskVariantGroup | undefined {
+    const bestOf = this.legacyTaskVariantGroups.get(workspaceId)?.bestOf;
+    return bestOf ? { ...bestOf } : undefined;
+  }
+
+  listLegacyTaskVariantWorkspaces(parentWorkspaceId: string): LegacyTaskVariantWorkspace[] {
+    return Array.from(this.legacyTaskVariantGroups.values())
+      .filter((workspace) => workspace.parentWorkspaceId === parentWorkspaceId)
+      .map((workspace) => ({ ...workspace, bestOf: { ...workspace.bestOf } }));
   }
 
   onConfigChanged(callback: () => void): () => void {
@@ -1001,13 +1099,10 @@ export class Config {
             return true;
           })
           .map(([projectPath, projectConfig]) => {
-            if (
-              Array.isArray(projectConfig?.workspaces) &&
-              projectConfig.workspaces.some((workspace) =>
-                isLegacyTaskVariantGroup(workspace.bestOf)
-              )
-            ) {
-              configModified = true;
+            if (Array.isArray(projectConfig?.workspaces)) {
+              for (const workspace of projectConfig.workspaces) {
+                this.rememberLegacyTaskVariantWorkspace(projectPath, workspace);
+              }
             }
             const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
             return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
@@ -1339,10 +1434,23 @@ export class Config {
       const data: Partial<Record<keyof AppConfigOnDisk, unknown>> & {
         projects: Array<[string, ProjectConfig]>;
       } = {
-        projects: Array.from(config.projects.entries()).map(
-          ([projectPath, projectConfig]) =>
-            [projectPath, normalizeProjectRuntimeSettings(projectConfig)] as [string, ProjectConfig]
-        ),
+        projects: Array.from(config.projects.entries()).map(([projectPath, projectConfig]) => {
+          const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
+          const persistedProjectConfig = {
+            ...normalizedProjectConfig,
+            workspaces: normalizedProjectConfig.workspaces.map((workspace) => ({ ...workspace })),
+          };
+          for (const workspace of persistedProjectConfig.workspaces) {
+            const workspaceId = parseOptionalNonEmptyString(workspace.id);
+            const legacy = workspaceId ? this.legacyTaskVariantGroups.get(workspaceId) : undefined;
+            if (legacy && workspace.bestOf == null) {
+              // Keep downgrade-only metadata on disk without exposing it to current runtime types,
+              // UI grouping, or provider-facing task schemas.
+              (workspace as unknown as Record<string, unknown>).bestOf = { ...legacy.bestOf };
+            }
+          }
+          return [projectPath, persistedProjectConfig] as [string, ProjectConfig];
+        }),
         taskSettings: config.taskSettings ?? DEFAULT_TASK_SETTINGS,
       };
 
@@ -1818,6 +1926,7 @@ export class Config {
             try {
               const data = fs.readFileSync(metadataPath, "utf-8");
               const metadata = JSON.parse(data) as WorkspaceMetadata;
+              this.rememberLegacyTaskVariantWorkspace(projectPath, metadata);
               if (metadata.id === workspaceId) {
                 return {
                   workspacePath: workspace.path,
@@ -2073,6 +2182,7 @@ export class Config {
           if (fs.existsSync(metadataPath)) {
             const data = fs.readFileSync(metadataPath, "utf-8");
             const metadata = JSON.parse(data) as WorkspaceMetadata;
+            this.rememberLegacyTaskVariantWorkspace(projectPath, metadata);
 
             // Ensure required fields are present
             if (!metadata.name) metadata.name = workspaceBasename;

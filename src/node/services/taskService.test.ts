@@ -16475,6 +16475,7 @@ describe("TaskService", () => {
     toolCallId: string;
     title: string;
     n?: number;
+    legacyVariants?: string[];
     timestamp: number;
     prompt?: string;
     additionalParts?: MuxMessage["parts"];
@@ -16494,6 +16495,7 @@ describe("TaskService", () => {
             prompt: params.prompt ?? "compare options",
             title: params.title,
             ...(params.n != null ? { n: params.n } : {}),
+            ...(params.legacyVariants ? { variants: params.legacyVariants } : {}),
           },
           state: "input-available",
         },
@@ -16710,6 +16712,125 @@ describe("TaskService", () => {
     const remainingTaskIds = getConfiguredWorkspaceIds(config);
     expect(remainingTaskIds).toContain(childOneId);
     expect(remainingTaskIds).toContain(childTwoId);
+  });
+
+  test("agent_report recovers a pending legacy variants task call", async () => {
+    const parentId = "parent-legacy-variants";
+    const childOneId = "child-legacy-variant-1";
+    const childTwoId = "child-legacy-variant-2";
+    const groupId = "legacy-variant-group";
+
+    const { config, historyService, partialService, taskService } =
+      await createBestOfTaskServiceTestHarness({
+        parentId,
+        children: [
+          {
+            id: childOneId,
+            name: "agent_explore_frontend",
+            title: "Split review",
+            taskStatus: "running",
+            bestOf: { groupId, index: 0, total: 2 },
+          },
+          {
+            id: childTwoId,
+            name: "agent_explore_backend",
+            title: "Split review",
+            taskStatus: "running",
+            bestOf: { groupId, index: 1, total: 2 },
+          },
+        ],
+      });
+
+    const configFile = path.join(config.rootDir, "config.json");
+    const rawConfig = JSON.parse(await fsPromises.readFile(configFile, "utf-8")) as {
+      projects: Array<[string, { workspaces: Array<Record<string, unknown>> }]>;
+    };
+    for (const [, project] of rawConfig.projects) {
+      for (const workspace of project.workspaces) {
+        if (workspace.id === childOneId) {
+          workspace.bestOf = {
+            groupId,
+            index: 0,
+            total: 2,
+            kind: "variants",
+            label: "frontend",
+          };
+        }
+        if (workspace.id === childTwoId) {
+          workspace.bestOf = {
+            groupId,
+            index: 1,
+            total: 2,
+            kind: "variants",
+            label: "backend",
+          };
+        }
+      }
+    }
+    await fsPromises.writeFile(configFile, JSON.stringify(rawConfig, null, 2));
+
+    const runtimeWorkspaces = Array.from(config.loadConfigOrDefault().projects.values()).flatMap(
+      (project) => project.workspaces
+    );
+    expect(
+      runtimeWorkspaces.find((workspace) => workspace.id === childOneId)?.bestOf
+    ).toBeUndefined();
+    expect(
+      runtimeWorkspaces.find((workspace) => workspace.id === childTwoId)?.bestOf
+    ).toBeUndefined();
+
+    await writePendingBestOfParentPartial({
+      partialService,
+      parentId,
+      messageId: "assistant-parent-legacy-variants-partial",
+      toolCallId: "task-legacy-variants-call",
+      title: "Split review",
+      legacyVariants: ["frontend", "backend"],
+      prompt: "Review ${variant} for regressions",
+      timestamp: Date.now(),
+    });
+
+    await finalizeReportedChildTaskForTest({
+      historyService,
+      partialService,
+      taskService,
+      childId: childOneId,
+      reportMarkdown: "Frontend findings",
+      title: "Frontend review",
+      prompt: "Review frontend for regressions",
+    });
+    expect(getTaskToolPart(await partialService.readPartial(parentId))?.state).toBe(
+      "input-available"
+    );
+
+    await finalizeReportedChildTaskForTest({
+      historyService,
+      partialService,
+      taskService,
+      childId: childTwoId,
+      reportMarkdown: "Backend findings",
+      title: "Backend review",
+      prompt: "Review backend for regressions",
+    });
+
+    const toolPart = getTaskToolPart(await partialService.readPartial(parentId));
+    expect(toolPart?.state).toBe("output-available");
+    const serializedOutput = JSON.stringify(toolPart?.output);
+    expect(serializedOutput).toContain("Frontend findings");
+    expect(serializedOutput).toContain("Backend findings");
+
+    const persisted = JSON.parse(await fsPromises.readFile(configFile, "utf-8")) as {
+      projects: Array<
+        [string, { workspaces: Array<{ id?: string; bestOf?: { kind?: string; label?: string } }> }]
+      >;
+    };
+    const persistedWorkspaces = persisted.projects.flatMap(([, project]) => project.workspaces);
+    expect(
+      persistedWorkspaces.find((workspace) => workspace.id === childOneId)?.bestOf
+    ).toMatchObject({ kind: "variants", label: "frontend" });
+    expect(
+      persistedWorkspaces.find((workspace) => workspace.id === childTwoId)?.bestOf
+    ).toMatchObject({ kind: "variants", label: "backend" });
   });
 
   // Test exercises real config + history + partial-on-disk I/O across many

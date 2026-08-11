@@ -262,7 +262,7 @@ describe("Config", () => {
   });
 
   describe("legacy task variant compatibility", () => {
-    it("loads and persists variant children as ordinary persistent sub-agents", async () => {
+    it("loads variant children as ordinary sub-agents without destroying downgrade metadata", async () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
@@ -312,13 +312,33 @@ describe("Config", () => {
       await flushConfigEdits();
       const persisted = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
         projects?: Array<
-          [string, { workspaces?: Array<{ id?: string; bestOf?: { groupId?: string } }> }]
+          [
+            string,
+            {
+              workspaces?: Array<{
+                id?: string;
+                bestOf?: {
+                  groupId?: string;
+                  index?: number;
+                  total?: number;
+                  kind?: string;
+                  label?: string;
+                };
+              }>;
+            },
+          ]
         >;
       };
       const persistedWorkspaces = persisted.projects?.[0]?.[1].workspaces;
       expect(
         persistedWorkspaces?.find((workspace) => workspace.id === "legacy-variant")?.bestOf
-      ).toBeUndefined();
+      ).toEqual({
+        groupId: "legacy-variant-group",
+        index: 0,
+        total: 2,
+        kind: "variants",
+        label: "frontend",
+      });
       expect(
         persistedWorkspaces?.find((workspace) => workspace.id === "best-of")?.bestOf?.groupId
       ).toBe("best-of-group");
@@ -357,6 +377,22 @@ describe("Config", () => {
       expect(metadata).toHaveLength(1);
       expect(metadata[0]?.parentWorkspaceId).toBe("parent");
       expect(metadata[0]?.bestOf).toBeUndefined();
+
+      const persisted = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        projects?: Array<
+          [
+            string,
+            { workspaces?: Array<{ id?: string; bestOf?: { kind?: string; label?: string } }> },
+          ]
+        >;
+      };
+      const persistedWorkspace = persisted.projects?.[0]?.[1].workspaces?.find(
+        (workspace) => workspace.id === "legacy-child"
+      );
+      expect(persistedWorkspace?.bestOf).toMatchObject({
+        kind: "variants",
+        label: "frontend",
+      });
     });
   });
 
