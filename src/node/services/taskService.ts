@@ -5664,6 +5664,7 @@ export class TaskService {
 
   async markWorkspaceTurnTerminalAttentionConsumed(params: {
     ownerWorkspaceId: string;
+    consumingWorkspaceId: string;
     handleId: string;
     status: WorkspaceTurnTaskStatus;
   }): Promise<void> {
@@ -5675,6 +5676,16 @@ export class TaskService {
       params.handleId.length > 0,
       "markWorkspaceTurnTerminalAttentionConsumed requires handleId"
     );
+    assert(
+      params.consumingWorkspaceId.length > 0,
+      "markWorkspaceTurnTerminalAttentionConsumed requires consumingWorkspaceId"
+    );
+    // A nested continuation's owner and direct parent can differ. Returning the result to the
+    // direct parent must not consume the owner-scoped workspace-turn wake for the ancestor that
+    // initiated the continuation.
+    if (params.consumingWorkspaceId !== params.ownerWorkspaceId) {
+      return;
+    }
     if (!this.isTerminalWorkspaceTurnStatus(params.status)) {
       return;
     }

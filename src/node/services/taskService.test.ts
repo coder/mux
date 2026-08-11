@@ -5388,6 +5388,12 @@ describe("TaskService", () => {
     );
     expect(consumed?.directParentResultDeliveredAt).toBe("2026-08-11T00:00:02.500Z");
     expect(consumed?.terminalAttentionNotifiedAt).toBeUndefined();
+    await taskService.markWorkspaceTurnTerminalAttentionConsumed({
+      ownerWorkspaceId: rootWorkspaceId,
+      consumingWorkspaceId: directParentTaskId,
+      handleId: terminal.handleId,
+      status: terminal.status,
+    });
     expect(
       await terminalAttentionStore.get(
         rootWorkspaceId,

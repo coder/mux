@@ -98,6 +98,7 @@ describe("task_await tool", () => {
     expect(result.results[0]?.finalMessage).toBeUndefined();
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
+      consumingWorkspaceId: "parent-workspace",
       handleId: "wst_done",
       status: "completed",
     });
@@ -175,6 +176,7 @@ describe("task_await tool", () => {
     expect(observedOptions.abortSignal).toBeInstanceOf(AbortSignal);
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-task",
+      consumingWorkspaceId: "root-workspace",
       handleId: "wst_nested",
       status: "completed",
     });
@@ -340,6 +342,7 @@ describe("task_await tool", () => {
 
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
+      consumingWorkspaceId: "parent-workspace",
       handleId: "wst_running",
       status: "completed",
     });
@@ -401,6 +404,7 @@ describe("task_await tool", () => {
     ]);
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
+      consumingWorkspaceId: "parent-workspace",
       handleId: "wst_race",
       status: "completed",
     });
@@ -453,6 +457,7 @@ describe("task_await tool", () => {
     ]);
     expect(markWorkspaceTurnTerminalAttentionConsumed).toHaveBeenCalledWith({
       ownerWorkspaceId: "parent-workspace",
+      consumingWorkspaceId: "parent-workspace",
       handleId: "wst_failed",
       status: "error",
     });

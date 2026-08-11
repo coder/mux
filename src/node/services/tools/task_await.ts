@@ -579,6 +579,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           ): Promise<void> => {
             await taskService.markWorkspaceTurnTerminalAttentionConsumed?.({
               ownerWorkspaceId: workspaceTurnOwnerId,
+              consumingWorkspaceId: workspaceId,
               handleId: workspaceTurnTaskId,
               status,
             });
