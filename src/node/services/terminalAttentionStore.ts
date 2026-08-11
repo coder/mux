@@ -50,6 +50,8 @@ export interface TerminalAttentionNotification {
   ownerWorkspaceId: string;
   sourceKind: TerminalAttentionSourceKind;
   sourceId: string;
+  /** Optional internal execution generation; keeps repeated stable-child assignments independent. */
+  generationId?: string;
   outputDelivery: TerminalAttentionOutputDelivery;
   terminalOutcome: TerminalAttentionOutcome;
   status: TerminalAttentionStatus;
@@ -62,6 +64,7 @@ const TerminalAttentionNotificationSchema = z.object({
   ownerWorkspaceId: z.string().min(1),
   sourceKind: z.enum(TERMINAL_ATTENTION_SOURCE_KINDS),
   sourceId: z.string().min(1),
+  generationId: z.string().min(1).optional(),
   outputDelivery: z.enum(TERMINAL_ATTENTION_OUTPUT_DELIVERIES),
   terminalOutcome: z.enum(TERMINAL_ATTENTION_OUTCOMES),
   status: z.enum(TERMINAL_ATTENTION_STATUSES),
@@ -82,9 +85,15 @@ export class TerminalAttentionStore {
     return path.join(this.config.getSessionDir(ownerWorkspaceId), TERMINAL_ATTENTION_DIR);
   }
 
-  /** Stable id keyed by source so re-enqueuing the same terminal source is idempotent. */
-  static notificationId(sourceKind: TerminalAttentionSourceKind, sourceId: string): string {
-    return `${sourceKind}:${sourceId}`;
+  /** Stable id keyed by source and optional execution generation for per-assignment idempotency. */
+  static notificationId(
+    sourceKind: TerminalAttentionSourceKind,
+    sourceId: string,
+    generationId?: string
+  ): string {
+    return generationId == null
+      ? `${sourceKind}:${sourceId}`
+      : `${sourceKind}:${sourceId}:${generationId}`;
   }
 
   private file(ownerWorkspaceId: string, id: string): string {
@@ -107,7 +116,8 @@ export class TerminalAttentionStore {
   ): Promise<TerminalAttentionNotification | null> {
     const id = TerminalAttentionStore.notificationId(
       notification.sourceKind,
-      notification.sourceId
+      notification.sourceId,
+      notification.generationId
     );
     const existing = await this.get(notification.ownerWorkspaceId, id);
     if (existing != null) {
@@ -118,6 +128,7 @@ export class TerminalAttentionStore {
       ownerWorkspaceId: notification.ownerWorkspaceId,
       sourceKind: notification.sourceKind,
       sourceId: notification.sourceId,
+      ...(notification.generationId != null ? { generationId: notification.generationId } : {}),
       outputDelivery: outputDeliveryForSource(notification.sourceKind),
       terminalOutcome: notification.terminalOutcome ?? "completed",
       status: "pending",

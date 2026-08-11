@@ -11347,27 +11347,38 @@ describe("TaskService", () => {
       success: true,
       data: { delivery: "reactivated" },
     });
+    if (!reactivated.success || reactivated.data.delivery !== "reactivated") return;
     expect(await terminalAttentionStore.get(parentWorkspaceId, pendingAttention.id)).toMatchObject({
       status: "pending",
     });
-    // The old wake may drain while the new continuation is still running. When this generation
-    // later reports, its older timestamp identifies the delivered tombstone as stale and re-arms it.
+
+    // The old wake may drain while the new continuation is still running. This generation uses a
+    // distinct notification ID, so its eventual report can enqueue independently without racing the
+    // prior record's transition or relying on either record's timestamp.
     await terminalAttentionStore.markDelivered(parentWorkspaceId, pendingAttention.id);
-    await (
+    const generationId = await (
       taskService as unknown as {
-        rearmAgentTerminalAttentionForCurrentExecution: (
+        getAgentTerminalAttentionGenerationId: (
           ownerWorkspaceId: string,
           childTaskId: string
-        ) => Promise<void>;
+        ) => Promise<string | undefined>;
       }
-    ).rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childTaskId);
-    expect(
-      await terminalAttentionStore.enqueueIfAbsent({
-        ownerWorkspaceId: parentWorkspaceId,
-        sourceKind: "agent_task",
-        sourceId: childTaskId,
-      })
-    ).toMatchObject({ status: "pending" });
+    ).getAgentTerminalAttentionGenerationId(parentWorkspaceId, childTaskId);
+    expect(generationId).toBe(reactivated.data.executionTaskId);
+    const generationAttention = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+      generationId,
+    });
+    expect(generationAttention).toMatchObject({
+      status: "pending",
+      generationId: reactivated.data.executionTaskId,
+    });
+    expect(generationAttention?.id).not.toBe(pendingAttention.id);
+    expect(await terminalAttentionStore.get(parentWorkspaceId, pendingAttention.id)).toMatchObject({
+      status: "delivered",
+    });
   });
 
   test("concurrent inactive-child messages create only one continuation execution", async () => {

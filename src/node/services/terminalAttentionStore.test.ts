@@ -95,6 +95,34 @@ describe("TerminalAttentionStore", () => {
     expect(await store.listPending("owner-1")).toHaveLength(1);
   });
 
+  test("agent task generations enqueue independently of prior state or timestamps", async () => {
+    const store = new TerminalAttentionStore(makeConfig(rootDir));
+    const legacy = await store.enqueueIfAbsent({
+      ownerWorkspaceId: "owner-1",
+      sourceKind: "agent_task",
+      sourceId: "task-1",
+      createdAt: "zzz",
+    });
+    expect(legacy).not.toBeNull();
+    await store.markDelivered("owner-1", legacy!.id);
+
+    const generation = await store.enqueueIfAbsent({
+      ownerWorkspaceId: "owner-1",
+      sourceKind: "agent_task",
+      sourceId: "task-1",
+      generationId: "wst_generation_2",
+    });
+
+    expect(generation).not.toBeNull();
+    if (generation == null) return;
+    expect(generation).toMatchObject({
+      id: "agent_task:task-1:wst_generation_2",
+      generationId: "wst_generation_2",
+      status: "pending",
+    });
+    expect(await store.listPending("owner-1")).toEqual([generation]);
+  });
+
   test("delivered notifications are not redelivered and survive reload", async () => {
     const config = makeConfig(rootDir);
     const store = new TerminalAttentionStore(config);

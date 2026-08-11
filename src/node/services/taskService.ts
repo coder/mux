@@ -5672,39 +5672,15 @@ export class TaskService {
     );
   }
 
-  private async rearmAgentTerminalAttentionForCurrentExecution(
+  private async getAgentTerminalAttentionGenerationId(
     ownerWorkspaceId: string,
     childTaskId: string
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     const execution = await this.getDescendantAgentTaskExecutionSnapshot(
       ownerWorkspaceId,
       childTaskId
     );
-    if (execution == null) {
-      return;
-    }
-
-    const notificationId = TerminalAttentionStore.notificationId("agent_task", childTaskId);
-    const previousAttention = await this.terminalAttentionStore.get(
-      ownerWorkspaceId,
-      notificationId
-    );
-    if (previousAttention == null || previousAttention.status === "pending") {
-      return;
-    }
-
-    const previousCreatedAt = Date.parse(previousAttention.createdAt);
-    const executionCreatedAt = Date.parse(execution.record.createdAt);
-    if (
-      Number.isFinite(previousCreatedAt) &&
-      Number.isFinite(executionCreatedAt) &&
-      previousCreatedAt < executionCreatedAt
-    ) {
-      // Re-arm only when the terminal result for a newer continuation generation is about to enqueue.
-      // A prior pending wake remains authoritative and can deliver all injected context; if it was
-      // delivered while this generation ran, its older timestamp proves the tombstone is now stale.
-      await this.terminalAttentionStore.delete(ownerWorkspaceId, notificationId);
-    }
+    return execution?.record.handleId;
   }
 
   private async enqueueTerminalAttention(params: {
@@ -5712,6 +5688,7 @@ export class TaskService {
     sourceKind: TerminalAttentionNotification["sourceKind"];
     terminalOutcome: TerminalAttentionOutcome;
     sourceId: string;
+    generationId?: string;
   }): Promise<void> {
     const created = await this.terminalAttentionStore.enqueueIfAbsent(params);
     if (created == null) {
@@ -11127,12 +11104,16 @@ export class TaskService {
     // The failure message is already injected above. Enqueue even when other children are active:
     // the drain defers on blocking work, and the later settling child may have a foreground waiter
     // that suppresses its own terminal wake-up.
-    await this.rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childWorkspaceId);
+    const generationId = await this.getAgentTerminalAttentionGenerationId(
+      parentWorkspaceId,
+      childWorkspaceId
+    );
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       terminalOutcome: "failed",
       sourceId: childWorkspaceId,
+      ...(generationId != null ? { generationId } : {}),
     });
   }
 
@@ -12120,12 +12101,16 @@ export class TaskService {
     // The report is already injected into parent history above (deliverReportToParent). Enqueue the
     // notification even when other children are still active: the drain defers on blocking work and
     // a later foreground-awaited sibling may suppress its own wake-up.
-    await this.rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childWorkspaceId);
+    const generationId = await this.getAgentTerminalAttentionGenerationId(
+      parentWorkspaceId,
+      childWorkspaceId
+    );
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       terminalOutcome: "completed",
       sourceId: childWorkspaceId,
+      ...(generationId != null ? { generationId } : {}),
     });
 
     return { finalized: true };
