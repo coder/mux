@@ -136,6 +136,16 @@ export class CoderOauthService {
       await this.revokeTokens(auth.deploymentUrl, auth);
     }
 
+    // Revocation may be slow, and the UI keeps login available while it runs:
+    // a re-login can complete in the meantime. Only clear when the stored
+    // credential is still the one this disconnect captured.
+    this.cachedAuth = null;
+    const current = this.readStoredAuth();
+    if (auth && current && current.refresh !== auth.refresh) {
+      log.debug("[Coder OAuth] Disconnect raced a newer login; keeping the new credentials");
+      return Ok(undefined);
+    }
+
     this.cachedAuth = null;
     const clearAuthResult = await this.providerService.setConfigValue(
       "coder",
@@ -278,7 +288,7 @@ export class CoderOauthService {
       // Model discovery runs only after the flow is committed: Cancel is no
       // longer possible, so this network await cannot strand half-cancelled
       // state (persisted auth with a cancelled flow).
-      await this.refreshBridgeModels(deploymentUrl, exchangeResult.data.access);
+      await this.refreshBridgeModels(exchangeResult.data);
     })();
 
     log.debug(`[Coder OAuth] Desktop flow started (flowId=${flowId})`);
@@ -329,6 +339,10 @@ export class CoderOauthService {
     await using _lock = await this.refreshMutex.acquire();
 
     // Re-read after acquiring lock in case another caller refreshed first.
+    // Drop the in-memory cache: the mutex is process-local, and a concurrent
+    // desktop/CLI process sharing providers.jsonc may have rotated the tokens
+    // on disk while we waited.
+    this.cachedAuth = null;
     const latest = this.readStoredAuth();
     if (!latest) {
       return Err("Coder OAuth is not configured. Use 'Login with Coder' in Settings.");
@@ -618,6 +632,23 @@ export class CoderOauthService {
       // When the refresh token is invalid/revoked (rotation means a reused token
       // is dead), clear persisted auth so requests surface "reconnect" errors.
       if (result.invalidGrant) {
+        // The refresh mutex is process-local: a concurrent desktop/CLI process
+        // sharing providers.jsonc may have consumed this refresh token and
+        // persisted the rotated one. Re-read disk and only clear when the
+        // rejected token is still the stored one — otherwise adopt the
+        // winner's credential instead of erasing it.
+        this.cachedAuth = null;
+        const stored = this.readStoredAuth();
+        if (stored && stored.refresh !== current.refresh) {
+          log.debug("[Coder OAuth] Refresh lost a cross-process rotation race; adopting winner");
+          if (!isCoderOauthAuthExpired(stored)) {
+            return Ok(stored);
+          }
+          // Recursion is bounded: it only recurses when the on-disk token
+          // changed again since the last attempt.
+          return this.refreshTokens(stored);
+        }
+
         log.debug("[Coder OAuth] Refresh token rejected; clearing stored auth");
         this.cachedAuth = null;
         const clearResult = await this.providerService.setConfigValue(
@@ -762,14 +793,14 @@ export class CoderOauthService {
   // Model list refresh (AI Bridge passthrough catalogs)
   // -------------------------------------------------------------------------
 
-  private async refreshBridgeModels(deploymentUrl: string, accessToken: string): Promise<void> {
+  private async refreshBridgeModels(auth: CoderOauthAuth): Promise<void> {
     const modelIds: string[] = [];
 
     for (const origin of CODER_AIBRIDGE_ORIGINS) {
       try {
-        const response = await fetch(`${coderAibridgeBaseUrl(deploymentUrl, origin)}/models`, {
+        const response = await fetch(`${coderAibridgeBaseUrl(auth.deploymentUrl, origin)}/models`, {
           headers: {
-            Authorization: `Bearer ${accessToken}`,
+            Authorization: `Bearer ${auth.access}`,
             Accept: "application/json",
           },
         });
@@ -789,6 +820,21 @@ export class CoderOauthService {
       } catch (error) {
         log.debug(`[Coder OAuth] Failed to fetch ${origin} models: ${getErrorMessage(error)}`);
       }
+    }
+
+    // Discovery races logins/disconnects: the flow resolves before this runs,
+    // so a newer login (or a disconnect) may have replaced or cleared the
+    // stored credential while catalogs were fetched. Only the login whose
+    // tokens are still current may commit the catalog.
+    this.cachedAuth = null;
+    const current = this.readStoredAuth();
+    if (
+      !current ||
+      current.access !== auth.access ||
+      current.deploymentUrl !== auth.deploymentUrl
+    ) {
+      log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
+      return;
     }
 
     // Always overwrite the persisted catalog — including with an empty list —

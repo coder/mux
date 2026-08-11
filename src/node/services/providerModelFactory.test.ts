@@ -2061,6 +2061,44 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("routes through the policy-forced base URL instead of the user-editable deployment URL", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder", base_url: "https://locked.coder.example.com" }],
+      },
+      async (config, factory) => {
+        const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+        let capturedBaseURL: string | undefined;
+
+        // User-editable deploymentUrl points elsewhere; policy must win.
+        saveCoderConfig(config);
+        factory.coderOauthService = stubCoderOauthService();
+
+        PROVIDER_REGISTRY.anthropic = async () => {
+          const module = await originalAnthropicRegistry();
+          return {
+            ...module,
+            createAnthropic: (options) => {
+              capturedBaseURL = options?.baseURL;
+              return module.createAnthropic(options);
+            },
+          };
+        };
+
+        try {
+          const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+          expect(result.success).toBe(true);
+          expect(capturedBaseURL).toBe(
+            "https://locked.coder.example.com/api/v2/aibridge/anthropic/v1"
+          );
+        } finally {
+          PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+        }
+      }
+    );
+  });
+
   it("refuses to attach credentials minted by a different deployment than the model's", async () => {
     await withTempConfig(async (config, factory) => {
       const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;

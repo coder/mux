@@ -334,6 +334,36 @@ describe("CoderOauthService", () => {
       }
     });
 
+    it("adopts a concurrently rotated credential instead of clearing it on invalid_grant", async () => {
+      // The refresh mutex is process-local: another process (desktop vs CLI)
+      // can consume our refresh token and persist the rotated one. Losing that
+      // race must not wipe the winner's valid credential.
+      const expired = expiredAuth({ refresh: "rt_loser" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expired } };
+
+      const winner = validAuth({ access: "at_winner", refresh: "rt_winner" });
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          // Simulate the other process having already rotated the tokens on disk.
+          deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: winner } };
+          return Promise.resolve(jsonResponse({ error: "invalid_grant" }, 400));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.access).toBe("at_winner");
+      }
+      // The winner's credential was NOT cleared.
+      const cleared = deps.setConfigValueCalls.find(
+        (c) => c.keyPath[0] === "coderOauth" && c.value === undefined
+      );
+      expect(cleared).toBeUndefined();
+    });
+
     it("rejects tokens minted by a different deployment without any network call", async () => {
       // Even non-expired tokens must never be handed out for a different
       // deployment: the bearer token would leak to the new host.
@@ -847,6 +877,71 @@ describe("CoderOauthService", () => {
       expect(deps.setModelsCalls[0].provider).toBe("coder");
       expect(deps.setModelsCalls[0].models).toEqual([]);
     });
+
+    it("skips the model catalog write when the login was superseded during discovery", async () => {
+      // Gate the catalog fetch so a newer login can land while discovery runs.
+      let releaseCatalog!: () => void;
+      const catalogGate = new Promise<void>((resolve) => (releaseCatalog = resolve));
+      let catalogStarted!: () => void;
+      const catalogStartedPromise = new Promise<void>((resolve) => (catalogStarted = resolve));
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_slow_login",
+            refresh_token: "rt_slow_login",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          catalogStarted();
+          await catalogGate;
+          return jsonResponse({ data: [{ id: "stale-model" }] });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_slow");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // While discovery is blocked, a newer login replaces the stored credential.
+      await catalogStartedPromise;
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ access: "at_newer_login", refresh: "rt_newer_login" }),
+        },
+      };
+      releaseCatalog();
+
+      // The stale discovery must not commit its catalog over the newer login's.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(deps.setModelsCalls).toHaveLength(0);
+    });
   });
 
   describe("cancelDesktopFlow", () => {
@@ -913,6 +1008,32 @@ describe("CoderOauthService", () => {
       );
       expect(clearCall).toBeDefined();
       expect(deps.setModelsCalls).toEqual([{ provider: "coder", models: [] }]);
+    });
+
+    it("does not clear a newer login that completed while revocation was pending", async () => {
+      const oldAuth = validAuth({ refresh: "rt_old" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: oldAuth } };
+
+      const newAuth = validAuth({ access: "at_new", refresh: "rt_new" });
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          // Simulate a re-login completing while the (slow) revocation runs.
+          deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: newAuth } };
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.disconnect();
+      expect(result.success).toBe(true);
+
+      // The new login's credential and models were left intact.
+      const cleared = deps.setConfigValueCalls.find(
+        (c) => c.keyPath[0] === "coderOauth" && c.value === undefined
+      );
+      expect(cleared).toBeUndefined();
+      expect(deps.setModelsCalls).toHaveLength(0);
     });
 
     it("still clears auth when revocation fails", async () => {

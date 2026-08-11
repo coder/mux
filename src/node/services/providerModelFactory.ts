@@ -42,7 +42,11 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CoderOauthService } from "@/node/services/coderOauthService";
-import { coderAibridgeBaseUrl, isCoderAibridgeOrigin } from "@/common/constants/coderOAuth";
+import {
+  coderAibridgeBaseUrl,
+  isCoderAibridgeOrigin,
+  normalizeCoderDeploymentUrl,
+} from "@/common/constants/coderOAuth";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
@@ -1916,7 +1920,25 @@ export class ProviderModelFactory {
         if (!creds.isConfigured || !creds.deploymentUrl) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-        const deploymentUrl = creds.deploymentUrl;
+
+        // Policy: an enforced forcedBaseUrl must win over the user-editable
+        // deploymentUrl, otherwise Coder traffic would bypass the policy-locked
+        // endpoint. The issuer check in the fetch wrapper below then also
+        // requires the OAuth tokens to have been minted by that deployment.
+        const coderForcedBaseUrl = this.policyService?.isEnforced()
+          ? this.policyService.getForcedBaseUrl("coder")
+          : undefined;
+        let deploymentUrl = creds.deploymentUrl;
+        if (coderForcedBaseUrl) {
+          const normalizedForced = normalizeCoderDeploymentUrl(coderForcedBaseUrl);
+          if (!normalizedForced) {
+            return Err({
+              type: "invalid_model_string",
+              message: `Policy-forced Coder base URL is not a valid deployment URL: ${coderForcedBaseUrl}`,
+            });
+          }
+          deploymentUrl = normalizedForced;
+        }
 
         const coderOauthService = this.coderOauthService;
         if (!coderOauthService) {
