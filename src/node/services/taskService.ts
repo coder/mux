@@ -7874,7 +7874,6 @@ export class TaskService {
       record == null ||
       consumingWorkspaceId == null ||
       record.directParentResultDeliveryRequiredAt == null ||
-      record.directParentResultDeliveredAt != null ||
       !this.workspaceTurnRequiresDirectParentDelivery(record)
     ) {
       return record;
@@ -7904,7 +7903,7 @@ export class TaskService {
 
     const consumed = {
       ...record,
-      directParentResultDeliveredAt: consumedAt,
+      directParentResultDeliveredAt: record.directParentResultDeliveredAt ?? consumedAt,
       ...(consumesTerminalAttention
         ? { terminalAttentionNotifiedAt: record.terminalAttentionNotifiedAt ?? consumedAt }
         : {}),

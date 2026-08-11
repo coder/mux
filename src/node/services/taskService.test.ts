@@ -5260,10 +5260,15 @@ describe("TaskService", () => {
         waiterWorkspaceIds: ReadonlySet<string>
       ) => Promise<void>;
     };
+    const deliverPersistentChildWorkspaceTurnResult =
+      internal.deliverPersistentChildWorkspaceTurnResult.bind(taskService);
     const delivery = spyOn(
       internal,
       "deliverPersistentChildWorkspaceTurnResult"
-    ).mockImplementation(async () => {
+    ).mockImplementation(async (record, waiterWorkspaceIds) => {
+      // Preserve the production direct-parent report/marker path, then pause before
+      // settleWorkspaceTurn can re-arm the corrected private workspace-turn wake.
+      await deliverPersistentChildWorkspaceTurnResult(record, waiterWorkspaceIds);
       signalPostSettlementDelivery();
       await postSettlementDeliveryBlocked;
     });
@@ -5306,7 +5311,11 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.get(parentId, "workspace_turn:wst_handle")).toMatchObject({
       status: "delivered",
     });
-    expect(await terminalAttentionStore.listPending(parentId)).toEqual([]);
+    expect(
+      (await terminalAttentionStore.listPending(parentId)).filter(
+        (notification) => notification.sourceKind === "workspace_turn"
+      )
+    ).toEqual([]);
   });
 
   test("getWorkspaceTurnSnapshot revives an interrupted handle while the child retries the same turn", async () => {
