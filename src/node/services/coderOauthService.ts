@@ -31,6 +31,15 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 
+// The buildinfo/discovery probes run before a flow ID exists, so the Settings
+// Cancel button cannot reach them — they must be time-bounded or a deployment
+// that accepts connections but stalls would pin the UI in "starting" forever.
+const DEPLOYMENT_PROBE_TIMEOUT_MS = 10_000;
+
+// Token revocation is best-effort cleanup; bound it so a stalled revocation
+// endpoint can never pin a mutex or an abandoned flow's cleanup indefinitely.
+const REVOKE_TIMEOUT_MS = 10_000;
+
 /** RFC 8414 endpoints resolved from the deployment's discovery document. */
 interface CoderOauthEndpoints {
   authorizationEndpoint: string;
@@ -119,16 +128,36 @@ export class CoderOauthService {
   // across overlapping flows (see commitDesktopLogin for the invariant).
   private readonly loginCommitMutex = new AsyncMutex();
 
+  // The stored dynamic client has a single redirect_uris slot (see
+  // buildCoderClientMetadata), making it a shared mutable resource: two
+  // overlapping flows PUT-updating it would clobber each other's ephemeral
+  // loopback URI and invalidate the earlier flow's authorize URL. At most one
+  // active flow may own (reuse + update) the stored client; overlapping flows
+  // register fresh clients instead.
+  private storedClientOwnerFlowId: string | null = null;
+
   // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
-  // Invalidated on every write (exchange, refresh, disconnect).
+  // Invalidated on every write (exchange, refresh, disconnect) AND on every
+  // provider-config change notification (below).
   private cachedAuth: CoderOauthAuth | null = null;
+
+  private readonly unsubscribeConfigChanged: () => void;
 
   constructor(
     private readonly config: Config,
     private readonly providerService: ProviderService,
     private readonly windowService?: WindowService,
     private readonly policyService?: PolicyService
-  ) {}
+  ) {
+    // Another Mux process sharing providers.jsonc (desktop vs `mux run`) can
+    // disconnect or re-login to the SAME deployment; the deployment URL then
+    // still matches, so without invalidation getValidAuth would keep serving
+    // the stale cached token until it expires. onConfigChanged fires for both
+    // in-app writes and external file-watcher events.
+    this.unsubscribeConfigChanged = this.providerService.onConfigChanged(() => {
+      this.cachedAuth = null;
+    });
+  }
 
   /**
    * An enforced policy forcedBaseUrl overrides every user-supplied or stored
@@ -299,11 +328,28 @@ export class CoderOauthService {
     const registrationAbort = new AbortController();
     void resultDeferred.promise.then(() => registrationAbort.abort());
 
+    // Reserve the stored client's single redirect slot for this flow, or —
+    // when another active flow already owns it — fall back to registering a
+    // fresh client so the flows' redirect URIs cannot clobber each other.
+    // Check-and-set is synchronous, so concurrent starts cannot both reserve.
+    // The reservation is released when this flow finishes (the flow manager
+    // resolves resultDeferred on every completion/cancel/timeout path).
+    const ownsStoredClient = this.storedClientOwnerFlowId === null;
+    if (ownsStoredClient) {
+      this.storedClientOwnerFlowId = flowId;
+      void resultDeferred.promise.then(() => {
+        if (this.storedClientOwnerFlowId === flowId) {
+          this.storedClientOwnerFlowId = null;
+        }
+      });
+    }
+
     const clientResult = await this.ensureClient(
       deploymentUrl,
       endpoints,
       loopback.redirectUri,
-      registrationAbort.signal
+      registrationAbort.signal,
+      ownsStoredClient
     );
     if (!clientResult.success) {
       // No-op if the flow already ended (its cancel/timeout aborted the RPC);
@@ -454,6 +500,7 @@ export class CoderOauthService {
   }
 
   async dispose(): Promise<void> {
+    this.unsubscribeConfigChanged();
     await this.desktopFlows.shutdownAll();
   }
 
@@ -465,6 +512,7 @@ export class CoderOauthService {
     try {
       const response = await fetch(`${deploymentUrl}${CODER_BUILDINFO_PATH}`, {
         headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(DEPLOYMENT_PROBE_TIMEOUT_MS),
       });
       if (!response.ok) {
         return Err(
@@ -489,6 +537,7 @@ export class CoderOauthService {
     try {
       const response = await fetch(`${deploymentUrl}${CODER_OAUTH_DISCOVERY_PATH}`, {
         headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(DEPLOYMENT_PROBE_TIMEOUT_MS),
       });
       if (!response.ok) {
         return Err(
@@ -536,13 +585,17 @@ export class CoderOauthService {
     redirectUri: string,
     // Aborted when the owning flow finishes (cancel/timeout/shutdown), so a
     // stalled registration endpoint cannot pin the RPC past the flow's life.
-    signal: AbortSignal
+    signal: AbortSignal,
+    // Only the flow holding the stored-client reservation may reuse (and
+    // redirect-update) it; see storedClientOwnerFlowId.
+    allowStoredClient: boolean
   ): Promise<Result<CoderOauthClient, string>> {
     const stored = this.readStoredAuth();
     // Only reuse a client registered on the SAME deployment; a client from a
     // different deployment is meaningless there (and its RFC 7592 endpoint
     // would point at the old host).
     if (
+      allowStoredClient &&
       stored?.deploymentUrl === deploymentUrl &&
       stored.registrationAccessToken &&
       stored.registrationClientUri
@@ -680,6 +733,34 @@ export class CoderOauthService {
       "sendSuccessResponse" | "sendFailureResponse"
     >
   ): Promise<boolean> {
+    const outcome = await this.commitDesktopLoginLocked(flowId, deploymentUrl, auth, loopback);
+
+    // Revocation of a cancelled login's tokens is best-effort network I/O
+    // against a possibly stalled endpoint: it runs AFTER the commit lock is
+    // released so one abandoned flow's cleanup can never block later logins
+    // from committing (the fetch is additionally time-bounded, see
+    // REVOKE_TIMEOUT_MS).
+    if (outcome === "cancelled") {
+      await this.revokeTokens(deploymentUrl, auth);
+    }
+
+    return outcome === "committed";
+  }
+
+  /**
+   * The persist -> finish/rollback critical section of commitDesktopLogin;
+   * "cancelled" means the caller must revoke the raced login's tokens (after
+   * the lock is released).
+   */
+  private async commitDesktopLoginLocked(
+    flowId: string,
+    deploymentUrl: string,
+    auth: CoderOauthAuth,
+    loopback: Pick<
+      Awaited<ReturnType<typeof startLoopbackServer>>,
+      "sendSuccessResponse" | "sendFailureResponse"
+    >
+  ): Promise<"committed" | "cancelled" | "failed"> {
     await using _commitLock = await this.loginCommitMutex.acquire();
 
     // The flow may have been cancelled (or timed out) while the exchange
@@ -687,8 +768,7 @@ export class CoderOauthService {
     // anyway would leave the account connected after the user clicked
     // Cancel — drop and revoke the tokens.
     if (!this.desktopFlows.has(flowId)) {
-      await this.revokeTokens(deploymentUrl, auth);
-      return false;
+      return "cancelled";
     }
 
     // Persist the new credentials, the deployment URL they belong to, and a
@@ -723,13 +803,12 @@ export class CoderOauthService {
     if (!persistResult.success) {
       loopback.sendFailureResponse(persistResult.error);
       await this.desktopFlows.finish(flowId, Err(persistResult.error));
-      return false;
+      return "failed";
     }
     if (!persistResult.data.applied) {
       // Cancel won while the mutation waited for the providers-file lock; the
       // flow is already finished, so only the raced tokens need cleanup.
-      await this.revokeTokens(deploymentUrl, auth);
-      return false;
+      return "cancelled";
     }
 
     // Cancellation may also race the window between the persist write and
@@ -739,7 +818,7 @@ export class CoderOauthService {
     // account stays connected).
     if (!this.desktopFlows.has(flowId)) {
       await this.rollbackPersistedAuth(auth, previousSection);
-      return false;
+      return "cancelled";
     }
 
     loopback.sendSuccessResponse();
@@ -748,7 +827,7 @@ export class CoderOauthService {
 
     log.debug("[Coder OAuth] Desktop login committed");
 
-    return true;
+    return "committed";
   }
 
   /**
@@ -759,7 +838,8 @@ export class CoderOauthService {
    * a newer cross-process write that landed in between is kept. Runs under
    * the login commit lock (see commitDesktopLogin), so the restored snapshot
    * is always a committed section, never another in-process flow's pending
-   * login. The cancelled login's tokens are revoked either way.
+   * login. The caller revokes the cancelled login's tokens after the lock is
+   * released.
    */
   private async rollbackPersistedAuth(
     auth: CoderOauthAuth,
@@ -780,7 +860,6 @@ export class CoderOauthService {
     } else if (!restoreResult.data.applied) {
       log.debug("[Coder OAuth] Rollback skipped: a newer login already replaced the credentials");
     }
-    await this.revokeTokens(auth.deploymentUrl, auth);
   }
 
   private async refreshTokens(current: CoderOauthAuth): Promise<Result<CoderOauthAuth, string>> {
@@ -983,6 +1062,7 @@ export class CoderOauthService {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
+        signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
       });
     } catch (error) {
       log.debug(`[Coder OAuth] Best-effort token revocation failed: ${getErrorMessage(error)}`);

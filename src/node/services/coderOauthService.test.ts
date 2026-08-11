@@ -96,6 +96,8 @@ interface MockDeps {
   setConfigValueCalls: Array<{ provider: string; keyPath: string[]; value: unknown }>;
   setModelsCalls: Array<{ provider: string; models: ProviderModelEntry[] }>;
   focusCalls: number;
+  /** Listeners registered via onConfigChanged (fire to simulate external file changes). */
+  configChangedListeners: Array<() => void>;
 }
 
 function createMockDeps(): MockDeps {
@@ -104,6 +106,7 @@ function createMockDeps(): MockDeps {
     setConfigValueCalls: [],
     setModelsCalls: [],
     focusCalls: 0,
+    configChangedListeners: [],
   };
 }
 
@@ -186,7 +189,7 @@ function createMockProviderService(
   deps: MockDeps
 ): Pick<
   ProviderService,
-  "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
+  "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection" | "onConfigChanged"
 > {
   return {
     setConfigValue: (provider, keyPath, value) =>
@@ -197,6 +200,12 @@ function createMockProviderService(
     setModels: (provider: string, models: ProviderModelEntry[]): Promise<Result<void, string>> => {
       deps.setModelsCalls.push({ provider, models });
       return Promise.resolve(Ok(undefined));
+    },
+    onConfigChanged: (callback: () => void) => {
+      deps.configChangedListeners.push(callback);
+      return () => {
+        deps.configChangedListeners = deps.configChangedListeners.filter((l) => l !== callback);
+      };
     },
   };
 }
@@ -491,6 +500,43 @@ describe("CoderOauthService", () => {
         expect(result.error).toContain("deployment URL changed");
       }
       expect(fetchCalls).toBe(0);
+    });
+
+    it("serves credentials written by another process after a config-change notification", async () => {
+      // Another Mux process sharing providers.jsonc re-logs in to the SAME
+      // deployment: the deployment URL still matches, so only the config
+      // change notification (file watcher) can tell this process its cached
+      // token is stale. getValidAuth must serve the new on-disk credential,
+      // not the cached one, until expiry.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      const first = await service.getValidAuth();
+      expect(first.success).toBe(true);
+      if (first.success) {
+        expect(first.data.access).toBe("at_test");
+      }
+
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({
+            sessionId: "session_other_process",
+            access: "at_other",
+            refresh: "rt_other",
+          }),
+        },
+      };
+      for (const listener of deps.configChangedListeners) {
+        listener();
+      }
+
+      const second = await service.getValidAuth();
+      expect(second.success).toBe(true);
+      if (second.success) {
+        expect(second.data.access).toBe("at_other");
+      }
     });
   });
 
@@ -976,23 +1022,18 @@ describe("CoderOauthService", () => {
       const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
       let revokeBody: URLSearchParams | null = null;
 
-      const gatedProviderService: Pick<
-        ProviderService,
-        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
-      > = {
-        setConfigValue: (provider, keyPath, value) =>
-          mockSetConfigValue(deps, provider, keyPath, value),
-        updateConfigValue: (provider, keyPath, update) =>
-          mockUpdateConfigValue(deps, provider, keyPath, update),
-        updateProviderSection: async (provider, update) => {
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
           // Gate credential writes (login persists route through updateProviderSection).
           persistStarted();
           await persistGate;
           return mockUpdateProviderSection(deps, provider, update);
-        },
-        setModels: (provider, models) => {
-          deps.setModelsCalls.push({ provider, models });
-          return Promise.resolve(Ok(undefined));
         },
       };
       service = new CoderOauthService(
@@ -1077,22 +1118,17 @@ describe("CoderOauthService", () => {
       const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
       let revokeBody: URLSearchParams | null = null;
 
-      const gatedProviderService: Pick<
-        ProviderService,
-        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
-      > = {
-        setConfigValue: (provider, keyPath, value) =>
-          mockSetConfigValue(deps, provider, keyPath, value),
-        updateConfigValue: (provider, keyPath, update) =>
-          mockUpdateConfigValue(deps, provider, keyPath, update),
-        updateProviderSection: async (provider, update) => {
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
           persistStarted();
           await persistGate;
           return mockUpdateProviderSection(deps, provider, update);
-        },
-        setModels: (provider, models) => {
-          deps.setModelsCalls.push({ provider, models });
-          return Promise.resolve(Ok(undefined));
         },
       };
       service = new CoderOauthService(
@@ -1190,15 +1226,14 @@ describe("CoderOauthService", () => {
       );
       let sectionCalls = 0;
 
-      const gatedProviderService: Pick<
-        ProviderService,
-        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
-      > = {
-        setConfigValue: (provider, keyPath, value) =>
-          mockSetConfigValue(deps, provider, keyPath, value),
-        updateConfigValue: (provider, keyPath, update) =>
-          mockUpdateConfigValue(deps, provider, keyPath, update),
-        updateProviderSection: async (provider, update) => {
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
           const call = ++sectionCalls;
           const result = await mockUpdateProviderSection(deps, provider, update);
           if (call === 1) {
@@ -1208,10 +1243,6 @@ describe("CoderOauthService", () => {
             await gates[call - 1];
           }
           return result;
-        },
-        setModels: (provider, models) => {
-          deps.setModelsCalls.push({ provider, models });
-          return Promise.resolve(Ok(undefined));
         },
       };
       service = new CoderOauthService(
@@ -1236,6 +1267,11 @@ describe("CoderOauthService", () => {
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
           return jsonResponse({ client_id: "client_test" });
+        }
+        // The second overlapping flow registers a fresh client instead of
+        // updating the stored one (stored-client reservation).
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
           const body = new URLSearchParams(fetchBodyText(init));
@@ -1340,6 +1376,164 @@ describe("CoderOauthService", () => {
       if (!startResult.success) {
         expect(startResult.error).toContain("registration failed");
       }
+    });
+
+    it("registers a fresh client for a second overlapping flow instead of re-updating the stored one", async () => {
+      // The stored dynamic client has a single redirect_uris slot: if two
+      // overlapping flows both PUT-updated it, the later update would clobber
+      // the earlier flow's ephemeral loopback URI and its authorize URL would
+      // be rejected for a redirect mismatch. Only the first active flow may
+      // reuse the stored client; overlapping flows get fresh clients. Once
+      // the owner finishes, the stored client becomes reusable again.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      const putRedirects: string[] = [];
+      const registerRedirects: string[] = [];
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          const body = JSON.parse(fetchBodyText(init)) as { redirect_uris?: string[] };
+          putRedirects.push(...(body.redirect_uris ?? []));
+          return Promise.resolve(jsonResponse({ client_id: "client_test" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          const body = JSON.parse(fetchBodyText(init)) as { redirect_uris?: string[] };
+          registerRedirects.push(...(body.redirect_uris ?? []));
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const start1 = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      const start2 = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start1.success && start2.success).toBe(true);
+      if (!start1.success || !start2.success) return;
+
+      const clientIdOf = (authorizeUrl: string): string =>
+        new URL(authorizeUrl).searchParams.get("client_id")!;
+      const redirectOf = (authorizeUrl: string): string =>
+        new URL(authorizeUrl).searchParams.get("redirect_uri")!;
+
+      // Flow 1 owns the stored client; flow 2 got a fresh, isolated client.
+      expect(clientIdOf(start1.data.authorizeUrl)).toBe("client_test");
+      expect(clientIdOf(start2.data.authorizeUrl)).toBe("client_fresh");
+      // The stored client's registered redirect is flow 1's — flow 2 never
+      // touched it (exactly one PUT), so flow 1's authorize URL stays valid.
+      expect(putRedirects).toEqual([redirectOf(start1.data.authorizeUrl)]);
+      expect(registerRedirects).toEqual([redirectOf(start2.data.authorizeUrl)]);
+
+      // Once the owning flow finishes, the stored client is reusable again.
+      await service.cancelDesktopFlow(start1.data.flowId);
+      const start3 = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start3.success).toBe(true);
+      if (!start3.success) return;
+      expect(clientIdOf(start3.data.authorizeUrl)).toBe("client_test");
+      expect(putRedirects).toHaveLength(2);
+    });
+
+    it("commits a new login while a cancelled flow's revocation is still stalled", async () => {
+      // Cancellation after token exchange triggers best-effort revocation of
+      // the raced tokens. That network call must not run under the login
+      // commit lock: a stalled revocation endpoint would otherwise block
+      // every later login from committing after browser authorization.
+      let releaseExchangeA!: () => void;
+      const exchangeGateA = new Promise<void>((resolve) => (releaseExchangeA = resolve));
+      let exchangeAStarted!: () => void;
+      const exchangeAStartedPromise = new Promise<void>((resolve) => (exchangeAStarted = resolve));
+      let revokeAStarted = false;
+      let releaseRevokeA!: () => void;
+      const revokeGateA = new Promise<void>((resolve) => (releaseRevokeA = resolve));
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          const body = new URLSearchParams(fetchBodyText(init));
+          if (body.get("code") === "code_a") {
+            exchangeAStarted();
+            await exchangeGateA;
+            return jsonResponse({
+              access_token: "at_a",
+              refresh_token: "rt_a",
+              expires_in: 86400,
+              token_type: "Bearer",
+            });
+          }
+          return jsonResponse({
+            access_token: "at_b",
+            refresh_token: "rt_b",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          if (new URLSearchParams(fetchBodyText(init)).get("token") === "rt_a") {
+            revokeAStarted = true;
+            await revokeGateA; // Stalled revocation endpoint.
+          }
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const callbackFor = (authorizeUrl: string, state: string, code: string): URL => {
+        const cb = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+        cb.searchParams.set("code", code);
+        cb.searchParams.set("state", state);
+        return cb;
+      };
+
+      // Flow A: callback arrives, exchange stalls, Cancel wins, then the
+      // exchange resolves — commit sees the dead flow and starts revocation,
+      // which hangs on the gated endpoint.
+      const startA = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startA.success).toBe(true);
+      if (!startA.success) return;
+      const cbA = originalFetch(
+        callbackFor(startA.data.authorizeUrl, startA.data.flowId, "code_a")
+      ).catch(() => null);
+      await exchangeAStartedPromise;
+      await service.cancelDesktopFlow(startA.data.flowId);
+      releaseExchangeA();
+      await cbA;
+      await waitUntil(() => revokeAStarted);
+
+      // Flow B must be able to commit while A's revocation is still pending.
+      const startB = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startB.success).toBe(true);
+      if (!startB.success) return;
+      await originalFetch(
+        callbackFor(startB.data.authorizeUrl, startB.data.flowId, "code_b")
+      ).catch(() => null);
+      const waitB = await service.waitForDesktopFlow(startB.data.flowId, { timeoutMs: 3000 });
+      expect(waitB.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_b");
+
+      releaseRevokeA();
     });
 
     it("clears the persisted model catalog when the new deployment has no catalogs", async () => {
