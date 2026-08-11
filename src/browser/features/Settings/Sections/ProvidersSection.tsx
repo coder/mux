@@ -1107,15 +1107,27 @@ export function ProvidersSection() {
   const coderDeploymentUrl = config?.coder?.deploymentUrl ?? "";
   const coderLoginInProgress = coderLoginStatus === "starting" || coderLoginStatus === "waiting";
 
-  const cancelCoderLogin = () => {
+  const cancelCoderLogin = async () => {
     coderLoginAttemptRef.current++;
+    // Await backend cancellation BEFORE dismissing the attempt: Cancel can
+    // race the OAuth callback/token exchange, and only when cancelDesktopFlow
+    // returns has the backend settled which of them won. Dropping the local
+    // state first would show an idle "cancelled" attempt while the exchange
+    // commits a connected account behind it.
     if (api && coderFlowId) {
-      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      try {
+        await api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      } catch {
+        // Backend unreachable — clear local state regardless.
+      }
     }
     setCoderFlowId(null);
     setCoderAuthorizeUrl(null);
     setCoderLoginStatus("idle");
     setCoderLoginError(null);
+    // The exchange may have won the race: re-fetch so Settings reflects the
+    // authoritative backend outcome (connected vs not).
+    await refresh();
   };
 
   const startCoderLogin = async () => {
@@ -1127,9 +1139,16 @@ export function ProvidersSection() {
       return;
     }
 
-    // Best-effort: cancel any in-progress flow before starting a new one.
+    // Cancel any in-progress flow before starting a new one — awaited, so the
+    // old flow cannot commit a login after this replacement attempt begins.
     if (coderFlowId) {
-      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      try {
+        await api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      } catch {
+        // Proceed anyway; the backend's last-committed-login-wins semantics
+        // still bound the damage if the old flow survives.
+      }
+      if (attempt !== coderLoginAttemptRef.current) return;
     }
 
     setCoderLoginError(null);
@@ -1195,8 +1214,15 @@ export function ProvidersSection() {
     const attempt = ++coderLoginAttemptRef.current;
     if (!api) return;
 
+    // Awaited: an unsettled flow could otherwise commit a login AFTER the
+    // disconnect below cleared credentials, silently reconnecting the account.
     if (coderFlowId) {
-      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      try {
+        await api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+      } catch {
+        // Proceed with disconnect regardless.
+      }
+      if (attempt !== coderLoginAttemptRef.current) return;
     }
     setCoderFlowId(null);
     setCoderAuthorizeUrl(null);
@@ -2230,7 +2256,13 @@ export function ProvidersSection() {
                                 )}
 
                                 {coderLoginInProgress && (
-                                  <Button variant="secondary" size="sm" onClick={cancelCoderLogin}>
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={() => {
+                                      void cancelCoderLogin();
+                                    }}
+                                  >
                                     Cancel
                                   </Button>
                                 )}

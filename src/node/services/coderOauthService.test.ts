@@ -115,7 +115,10 @@ function createMockDeps(): MockDeps {
 
 function createMockConfig(
   deps: MockDeps
-): Pick<Config, "loadProvidersConfig" | "tryAcquireCoderOauthClientLease"> {
+): Pick<
+  Config,
+  "loadProvidersConfig" | "tryAcquireCoderOauthClientLease" | "withCoderOauthRefreshLock"
+> {
   return {
     loadProvidersConfig: () => deps.providersConfig,
     // Mirrors Config.tryAcquireCoderOauthClientLease: non-blocking, exclusive,
@@ -129,6 +132,30 @@ function createMockConfig(
         deps.coderClientLeaseHeld = false;
       };
     },
+    // Single-process tests do not contend on the cross-process refresh lock;
+    // the two-process race test wires a shared serializing lock instead.
+    withCoderOauthRefreshLock: async <T>(fn: () => Promise<T> | T): Promise<T> => await fn(),
+  };
+}
+
+/**
+ * A shared, serializing implementation of Config.withCoderOauthRefreshLock
+ * for tests that simulate two Mux processes refreshing concurrently.
+ */
+function createSharedRefreshLock(): <T>(fn: () => Promise<T> | T) => Promise<T> {
+  let busy = false;
+  const queue: Array<() => void> = [];
+  return async <T>(fn: () => Promise<T> | T): Promise<T> => {
+    while (busy) {
+      await new Promise<void>((resolve) => queue.push(resolve));
+    }
+    busy = true;
+    try {
+      return await fn();
+    } finally {
+      busy = false;
+      queue.shift()?.();
+    }
   };
 }
 
@@ -495,6 +522,87 @@ describe("CoderOauthService", () => {
         (c) => c.keyPath[0] === "coderOauth" && c.value === undefined
       );
       expect(cleared).toBeUndefined();
+    });
+
+    it("serializes cross-process refreshes so a losing invalid_grant cannot clear the winner's rotation", async () => {
+      // Two Mux processes refresh the same expired credential. Without
+      // cross-process serialization the loser's invalid_grant response can
+      // arrive while the winner's rotation is still in flight; the loser's
+      // compare-and-clear then deletes the (still-old) credential, the
+      // winner's persist CAS fails, and both processes discard the only valid
+      // token. With the shared refresh lock the loser blocks, re-reads the
+      // winner's rotation from disk, and never sends a doomed request.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expiredAuth() },
+      };
+
+      const sharedLock = createSharedRefreshLock();
+      const makeProcess = (): CoderOauthService =>
+        new CoderOauthService(
+          {
+            ...createMockConfig(deps),
+            withCoderOauthRefreshLock: sharedLock,
+          } as Config,
+          createMockProviderService(deps) as ProviderService,
+          createMockWindowService(deps) as WindowService
+        );
+      const processA = makeProcess();
+      const processB = makeProcess();
+
+      let tokenRequests = 0;
+      let releaseWinner!: () => void;
+      const winnerGate = new Promise<void>((resolve) => (releaseWinner = resolve));
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          const request = ++tokenRequests;
+          if (request === 1) {
+            // The winner's rotation: stalled so the race window stays open.
+            await winnerGate;
+            return jsonResponse({
+              access_token: "at_rotated",
+              refresh_token: "rt_rotated",
+              expires_in: 86400,
+              token_type: "Bearer",
+            });
+          }
+          // Any second request would be the loser reusing the consumed
+          // refresh token — the exact doomed request the lock must prevent.
+          return jsonResponse({ error: "invalid_grant" }, 400);
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        void init;
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const resultAPromise = processA.getValidAuth();
+      // A holds the shared lock with its token request in flight; B must
+      // queue on the lock rather than issue its own request.
+      await waitUntil(() => tokenRequests === 1);
+      const resultBPromise = processB.getValidAuth();
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(tokenRequests).toBe(1);
+
+      releaseWinner();
+      const [resultA, resultB] = await Promise.all([resultAPromise, resultBPromise]);
+
+      // Both processes end up with the winner's rotation; B adopted it from
+      // disk without ever sending a request with the consumed token.
+      expect(resultA.success).toBe(true);
+      if (resultA.success) expect(resultA.data.access).toBe("at_rotated");
+      expect(resultB.success).toBe(true);
+      if (resultB.success) expect(resultB.data.access).toBe("at_rotated");
+      expect(tokenRequests).toBe(1);
+      // The rotated credential is still on disk (never cleared).
+      const storedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as CoderOauthAuth;
+      expect(storedAuth.refresh).toBe("rt_rotated");
+
+      await processA.dispose();
+      await processB.dispose();
     });
 
     it("rejects tokens minted by a different deployment without any network call", async () => {

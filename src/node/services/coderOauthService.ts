@@ -538,28 +538,36 @@ export class CoderOauthService {
 
     await using _lock = await this.refreshMutex.acquire();
 
-    // Re-read after acquiring lock in case another caller refreshed first.
-    // Drop the in-memory cache: the mutex is process-local, and a concurrent
-    // desktop/CLI process sharing providers.jsonc may have rotated the tokens
-    // on disk while we waited.
-    this.cachedAuth = null;
-    const latest = this.readStoredAuth();
-    if (!latest) {
-      return Err("Coder OAuth is not configured. Use 'Login with Coder' in Settings.");
-    }
+    // The refresh round-trip is additionally serialized ACROSS processes: a
+    // concurrent desktop/CLI process refreshing the same credential would
+    // otherwise race destructively — its invalid_grant compare-and-clear can
+    // land while our winning rotation is still in flight (not yet on disk),
+    // after which our persist CAS fails too and both processes discard the
+    // only valid token. Inside the lock the loser re-reads disk and adopts
+    // the winner's rotation without ever sending a doomed request.
+    return await this.config.withCoderOauthRefreshLock(async () => {
+      // Re-read after acquiring both locks in case another caller (this
+      // process or another) refreshed first. Drop the in-memory cache so the
+      // read reflects cross-process writes.
+      this.cachedAuth = null;
+      const latest = this.readStoredAuth();
+      if (!latest) {
+        return Err("Coder OAuth is not configured. Use 'Login with Coder' in Settings.");
+      }
 
-    if (!isCoderOauthAuthExpired(latest)) {
-      return Ok(latest);
-    }
+      if (!isCoderOauthAuthExpired(latest)) {
+        return Ok(latest);
+      }
 
-    // Await inside the mutex scope: a bare `return promise` would dispose the
-    // lock before the refresh finishes, letting concurrent callers refresh too.
-    const refreshed = await this.refreshTokens(latest);
-    if (!refreshed.success) {
-      return Err(refreshed.error);
-    }
+      // Await inside the mutex scope: a bare `return promise` would dispose the
+      // lock before the refresh finishes, letting concurrent callers refresh too.
+      const refreshed = await this.refreshTokens(latest);
+      if (!refreshed.success) {
+        return Err(refreshed.error);
+      }
 
-    return Ok(refreshed.data);
+      return Ok(refreshed.data);
+    });
   }
 
   getDeploymentUrl(): string | null {

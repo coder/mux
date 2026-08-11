@@ -2538,4 +2538,36 @@ describe("Config", () => {
       expect(fs.existsSync(leasePath)).toBe(false);
     });
   });
+
+  describe("withCoderOauthRefreshLock", () => {
+    it("serializes critical sections, including across Config instances on the same root", async () => {
+      // A second Config on the same root stands in for another Mux process
+      // sharing providers.jsonc.
+      const otherProcess = new Config(tempDir);
+      const events: string[] = [];
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+      let firstEntered!: () => void;
+      const firstEnteredPromise = new Promise<void>((resolve) => (firstEntered = resolve));
+
+      const first = config.withCoderOauthRefreshLock(async () => {
+        events.push("first:enter");
+        firstEntered();
+        await firstGate;
+        events.push("first:exit");
+      });
+      await firstEnteredPromise;
+
+      const second = otherProcess.withCoderOauthRefreshLock(() => {
+        events.push("second:enter");
+      });
+      // The second section must not start while the first holds the lock.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(events).toEqual(["first:enter"]);
+
+      releaseFirst();
+      await Promise.all([first, second]);
+      expect(events).toEqual(["first:enter", "first:exit", "second:enter"]);
+    });
+  });
 });

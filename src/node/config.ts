@@ -2525,11 +2525,44 @@ export class Config {
    * by crashed processes are broken after a staleness timeout.
    */
   async withProvidersFileLock<T>(fn: () => Promise<T> | T): Promise<T> {
-    const lockPath = `${this.providersFile}.lock`;
-    const ACQUIRE_TIMEOUT_MS = 5_000;
-    const STALE_LOCK_MS = 10_000;
+    // Guards sub-second file mutations, so contention resolves quickly.
+    return this.withDirLock(`${this.providersFile}.lock`, 5_000, 10_000, fn);
+  }
+
+  /**
+   * Cross-process serialization of Coder OAuth token refreshes.
+   *
+   * Coder rotates refresh tokens on every use, so two processes refreshing
+   * the same credential race destructively: the loser's `invalid_grant` can
+   * arrive — and its compare-and-clear delete the credential — while the
+   * winner's rotation is still in flight and not yet on disk, after which the
+   * winner's persist CAS fails too and BOTH processes discard the only valid
+   * token. Serializing the whole refresh round-trip (re-read + token request
+   * + persist) closes that window: a loser re-reads inside the lock and
+   * adopts the winner's rotation without ever sending a doomed request.
+   *
+   * Timing: the guarded section includes one bounded token request (30s cap,
+   * see TOKEN_REQUEST_TIMEOUT_MS in coderOauthService.ts), so acquisition
+   * waits up to 45s and orphaned locks are broken after 60s.
+   */
+  async withCoderOauthRefreshLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    return this.withDirLock(`${this.providersFile}.coder-refresh.lock`, 45_000, 60_000, fn);
+  }
+
+  /**
+   * Shared mkdir-based advisory lock: exclusive directory creation is atomic
+   * on all platforms; locks orphaned by crashed processes are broken after
+   * `staleLockMs`.
+   */
+  private async withDirLock<T>(
+    lockPath: string,
+    acquireTimeoutMs: number,
+    staleLockMs: number,
+    fn: () => Promise<T> | T
+  ): Promise<T> {
+    const STALE_LOCK_MS = staleLockMs;
     const RETRY_DELAY_MS = 25;
-    const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
+    const deadline = Date.now() + acquireTimeoutMs;
 
     if (!fs.existsSync(this.rootDir)) {
       ensurePrivateDirSync(this.rootDir);
