@@ -16,6 +16,11 @@ export {
 
 // Project schemas
 export { ProjectConfigSchema, WorkspaceConfigSchema } from "./schemas/project";
+export {
+  ConfiguredProjectGitHubRepoInfoSchema,
+  GitHubRepoInfoSchema,
+} from "./schemas/githubRepoInfo";
+export type { ConfiguredProjectGitHubRepoInfo, GitHubRepoInfo } from "./schemas/githubRepoInfo";
 
 // Goal schemas
 export {

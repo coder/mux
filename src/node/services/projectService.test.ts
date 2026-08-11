@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { describe, it, test, expect, beforeEach, afterEach } from "bun:test";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
@@ -2206,5 +2206,68 @@ exit 1
       expect(project!.workspaces).toHaveLength(1);
       expect(project!.workspaces[0]?.path).toBe(realDir);
     });
+  });
+});
+
+describe("ProjectService GitHub repo info", () => {
+  test("returns GitHub identity or null for every configured project", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "projectservice-github-test-"));
+    try {
+      const config = new Config(tempDir);
+      await config.editConfig((current) => {
+        current.projects.set("/repo/github", { workspaces: [] });
+        current.projects.set("/repo/local", { workspaces: [] });
+        return current;
+      });
+      const service = new ProjectService(config, undefined, (projectPath) =>
+        Promise.resolve(
+          projectPath === "/repo/github"
+            ? "https://github.com/coder/mux.git"
+            : "https://gitlab.com/coder/mux.git"
+        )
+      );
+
+      expect(await service.githubRepoInfo()).toEqual({
+        "/repo/github": {
+          owner: "coder",
+          repo: "mux",
+          avatarUrl: "https://github.com/coder.png?size=64",
+        },
+        "/repo/local": null,
+      });
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("coalesces concurrent reads and caches the result", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "projectservice-github-cache-test-"));
+    try {
+      const config = new Config(tempDir);
+      await config.editConfig((current) => {
+        current.projects.set("/repo/github", { workspaces: [] });
+        return current;
+      });
+      let reads = 0;
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const service = new ProjectService(config, undefined, async () => {
+        reads += 1;
+        await gate;
+        return "git@github.com:coder/mux.git";
+      });
+
+      const first = service.githubRepoInfo();
+      const second = service.githubRepoInfo();
+      release?.();
+      await Promise.all([first, second]);
+      await service.githubRepoInfo();
+
+      expect(reads).toBe(1);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    }
   });
 });

@@ -33,6 +33,7 @@ import {
   GoalSetErrorSchema,
   GoalSetInputSchema,
 } from "./goal";
+import { ConfiguredProjectGitHubRepoInfoSchema } from "./githubRepoInfo";
 import { ProjectConfigSchema } from "./project";
 import {
   MemoryChangeEventSchema,
@@ -637,6 +638,10 @@ export const projects = {
   getDefaultProjectDir: {
     input: z.void(),
     output: z.string(),
+  },
+  githubRepoInfo: {
+    input: z.void(),
+    output: ConfiguredProjectGitHubRepoInfoSchema,
   },
   setDefaultProjectDir: {
     input: z.object({ path: z.string() }),
