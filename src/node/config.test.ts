@@ -2507,4 +2507,35 @@ describe("Config", () => {
       });
     });
   });
+
+  describe("tryAcquireCoderOauthClientLease", () => {
+    const TTL_MS = 60_000;
+
+    it("is exclusive until released, including for a second Config on the same root", () => {
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+
+      // Same file root = same lease, even from another Config instance
+      // (stands in for another Mux process sharing providers.jsonc).
+      const otherProcess = new Config(tempDir);
+      expect(otherProcess.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
+
+      release!();
+      const reacquired = otherProcess.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(reacquired).not.toBeNull();
+      reacquired!();
+    });
+
+    it("breaks a stale lease left behind by a crashed holder", () => {
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+      fs.mkdirSync(leasePath, { recursive: true });
+      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
+      fs.utimesSync(leasePath, staleTime, staleTime);
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+      release!();
+      expect(fs.existsSync(leasePath)).toBe(false);
+    });
+  });
 });

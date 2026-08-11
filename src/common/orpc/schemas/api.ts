@@ -530,7 +530,10 @@ export const codexOauth = {
 // Coder OAuth ("Login with Coder" against a user-supplied deployment)
 export const coderOauth = {
   startDesktopFlow: {
-    input: z.object({ deploymentUrl: z.string() }).strict(),
+    // flowId is caller-generated so Cancel can reference the attempt while
+    // startDesktopFlow is still in flight (probes/client registration); the
+    // backend generates one when omitted.
+    input: z.object({ deploymentUrl: z.string(), flowId: z.string().optional() }).strict(),
     output: ResultSchema(z.object({ flowId: z.string(), authorizeUrl: z.string() }), z.string()),
   },
   waitForDesktopFlow: {

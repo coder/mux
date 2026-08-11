@@ -98,6 +98,8 @@ interface MockDeps {
   focusCalls: number;
   /** Listeners registered via onConfigChanged (fire to simulate external file changes). */
   configChangedListeners: Array<() => void>;
+  /** Simulates the cross-process stored-client lease (true = held elsewhere). */
+  coderClientLeaseHeld: boolean;
 }
 
 function createMockDeps(): MockDeps {
@@ -107,12 +109,26 @@ function createMockDeps(): MockDeps {
     setModelsCalls: [],
     focusCalls: 0,
     configChangedListeners: [],
+    coderClientLeaseHeld: false,
   };
 }
 
-function createMockConfig(deps: MockDeps): Pick<Config, "loadProvidersConfig"> {
+function createMockConfig(
+  deps: MockDeps
+): Pick<Config, "loadProvidersConfig" | "tryAcquireCoderOauthClientLease"> {
   return {
     loadProvidersConfig: () => deps.providersConfig,
+    // Mirrors Config.tryAcquireCoderOauthClientLease: non-blocking, exclusive,
+    // released via the returned function.
+    tryAcquireCoderOauthClientLease: () => {
+      if (deps.coderClientLeaseHeld) {
+        return null;
+      }
+      deps.coderClientLeaseHeld = true;
+      return () => {
+        deps.coderClientLeaseHeld = false;
+      };
+    },
   };
 }
 
@@ -1376,6 +1392,135 @@ describe("CoderOauthService", () => {
       if (!startResult.success) {
         expect(startResult.error).toContain("registration failed");
       }
+    });
+
+    it("lets Cancel reach a stalled client registration via the caller-supplied flow ID", async () => {
+      // The UI generates the flow ID before calling startDesktopFlow, so its
+      // Cancel action can target the attempt even though start has not
+      // returned yet. Cancelling that ID must abort the in-flight
+      // registration RPC (and close the loopback listener), not just abandon
+      // the frontend state until the five-minute flow timeout.
+      const flowId = "ui-generated-flow-id-123";
+      let registerStarted!: () => void;
+      const registerStartedPromise = new Promise<void>((resolve) => (registerStarted = resolve));
+      let registerAborted = false;
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          registerStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              registerAborted = true;
+              reject(new Error("The operation was aborted"));
+            });
+          });
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const startPromise = service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL, flowId });
+      await registerStartedPromise;
+
+      // The user's Cancel action: the flow is registered by now, so this
+      // cancels it directly, which aborts the registration RPC.
+      await service.cancelDesktopFlow(flowId);
+
+      const startResult = await startPromise;
+      expect(registerAborted).toBe(true);
+      expect(startResult.success).toBe(false);
+    });
+
+    it("honors a Cancel that lands while the deployment probes are still in flight", async () => {
+      // Before the flow is registered (buildinfo/discovery probes), Cancel
+      // records a pre-cancellation; startDesktopFlow must consume it at its
+      // next checkpoint and abort instead of continuing as an orphan attempt.
+      const flowId = "ui-generated-flow-id-456";
+      let probeStarted!: () => void;
+      const probeStartedPromise = new Promise<void>((resolve) => (probeStarted = resolve));
+      let releaseProbe!: () => void;
+      const probeGate = new Promise<void>((resolve) => (releaseProbe = resolve));
+      let registrationAttempted = false;
+
+      mockFetch(async (input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          probeStarted();
+          await probeGate;
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          registrationAttempted = true;
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startPromise = service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL, flowId });
+      await probeStartedPromise;
+      await service.cancelDesktopFlow(flowId); // Flow not registered yet -> pre-cancel.
+      releaseProbe();
+
+      const startResult = await startPromise;
+      expect(startResult.success).toBe(false);
+      if (!startResult.success) {
+        expect(startResult.error).toContain("cancelled");
+      }
+      // The attempt aborted before touching the registration endpoint.
+      expect(registrationAttempted).toBe(false);
+    });
+
+    it("registers a fresh client when another process holds the stored-client lease", async () => {
+      // The stored-client reservation is a cross-process filesystem lease:
+      // a concurrent login flow in ANOTHER Mux process sharing providers.jsonc
+      // would clobber the stored client's single redirect slot just like an
+      // in-process one. When the lease is unavailable, the flow must fall
+      // back to a fresh client and leave the stored client untouched.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+      deps.coderClientLeaseHeld = true; // Held by "another process".
+
+      let putAttempted = false;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          putAttempted = true;
+          return Promise.resolve(jsonResponse({ client_id: "client_test" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+
+      expect(putAttempted).toBe(false);
+      expect(new URL(start.data.authorizeUrl).searchParams.get("client_id")).toBe("client_fresh");
+
+      await service.cancelDesktopFlow(start.data.flowId);
+      // The foreign lease is not released by this process's flow teardown.
+      expect(deps.coderClientLeaseHeld).toBe(true);
     });
 
     it("registers a fresh client for a second overlapping flow instead of re-updating the stored one", async () => {

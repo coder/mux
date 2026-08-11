@@ -2628,6 +2628,7 @@ export const router = (authToken?: string) => {
         .handler(({ context, input }) => {
           return context.coderOauthService.startDesktopFlow({
             deploymentUrl: input.deploymentUrl,
+            flowId: input.flowId,
           });
         }),
       waitForDesktopFlow: t

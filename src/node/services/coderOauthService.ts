@@ -128,13 +128,12 @@ export class CoderOauthService {
   // across overlapping flows (see commitDesktopLogin for the invariant).
   private readonly loginCommitMutex = new AsyncMutex();
 
-  // The stored dynamic client has a single redirect_uris slot (see
-  // buildCoderClientMetadata), making it a shared mutable resource: two
-  // overlapping flows PUT-updating it would clobber each other's ephemeral
-  // loopback URI and invalidate the earlier flow's authorize URL. At most one
-  // active flow may own (reuse + update) the stored client; overlapping flows
-  // register fresh clients instead.
-  private storedClientOwnerFlowId: string | null = null;
+  // Cancellations that arrive while startDesktopFlow is still starting the
+  // flow (deployment probes run before the flow is registered): recorded here
+  // so the start attempt aborts at its next checkpoint instead of continuing
+  // as an orphan the UI can no longer reach. Keyed by caller-supplied flow ID
+  // with an insertion timestamp for pruning.
+  private readonly preCancelledFlowIds = new Map<string, number>();
 
   // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
   // Invalidated on every write (exchange, refresh, disconnect) AND on every
@@ -252,7 +251,19 @@ export class CoderOauthService {
 
   async startDesktopFlow(input: {
     deploymentUrl: string;
+    /**
+     * Caller-generated flow ID (doubles as the OAuth state param). The UI
+     * supplies one BEFORE this call so its Cancel action can reference the
+     * attempt while probes/registration are still in flight; generated when
+     * omitted (CLI/tests).
+     */
+    flowId?: string;
   }): Promise<Result<{ flowId: string; authorizeUrl: string }, string>> {
+    if (input.flowId !== undefined && !/^[A-Za-z0-9_-]{16,128}$/.test(input.flowId)) {
+      return Err("Invalid flow ID");
+    }
+    const flowId = input.flowId ?? randomBase64Url();
+
     const requestedUrl = normalizeCoderDeploymentUrl(input.deploymentUrl);
     if (!requestedUrl) {
       return Err("Invalid Coder deployment URL (expected e.g. https://coder.example.com)");
@@ -285,9 +296,15 @@ export class CoderOauthService {
     // other flows/logins, and an abandoned flow's early URL write could strand
     // a completed login with a mismatched issuer. The exchange commits the URL
     // atomically with the auth blob when this flow actually completes.
-    const flowId = randomBase64Url();
     const codeVerifier = randomBase64Url();
     const codeChallenge = sha256Base64Url(codeVerifier);
+
+    // Cancel may have landed while the probes above were in flight — before
+    // the flow was registered. Honor it here instead of opening a listener
+    // for an attempt the caller already abandoned.
+    if (this.consumePreCancelled(flowId)) {
+      return Err("Login was cancelled");
+    }
 
     // Ephemeral port: Coder requires exact redirect URI matching (OAuth 2.1),
     // so the freshly bound URI is (re-)registered on the client below.
@@ -303,6 +320,14 @@ export class CoderOauthService {
       });
     } catch (error) {
       return Err(`Failed to start OAuth callback listener: ${getErrorMessage(error)}`);
+    }
+
+    // Last pre-registration checkpoint: this check and register() below run
+    // with no intervening await, so a cancel is either consumed here or finds
+    // the registered flow — no gap either way.
+    if (this.consumePreCancelled(flowId)) {
+      await loopback.close();
+      return Err("Login was cancelled");
     }
 
     const resultDeferred = createDeferred<Result<void, string>>();
@@ -330,18 +355,24 @@ export class CoderOauthService {
 
     // Reserve the stored client's single redirect slot for this flow, or —
     // when another active flow already owns it — fall back to registering a
-    // fresh client so the flows' redirect URIs cannot clobber each other.
-    // Check-and-set is synchronous, so concurrent starts cannot both reserve.
-    // The reservation is released when this flow finishes (the flow manager
-    // resolves resultDeferred on every completion/cancel/timeout path).
-    const ownsStoredClient = this.storedClientOwnerFlowId === null;
-    if (ownsStoredClient) {
-      this.storedClientOwnerFlowId = flowId;
-      void resultDeferred.promise.then(() => {
-        if (this.storedClientOwnerFlowId === flowId) {
-          this.storedClientOwnerFlowId = null;
-        }
-      });
+    // fresh client so the flows' redirect URIs cannot clobber each other. The
+    // lease is a filesystem lock shared by every Mux process using this
+    // providers file (desktop + CLI), because a concurrent flow in ANOTHER
+    // process would clobber the redirect just the same. It is released when
+    // this flow finishes (the flow manager resolves resultDeferred on every
+    // completion/cancel/timeout path); a crashed holder's lease goes stale
+    // after the flow timeout.
+    let releaseClientLease: (() => void) | null = null;
+    try {
+      releaseClientLease = this.config.tryAcquireCoderOauthClientLease(DEFAULT_DESKTOP_TIMEOUT_MS);
+    } catch (error) {
+      // Lease failures must not break login; degrade to a fresh client.
+      log.debug(`[Coder OAuth] Client lease unavailable: ${getErrorMessage(error)}`);
+    }
+    const ownsStoredClient = releaseClientLease !== null;
+    if (releaseClientLease !== null) {
+      const release = releaseClientLease;
+      void resultDeferred.promise.then(() => release());
     }
 
     const clientResult = await this.ensureClient(
@@ -435,8 +466,30 @@ export class CoderOauthService {
   async cancelDesktopFlow(flowId: string): Promise<void> {
     if (this.desktopFlows.has(flowId)) {
       log.debug(`[Coder OAuth] Desktop flow cancelled (flowId=${flowId})`);
+      await this.desktopFlows.cancel(flowId);
+      return;
     }
-    await this.desktopFlows.cancel(flowId);
+    // The flow may still be starting (probes run before registration, and the
+    // caller generated this ID before startDesktopFlow returned): record the
+    // cancel so the start attempt aborts at its next checkpoint rather than
+    // living on as an orphan until the flow timeout.
+    this.prunePreCancelled();
+    this.preCancelledFlowIds.set(flowId, Date.now());
+  }
+
+  /** True (and consumes the record) when `flowId` was cancelled before the flow registered. */
+  private consumePreCancelled(flowId: string): boolean {
+    return this.preCancelledFlowIds.delete(flowId);
+  }
+
+  /** Drop pre-cancel records for start attempts that never materialized. */
+  private prunePreCancelled(): void {
+    const cutoff = Date.now() - DEFAULT_DESKTOP_TIMEOUT_MS;
+    for (const [flowId, cancelledAt] of this.preCancelledFlowIds) {
+      if (cancelledAt < cutoff) {
+        this.preCancelledFlowIds.delete(flowId);
+      }
+    }
   }
 
   /**

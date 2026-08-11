@@ -1133,35 +1133,40 @@ export function ProvidersSection() {
     }
 
     setCoderLoginError(null);
-    setCoderFlowId(null);
     setCoderAuthorizeUrl(null);
 
     const deploymentUrl = coderDeploymentUrl.trim();
     if (!deploymentUrl) {
+      setCoderFlowId(null);
       setCoderLoginStatus("error");
       setCoderLoginError("Set the deployment URL first.");
       return;
     }
 
+    // Generate the flow ID client-side and expose it BEFORE the start RPC:
+    // startDesktopFlow can stall on backend network calls, and Cancel must be
+    // able to reach the attempt (the backend pre-cancels IDs it hasn't
+    // registered yet) instead of abandoning only the frontend state.
+    const flowId = crypto.randomUUID();
+    setCoderFlowId(flowId);
+
     try {
       setCoderLoginStatus("starting");
-      const startResult = await api.coderOauth.startDesktopFlow({ deploymentUrl });
+      const startResult = await api.coderOauth.startDesktopFlow({ deploymentUrl, flowId });
 
       if (attempt !== coderLoginAttemptRef.current) {
-        if (startResult.success) {
-          void api.coderOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
-        }
+        // cancelCoderLogin already cancelled this flowId; nothing to clean up.
         return;
       }
 
       if (!startResult.success) {
+        setCoderFlowId(null);
         setCoderLoginStatus("error");
         setCoderLoginError(startResult.error);
         return;
       }
 
-      const { flowId, authorizeUrl } = startResult.data;
-      setCoderFlowId(flowId);
+      const { authorizeUrl } = startResult.data;
       setCoderAuthorizeUrl(authorizeUrl);
       setCoderLoginStatus("waiting");
 

@@ -2585,6 +2585,61 @@ export class Config {
   }
 
   /**
+   * Try to take an exclusive cross-process lease on the stored Coder OAuth
+   * dynamic client. The client's registration has a single redirect_uris
+   * slot, so only one login flow — across every Mux process sharing this
+   * providers file — may reuse (and RFC 7592-update) it at a time; callers
+   * that fail to acquire the lease must register a fresh client instead.
+   *
+   * Non-blocking: returns a release function on success, or null when another
+   * live flow holds the lease. Unlike withProvidersFileLock (which guards
+   * sub-second file mutations), this lease spans a whole login flow — the
+   * redirect URI must stay registered until the user finishes authorizing —
+   * so staleness is judged against `ttlMs` (the flow timeout). A crashed
+   * holder's lease is broken after that, and in the interim other flows
+   * degrade gracefully to fresh client registrations.
+   */
+  tryAcquireCoderOauthClientLease(ttlMs: number): (() => void) | null {
+    const leasePath = `${this.providersFile}.coder-client.lock`;
+
+    if (!fs.existsSync(this.rootDir)) {
+      ensurePrivateDirSync(this.rootDir);
+    }
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        fs.mkdirSync(leasePath);
+        return () => {
+          try {
+            fs.rmdirSync(leasePath);
+          } catch (error) {
+            log.debug("Failed to release Coder OAuth client lease:", error);
+          }
+        };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw error;
+        }
+        let stale = false;
+        try {
+          stale = Date.now() - fs.statSync(leasePath).mtimeMs > ttlMs;
+        } catch {
+          continue; // Released between mkdir and stat; retry once.
+        }
+        if (!stale) {
+          return null;
+        }
+        try {
+          fs.rmdirSync(leasePath);
+        } catch {
+          // Another process broke it first; retry once.
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
    * Save providers configuration to JSONC file
    * @param config The providers configuration to save
    */
