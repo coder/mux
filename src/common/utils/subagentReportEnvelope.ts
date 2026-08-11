@@ -8,6 +8,7 @@ export interface SubagentReportEnvelope {
   status: SubagentReportStatus;
   title: string;
   reportMarkdown: string;
+  executionVersion?: string;
   executionId?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -73,6 +74,9 @@ function parseJsonEnvelope(inner: string): SubagentReportEnvelope | null {
     status: record.status,
     title: record.title,
     reportMarkdown: record.reportMarkdown,
+    ...(isNonEmptyString(record.executionVersion)
+      ? { executionVersion: record.executionVersion }
+      : {}),
     ...(isNonEmptyString(record.executionId) ? { executionId: record.executionId } : {}),
     // Model/thinking are display metadata: tolerate absent or malformed values so a bad
     // producer can never invalidate an otherwise well-formed report.

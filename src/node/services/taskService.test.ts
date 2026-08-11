@@ -4924,6 +4924,31 @@ describe("TaskService", () => {
       error: "Stream error: provider overloaded",
     });
 
+    expect(
+      (
+        await historyService.appendToHistory(
+          parentId,
+          createMuxMessage(
+            "stale-direct-parent-failure",
+            "user",
+            [
+              "<mux_subagent_failure>",
+              "<task_id>childworkspace</task_id>",
+              "<execution_version>wst_handle:error:2026-06-19T00:00:01.000Z</execution_version>",
+              "<execution_id>wst_handle</execution_id>",
+              "<agent_type>explore</agent_type>",
+              "<error_type>workspace_turn_error</error_type>",
+              "<error_message>",
+              "Stream error: provider overloaded",
+              "</error_message>",
+              "</mux_subagent_failure>",
+            ].join("\n"),
+            { timestamp: Date.now(), synthetic: true, uiVisible: true }
+          )
+        )
+      ).success
+    ).toBe(true);
+
     const terminalAttentionStore = new TerminalAttentionStore(config);
     const staleAttention = await terminalAttentionStore.enqueueIfAbsent({
       ownerWorkspaceId: parentId,
@@ -4954,6 +4979,8 @@ describe("TaskService", () => {
     expect(deliveredSnapshot?.directParentResultDeliveredAt).toBeDefined();
     expect(deliveredSnapshot?.directParentResultDeliveredAt).not.toBe("2026-06-19T00:00:01.750Z");
     const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(JSON.stringify(parentHistory)).toContain("Stream error: provider overloaded");
+    expect(JSON.stringify(parentHistory)).toContain("wst_handle:completed:");
     expect(JSON.stringify(parentHistory)).toContain("Self-healed final text");
     assert(deliveredSnapshot, "repaired terminal record must exist");
     const correctedGenerationId = `${deliveredSnapshot.handleId}:${deliveredSnapshot.status}:${deliveredSnapshot.updatedAt}`;

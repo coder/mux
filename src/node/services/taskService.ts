@@ -286,6 +286,7 @@ function formatSubagentReportUserMessage(params: {
   title: string;
   reportMarkdown: string;
   status: "in_progress" | "completed";
+  executionVersion?: string;
   executionId?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
@@ -302,6 +303,7 @@ function formatSubagentReportUserMessage(params: {
     status: params.status,
     title: params.title,
     reportMarkdown: params.reportMarkdown,
+    ...(params.executionVersion != null ? { executionVersion: params.executionVersion } : {}),
     ...(params.executionId != null ? { executionId: params.executionId } : {}),
     ...(params.model != null ? { model: params.model } : {}),
     ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
@@ -316,11 +318,11 @@ function parseTerminalSubagentTaskId(content: string): string | null {
   return /<task_id>([^\n<]+)<\/task_id>/.exec(content)?.[1] ?? null;
 }
 
-function parseTerminalSubagentExecutionId(content: string): string | null {
+function parseTerminalSubagentExecutionVersion(content: string): string | null {
   const report = parseSubagentReportEnvelope(content);
-  if (report?.executionId != null) return report.executionId;
+  if (report?.executionVersion != null) return report.executionVersion;
   if (!content.startsWith(SUBAGENT_FAILURE_ENVELOPE_TAG)) return null;
-  return /<execution_id>([^\n<]+)<\/execution_id>/.exec(content)?.[1] ?? null;
+  return /<execution_version>([^\n<]+)<\/execution_version>/.exec(content)?.[1] ?? null;
 }
 
 // Failure twin of formatSubagentReportUserMessage: terminal child failures are
@@ -330,6 +332,7 @@ function parseTerminalSubagentExecutionId(content: string): string | null {
 function formatSubagentFailureUserMessage(params: {
   childWorkspaceId: string;
   agentType: string;
+  executionVersion?: string;
   executionId?: string;
   errorType: string;
   errorMessage: string;
@@ -341,6 +344,9 @@ function formatSubagentFailureUserMessage(params: {
   return [
     SUBAGENT_FAILURE_ENVELOPE_TAG,
     `<task_id>${params.childWorkspaceId}</task_id>`,
+    ...(params.executionVersion != null
+      ? [`<execution_version>${params.executionVersion}</execution_version>`]
+      : []),
     ...(params.executionId != null ? [`<execution_id>${params.executionId}</execution_id>`] : []),
     `<agent_type>${params.agentType}</agent_type>`,
     `<error_type>${params.errorType}</error_type>`,
@@ -6399,6 +6405,7 @@ export class TaskService {
       return;
     }
 
+    const deliveryVersion = this.persistentChildWorkspaceTurnAttentionGenerationId(record);
     const historyResult =
       await this.historyService.getHistoryFromLatestBoundary(directParentWorkspaceId);
     const alreadyDelivered =
@@ -6411,13 +6418,14 @@ export class TaskService {
           .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
           .map((part) => part.text)
           .join("\n");
-        return parseTerminalSubagentExecutionId(content) === record.handleId;
+        return parseTerminalSubagentExecutionVersion(content) === deliveryVersion;
       });
 
     const agentType = coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent";
     const content =
       record.status === "completed"
         ? formatSubagentReportUserMessage({
+            executionVersion: deliveryVersion,
             executionId: record.handleId,
             childWorkspaceId: record.workspaceId,
             agentType,
@@ -6437,6 +6445,7 @@ export class TaskService {
         : formatSubagentFailureUserMessage({
             childWorkspaceId: record.workspaceId,
             agentType,
+            executionVersion: deliveryVersion,
             executionId: record.handleId,
             errorType: "workspace_turn_error",
             errorMessage: record.error ?? "Workspace turn failed",
