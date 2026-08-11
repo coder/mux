@@ -2917,9 +2917,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   groups.push({
                                     ...retainedGroup,
                                     displayMembers: [],
-                                    runningCount: 0,
+                                    // The workflow run itself remains active between transient worker
+                                    // steps, so keep the header and connector in the active visual state.
+                                    runningCount: 1,
                                     queuedCount: 0,
-                                    hasActiveMember: false,
+                                    hasActiveMember: true,
                                   });
                                   retainedWorkflowGroupsByParentId.set(
                                     retainedGroup.parentWorkspaceId,
@@ -2989,7 +2991,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       id: retainedGroup.storageKey,
                                       parentId: workspace.id,
                                       depth: headerDepth,
-                                      isRunning: false,
+                                      isRunning: true,
                                       baseMeta: {
                                         depth: headerDepth,
                                         rowKind: "subagent",

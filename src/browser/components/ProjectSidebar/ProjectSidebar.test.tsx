@@ -1703,6 +1703,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     // the parent workspace. The cached run-level descriptor keeps the header mounted independently.
     view.rerender(<ProjectSidebar {...renderProps()} />);
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
+    expect(view.getByTestId("task-group-wfr_alpha").dataset.running).toBe("true");
+    expect(view.getByTestId("task-group-wfr_alpha").dataset.aggregateState).toBe("active");
     expect(view.queryByTestId(agentItemTestId("step-1"))).toBeNull();
 
     // Run alpha finishes while run beta and the parent stream remain active. The exact run-id
