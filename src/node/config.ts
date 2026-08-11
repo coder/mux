@@ -2550,6 +2550,27 @@ export class Config {
   }
 
   /**
+   * Cross-process serialization of Coder OAuth desktop-login commits
+   * (persist -> finish/rollback; see commitDesktopLogin in
+   * coderOauthService.ts).
+   *
+   * A login's rollback snapshot (`previousSection`) must only ever capture a
+   * COMMITTED section. Login flows are process-local, but the persisted
+   * section is shared across processes: without this lock, a flow in process
+   * B could snapshot process A's persisted-but-uncommitted login; if both
+   * were then cancelled, A's rollback would skip (B's auth is current) and
+   * revoke A's tokens, after which B's rollback would restore that
+   * already-revoked auth over the original login.
+   *
+   * Timing: the guarded section is a handful of providers-file mutations and
+   * no network I/O (revocation runs after release), so acquisition waits up
+   * to 15s and orphaned locks are broken after 20s.
+   */
+  async withCoderOauthLoginCommitLock<T>(fn: () => Promise<T> | T): Promise<T> {
+    return this.withDirLock(`${this.providersFile}.coder-login.lock`, 15_000, 20_000, fn);
+  }
+
+  /**
    * Shared mkdir-based advisory lock: exclusive directory creation is atomic
    * on all platforms; locks orphaned by crashed processes are broken after
    * `staleLockMs`.

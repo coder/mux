@@ -789,17 +789,19 @@ export class CoderOauthService {
    * Persist a completed login and finish its flow — or, when Cancel raced the
    * commit, revoke/roll back instead — as ONE exclusive critical section.
    *
-   * The process-local commit lock spans persist -> finish/rollback so
-   * overlapping login flows cannot interleave: a rollback snapshot
-   * (`previousSection`) can then only ever capture a committed section.
-   * Without serialization, flow B could snapshot flow A's
-   * persisted-but-uncommitted login; if both were then cancelled, A's
-   * rollback would skip (B's auth is current) and revoke A's tokens, after
-   * which B's rollback would restore that already-revoked auth over the
-   * original login. Desktop flows exist only in this process (they own local
-   * loopback servers), so a process-local mutex suffices; concurrent
-   * cross-process writers are handled by the CAS predicates inside the locked
-   * mutations.
+   * The commit lock spans persist -> finish/rollback so overlapping login
+   * flows cannot interleave: a rollback snapshot (`previousSection`) can then
+   * only ever capture a committed section. Without serialization, flow B
+   * could snapshot flow A's persisted-but-uncommitted login; if both were
+   * then cancelled, A's rollback would skip (B's auth is current) and revoke
+   * A's tokens, after which B's rollback would restore that already-revoked
+   * auth over the original login. Flows are process-local, but the persisted
+   * section is shared across every Mux process using this providers file, so
+   * the critical section is guarded by BOTH the process-local mutex (fair,
+   * spin-free queueing within a process) and the cross-process
+   * withCoderOauthLoginCommitLock (a flow in another process could compose
+   * the same snapshot bug); the CAS predicates inside the locked mutations
+   * remain as defense in depth.
    *
    * Returns true when the login was committed (flow finished with Ok).
    */
@@ -842,71 +844,73 @@ export class CoderOauthService {
   ): Promise<"committed" | "cancelled" | "failed"> {
     await using _commitLock = await this.loginCommitMutex.acquire();
 
-    // The flow may have been cancelled (or timed out) while the exchange
-    // round-trip was in flight (or while waiting for this lock). Persisting
-    // anyway would leave the account connected after the user clicked
-    // Cancel — drop and revoke the tokens.
-    if (!this.desktopFlows.has(flowId)) {
-      return "cancelled";
-    }
-
-    // Persist the new credentials, the deployment URL they belong to, and a
-    // cleared model catalog in ONE locked mutation:
-    // - URL + auth together: a slower flow finishing after a login to another
-    //   deployment must re-assert its own URL alongside its auth or it would
-    //   store auth A next to URL B and fail issuer validation. Last completed
-    //   login wins with a fully coherent section.
-    // - models cleared: the flow resolves (and Settings refreshes) before
-    //   discovery runs, so leaving the old deployment's models in place would
-    //   offer them against the new deployment until — or indefinitely, if a
-    //   catalog request stalls — discovery overwrites them.
-    // The previous section is captured under the same lock so a post-persist
-    // cancellation can restore it verbatim (not just delete the new blob,
-    // which would log out a previously connected account).
-    let previousSection: Record<string, unknown> = {};
-    const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
-      // Cancellation can also win while this mutation waits for the
-      // providers-file lock: re-check liveness at write time, inside the
-      // lock, so a cancelled flow never replaces the prior login's state.
+    return await this.config.withCoderOauthLoginCommitLock(async () => {
+      // The flow may have been cancelled (or timed out) while the exchange
+      // round-trip was in flight (or while waiting for the locks). Persisting
+      // anyway would leave the account connected after the user clicked
+      // Cancel — drop and revoke the tokens.
       if (!this.desktopFlows.has(flowId)) {
-        return null;
+        return "cancelled";
       }
-      previousSection = { ...(section ?? {}) };
-      const next = { ...(section ?? {}) };
-      next.deploymentUrl = deploymentUrl;
-      next.coderOauth = auth;
-      next.models = [];
-      return { value: next };
+
+      // Persist the new credentials, the deployment URL they belong to, and a
+      // cleared model catalog in ONE locked mutation:
+      // - URL + auth together: a slower flow finishing after a login to another
+      //   deployment must re-assert its own URL alongside its auth or it would
+      //   store auth A next to URL B and fail issuer validation. Last completed
+      //   login wins with a fully coherent section.
+      // - models cleared: the flow resolves (and Settings refreshes) before
+      //   discovery runs, so leaving the old deployment's models in place would
+      //   offer them against the new deployment until — or indefinitely, if a
+      //   catalog request stalls — discovery overwrites them.
+      // The previous section is captured under the same lock so a post-persist
+      // cancellation can restore it verbatim (not just delete the new blob,
+      // which would log out a previously connected account).
+      let previousSection: Record<string, unknown> = {};
+      const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
+        // Cancellation can also win while this mutation waits for the
+        // providers-file lock: re-check liveness at write time, inside the
+        // lock, so a cancelled flow never replaces the prior login's state.
+        if (!this.desktopFlows.has(flowId)) {
+          return null;
+        }
+        previousSection = { ...(section ?? {}) };
+        const next = { ...(section ?? {}) };
+        next.deploymentUrl = deploymentUrl;
+        next.coderOauth = auth;
+        next.models = [];
+        return { value: next };
+      });
+      this.cachedAuth = null;
+      if (!persistResult.success) {
+        loopback.sendFailureResponse(persistResult.error);
+        await this.desktopFlows.finish(flowId, Err(persistResult.error));
+        return "failed";
+      }
+      if (!persistResult.data.applied) {
+        // Cancel won while the mutation waited for the providers-file lock; the
+        // flow is already finished, so only the raced tokens need cleanup.
+        return "cancelled";
+      }
+
+      // Cancellation may also race the window between the persist write and
+      // this check. `has` + `finish` below run with no intervening await, so
+      // exactly one of Cancel and completion wins the flow; if Cancel won
+      // mid-persist, restore the pre-login section (a previously connected
+      // account stays connected).
+      if (!this.desktopFlows.has(flowId)) {
+        await this.rollbackPersistedAuth(auth, previousSection);
+        return "cancelled";
+      }
+
+      loopback.sendSuccessResponse();
+      this.windowService?.focusMainWindow();
+      await this.desktopFlows.finish(flowId, Ok(undefined));
+
+      log.debug("[Coder OAuth] Desktop login committed");
+
+      return "committed";
     });
-    this.cachedAuth = null;
-    if (!persistResult.success) {
-      loopback.sendFailureResponse(persistResult.error);
-      await this.desktopFlows.finish(flowId, Err(persistResult.error));
-      return "failed";
-    }
-    if (!persistResult.data.applied) {
-      // Cancel won while the mutation waited for the providers-file lock; the
-      // flow is already finished, so only the raced tokens need cleanup.
-      return "cancelled";
-    }
-
-    // Cancellation may also race the window between the persist write and
-    // this check. `has` + `finish` below run with no intervening await, so
-    // exactly one of Cancel and completion wins the flow; if Cancel won
-    // mid-persist, restore the pre-login section (a previously connected
-    // account stays connected).
-    if (!this.desktopFlows.has(flowId)) {
-      await this.rollbackPersistedAuth(auth, previousSection);
-      return "cancelled";
-    }
-
-    loopback.sendSuccessResponse();
-    this.windowService?.focusMainWindow();
-    await this.desktopFlows.finish(flowId, Ok(undefined));
-
-    log.debug("[Coder OAuth] Desktop login committed");
-
-    return "committed";
   }
 
   /**
@@ -915,10 +919,11 @@ export class CoderOauthService {
    * (a previously connected account stays connected with its URL and catalog)
    * — but only while the stored credential is still the cancelled login's;
    * a newer cross-process write that landed in between is kept. Runs under
-   * the login commit lock (see commitDesktopLogin), so the restored snapshot
-   * is always a committed section, never another in-process flow's pending
-   * login. The caller revokes the cancelled login's tokens after the lock is
-   * released.
+   * the login commit locks (process-local + cross-process; see
+   * commitDesktopLogin), so the restored snapshot is always a committed
+   * section, never another flow's pending login — in this process or any
+   * other sharing the providers file. The caller revokes the cancelled
+   * login's tokens after the lock is released.
    */
   private async rollbackPersistedAuth(
     auth: CoderOauthAuth,

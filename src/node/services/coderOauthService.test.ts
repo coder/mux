@@ -117,7 +117,10 @@ function createMockConfig(
   deps: MockDeps
 ): Pick<
   Config,
-  "loadProvidersConfig" | "tryAcquireCoderOauthClientLease" | "withCoderOauthRefreshLock"
+  | "loadProvidersConfig"
+  | "tryAcquireCoderOauthClientLease"
+  | "withCoderOauthRefreshLock"
+  | "withCoderOauthLoginCommitLock"
 > {
   return {
     loadProvidersConfig: () => deps.providersConfig,
@@ -132,17 +135,19 @@ function createMockConfig(
         deps.coderClientLeaseHeld = false;
       };
     },
-    // Single-process tests do not contend on the cross-process refresh lock;
-    // the two-process race test wires a shared serializing lock instead.
+    // Single-process tests do not contend on the cross-process locks; the
+    // two-process race tests wire shared serializing locks instead.
     withCoderOauthRefreshLock: async <T>(fn: () => Promise<T> | T): Promise<T> => await fn(),
+    withCoderOauthLoginCommitLock: async <T>(fn: () => Promise<T> | T): Promise<T> => await fn(),
   };
 }
 
 /**
- * A shared, serializing implementation of Config.withCoderOauthRefreshLock
- * for tests that simulate two Mux processes refreshing concurrently.
+ * A shared, serializing implementation of Config's cross-process locks
+ * (withCoderOauthRefreshLock / withCoderOauthLoginCommitLock) for tests that
+ * simulate two Mux processes contending on the same providers file.
  */
-function createSharedRefreshLock(): <T>(fn: () => Promise<T> | T) => Promise<T> {
+function createSharedCrossProcessLock(): <T>(fn: () => Promise<T> | T) => Promise<T> {
   let busy = false;
   const queue: Array<() => void> = [];
   return async <T>(fn: () => Promise<T> | T): Promise<T> => {
@@ -536,7 +541,7 @@ describe("CoderOauthService", () => {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expiredAuth() },
       };
 
-      const sharedLock = createSharedRefreshLock();
+      const sharedLock = createSharedCrossProcessLock();
       const makeProcess = (): CoderOauthService =>
         new CoderOauthService(
           {
@@ -1456,6 +1461,167 @@ describe("CoderOauthService", () => {
       expect((coderSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_prior");
       expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
       expect(coderSection.models).toEqual(["anthropic/prior-model"]);
+    });
+
+    it("keeps the original login when overlapping logins in two processes are both cancelled", async () => {
+      // Cross-process variant of the previous test: the rollback-snapshot
+      // composure bug is not confined to one CoderOauthService instance —
+      // process B persisting while process A is mid-commit captures A's
+      // uncommitted auth as its previousSection just the same. The shared
+      // commit lock must keep B's persist out of A's persist->commit window,
+      // so the original login survives both cancellations.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: priorAuth,
+          models: ["anthropic/prior-model"],
+        },
+      };
+
+      const sharedCommitLock = createSharedCrossProcessLock();
+
+      // Per-process provider services: process A's first section write is
+      // gated AFTER it lands so A pauses inside its commit critical section;
+      // process B's first write is gated the same way (only reached when the
+      // shared lock is absent — under the fix B never persists at all).
+      let releaseA!: () => void;
+      const gateA = new Promise<void>((resolve) => (releaseA = resolve));
+      let persistAApplied!: () => void;
+      const persistAAppliedPromise = new Promise<void>((resolve) => (persistAApplied = resolve));
+      let releaseB!: () => void;
+      const gateB = new Promise<void>((resolve) => (releaseB = resolve));
+      let sectionCallsA = 0;
+      let sectionCallsB = 0;
+
+      const makeProcess = (
+        who: "A" | "B"
+      ): { service: CoderOauthService; sectionCalls: () => number } => {
+        const gatedProviderService = {
+          ...createMockProviderService(deps),
+          updateProviderSection: async (
+            provider: string,
+            update: (
+              section: Record<string, unknown> | undefined
+            ) => { value: Record<string, unknown> } | null
+          ) => {
+            const call = who === "A" ? ++sectionCallsA : ++sectionCallsB;
+            const result = await mockUpdateProviderSection(deps, provider, update);
+            if (who === "A" && call === 1) {
+              persistAApplied();
+              await gateA;
+            }
+            if (who === "B" && call === 1) {
+              await gateB;
+            }
+            return result;
+          },
+        };
+        const service = new CoderOauthService(
+          {
+            ...createMockConfig(deps),
+            withCoderOauthLoginCommitLock: sharedCommitLock,
+          } as Config,
+          gatedProviderService as unknown as ProviderService,
+          createMockWindowService(deps) as WindowService
+        );
+        return { service, sectionCalls: () => (who === "A" ? sectionCallsA : sectionCallsB) };
+      };
+      const processA = makeProcess("A");
+      const processB = makeProcess("B");
+
+      const servedCodes = new Set<string>();
+      const revokedTokens: string[] = [];
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        // Whichever process misses the client lease registers fresh.
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          const body = new URLSearchParams(fetchBodyText(init));
+          const code = body.get("code") ?? "";
+          servedCodes.add(code);
+          const suffix = code === "code_flow1" ? "flow1" : "flow2";
+          return jsonResponse({
+            access_token: `at_${suffix}`,
+            refresh_token: `rt_${suffix}`,
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const start1 = await processA.service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      const start2 = await processB.service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start1.success && start2.success).toBe(true);
+      if (!start1.success || !start2.success) return;
+
+      const callbackFor = (authorizeUrl: string, state: string, code: string): URL => {
+        const cb = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+        cb.searchParams.set("code", code);
+        cb.searchParams.set("state", state);
+        return cb;
+      };
+
+      // Process A persists its login and blocks mid-commit.
+      const cb1 = originalFetch(
+        callbackFor(start1.data.authorizeUrl, start1.data.flowId, "code_flow1")
+      ).catch(() => null);
+      await persistAAppliedPromise;
+
+      // Process B exchanges its code; its commit must queue on the shared
+      // lock — it must NOT persist while A is mid-commit.
+      const cb2 = originalFetch(
+        callbackFor(start2.data.authorizeUrl, start2.data.flowId, "code_flow2")
+      ).catch(() => null);
+      await waitUntil(() => servedCodes.has("code_flow2"));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(processB.sectionCalls()).toBe(0);
+
+      // Cancel both flows in order, then release the gates.
+      await processA.service.cancelDesktopFlow(start1.data.flowId);
+      await processB.service.cancelDesktopFlow(start2.data.flowId);
+      releaseA();
+      releaseB();
+      await Promise.all([cb1, cb2]);
+
+      // Both raced logins' tokens are revoked...
+      await waitUntil(
+        () => revokedTokens.includes("rt_flow1") && revokedTokens.includes("rt_flow2")
+      );
+      // ...and the ORIGINAL login survives — B never restored A's revoked
+      // auth over it.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_prior");
+      expect((coderSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_prior");
+      expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
+      expect(coderSection.models).toEqual(["anthropic/prior-model"]);
+
+      await processA.service.dispose();
+      await processB.service.dispose();
     });
 
     it("aborts a stalled client registration when the flow ends", async () => {
