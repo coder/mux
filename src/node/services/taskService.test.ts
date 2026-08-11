@@ -11275,6 +11275,14 @@ describe("TaskService", () => {
     });
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const previousAttention = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+    });
+    assert(previousAttention, "previous terminal attention must be created");
+    await terminalAttentionStore.markDelivered(parentWorkspaceId, previousAttention.id);
 
     const reactivated = await taskService.sendMessageToDescendantAgentTask(
       parentWorkspaceId,
@@ -11285,6 +11293,15 @@ describe("TaskService", () => {
     expect(reactivated.success).toBe(true);
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("reported");
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
+
+    expect(await terminalAttentionStore.get(parentWorkspaceId, previousAttention.id)).toBeNull();
+    expect(
+      await terminalAttentionStore.enqueueIfAbsent({
+        ownerWorkspaceId: parentWorkspaceId,
+        sourceKind: "agent_task",
+        sourceId: childTaskId,
+      })
+    ).not.toBeNull();
 
     await taskService.reportAgentProgress(childTaskId, "progress-call", {
       reportMarkdown: "The regression is in the effect cleanup path.",

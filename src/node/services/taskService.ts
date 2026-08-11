@@ -4505,6 +4505,17 @@ export class TaskService {
           if (!execution.success) {
             return Err({ code: "send_failed" as const, message: execution.error });
           }
+          const directParentWorkspaceId = refreshedEntry.workspace.parentWorkspaceId;
+          if (directParentWorkspaceId != null) {
+            // Terminal attention is keyed by stable child ID, so a delivered prior assignment would
+            // otherwise suppress every later continuation generation. Re-arm it only after the new
+            // continuation is accepted; its unique workspace-turn notification remains the fallback
+            // when this generation fails to deliver a stable child report/failure.
+            await this.terminalAttentionStore.delete(
+              directParentWorkspaceId,
+              TerminalAttentionStore.notificationId("agent_task", taskId)
+            );
+          }
           return Ok({
             delivery: "reactivated" as const,
             executionTaskId: execution.data.taskId,
