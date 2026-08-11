@@ -5205,6 +5205,110 @@ describe("TaskService", () => {
     ).toBeNull();
   });
 
+  test("direct-parent consumption suppresses a concurrently resettled workspace-turn wake", async () => {
+    const { config, parentId, taskService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const child = Array.from(cfg.projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = parentId;
+      child.agentId = "explore";
+      child.agentType = "explore";
+      child.taskStatus = "reported";
+      return cfg;
+    });
+    const staleRecord: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
+      error: "Stream error: provider overloaded",
+      attentionPolicy: "notify_on_terminal",
+      terminalAttentionNotifiedAt: "2026-06-19T00:00:02.000Z",
+    };
+    await new TaskHandleStore(config).upsertWorkspaceTurn(staleRecord);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: "wst_handle",
+      terminalOutcome: "error",
+    });
+    await terminalAttentionStore.markDelivered(parentId, "workspace_turn:wst_handle");
+
+    let releasePostSettlementDelivery: () => void = () => undefined;
+    const postSettlementDeliveryBlocked = new Promise<void>((resolve) => {
+      releasePostSettlementDelivery = resolve;
+    });
+    let signalPostSettlementDelivery: () => void = () => undefined;
+    const postSettlementDeliveryStarted = new Promise<void>((resolve) => {
+      signalPostSettlementDelivery = resolve;
+    });
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+      deliverPersistentChildWorkspaceTurnResult: (
+        record: WorkspaceTurnTaskHandleRecord,
+        waiterWorkspaceIds: ReadonlySet<string>
+      ) => Promise<void>;
+    };
+    const delivery = spyOn(
+      internal,
+      "deliverPersistentChildWorkspaceTurnResult"
+    ).mockImplementation(async () => {
+      signalPostSettlementDelivery();
+      await postSettlementDeliveryBlocked;
+    });
+    const settling = internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_concurrent_resettle",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "Concurrently corrected result" }],
+    });
+
+    try {
+      await postSettlementDeliveryStarted;
+      const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle", {
+        consumingWorkspaceId: parentId,
+      });
+      expect(snapshot).toMatchObject({
+        status: "completed",
+        messageId: "msg_concurrent_resettle",
+        reportMarkdown: "Concurrently corrected result",
+      });
+      expect(snapshot?.directParentResultDeliveredAt).toBeDefined();
+      expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+    } finally {
+      releasePostSettlementDelivery();
+      await settling;
+      delivery.mockRestore();
+    }
+
+    expect(await terminalAttentionStore.get(parentId, "workspace_turn:wst_handle")).toMatchObject({
+      status: "delivered",
+    });
+    expect(await terminalAttentionStore.listPending(parentId)).toEqual([]);
+  });
+
   test("getWorkspaceTurnSnapshot revives an interrupted handle while the child retries the same turn", async () => {
     const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({

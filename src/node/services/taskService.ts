@@ -6671,12 +6671,33 @@ export class TaskService {
     // record of intent; only after it is accepted do we set terminalAttentionNotifiedAt on the
     // handle so a duplicate settlement / stale recovery cannot double-wake.
     if (pendingNotify.resettled) {
-      // The stale settlement's wake-up may already be delivered/consumed; enqueueIfAbsent
-      // treats that tombstone as "already notified" and would swallow the corrected outcome.
-      await this.terminalAttentionStore.delete(
-        params.record.ownerWorkspaceId,
-        TerminalAttentionStore.notificationId("workspace_turn", params.record.handleId)
-      );
+      const shouldEnqueueCorrectedAttention =
+        settledRecord != null &&
+        (await this.workspaceTurnSettlementLocks.withLock(params.record.handleId, async () => {
+          const current = await this.taskHandleStore.getWorkspaceTurn(
+            params.record.ownerWorkspaceId,
+            params.record.handleId
+          );
+          if (
+            current == null ||
+            current.status !== settledRecord.status ||
+            current.updatedAt !== settledRecord.updatedAt ||
+            current.terminalAttentionNotifiedAt != null
+          ) {
+            return false;
+          }
+          // Delete the stale generation while holding the same lock used by direct-parent
+          // consumption. If consumption wins next, it installs a delivered tombstone before this
+          // method's enqueueIfAbsent; if it already won, the marker above prevents this deletion.
+          await this.terminalAttentionStore.delete(
+            params.record.ownerWorkspaceId,
+            TerminalAttentionStore.notificationId("workspace_turn", params.record.handleId)
+          );
+          return true;
+        }));
+      if (!shouldEnqueueCorrectedAttention) {
+        return;
+      }
     }
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: params.record.ownerWorkspaceId,
@@ -6684,16 +6705,24 @@ export class TaskService {
       terminalOutcome: terminalAttentionOutcome(settlementResult.winningStatus),
       sourceId: params.record.handleId,
     });
-    const terminal = await this.taskHandleStore.getWorkspaceTurn(
-      params.record.ownerWorkspaceId,
-      params.record.handleId
-    );
-    if (terminal != null && terminal.terminalAttentionNotifiedAt == null) {
-      await this.taskHandleStore.upsertWorkspaceTurn({
-        ...terminal,
-        terminalAttentionNotifiedAt: getIsoNow(),
-      });
-    }
+    await this.workspaceTurnSettlementLocks.withLock(params.record.handleId, async () => {
+      const terminal = await this.taskHandleStore.getWorkspaceTurn(
+        params.record.ownerWorkspaceId,
+        params.record.handleId
+      );
+      if (
+        terminal != null &&
+        (settledRecord == null ||
+          (terminal.status === settledRecord.status &&
+            terminal.updatedAt === settledRecord.updatedAt)) &&
+        terminal.terminalAttentionNotifiedAt == null
+      ) {
+        await this.taskHandleStore.upsertWorkspaceTurn({
+          ...terminal,
+          terminalAttentionNotifiedAt: getIsoNow(),
+        });
+      }
+    });
   }
 
   async waitForWorkspaceTurn(
@@ -7856,9 +7885,29 @@ export class TaskService {
       return record;
     }
 
+    const consumedAt = getIsoNow();
+    const consumesTerminalAttention =
+      resolveBackgroundWorkAttentionPolicy(record.attentionPolicy) === "notify_on_terminal";
+    if (consumesTerminalAttention) {
+      // Publish a delivered tombstone while the settlement lock is held. A concurrent settlement
+      // that has not enqueued its corrected wake yet will then observe this record via
+      // enqueueIfAbsent; one that already enqueued it is transitioned before the parent goes idle.
+      const attentionId = TerminalAttentionStore.notificationId("workspace_turn", record.handleId);
+      await this.terminalAttentionStore.enqueueIfAbsent({
+        ownerWorkspaceId: record.ownerWorkspaceId,
+        sourceKind: "workspace_turn",
+        sourceId: record.handleId,
+        terminalOutcome: terminalAttentionOutcome(record.status),
+      });
+      await this.terminalAttentionStore.markDelivered(record.ownerWorkspaceId, attentionId);
+    }
+
     const consumed = {
       ...record,
-      directParentResultDeliveredAt: getIsoNow(),
+      directParentResultDeliveredAt: consumedAt,
+      ...(consumesTerminalAttention
+        ? { terminalAttentionNotifiedAt: record.terminalAttentionNotifiedAt ?? consumedAt }
+        : {}),
     };
     await this.taskHandleStore.upsertWorkspaceTurn(consumed);
     return consumed;
