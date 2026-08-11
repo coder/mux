@@ -11316,6 +11316,58 @@ describe("TaskService", () => {
     ).toBe(true);
   });
 
+  test("reactivation preserves pending stable-child attention owed to the direct parent", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["pendinghandle", "pendingturn"]);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-pending-reactivation";
+    const childTaskId = "child-pending-reactivation";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const pendingAttention = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: childTaskId,
+    });
+    assert(pendingAttention, "pending terminal attention must be created");
+
+    const reactivated = await taskService.sendMessageToDescendantAgentTask(
+      parentWorkspaceId,
+      childTaskId,
+      "Continue while the prior parent wake is pending.",
+      "tool-end"
+    );
+
+    expect(reactivated).toMatchObject({
+      success: true,
+      data: { delivery: "reactivated" },
+    });
+    expect(await terminalAttentionStore.get(parentWorkspaceId, pendingAttention.id)).toMatchObject({
+      status: "pending",
+    });
+  });
+
   test("concurrent inactive-child messages create only one continuation execution", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["singlehandle", "singleturn"]);

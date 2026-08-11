@@ -4508,13 +4508,17 @@ export class TaskService {
           const directParentWorkspaceId = refreshedEntry.workspace.parentWorkspaceId;
           if (directParentWorkspaceId != null) {
             // Terminal attention is keyed by stable child ID, so a delivered prior assignment would
-            // otherwise suppress every later continuation generation. Re-arm it only after the new
-            // continuation is accepted; its unique workspace-turn notification remains the fallback
-            // when this generation fails to deliver a stable child report/failure.
-            await this.terminalAttentionStore.delete(
+            // otherwise suppress every later continuation generation. Keep an undelivered prior
+            // notification intact, though: it still owes the direct parent a wake for already-injected
+            // context and the new continuation may be owned by a higher ancestor.
+            const notificationId = TerminalAttentionStore.notificationId("agent_task", taskId);
+            const previousAttention = await this.terminalAttentionStore.get(
               directParentWorkspaceId,
-              TerminalAttentionStore.notificationId("agent_task", taskId)
+              notificationId
             );
+            if (previousAttention != null && previousAttention.status !== "pending") {
+              await this.terminalAttentionStore.delete(directParentWorkspaceId, notificationId);
+            }
           }
           return Ok({
             delivery: "reactivated" as const,
