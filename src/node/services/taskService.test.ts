@@ -1921,6 +1921,108 @@ describe("TaskService", () => {
         TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
       )
     ).toMatchObject({ status: "superseded" });
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const terminalRecord = await taskHandleStore.getWorkspaceTurn(parentId, created.data.taskId);
+    assert(terminalRecord, "terminal continuation record must exist");
+    const recordWithoutDeliveryMarker = { ...terminalRecord };
+    delete recordWithoutDeliveryMarker.directParentResultDeliveredAt;
+    await taskHandleStore.upsertWorkspaceTurn(recordWithoutDeliveryMarker);
+    await (
+      taskService as unknown as {
+        recoverTerminalWorkspaceTurnAttentionNotifications: () => Promise<number>;
+      }
+    ).recoverTerminalWorkspaceTurnAttentionNotifications();
+    await flushTerminalAttentionDrains(taskService);
+
+    const recoveredHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(JSON.stringify(recoveredHistory).match(/Mapped the tooling surface\./g)).toHaveLength(1);
+    expect(
+      (await taskHandleStore.getWorkspaceTurn(parentId, created.data.taskId))
+        ?.directParentResultDeliveredAt
+    ).toBeDefined();
+  });
+
+  test("higher-ancestor waiters do not suppress continuation delivery to the direct parent", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["nestedwaiterhandle", "nestedwaiterturn"]);
+    const { parentId: rootWorkspaceId, projectPath } = await saveLocalParentWorkspace(
+      config,
+      rootDir
+    );
+    const directParentTaskId = "direct-parent-continuation-result";
+    const childTaskId = "nested-child-continuation-result";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "direct-parent", directParentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: directParentTaskId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          title: "Nested Reviewer",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: directParentTaskId,
+      prompt: "Continue the nested review.",
+      title: "Nested Reviewer",
+      allowAgentWorkspace: true,
+      attentionPolicy: "notify_on_terminal",
+      workspace: { mode: "existing", workspaceId: childTaskId },
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    const waited = taskService.waitForWorkspaceTurn(created.data.taskId, {
+      requestingWorkspaceId: rootWorkspaceId,
+      ownerWorkspaceId: directParentTaskId,
+      timeoutMs: 5_000,
+    });
+    await (
+      taskService as unknown as { handleStreamEnd: (event: StreamEndEvent) => Promise<void> }
+    ).handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "msg-nested-continuation-result",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "explore",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: created.data.taskId,
+          ownerWorkspaceId: directParentTaskId,
+          turnId: "nestedwaiterturn",
+        },
+      },
+      parts: [{ type: "text", text: "Nested review complete." }],
+    });
+    expect(await waited).toMatchObject({ reportMarkdown: "Nested review complete." });
+
+    const directParentHistory =
+      await historyService.getHistoryFromLatestBoundary(directParentTaskId);
+    expect(JSON.stringify(directParentHistory)).toContain("Nested review complete.");
+    expect(JSON.stringify(directParentHistory)).toContain(childTaskId);
   });
 
   test("createWorkspaceTurn queues busy owner-created existing workspaces", async () => {

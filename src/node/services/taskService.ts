@@ -286,6 +286,7 @@ function formatSubagentReportUserMessage(params: {
   title: string;
   reportMarkdown: string;
   status: "in_progress" | "completed";
+  executionId?: string;
   model?: string;
   thinkingLevel?: ThinkingLevel;
   structuredOutput?: unknown;
@@ -301,6 +302,7 @@ function formatSubagentReportUserMessage(params: {
     status: params.status,
     title: params.title,
     reportMarkdown: params.reportMarkdown,
+    ...(params.executionId != null ? { executionId: params.executionId } : {}),
     ...(params.model != null ? { model: params.model } : {}),
     ...(params.thinkingLevel != null ? { thinkingLevel: params.thinkingLevel } : {}),
     ...(params.structuredOutput !== undefined ? { structuredOutput: params.structuredOutput } : {}),
@@ -314,6 +316,13 @@ function parseTerminalSubagentTaskId(content: string): string | null {
   return /<task_id>([^\n<]+)<\/task_id>/.exec(content)?.[1] ?? null;
 }
 
+function parseTerminalSubagentExecutionId(content: string): string | null {
+  const report = parseSubagentReportEnvelope(content);
+  if (report?.executionId != null) return report.executionId;
+  if (!content.startsWith(SUBAGENT_FAILURE_ENVELOPE_TAG)) return null;
+  return /<execution_id>([^\n<]+)<\/execution_id>/.exec(content)?.[1] ?? null;
+}
+
 // Failure twin of formatSubagentReportUserMessage: terminal child failures are
 // delivered into the parent context as an explicit failure block (never as a
 // report) so a later wake-up — by ANY sibling's settlement — cannot present the
@@ -321,6 +330,7 @@ function parseTerminalSubagentTaskId(content: string): string | null {
 function formatSubagentFailureUserMessage(params: {
   childWorkspaceId: string;
   agentType: string;
+  executionId?: string;
   errorType: string;
   errorMessage: string;
 }): string {
@@ -331,6 +341,7 @@ function formatSubagentFailureUserMessage(params: {
   return [
     SUBAGENT_FAILURE_ENVELOPE_TAG,
     `<task_id>${params.childWorkspaceId}</task_id>`,
+    ...(params.executionId != null ? [`<execution_id>${params.executionId}</execution_id>`] : []),
     `<agent_type>${params.agentType}</agent_type>`,
     `<error_type>${params.errorType}</error_type>`,
     "<error_message>",
@@ -5523,6 +5534,9 @@ export class TaskService {
     });
     let recoveredCount = 0;
     for (const record of terminalRecords) {
+      if (record.directParentResultDeliveredAt == null) {
+        await this.deliverPersistentChildWorkspaceTurnResult(record, new Set());
+      }
       if (
         resolveBackgroundWorkAttentionPolicy(record.attentionPolicy) !== "notify_on_terminal" ||
         record.terminalAttentionNotifiedAt != null
@@ -6195,27 +6209,28 @@ export class TaskService {
     };
   }
 
-  /**
-   * Settle pending workspace-turn waiters. Returns whether any foreground waiter consumed the
-   * terminal result — callers use this to suppress a duplicate terminal wake-up notification.
-   */
+  /** Settle pending workspace-turn waiters and return the workspaces that consumed the result. */
   private settleWorkspaceTurnWaiters(
     handleId: string,
     settlement:
       | { status: "completed"; result: WorkspaceTurnWaitResult }
       | { status: "error"; error: Error }
-  ): boolean {
+  ): Set<string> {
     assert(handleId.length > 0, "settleWorkspaceTurnWaiters requires handleId");
     const waiters = this.pendingWorkspaceTurnWaitersByHandleId.get(handleId) ?? [];
     this.pendingWorkspaceTurnWaitersByHandleId.delete(handleId);
+    const requestingWorkspaceIds = new Set<string>();
     for (const waiter of waiters) {
+      if (waiter.requestingWorkspaceId != null) {
+        requestingWorkspaceIds.add(waiter.requestingWorkspaceId);
+      }
       if (settlement.status === "completed") {
         waiter.resolve(settlement.result);
       } else {
         waiter.reject(settlement.error);
       }
     }
-    return waiters.length > 0;
+    return requestingWorkspaceIds;
   }
 
   private async cleanupDisposableWorkspaceTurn(
@@ -6277,12 +6292,15 @@ export class TaskService {
 
   private async deliverPersistentChildWorkspaceTurnResult(
     record: WorkspaceTurnTaskHandleRecord,
-    hadForegroundWaiter: boolean
+    foregroundWaiterWorkspaceIds: ReadonlySet<string>
   ): Promise<void> {
     if (record.status !== "completed" && record.status !== "error") {
       return;
     }
 
+    if (record.directParentResultDeliveredAt != null) {
+      return;
+    }
     const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
     if (childEntry == null || childEntry.workspace.workflowTask != null) {
       return;
@@ -6291,15 +6309,42 @@ export class TaskService {
     if (directParentWorkspaceId == null) {
       return;
     }
-    if (hadForegroundWaiter && record.ownerWorkspaceId === directParentWorkspaceId) {
+    const markDirectParentResultDelivered = async () => {
+      await this.taskHandleStore.updateWorkspaceTurn(
+        record.ownerWorkspaceId,
+        record.handleId,
+        (current) => ({
+          ...current,
+          directParentResultDeliveredAt: current.directParentResultDeliveredAt ?? getIsoNow(),
+        })
+      );
+    };
+    if (foregroundWaiterWorkspaceIds.has(directParentWorkspaceId)) {
+      await markDirectParentResultDelivered();
       // The direct parent's in-flight tool result already carries this output.
       return;
     }
+
+    const historyResult =
+      await this.historyService.getHistoryFromLatestBoundary(directParentWorkspaceId);
+    const alreadyDelivered =
+      historyResult.success &&
+      historyResult.data.some((message) => {
+        if (message.role !== "user" || message.metadata?.synthetic !== true) {
+          return false;
+        }
+        const content = message.parts
+          .filter((part): part is Extract<typeof part, { type: "text" }> => part.type === "text")
+          .map((part) => part.text)
+          .join("\n");
+        return parseTerminalSubagentExecutionId(content) === record.handleId;
+      });
 
     const agentType = coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent";
     const content =
       record.status === "completed"
         ? formatSubagentReportUserMessage({
+            executionId: record.handleId,
             childWorkspaceId: record.workspaceId,
             agentType,
             title:
@@ -6318,29 +6363,32 @@ export class TaskService {
         : formatSubagentFailureUserMessage({
             childWorkspaceId: record.workspaceId,
             agentType,
+            executionId: record.handleId,
             errorType: "workspace_turn_error",
             errorMessage: record.error ?? "Workspace turn failed",
           });
-    const message = createMuxMessage(
-      record.status === "completed" ? createTaskReportMessageId() : createTaskFailureMessageId(),
-      "user",
-      content,
-      { timestamp: Date.now(), synthetic: true, uiVisible: true }
-    );
-    const appendResult = await this.historyService.appendToHistory(
-      directParentWorkspaceId,
-      message
-    );
-    if (!appendResult.success) {
-      log.error("Failed to append persistent child continuation result to direct parent", {
+    if (!alreadyDelivered) {
+      const message = createMuxMessage(
+        record.status === "completed" ? createTaskReportMessageId() : createTaskFailureMessageId(),
+        "user",
+        content,
+        { timestamp: Date.now(), synthetic: true, uiVisible: true }
+      );
+      const appendResult = await this.historyService.appendToHistory(
         directParentWorkspaceId,
-        childWorkspaceId: record.workspaceId,
-        handleId: record.handleId,
-        error: appendResult.error,
-      });
-      return;
+        message
+      );
+      if (!appendResult.success) {
+        log.error("Failed to append persistent child continuation result to direct parent", {
+          directParentWorkspaceId,
+          childWorkspaceId: record.workspaceId,
+          handleId: record.handleId,
+          error: appendResult.error,
+        });
+        return;
+      }
+      this.workspaceService.emitChatEvent(directParentWorkspaceId, { ...message, type: "message" });
     }
-    this.workspaceService.emitChatEvent(directParentWorkspaceId, { ...message, type: "message" });
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: directParentWorkspaceId,
       sourceKind: "agent_task",
@@ -6348,6 +6396,7 @@ export class TaskService {
       generationId: record.handleId,
       terminalOutcome: terminalAttentionOutcome(record.status),
     });
+    await markDirectParentResultDelivered();
   }
 
   private async settleWorkspaceTurn(params: {
@@ -6381,7 +6430,7 @@ export class TaskService {
         pendingNotify: { kind: "notify"; resettled: boolean } | { kind: "drain_pending" } | null;
         winningStatus: WorkspaceTurnTaskStatus;
         settledRecord?: WorkspaceTurnTaskHandleRecord;
-        hadForegroundWaiter?: boolean;
+        foregroundWaiterWorkspaceIds?: Set<string>;
       } | null> => {
         const current = await this.taskHandleStore.getWorkspaceTurn(
           params.record.ownerWorkspaceId,
@@ -6467,10 +6516,11 @@ export class TaskService {
         ) {
           this.activeWorkspaceTurnHandleByWorkspaceId.delete(params.record.workspaceId);
         }
-        const hadForegroundWaiter = this.settleWorkspaceTurnWaiters(
+        const foregroundWaiterWorkspaceIds = this.settleWorkspaceTurnWaiters(
           params.record.handleId,
           params.waiterSettlement
         );
+        const hadForegroundWaiter = foregroundWaiterWorkspaceIds.size > 0;
         this.markTaskForegroundRelevant(params.record.handleId);
         await this.cleanupDisposableWorkspaceTurn(nextRecord);
         this.scheduleMaybeStartQueuedTasks();
@@ -6483,7 +6533,7 @@ export class TaskService {
             pendingNotify: { kind: "drain_pending" },
             winningStatus: nextRecord.status,
             settledRecord: nextRecord,
-            hadForegroundWaiter,
+            foregroundWaiterWorkspaceIds,
           };
         }
         if (!shouldNotify) {
@@ -6491,14 +6541,14 @@ export class TaskService {
             pendingNotify: null,
             winningStatus: nextRecord.status,
             settledRecord: nextRecord,
-            hadForegroundWaiter,
+            foregroundWaiterWorkspaceIds,
           };
         }
         return {
           pendingNotify: { kind: "notify", resettled: resettleStaleTerminal },
           winningStatus: nextRecord.status,
           settledRecord: nextRecord,
-          hadForegroundWaiter,
+          foregroundWaiterWorkspaceIds,
         };
       }
     );
@@ -6506,9 +6556,16 @@ export class TaskService {
     if (settlementResult == null) {
       return;
     }
-    const { pendingNotify, settledRecord, hadForegroundWaiter = false } = settlementResult;
+    const {
+      pendingNotify,
+      settledRecord,
+      foregroundWaiterWorkspaceIds = new Set<string>(),
+    } = settlementResult;
     if (settledRecord != null) {
-      await this.deliverPersistentChildWorkspaceTurnResult(settledRecord, hadForegroundWaiter);
+      await this.deliverPersistentChildWorkspaceTurnResult(
+        settledRecord,
+        foregroundWaiterWorkspaceIds
+      );
     }
     if (pendingNotify == null) {
       return;

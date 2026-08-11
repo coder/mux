@@ -83,6 +83,8 @@ export interface WorkspaceTurnTaskHandleRecord {
    * accepted/sent for this handle. Restart-safe one-shot dedupe: a present marker
    * prevents a duplicate wake-up during stale recovery or duplicate settlement.
    */
+  /** ISO timestamp set after a persistent child's continuation result is delivered to its direct parent. */
+  directParentResultDeliveredAt?: string;
   terminalAttentionNotifiedAt?: string;
 }
 
@@ -116,6 +118,7 @@ const WorkspaceTurnTaskHandleRecordSchema = z
     deferredMessageIds: z.array(z.string().min(1)).optional(),
     error: z.string().optional(),
     attentionPolicy: BackgroundWorkAttentionPolicySchema.optional(),
+    directParentResultDeliveredAt: z.string().optional(),
     terminalAttentionNotifiedAt: z.string().optional(),
   })
   .strict();
