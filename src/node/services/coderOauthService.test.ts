@@ -1479,6 +1479,63 @@ describe("CoderOauthService", () => {
       expect(registrationAttempted).toBe(false);
     });
 
+    it("aborts a stalled token exchange when the flow is cancelled", async () => {
+      // The token endpoint accepts the connection but never responds. The
+      // exchange carries the flow's abort signal, so Cancel (or the flow
+      // timeout) must kill the in-flight round-trip instead of leaking it as
+      // a background request for up to the request timeout.
+      let exchangeStarted!: () => void;
+      const exchangeStartedPromise = new Promise<void>((resolve) => (exchangeStarted = resolve));
+      let exchangeAborted = false;
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          exchangeStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              exchangeAborted = true;
+              reject(new Error("The operation was aborted"));
+            });
+          });
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+
+      const callbackUrl = new URL(
+        new URL(start.data.authorizeUrl).searchParams.get("redirect_uri")!
+      );
+      callbackUrl.searchParams.set("code", "code_stalled");
+      callbackUrl.searchParams.set("state", start.data.flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      await exchangeStartedPromise;
+      await service.cancelDesktopFlow(start.data.flowId);
+      await callbackPromise;
+
+      await waitUntil(() => exchangeAborted);
+      // Nothing was persisted for the aborted exchange.
+      expect(deps.providersConfig.coder?.coderOauth).toBeUndefined();
+    });
+
     it("registers a fresh client when another process holds the stored-client lease", async () => {
       // The stored-client reservation is a cross-process filesystem lease:
       // a concurrent login flow in ANOTHER Mux process sharing providers.jsonc
@@ -1729,6 +1786,77 @@ describe("CoderOauthService", () => {
       await waitUntil(() => deps.setModelsCalls.length > 0);
       expect(deps.setModelsCalls[0].provider).toBe("coder");
       expect(deps.setModelsCalls[0].models).toEqual([]);
+    });
+
+    it("fetches origin catalogs concurrently so a stalled origin cannot starve a healthy one", async () => {
+      // The anthropic catalog stalls until the openai catalog has been
+      // REQUESTED: with the old sequential loop this deadlocks (openai was
+      // only queried after anthropic resolved), so completion here proves the
+      // healthy origin is fetched while the other is stalled. Each request
+      // must also carry an abort signal (the per-request timeout that unwedges
+      // a genuinely dead origin in production).
+      let releaseAnthropic!: () => void;
+      const anthropicGate = new Promise<void>((resolve) => (releaseAnthropic = resolve));
+      const catalogSignals: Array<AbortSignal | null | undefined> = [];
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_concurrent",
+            refresh_token: "rt_concurrent",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          catalogSignals.push(init?.signal);
+          await anthropicGate; // Stalled until openai is queried.
+          return jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          catalogSignals.push(init?.signal);
+          releaseAnthropic();
+          return jsonResponse({ data: [{ id: "gpt-5" }] });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_concurrent");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // Both catalogs land, in deterministic origin order, despite the stall.
+      // (The first models write is the login commit's atomic catalog clear.)
+      await waitUntil(() => deps.setModelsCalls.some((call) => call.models.length > 0));
+      const catalogWrite = deps.setModelsCalls.find((call) => call.models.length > 0)!;
+      expect(catalogWrite.models).toEqual(["anthropic/claude-sonnet-4-5", "openai/gpt-5"]);
+      // Every catalog request was time-bounded.
+      expect(catalogSignals).toHaveLength(2);
+      for (const signal of catalogSignals) {
+        expect(signal).toBeInstanceOf(AbortSignal);
+      }
     });
 
     it("skips the model catalog write when the login was superseded during discovery", async () => {

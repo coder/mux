@@ -40,6 +40,16 @@ const DEPLOYMENT_PROBE_TIMEOUT_MS = 10_000;
 // endpoint can never pin a mutex or an abandoned flow's cleanup indefinitely.
 const REVOKE_TIMEOUT_MS = 10_000;
 
+// Token endpoint round-trips (exchange + refresh) must be bounded: a refresh
+// runs under refreshMutex — a stalled token endpoint would otherwise block
+// every subsequent Coder request in this process — and an exchange would
+// outlive Cancel and the flow timeout as a leaked background request.
+const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
+
+// AI Bridge catalog requests are fetched per origin; bound each so a single
+// stalled origin cannot block discovery (requests also run concurrently).
+const CATALOG_FETCH_TIMEOUT_MS = 10_000;
+
 /** RFC 8414 endpoints resolved from the deployment's discovery document. */
 interface CoderOauthEndpoints {
   authorizationEndpoint: string;
@@ -350,8 +360,11 @@ export class CoderOauthService {
       }, DEFAULT_DESKTOP_TIMEOUT_MS),
     });
 
-    const registrationAbort = new AbortController();
-    void resultDeferred.promise.then(() => registrationAbort.abort());
+    // Aborts every network round-trip owned by this flow (client
+    // registration, token exchange) when the flow finishes — Cancel, flow
+    // timeout, and shutdown all resolve the deferred.
+    const flowAbort = new AbortController();
+    void resultDeferred.promise.then(() => flowAbort.abort());
 
     // Reserve the stored client's single redirect slot for this flow, or —
     // when another active flow already owns it — fall back to registering a
@@ -379,7 +392,7 @@ export class CoderOauthService {
       deploymentUrl,
       endpoints,
       loopback.redirectUri,
-      registrationAbort.signal,
+      flowAbort.signal,
       ownsStoredClient
     );
     if (!clientResult.success) {
@@ -415,21 +428,26 @@ export class CoderOauthService {
         return;
       }
 
-      // The token exchange stays OUTSIDE the login commit lock: it is an
-      // unbounded network round-trip, and one stalled exchange must not block
-      // other logins from committing.
-      const tokenResult = await this.requestTokens(endpoints.tokenEndpoint, {
-        kind: "exchange",
-        deploymentUrl,
-        // Fresh session lineage: rotations preserve this id, a later login
-        // mints a new one, letting disconnect tell rotations and re-logins
-        // apart.
-        sessionId: randomBase64Url(16),
-        client,
-        code: callbackResult.data.code,
-        redirectUri: loopback.redirectUri,
-        codeVerifier,
-      });
+      // The token exchange stays OUTSIDE the login commit lock: it is a
+      // network round-trip, and one stalled exchange must not block other
+      // logins from committing. The flow's abort signal cancels it on
+      // Cancel/flow-timeout (plus the request timeout inside requestTokens).
+      const tokenResult = await this.requestTokens(
+        endpoints.tokenEndpoint,
+        {
+          kind: "exchange",
+          deploymentUrl,
+          // Fresh session lineage: rotations preserve this id, a later login
+          // mints a new one, letting disconnect tell rotations and re-logins
+          // apart.
+          sessionId: randomBase64Url(16),
+          client,
+          code: callbackResult.data.code,
+          redirectUri: loopback.redirectUri,
+          codeVerifier,
+        },
+        flowAbort.signal
+      );
       if (!tokenResult.success) {
         loopback.sendFailureResponse(tokenResult.error);
         await this.desktopFlows.finish(flowId, Err(tokenResult.error));
@@ -1020,7 +1038,10 @@ export class CoderOauthService {
           sessionId: string;
           client: CoderOauthClient;
           refreshToken: string;
-        }
+        },
+    // Always time-bounded; exchanges additionally pass the flow's abort
+    // signal so Cancel/flow-timeout kills the in-flight round-trip.
+    signal?: AbortSignal
   ): Promise<CoderTokenRequestResult> {
     const label = input.kind === "exchange" ? "exchange" : "refresh";
 
@@ -1040,10 +1061,12 @@ export class CoderOauthService {
               refreshToken: input.refreshToken,
             });
 
+      const timeoutSignal = AbortSignal.timeout(TOKEN_REQUEST_TIMEOUT_MS);
       const response = await fetch(tokenEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
+        signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
       });
 
       if (!response.ok) {
@@ -1127,33 +1150,46 @@ export class CoderOauthService {
   // -------------------------------------------------------------------------
 
   private async refreshBridgeModels(auth: CoderOauthAuth): Promise<void> {
-    const modelIds: string[] = [];
+    // Origin catalogs are independent: fetch them concurrently and bound each
+    // request, so one stalled origin can neither delay nor starve a healthy
+    // one — otherwise users would see an empty catalog indefinitely despite
+    // an available upstream. Per-origin results keep the deterministic
+    // CODER_AIBRIDGE_ORIGINS ordering.
+    const perOrigin = await Promise.all(
+      CODER_AIBRIDGE_ORIGINS.map(async (origin): Promise<string[]> => {
+        try {
+          const response = await fetch(
+            `${coderAibridgeBaseUrl(auth.deploymentUrl, origin)}/models`,
+            {
+              headers: {
+                Authorization: `Bearer ${auth.access}`,
+                Accept: "application/json",
+              },
+              signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
+            }
+          );
 
-    for (const origin of CODER_AIBRIDGE_ORIGINS) {
-      try {
-        const response = await fetch(`${coderAibridgeBaseUrl(auth.deploymentUrl, origin)}/models`, {
-          headers: {
-            Authorization: `Bearer ${auth.access}`,
-            Accept: "application/json",
-          },
-        });
-
-        if (!response.ok) {
-          log.debug(`[Coder OAuth] ${origin} model list unavailable (${response.status})`);
-          continue;
-        }
-
-        const json = (await response.json()) as unknown;
-        const entries = isPlainObject(json) && Array.isArray(json.data) ? json.data : [];
-        for (const entry of entries) {
-          if (isPlainObject(entry) && typeof entry.id === "string" && entry.id) {
-            modelIds.push(`${origin}/${entry.id}`);
+          if (!response.ok) {
+            log.debug(`[Coder OAuth] ${origin} model list unavailable (${response.status})`);
+            return [];
           }
+
+          const json = (await response.json()) as unknown;
+          const entries = isPlainObject(json) && Array.isArray(json.data) ? json.data : [];
+          const ids: string[] = [];
+          for (const entry of entries) {
+            if (isPlainObject(entry) && typeof entry.id === "string" && entry.id) {
+              ids.push(`${origin}/${entry.id}`);
+            }
+          }
+          return ids;
+        } catch (error) {
+          log.debug(`[Coder OAuth] Failed to fetch ${origin} models: ${getErrorMessage(error)}`);
+          return [];
         }
-      } catch (error) {
-        log.debug(`[Coder OAuth] Failed to fetch ${origin} models: ${getErrorMessage(error)}`);
-      }
-    }
+      })
+    );
+    const modelIds = perOrigin.flat();
 
     // Belt & suspenders: the factory enforces policy per model at creation
     // time, but don't persist catalog entries a policy already disallows.
