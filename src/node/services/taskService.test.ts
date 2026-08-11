@@ -2149,6 +2149,95 @@ describe("TaskService", () => {
     expect(JSON.stringify(directParentHistory)).toContain(childTaskId);
   });
 
+  test("a direct-parent foreground waiter does not suppress the continuation owner's wake", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["ownerwaiterhandle", "ownerwaiterturn"]);
+    const { parentId: rootWorkspaceId, projectPath } = await saveLocalParentWorkspace(
+      config,
+      rootDir
+    );
+    const directParentTaskId = "direct-parent-owner-wake";
+    const childTaskId = "nested-child-owner-wake";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "direct-parent", directParentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: directParentTaskId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          title: "Owner Wake Reviewer",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const created = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: rootWorkspaceId,
+      prompt: "Continue the root-owned nested review.",
+      title: "Owner Wake Reviewer",
+      allowAgentWorkspace: true,
+      attentionPolicy: "notify_on_terminal",
+      workspace: { mode: "existing", workspaceId: childTaskId },
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    const waited = taskService.waitForWorkspaceTurn(created.data.taskId, {
+      requestingWorkspaceId: directParentTaskId,
+      ownerWorkspaceId: rootWorkspaceId,
+      timeoutMs: 5_000,
+    });
+    await (
+      taskService as unknown as { handleStreamEnd: (event: StreamEndEvent) => Promise<void> }
+    ).handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "msg-owner-wake-result",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "explore",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: created.data.taskId,
+          ownerWorkspaceId: rootWorkspaceId,
+          turnId: "ownerwaiterturn",
+        },
+      },
+      parts: [{ type: "text", text: "Root-owned nested review complete." }],
+    });
+    expect(await waited).toMatchObject({ reportMarkdown: "Root-owned nested review complete." });
+    await flushTerminalAttentionDrains(taskService);
+
+    // The direct parent consumed the result through its waiter, so the distinct continuation
+    // owner must retain terminal attention (pending until idle, or already delivered).
+    const ownerAttention = await new TerminalAttentionStore(config).get(
+      rootWorkspaceId,
+      TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
+    );
+    expect(ownerAttention).toMatchObject({
+      sourceKind: "workspace_turn",
+      sourceId: created.data.taskId,
+    });
+    assert(ownerAttention, "continuation owner attention must remain persisted");
+    expect(["pending", "delivered"]).toContain(ownerAttention.status);
+  });
+
   test("createWorkspaceTurn queues busy owner-created existing workspaces", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["firsthandle", "firstturn", "secondhandle", "secondturn"]);

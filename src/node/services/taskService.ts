@@ -6623,15 +6623,17 @@ export class TaskService {
           params.record.handleId,
           params.waiterSettlement
         );
-        const hadForegroundWaiter = foregroundWaiterWorkspaceIds.size > 0;
+        const ownerHadForegroundWaiter = foregroundWaiterWorkspaceIds.has(
+          params.record.ownerWorkspaceId
+        );
         this.markTaskForegroundRelevant(params.record.handleId);
         await this.cleanupDisposableWorkspaceTurn(nextRecord);
         this.scheduleMaybeStartQueuedTasks();
 
-        // A foreground waiter that received this terminal result already integrates it, so suppress
-        // this source's synthetic wake-up. Still kick the drain after the lock: another sibling may
-        // have a pending terminal notification that was deferred on this workspace turn.
-        if (hadForegroundWaiter) {
+        // Suppress the owner-scoped wake only when the owner itself received this terminal result.
+        // Another workspace (for example the persistent child's direct parent) can await the same
+        // handle without consuming the continuation owner's notification.
+        if (ownerHadForegroundWaiter) {
           return {
             pendingNotify: { kind: "drain_pending" },
             winningStatus: nextRecord.status,
