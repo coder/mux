@@ -3814,6 +3814,10 @@ export class TaskService {
       );
     }
 
+    if (parentEntry?.workspace.taskStatus === "interrupted") {
+      return Err("Task.create: cannot spawn new tasks after task_stop");
+    }
+
     if (parentEntry?.workspace.taskStatus === "reported") {
       return Err("Task.create: cannot spawn new tasks after agent_report");
     }
@@ -4573,6 +4577,15 @@ export class TaskService {
     assert(ancestorWorkspaceId.length > 0, "stopDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "stopDescendantAgentTask: taskId required");
 
+    return await this.withTaskTreeLifecycleLock(taskId, () =>
+      this.stopDescendantAgentTaskUnderLifecycleLock(ancestorWorkspaceId, taskId)
+    );
+  }
+
+  private async stopDescendantAgentTaskUnderLifecycleLock(
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): Promise<Result<{ stoppedTaskIds: string[] }, string>> {
     const stoppedTaskIds: string[] = [];
     const metadataToEmit = new Set<string>();
 

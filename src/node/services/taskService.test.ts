@@ -11391,6 +11391,62 @@ describe("TaskService", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  test("task stop serializes descendant creation and leaves the stopped parent inactive", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-stop-create-race";
+    const childTaskId = "child-stop-create-race";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    let markStopStarted: (() => void) | undefined;
+    const stopStarted = new Promise<void>((resolve) => {
+      markStopStarted = resolve;
+    });
+    let releaseStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStream = mock(async (workspaceId: string) => {
+      if (workspaceId === childTaskId) {
+        markStopStarted?.();
+        await stopGate;
+      }
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming, stopStream });
+    const create = mock(
+      (): Promise<Result<{ metadata: WorkspaceMetadata }>> =>
+        Promise.resolve(Err("creation should be rejected after stop"))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ create });
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const stopping = taskService.stopDescendantAgentTask(parentWorkspaceId, childTaskId);
+    await stopStarted;
+
+    const creation = createAgentTask(taskService, childTaskId, "Spawn after stop");
+    await Promise.resolve();
+    expect(create).not.toHaveBeenCalled();
+
+    releaseStop?.();
+    expect(await stopping).toEqual(Ok({ stoppedTaskIds: [childTaskId] }));
+    expect(await creation).toEqual(Err("Task.create: cannot spawn new tasks after task_stop"));
+    expect(create).not.toHaveBeenCalled();
+  });
+
   test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
