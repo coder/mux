@@ -1022,6 +1022,44 @@ export class ProviderService {
     }
   }
 
+  /**
+   * Conditionally update a provider config value: `update` receives the
+   * current value at `keyPath` and returns `{ value }` to write or null to
+   * skip. The read, the predicate, and the file write all run in one
+   * synchronous block (setConfigValue does not await before saving), so no
+   * other in-process caller can interleave between compare and write. This is
+   * the compare-and-set used for credential writes that race concurrent
+   * logins/refreshes (e.g. Coder OAuth token rotation).
+   *
+   * Note: writes from OTHER processes sharing providers.jsonc can still land
+   * between the read and the write; true cross-process atomicity would need
+   * file locking, which no provider credential path currently has.
+   */
+  public async updateConfigValue(
+    provider: string,
+    keyPath: string[],
+    update: (current: unknown) => { value: unknown } | null
+  ): Promise<Result<{ applied: boolean }, string>> {
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    let current: unknown = providersConfig[provider];
+    for (const key of keyPath) {
+      current =
+        current !== null && typeof current === "object"
+          ? (current as Record<string, unknown>)[key]
+          : undefined;
+    }
+
+    const decision = update(current);
+    if (!decision) {
+      return { success: true, data: { applied: false } };
+    }
+
+    // Synchronous handoff: setConfigValue re-reads and writes without awaiting
+    // in between, so the predicate result cannot be invalidated in-process.
+    const result = await this.setConfigValue(provider, keyPath, decision.value);
+    return result.success ? { success: true, data: { applied: true } } : result;
+  }
+
   public async setConfig(
     provider: string,
     keyPath: string[],

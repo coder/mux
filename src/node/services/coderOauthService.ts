@@ -14,6 +14,7 @@ import {
   normalizeCoderDeploymentUrl,
 } from "@/common/constants/coderOAuth";
 import type { Config } from "@/node/config";
+import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import { log } from "@/node/services/log";
@@ -122,8 +123,24 @@ export class CoderOauthService {
   constructor(
     private readonly config: Config,
     private readonly providerService: ProviderService,
-    private readonly windowService?: WindowService
+    private readonly windowService?: WindowService,
+    private readonly policyService?: PolicyService
   ) {}
+
+  /**
+   * An enforced policy forcedBaseUrl overrides every user-supplied or stored
+   * deployment URL: logins, refreshes, and issuer checks must all target the
+   * policy-locked deployment or Coder traffic could bypass it.
+   */
+  private effectiveDeploymentUrl(candidate: string | null): string | null {
+    const forced = this.policyService?.isEnforced()
+      ? this.policyService.getForcedBaseUrl("coder")
+      : undefined;
+    if (!forced) {
+      return candidate;
+    }
+    return normalizeCoderDeploymentUrl(forced);
+  }
 
   async disconnect(): Promise<Result<void, string>> {
     const auth = this.readStoredAuth();
@@ -138,22 +155,15 @@ export class CoderOauthService {
 
     // Revocation may be slow, and the UI keeps login available while it runs:
     // a re-login can complete in the meantime. Only clear when the stored
-    // credential is still the one this disconnect captured.
-    this.cachedAuth = null;
-    const current = this.readStoredAuth();
-    if (auth && current && current.refresh !== auth.refresh) {
+    // credential is still the one this disconnect captured (compare-and-clear
+    // so the check and the write cannot interleave with a concurrent login).
+    const clearResult = await this.clearStoredAuthIfMatches(auth);
+    if (!clearResult.success) {
+      return Err(clearResult.error);
+    }
+    if (!clearResult.data.applied) {
       log.debug("[Coder OAuth] Disconnect raced a newer login; keeping the new credentials");
       return Ok(undefined);
-    }
-
-    this.cachedAuth = null;
-    const clearAuthResult = await this.providerService.setConfigValue(
-      "coder",
-      ["coderOauth"],
-      undefined
-    );
-    if (!clearAuthResult.success) {
-      return clearAuthResult;
     }
 
     // Models were fetched from the deployment's AI Bridge at login time; they
@@ -161,12 +171,52 @@ export class CoderOauthService {
     return this.providerService.setModels("coder", []);
   }
 
+  /**
+   * Compare-and-clear the persisted OAuth blob: clears only while the stored
+   * refresh token still matches `expected` (refresh tokens rotate on every
+   * use, so they uniquely identify a credential generation). When `expected`
+   * is null the clear is unconditional. Returns whether the clear applied.
+   */
+  private async clearStoredAuthIfMatches(
+    expected: CoderOauthAuth | null
+  ): Promise<Result<{ applied: boolean }, string>> {
+    this.cachedAuth = null;
+    const result = await this.providerService.updateConfigValue(
+      "coder",
+      ["coderOauth"],
+      (current) => {
+        if (expected) {
+          const stored = parseCoderOauthAuth(current);
+          if (stored && stored.refresh !== expected.refresh) {
+            return null; // A different (newer) credential landed; keep it.
+          }
+        }
+        return { value: undefined };
+      }
+    );
+    // Drop the cache again after the write so readers re-read the final state.
+    this.cachedAuth = null;
+    return result;
+  }
+
   async startDesktopFlow(input: {
     deploymentUrl: string;
   }): Promise<Result<{ flowId: string; authorizeUrl: string }, string>> {
-    const deploymentUrl = normalizeCoderDeploymentUrl(input.deploymentUrl);
-    if (!deploymentUrl) {
+    const requestedUrl = normalizeCoderDeploymentUrl(input.deploymentUrl);
+    if (!requestedUrl) {
       return Err("Invalid Coder deployment URL (expected e.g. https://coder.example.com)");
+    }
+
+    // Policy override: login must target the policy-locked deployment so the
+    // minted tokens are issuer-bound to it (getValidAuth enforces the match).
+    const deploymentUrl = this.effectiveDeploymentUrl(requestedUrl);
+    if (!deploymentUrl) {
+      return Err("Policy-forced Coder base URL is not a valid deployment URL");
+    }
+    if (deploymentUrl !== requestedUrl) {
+      log.debug(
+        `[Coder OAuth] Deployment URL overridden by policy: ${requestedUrl} -> ${deploymentUrl}`
+      );
     }
 
     const buildinfoResult = await this.validateDeployment(deploymentUrl);
@@ -366,7 +416,8 @@ export class CoderOauthService {
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const coderConfig = providersConfig.coder as Record<string, unknown> | undefined;
     const raw = coderConfig?.deploymentUrl;
-    return typeof raw === "string" ? normalizeCoderDeploymentUrl(raw) : null;
+    const configured = typeof raw === "string" ? normalizeCoderDeploymentUrl(raw) : null;
+    return this.effectiveDeploymentUrl(configured);
   }
 
   async dispose(): Promise<void> {
@@ -601,17 +652,20 @@ export class CoderOauthService {
     return Ok(tokenResult.auth);
   }
 
-  /** Undo a persisted login whose flow was cancelled mid-persist. */
+  /**
+   * Undo a persisted login whose flow was cancelled mid-persist. The clear is
+   * conditional: persistAuth awaits post-write work (gateway lifecycle sync),
+   * so a newer login can land before this rollback runs — that newer
+   * credential must be kept, while the cancelled login's tokens are revoked
+   * either way.
+   */
   private async rollbackPersistedAuth(auth: CoderOauthAuth): Promise<void> {
     log.debug("[Coder OAuth] Flow cancelled during persist; rolling back credentials");
-    this.cachedAuth = null;
-    const clearResult = await this.providerService.setConfigValue(
-      "coder",
-      ["coderOauth"],
-      undefined
-    );
+    const clearResult = await this.clearStoredAuthIfMatches(auth);
     if (!clearResult.success) {
       log.warn(`[Coder OAuth] Failed to roll back cancelled login: ${clearResult.error}`);
+    } else if (!clearResult.data.applied) {
+      log.debug("[Coder OAuth] Rollback skipped: a newer login already replaced the credentials");
     }
     await this.revokeTokens(auth.deploymentUrl, auth);
   }
@@ -634,33 +688,36 @@ export class CoderOauthService {
       if (result.invalidGrant) {
         // The refresh mutex is process-local: a concurrent desktop/CLI process
         // sharing providers.jsonc may have consumed this refresh token and
-        // persisted the rotated one. Re-read disk and only clear when the
-        // rejected token is still the stored one — otherwise adopt the
-        // winner's credential instead of erasing it.
-        this.cachedAuth = null;
-        const stored = this.readStoredAuth();
-        if (stored && stored.refresh !== current.refresh) {
-          log.debug("[Coder OAuth] Refresh lost a cross-process rotation race; adopting winner");
-          if (!isCoderOauthAuthExpired(stored)) {
-            return Ok(stored);
-          }
-          // Recursion is bounded: it only recurses when the on-disk token
-          // changed again since the last attempt.
-          return this.refreshTokens(stored);
-        }
-
-        log.debug("[Coder OAuth] Refresh token rejected; clearing stored auth");
-        this.cachedAuth = null;
-        const clearResult = await this.providerService.setConfigValue(
-          "coder",
-          ["coderOauth"],
-          undefined
-        );
+        // persisted the rotated one. Compare-and-clear: the stored blob is
+        // deleted only while it still holds the rejected refresh token, so a
+        // winner that persists concurrently is never erased (the predicate and
+        // the write run in one synchronous block; see updateConfigValue).
+        const clearResult = await this.clearStoredAuthIfMatches(current);
         if (!clearResult.success) {
           log.warn(
             `[Coder OAuth] Failed to clear stored auth after refresh failure: ${clearResult.error}`
           );
+          return Err(
+            "Coder OAuth session expired. Use 'Login with Coder' in Settings to reconnect."
+          );
         }
+
+        if (!clearResult.data.applied) {
+          // A different credential is on disk: another process won the
+          // rotation race. Adopt the winner instead of failing.
+          const stored = this.readStoredAuth();
+          if (stored && stored.refresh !== current.refresh) {
+            log.debug("[Coder OAuth] Refresh lost a cross-process rotation race; adopting winner");
+            if (!isCoderOauthAuthExpired(stored)) {
+              return Ok(stored);
+            }
+            // Recursion is bounded: it only recurses when the on-disk token
+            // changed again since the last attempt.
+            return this.refreshTokens(stored);
+          }
+        }
+
+        log.debug("[Coder OAuth] Refresh token rejected; cleared stored auth");
         return Err("Coder OAuth session expired. Use 'Login with Coder' in Settings to reconnect.");
       }
 

@@ -8,6 +8,7 @@ import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
 import type { ProviderModelEntry } from "@/common/config/schemas/providerModelEntry";
 import type { CoderOauthAuth } from "@/node/utils/coderOauthAuth";
+import type { PolicyService } from "@/node/services/policyService";
 import { CoderOauthService } from "./coderOauthService";
 
 // ---------------------------------------------------------------------------
@@ -111,27 +112,55 @@ function createMockConfig(deps: MockDeps): Pick<Config, "loadProvidersConfig"> {
   };
 }
 
+function mockSetConfigValue(
+  deps: MockDeps,
+  provider: string,
+  keyPath: string[],
+  value: unknown
+): Promise<Result<void, string>> {
+  deps.setConfigValueCalls.push({ provider, keyPath, value });
+  // Also update the in-memory config so readStoredAuth()/getDeploymentUrl() see the write
+  if (provider === "coder" && keyPath.length === 1) {
+    deps.providersConfig.coder ??= {};
+    if (value === undefined) {
+      delete (deps.providersConfig.coder as Record<string, unknown>)[keyPath[0]];
+    } else {
+      (deps.providersConfig.coder as Record<string, unknown>)[keyPath[0]] = value;
+    }
+  }
+  return Promise.resolve(Ok(undefined));
+}
+
+/** Mirrors ProviderService.updateConfigValue's read-predicate-write behavior. */
+async function mockUpdateConfigValue(
+  deps: MockDeps,
+  provider: string,
+  keyPath: string[],
+  update: (current: unknown) => { value: unknown } | null
+): Promise<Result<{ applied: boolean }, string>> {
+  let current: unknown = (deps.providersConfig as Record<string, unknown>)[provider];
+  for (const key of keyPath) {
+    current =
+      current !== null && typeof current === "object"
+        ? (current as Record<string, unknown>)[key]
+        : undefined;
+  }
+  const decision = update(current);
+  if (!decision) {
+    return Ok({ applied: false });
+  }
+  await mockSetConfigValue(deps, provider, keyPath, decision.value);
+  return Ok({ applied: true });
+}
+
 function createMockProviderService(
   deps: MockDeps
-): Pick<ProviderService, "setConfigValue" | "setModels"> {
+): Pick<ProviderService, "setConfigValue" | "setModels" | "updateConfigValue"> {
   return {
-    setConfigValue: (
-      provider: string,
-      keyPath: string[],
-      value: unknown
-    ): Promise<Result<void, string>> => {
-      deps.setConfigValueCalls.push({ provider, keyPath, value });
-      // Also update the in-memory config so readStoredAuth()/getDeploymentUrl() see the write
-      if (provider === "coder" && keyPath.length === 1) {
-        deps.providersConfig.coder ??= {};
-        if (value === undefined) {
-          delete (deps.providersConfig.coder as Record<string, unknown>)[keyPath[0]];
-        } else {
-          (deps.providersConfig.coder as Record<string, unknown>)[keyPath[0]] = value;
-        }
-      }
-      return Promise.resolve(Ok(undefined));
-    },
+    setConfigValue: (provider, keyPath, value) =>
+      mockSetConfigValue(deps, provider, keyPath, value),
+    updateConfigValue: (provider, keyPath, update) =>
+      mockUpdateConfigValue(deps, provider, keyPath, update),
     setModels: (provider: string, models: ProviderModelEntry[]): Result<void, string> => {
       deps.setModelsCalls.push({ provider, models });
       return Ok(undefined);
@@ -628,6 +657,59 @@ describe("CoderOauthService", () => {
       await service.cancelDesktopFlow(result.data.flowId);
     });
 
+    it("logs in to the policy-forced deployment instead of the requested URL", async () => {
+      const FORCED_URL = "http://locked.coder.test";
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService,
+        {
+          isEnforced: () => true,
+          getForcedBaseUrl: (provider: string) =>
+            provider === "coder" ? `${FORCED_URL}/` : undefined,
+        } as PolicyService
+      );
+
+      let requestedHostCalls = 0;
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url.startsWith(DEPLOYMENT_URL)) {
+          requestedHostCalls++;
+          return Promise.resolve(new Response("should not be called", { status: 500 }));
+        }
+        if (url === `${FORCED_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${FORCED_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(
+            jsonResponse({
+              authorization_endpoint: `${FORCED_URL}/oauth2/authorize`,
+              token_endpoint: `${FORCED_URL}/oauth2/tokens`,
+              registration_endpoint: `${FORCED_URL}/oauth2/register`,
+              code_challenge_methods_supported: ["S256"],
+            })
+          );
+        }
+        if (url === `${FORCED_URL}/oauth2/register`) {
+          return Promise.resolve(jsonResponse({ client_id: "c_locked", client_secret: "s" }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      // User asks for DEPLOYMENT_URL; policy must reroute the login.
+      const result = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(requestedHostCalls).toBe(0);
+      expect(new URL(result.data.authorizeUrl).origin).toBe(FORCED_URL);
+      // The effective (forced) URL is what gets persisted for issuer binding.
+      const urlCall = deps.setConfigValueCalls.find((c) => c.keyPath[0] === "deploymentUrl");
+      expect(urlCall?.value).toBe(FORCED_URL);
+
+      await service.cancelDesktopFlow(result.data.flowId);
+    });
+
     it("registers a fresh client when logging in to a different deployment", async () => {
       // Client registered on the OLD deployment must not be reused (its RFC 7592
       // endpoint points at the old host).
@@ -755,15 +837,19 @@ describe("CoderOauthService", () => {
       const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
       let revokeBody: URLSearchParams | null = null;
 
-      const gatedProviderService: Pick<ProviderService, "setConfigValue" | "setModels"> = {
+      const gatedProviderService: Pick<
+        ProviderService,
+        "setConfigValue" | "setModels" | "updateConfigValue"
+      > = {
         setConfigValue: async (provider, keyPath, value) => {
           if (keyPath[0] === "coderOauth" && value !== undefined) {
             persistStarted();
             await persistGate;
           }
-          deps.setConfigValueCalls.push({ provider, keyPath: [...keyPath], value });
-          return Ok(undefined);
+          return mockSetConfigValue(deps, provider, keyPath, value);
         },
+        updateConfigValue: (provider, keyPath, update) =>
+          mockUpdateConfigValue(deps, provider, keyPath, update),
         setModels: (provider, models) => {
           deps.setModelsCalls.push({ provider, models });
           return Ok(undefined);

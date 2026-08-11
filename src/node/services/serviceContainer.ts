@@ -304,7 +304,10 @@ export class ServiceContainer {
     this.coderOauthService = new CoderOauthService(
       config,
       this.providerService,
-      this.windowService
+      this.windowService,
+      // Policy-aware: an enforced forcedBaseUrl overrides the deployment URL
+      // for logins, refreshes, and issuer checks.
+      this.policyService
     );
     this.aiService.setCoderOauthService(this.coderOauthService);
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);

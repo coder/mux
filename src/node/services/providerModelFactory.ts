@@ -1923,8 +1923,11 @@ export class ProviderModelFactory {
 
         // Policy: an enforced forcedBaseUrl must win over the user-editable
         // deploymentUrl, otherwise Coder traffic would bypass the policy-locked
-        // endpoint. The issuer check in the fetch wrapper below then also
-        // requires the OAuth tokens to have been minted by that deployment.
+        // endpoint. Tokens are issuer-bound (resolveProviderCredentials
+        // guarantees blob issuer === creds.deploymentUrl), so tokens minted by
+        // any other deployment fail closed as "not configured" — the login
+        // flow itself targets the forced URL (CoderOauthService is
+        // policy-aware), so re-login produces matching credentials.
         const coderForcedBaseUrl = this.policyService?.isEnforced()
           ? this.policyService.getForcedBaseUrl("coder")
           : undefined;
@@ -1936,6 +1939,9 @@ export class ProviderModelFactory {
               type: "invalid_model_string",
               message: `Policy-forced Coder base URL is not a valid deployment URL: ${coderForcedBaseUrl}`,
             });
+          }
+          if (normalizedForced !== deploymentUrl) {
+            return Err({ type: "api_key_not_found", provider: providerName });
           }
           deploymentUrl = normalizedForced;
         }
