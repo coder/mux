@@ -257,14 +257,28 @@ export class CoderOauthService {
         isFlowAlive: () => this.desktopFlows.has(flowId),
       });
 
-      if (exchangeResult.success) {
-        loopback.sendSuccessResponse();
-        this.windowService?.focusMainWindow();
-      } else {
+      if (!exchangeResult.success) {
         loopback.sendFailureResponse(exchangeResult.error);
+        await this.desktopFlows.finish(flowId, Err(exchangeResult.error));
+        return;
       }
 
-      await this.desktopFlows.finish(flowId, exchangeResult);
+      // Cancellation may also race the persist write itself. `has` + `finish`
+      // below run with no intervening await, so exactly one of Cancel and
+      // completion wins the flow; if Cancel won mid-persist, roll back.
+      if (!this.desktopFlows.has(flowId)) {
+        await this.rollbackPersistedAuth(exchangeResult.data);
+        return;
+      }
+
+      loopback.sendSuccessResponse();
+      this.windowService?.focusMainWindow();
+      await this.desktopFlows.finish(flowId, Ok(undefined));
+
+      // Model discovery runs only after the flow is committed: Cancel is no
+      // longer possible, so this network await cannot strand half-cancelled
+      // state (persisted auth with a cancelled flow).
+      await this.refreshBridgeModels(deploymentUrl, exchangeResult.data.access);
     })();
 
     log.debug(`[Coder OAuth] Desktop flow started (flowId=${flowId})`);
@@ -542,7 +556,7 @@ export class CoderOauthService {
     redirectUri: string;
     codeVerifier: string;
     isFlowAlive: () => boolean;
-  }): Promise<Result<void, string>> {
+  }): Promise<Result<CoderOauthAuth, string>> {
     const tokenResult = await this.requestTokens(input.endpoints.tokenEndpoint, {
       kind: "exchange",
       deploymentUrl: input.deploymentUrl,
@@ -570,12 +584,22 @@ export class CoderOauthService {
 
     log.debug("[Coder OAuth] Desktop exchange completed");
 
-    // Best-effort: populate the model list from the deployment's AI Bridge
-    // upstream catalogs. Deployments may configure only one upstream (or none
-    // until AI Bridge is entitled), so per-origin failures are tolerated.
-    await this.refreshBridgeModels(input.deploymentUrl, tokenResult.auth.access);
+    return Ok(tokenResult.auth);
+  }
 
-    return Ok(undefined);
+  /** Undo a persisted login whose flow was cancelled mid-persist. */
+  private async rollbackPersistedAuth(auth: CoderOauthAuth): Promise<void> {
+    log.debug("[Coder OAuth] Flow cancelled during persist; rolling back credentials");
+    this.cachedAuth = null;
+    const clearResult = await this.providerService.setConfigValue(
+      "coder",
+      ["coderOauth"],
+      undefined
+    );
+    if (!clearResult.success) {
+      log.warn(`[Coder OAuth] Failed to roll back cancelled login: ${clearResult.error}`);
+    }
+    await this.revokeTokens(auth.deploymentUrl, auth);
   }
 
   private async refreshTokens(current: CoderOauthAuth): Promise<Result<CoderOauthAuth, string>> {
@@ -767,10 +791,9 @@ export class CoderOauthService {
       }
     }
 
-    if (modelIds.length === 0) {
-      return;
-    }
-
+    // Always overwrite the persisted catalog — including with an empty list —
+    // so a re-login against a different deployment (whose catalogs may be
+    // empty or unentitled) never keeps offering the previous deployment's models.
     const setResult = this.providerService.setModels("coder", modelIds);
     if (!setResult.success) {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);

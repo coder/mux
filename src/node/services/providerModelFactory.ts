@@ -1950,6 +1950,17 @@ export class ProviderModelFactory {
           if (!authResult.success) {
             throw new Error(authResult.error);
           }
+          // This model instance captured its deployment URL at creation time.
+          // If the user has since logged in to a DIFFERENT deployment, the
+          // current credential must not be attached to this model's (old) base
+          // URL — that would send the new deployment's bearer token to the old
+          // host. Fail the request instead; a freshly created model picks up
+          // the new deployment.
+          if (authResult.data.deploymentUrl !== deploymentUrl) {
+            throw new Error(
+              "Coder deployment changed since this model was created. Retry the request."
+            );
+          }
 
           const headers = new Headers(input instanceof Request ? input.headers : undefined);
           if (init?.headers) {

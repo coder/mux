@@ -74,6 +74,17 @@ function fetchBodyText(init?: RequestInit): string {
   throw new Error(`Unexpected request body type: ${typeof body}`);
 }
 
+/** Poll until `predicate` holds; model discovery runs after the flow resolves. */
+async function waitUntil(predicate: () => boolean, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("waitUntil: condition not met within timeout");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Mock dependencies
 // ---------------------------------------------------------------------------
@@ -492,6 +503,8 @@ describe("CoderOauthService", () => {
       expect(persistedAuth.registrationAccessToken).toBe("reg_token_new");
 
       // Model list fetched from the reachable upstream only (openai 404 tolerated).
+      // Discovery runs after the flow resolves, so wait for the detached task.
+      await waitUntil(() => deps.setModelsCalls.length > 0);
       expect(deps.setModelsCalls).toHaveLength(1);
       expect(deps.setModelsCalls[0].provider).toBe("coder");
       expect(deps.setModelsCalls[0].models).toEqual([
@@ -701,6 +714,138 @@ describe("CoderOauthService", () => {
       expect(persisted).toBeUndefined();
       expect(revokeBody).not.toBeNull();
       expect(revokeBody!.get("token")).toBe("rt_raced");
+    });
+
+    it("rolls back persisted credentials when cancelled during the persist write", async () => {
+      // Gate the persist (setConfigValue) write so cancellation can land in the
+      // window between the pre-persist liveness check and the flow commit.
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistStarted!: () => void;
+      const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
+      let revokeBody: URLSearchParams | null = null;
+
+      const gatedProviderService: Pick<ProviderService, "setConfigValue" | "setModels"> = {
+        setConfigValue: async (provider, keyPath, value) => {
+          if (keyPath[0] === "coderOauth" && value !== undefined) {
+            persistStarted();
+            await persistGate;
+          }
+          deps.setConfigValueCalls.push({ provider, keyPath: [...keyPath], value });
+          return Ok(undefined);
+        },
+        setModels: (provider, models) => {
+          deps.setModelsCalls.push({ provider, models });
+          return Ok(undefined);
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_persist_race",
+            refresh_token: "rt_persist_race",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_persist_race");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      await persistStartedPromise;
+      await service.cancelDesktopFlow(flowId);
+      releasePersist();
+      await callbackPromise;
+
+      // Wait for the detached task's rollback branch to run.
+      await waitUntil(() =>
+        deps.setConfigValueCalls.some((c) => c.keyPath[0] === "coderOauth" && c.value === undefined)
+      );
+      // The persisted write was undone and the raced tokens revoked.
+      expect(revokeBody).not.toBeNull();
+      expect(revokeBody!.get("token")).toBe("rt_persist_race");
+    });
+
+    it("clears the persisted model catalog when the new deployment has no catalogs", async () => {
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_no_catalog",
+            refresh_token: "rt_no_catalog",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        // Both bridge catalogs unavailable (e.g. AI Bridge not entitled).
+        if (url.includes("/api/v2/aibridge/")) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_no_catalog");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // A previous deployment's catalog must not survive the re-login: the
+      // list is overwritten with the (empty) catalog of the new deployment.
+      await waitUntil(() => deps.setModelsCalls.length > 0);
+      expect(deps.setModelsCalls[0].provider).toBe("coder");
+      expect(deps.setModelsCalls[0].models).toEqual([]);
     });
   });
 

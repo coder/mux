@@ -1921,13 +1921,16 @@ describe("ProviderModelFactory Coder", () => {
     } as Parameters<Config["saveProvidersConfig"]>[0]);
   }
 
-  function stubCoderOauthService(access = "at_factory"): CoderOauthService {
+  function stubCoderOauthService(
+    access = "at_factory",
+    deploymentUrl = CODER_DEPLOYMENT_URL
+  ): CoderOauthService {
     return {
       getValidAuth: () =>
         Promise.resolve(
           Ok({
             type: "oauth" as const,
-            deploymentUrl: CODER_DEPLOYMENT_URL,
+            deploymentUrl,
             access,
             refresh: "rt_factory",
             expires: Date.now() + 3_600_000,
@@ -2051,6 +2054,64 @@ describe("ProviderModelFactory Coder", () => {
         expect(forwardedHeaders).toBeDefined();
         expect(forwardedHeaders!.get("authorization")).toBe("Bearer at_fresh");
         expect(forwardedHeaders!.get("x-api-key")).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+      }
+    });
+  });
+
+  it("refuses to attach credentials minted by a different deployment than the model's", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+      const originalFetch = globalThis.fetch;
+      let capturedFetch: typeof fetch | undefined;
+      let upstreamCalls = 0;
+
+      saveCoderConfig(config);
+      // Model is created while the config points at CODER_DEPLOYMENT_URL, but
+      // by request time the user has re-logged into a different deployment:
+      // the wrapper must fail instead of sending that bearer token to the
+      // model's (old) base URL.
+      factory.coderOauthService = stubCoderOauthService("at_other", "https://other.example.com");
+
+      PROVIDER_REGISTRY.anthropic = async () => {
+        const module = await originalAnthropicRegistry();
+        return {
+          ...module,
+          createAnthropic: (options) => {
+            capturedFetch = options?.fetch;
+            return module.createAnthropic(options);
+          },
+        };
+      };
+
+      globalThis.fetch = Object.assign(
+        (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
+          upstreamCalls++;
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        },
+        { preconnect: () => undefined }
+      ) as typeof fetch;
+
+      try {
+        const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+        expect(result.success).toBe(true);
+        expect(capturedFetch).toBeDefined();
+
+        let thrown: unknown;
+        try {
+          await capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+            method: "POST",
+            headers: { "x-api-key": "coder" },
+            body: "{}",
+          });
+        } catch (error) {
+          thrown = error;
+        }
+        expect(thrown).toBeInstanceOf(Error);
+        expect((thrown as Error).message).toContain("deployment changed");
+        expect(upstreamCalls).toBe(0);
       } finally {
         globalThis.fetch = originalFetch;
         PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
