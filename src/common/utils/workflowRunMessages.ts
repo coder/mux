@@ -113,6 +113,28 @@ function getWorkflowResultField(value: unknown, field: string): unknown {
   return undefined;
 }
 
+/**
+ * agent()-based workflows return `{ reportMarkdown, structuredOutput }` — exactly the fields
+ * hoisted to the payload top level. Repeating them verbatim under `result` doubled the token
+ * cost of every workflow-completion context message, so `result` keeps only fields that were
+ * NOT hoisted (non-standard result shapes) and is dropped when nothing else remains.
+ */
+function getResidualWorkflowResult(
+  resultValue: unknown,
+  hoistedFields: readonly string[]
+): unknown {
+  if (hoistedFields.length === 0 || !isRecordValue(resultValue)) {
+    return resultValue;
+  }
+  const residual: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(resultValue)) {
+    if (!hoistedFields.includes(key)) {
+      residual[key] = value;
+    }
+  }
+  return Object.keys(residual).length > 0 ? residual : null;
+}
+
 function stringifyWorkflowResultPayload(payload: unknown): string {
   try {
     return JSON.stringify(payload, null, 2);
@@ -139,6 +161,11 @@ export function buildWorkflowResultContextMessage(input: {
   const resultValue = getWorkflowResultValue(input.result, input.run);
   const reportMarkdown = getWorkflowResultField(resultValue, "reportMarkdown");
   const structuredOutput = getWorkflowResultField(resultValue, "structuredOutput");
+  const hoistedFields = [
+    ...(typeof reportMarkdown === "string" ? ["reportMarkdown"] : []),
+    ...(structuredOutput !== undefined ? ["structuredOutput"] : []),
+  ];
+  const residualResult = getResidualWorkflowResult(resultValue, hoistedFields);
   const workflowError = getWorkflowError({
     run: input.run,
     status: input.status,
@@ -152,7 +179,7 @@ export function buildWorkflowResultContextMessage(input: {
     },
     ...(typeof reportMarkdown === "string" ? { reportMarkdown } : {}),
     ...(structuredOutput !== undefined ? { structuredOutput } : {}),
-    ...(resultValue != null ? { result: resultValue } : {}),
+    ...(residualResult != null ? { result: residualResult } : {}),
     ...(workflowError ? { error: workflowError } : {}),
   };
 
