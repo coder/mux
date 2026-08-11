@@ -127,23 +127,13 @@ export class CoderOauthService {
 
   async disconnect(): Promise<Result<void, string>> {
     const auth = this.readStoredAuth();
-    const deploymentUrl = this.getDeploymentUrl();
 
     // Best-effort RFC 7009 revocation so the Coder-side API key is invalidated.
-    if (auth && deploymentUrl) {
-      try {
-        const body = new URLSearchParams();
-        body.set("token", auth.refresh);
-        body.set("client_id", auth.clientId);
-        body.set("client_secret", auth.clientSecret);
-        await fetch(`${deploymentUrl}/oauth2/revoke`, {
-          method: "POST",
-          headers: { "Content-Type": "application/x-www-form-urlencoded" },
-          body,
-        });
-      } catch (error) {
-        log.debug(`[Coder OAuth] Best-effort token revocation failed: ${getErrorMessage(error)}`);
-      }
+    // Revoke against the issuer stored in the blob (not the currently configured
+    // deployment URL) so tokens are revoked on the deployment that minted them
+    // even if the user changed the URL since logging in.
+    if (auth) {
+      await this.revokeTokens(auth.deploymentUrl, auth);
     }
 
     this.cachedAuth = null;
@@ -211,7 +201,7 @@ export class CoderOauthService {
       return Err(`Failed to start OAuth callback listener: ${getErrorMessage(error)}`);
     }
 
-    const clientResult = await this.ensureClient(endpoints, loopback.redirectUri);
+    const clientResult = await this.ensureClient(deploymentUrl, endpoints, loopback.redirectUri);
     if (!clientResult.success) {
       await loopback.close();
       return Err(clientResult.error);
@@ -262,6 +252,9 @@ export class CoderOauthService {
         code: callbackResult.data.code,
         redirectUri: loopback.redirectUri,
         codeVerifier,
+        // Cancel/timeout can race the exchange round-trip; "Cancel" must stay
+        // authoritative, so the exchange re-checks liveness before persisting.
+        isFlowAlive: () => this.desktopFlows.has(flowId),
       });
 
       if (exchangeResult.success) {
@@ -303,6 +296,16 @@ export class CoderOauthService {
     const stored = this.readStoredAuth();
     if (!stored) {
       return Err("Coder OAuth is not configured. Use 'Login with Coder' in Settings.");
+    }
+
+    // Tokens are bound to the deployment (issuer) that minted them: never hand
+    // out a bearer token when the configured deployment URL has changed since
+    // login, or the old deployment's API key would be sent to the new host.
+    const deploymentUrl = this.getDeploymentUrl();
+    if (!deploymentUrl || stored.deploymentUrl !== deploymentUrl) {
+      return Err(
+        "Coder deployment URL changed since login. Use 'Login with Coder' in Settings to reconnect."
+      );
     }
 
     if (!isCoderOauthAuthExpired(stored)) {
@@ -416,11 +419,19 @@ export class CoderOauthService {
    * URI at the current loopback port; otherwise register a fresh client.
    */
   private async ensureClient(
+    deploymentUrl: string,
     endpoints: CoderOauthEndpoints,
     redirectUri: string
   ): Promise<Result<CoderOauthClient, string>> {
     const stored = this.readStoredAuth();
-    if (stored?.registrationAccessToken && stored.registrationClientUri) {
+    // Only reuse a client registered on the SAME deployment; a client from a
+    // different deployment is meaningless there (and its RFC 7592 endpoint
+    // would point at the old host).
+    if (
+      stored?.deploymentUrl === deploymentUrl &&
+      stored.registrationAccessToken &&
+      stored.registrationClientUri
+    ) {
       const updated = await this.updateClientRedirectUri(stored, redirectUri);
       if (updated.success) {
         return updated;
@@ -530,9 +541,11 @@ export class CoderOauthService {
     code: string;
     redirectUri: string;
     codeVerifier: string;
+    isFlowAlive: () => boolean;
   }): Promise<Result<void, string>> {
     const tokenResult = await this.requestTokens(input.endpoints.tokenEndpoint, {
       kind: "exchange",
+      deploymentUrl: input.deploymentUrl,
       client: input.client,
       code: input.code,
       redirectUri: input.redirectUri,
@@ -540,6 +553,14 @@ export class CoderOauthService {
     });
     if (!tokenResult.success) {
       return Err(tokenResult.error);
+    }
+
+    // The flow may have been cancelled (or timed out) while the exchange
+    // round-trip was in flight. Persisting anyway would leave the account
+    // connected after the user clicked Cancel — drop and revoke the tokens.
+    if (!input.isFlowAlive()) {
+      await this.revokeTokens(input.deploymentUrl, tokenResult.auth);
+      return Err("Login was cancelled");
     }
 
     const persistResult = await this.persistAuth(tokenResult.auth);
@@ -558,16 +579,13 @@ export class CoderOauthService {
   }
 
   private async refreshTokens(current: CoderOauthAuth): Promise<Result<CoderOauthAuth, string>> {
-    const deploymentUrl = this.getDeploymentUrl();
-    if (!deploymentUrl) {
-      return Err("Coder deployment URL is not configured");
-    }
-
-    // Endpoints derive from the deployment access URL; skip a discovery
-    // round-trip on the hot request path.
-    const tokenEndpoint = `${deploymentUrl}/oauth2/tokens`;
+    // Refresh against the issuer the tokens came from (getValidAuth already
+    // guarantees it matches the configured deployment URL). Endpoints derive
+    // from the access URL; skip a discovery round-trip on the hot request path.
+    const tokenEndpoint = `${current.deploymentUrl}/oauth2/tokens`;
     const result = await this.requestTokens(tokenEndpoint, {
       kind: "refresh",
+      deploymentUrl: current.deploymentUrl,
       client: current,
       refreshToken: current.refresh,
     });
@@ -610,12 +628,13 @@ export class CoderOauthService {
     input:
       | {
           kind: "exchange";
+          deploymentUrl: string;
           client: CoderOauthClient;
           code: string;
           redirectUri: string;
           codeVerifier: string;
         }
-      | { kind: "refresh"; client: CoderOauthClient; refreshToken: string }
+      | { kind: "refresh"; deploymentUrl: string; client: CoderOauthClient; refreshToken: string }
   ): Promise<CoderTokenRequestResult> {
     const label = input.kind === "exchange" ? "exchange" : "refresh";
 
@@ -676,6 +695,7 @@ export class CoderOauthService {
         success: true,
         auth: {
           type: "oauth",
+          deploymentUrl: input.deploymentUrl,
           access: accessToken,
           refresh: refreshToken,
           expires: Date.now() + Math.max(0, Math.floor(expiresIn * 1000)),
@@ -691,6 +711,26 @@ export class CoderOauthService {
         error: `Coder OAuth ${label} failed: ${getErrorMessage(error)}`,
         invalidGrant: false,
       };
+    }
+  }
+
+  /** Best-effort RFC 7009 revocation; failures are logged, never surfaced. */
+  private async revokeTokens(
+    deploymentUrl: string,
+    auth: Pick<CoderOauthAuth, "refresh" | "clientId" | "clientSecret">
+  ): Promise<void> {
+    try {
+      const body = new URLSearchParams();
+      body.set("token", auth.refresh);
+      body.set("client_id", auth.clientId);
+      body.set("client_secret", auth.clientSecret);
+      await fetch(`${deploymentUrl}/oauth2/revoke`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+    } catch (error) {
+      log.debug(`[Coder OAuth] Best-effort token revocation failed: ${getErrorMessage(error)}`);
     }
   }
 

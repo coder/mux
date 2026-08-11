@@ -9,6 +9,12 @@
 
 export interface CoderOauthAuth {
   type: "oauth";
+  /**
+   * Normalized deployment URL (issuer) these tokens were obtained from.
+   * Consumers must verify it matches the configured deployment URL so a URL
+   * change can never send the old deployment's bearer token to a new host.
+   */
+  deploymentUrl: string;
   /** Coder OAuth access token (a regular Coder API key). */
   access: string;
   /** Coder OAuth refresh token. Rotates on every refresh. */
@@ -40,9 +46,10 @@ export function parseCoderOauthAuth(value: unknown): CoderOauthAuth | null {
     return null;
   }
 
-  const { type, access, refresh, expires, clientId, clientSecret } = value;
+  const { type, deploymentUrl, access, refresh, expires, clientId, clientSecret } = value;
 
   if (type !== "oauth") return null;
+  if (typeof deploymentUrl !== "string" || !deploymentUrl) return null;
   if (typeof access !== "string" || !access) return null;
   if (typeof refresh !== "string" || !refresh) return null;
   if (typeof expires !== "number" || !Number.isFinite(expires)) return null;
@@ -56,6 +63,7 @@ export function parseCoderOauthAuth(value: unknown): CoderOauthAuth | null {
 
   return {
     type: "oauth",
+    deploymentUrl,
     access,
     refresh,
     expires,

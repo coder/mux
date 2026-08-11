@@ -167,6 +167,7 @@ describe("resolveProviderCredentials - legacy op:// references", () => {
 describe("resolveProviderCredentials - coder", () => {
   const coderOauth = {
     type: "oauth",
+    deploymentUrl: "https://coder.example.com",
     access: "at",
     refresh: "rt",
     expires: Date.now() + 3_600_000,
@@ -225,6 +226,20 @@ describe("resolveProviderCredentials - coder", () => {
     );
 
     expect(result.isConfigured).toBe(false);
+  });
+
+  it("is not configured when tokens were minted by a different deployment", () => {
+    // Issuer binding: an OAuth blob from deployment A must not make the
+    // provider configured for deployment B (its bearer token would be sent
+    // to B's AI Bridge).
+    const result = resolveProviderCredentials(
+      "coder",
+      { deploymentUrl: "https://other.example.com", coderOauth },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(false);
+    expect(result.missingRequirement).toBe("coder_login");
   });
 });
 

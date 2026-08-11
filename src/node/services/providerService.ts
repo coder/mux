@@ -38,6 +38,7 @@ import {
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
+import { normalizeCoderDeploymentUrl } from "@/common/constants/coderOAuth";
 import { parseCoderOauthAuth } from "@/node/utils/coderOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -441,8 +442,18 @@ export class ProviderService {
       }
 
       // Coder-specific fields: deployment URL + OAuth connection status.
+      // "Connected" only when the stored tokens were minted by the currently
+      // configured deployment (tokens are issuer-bound; see coderOauthAuth.ts).
       if (provider === "coder") {
-        providerInfo.coderOauthSet = parseCoderOauthAuth(config.coderOauth) !== null;
+        const coderOauth = parseCoderOauthAuth(config.coderOauth);
+        const configuredDeploymentUrl =
+          typeof config.deploymentUrl === "string"
+            ? normalizeCoderDeploymentUrl(config.deploymentUrl)
+            : null;
+        providerInfo.coderOauthSet =
+          coderOauth !== null &&
+          configuredDeploymentUrl !== null &&
+          coderOauth.deploymentUrl === configuredDeploymentUrl;
         if (typeof config.deploymentUrl === "string" && config.deploymentUrl) {
           providerInfo.deploymentUrl = config.deploymentUrl;
         }

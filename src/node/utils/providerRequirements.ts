@@ -354,8 +354,12 @@ export function resolveProviderCredentials(
       typeof config.deploymentUrl === "string"
         ? normalizeCoderDeploymentUrl(config.deploymentUrl)
         : null;
-    const hasOauth = parseCoderOauthAuth(config.coderOauth) !== null;
-    return deploymentUrl && hasOauth
+    // Tokens are issuer-bound: an OAuth blob only counts when it was minted by
+    // the currently configured deployment, so changing the URL never routes an
+    // old deployment's bearer token to the new host.
+    const oauth = parseCoderOauthAuth(config.coderOauth);
+    const hasMatchingOauth = oauth !== null && oauth.deploymentUrl === deploymentUrl;
+    return deploymentUrl && hasMatchingOauth
       ? { isConfigured: true, deploymentUrl }
       : { isConfigured: false, missingRequirement: "coder_login" };
   }

@@ -1909,6 +1909,7 @@ describe("ProviderModelFactory Coder", () => {
         deploymentUrl: CODER_DEPLOYMENT_URL,
         coderOauth: {
           type: "oauth",
+          deploymentUrl: CODER_DEPLOYMENT_URL,
           access: "at_factory",
           refresh: "rt_factory",
           expires: Date.now() + 3_600_000,
@@ -1926,6 +1927,7 @@ describe("ProviderModelFactory Coder", () => {
         Promise.resolve(
           Ok({
             type: "oauth" as const,
+            deploymentUrl: CODER_DEPLOYMENT_URL,
             access,
             refresh: "rt_factory",
             expires: Date.now() + 3_600_000,

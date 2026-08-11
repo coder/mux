@@ -20,6 +20,7 @@ const DEPLOYMENT_URL = "http://coder.test";
 function validAuth(overrides?: Partial<CoderOauthAuth>): CoderOauthAuth {
   return {
     type: "oauth",
+    deploymentUrl: DEPLOYMENT_URL,
     access: "at_test",
     refresh: "rt_test",
     expires: Date.now() + 3_600_000, // 1h from now
@@ -321,6 +322,27 @@ describe("CoderOauthService", () => {
         expect(result.error).toContain("deployment URL");
       }
     });
+
+    it("rejects tokens minted by a different deployment without any network call", async () => {
+      // Even non-expired tokens must never be handed out for a different
+      // deployment: the bearer token would leak to the new host.
+      deps.providersConfig = {
+        coder: { deploymentUrl: "http://other.coder.test", coderOauth: validAuth() },
+      };
+
+      let fetchCalls = 0;
+      mockFetch(() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("deployment URL changed");
+      }
+      expect(fetchCalls).toBe(0);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -561,6 +583,124 @@ describe("CoderOauthService", () => {
       );
 
       await service.cancelDesktopFlow(result.data.flowId);
+    });
+
+    it("registers a fresh client when logging in to a different deployment", async () => {
+      // Client registered on the OLD deployment must not be reused (its RFC 7592
+      // endpoint points at the old host).
+      const oldDeployment = "http://old.coder.test";
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: oldDeployment,
+          coderOauth: validAuth({
+            deploymentUrl: oldDeployment,
+            registrationClientUri: `${oldDeployment}/oauth2/clients/client_test`,
+          }),
+        },
+      };
+
+      let oldHostCalls = 0;
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url.startsWith(oldDeployment)) {
+          oldHostCalls++;
+          return Promise.resolve(new Response("should not be called", { status: 500 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(result.success).toBe(true);
+      if (!result.success) return;
+
+      expect(oldHostCalls).toBe(0);
+      expect(new URL(result.data.authorizeUrl).searchParams.get("client_id")).toBe("client_fresh");
+
+      await service.cancelDesktopFlow(result.data.flowId);
+    });
+
+    it("does not persist tokens when the flow is cancelled during the exchange", async () => {
+      let releaseExchange!: () => void;
+      const exchangeGate = new Promise<void>((resolve) => (releaseExchange = resolve));
+      let exchangeStarted!: () => void;
+      const exchangeStartedPromise = new Promise<void>((resolve) => (exchangeStarted = resolve));
+      let revokeBody: URLSearchParams | null = null;
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          // Hold the exchange round-trip open so the test can cancel mid-flight.
+          exchangeStarted();
+          await exchangeGate;
+          return jsonResponse({
+            access_token: "at_raced",
+            refresh_token: "rt_raced",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+
+      // Trigger the callback but do NOT await the response: it only resolves
+      // after the (gated) exchange settles.
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_raced");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      await exchangeStartedPromise;
+      await service.cancelDesktopFlow(flowId);
+      releaseExchange();
+
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(false);
+      await callbackPromise;
+
+      // Give the detached exchange task a beat to run its post-cancel branch.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      // No credentials persisted; the raced tokens were revoked best-effort.
+      const persisted = deps.setConfigValueCalls.find(
+        (c) => c.keyPath[0] === "coderOauth" && c.value !== undefined
+      );
+      expect(persisted).toBeUndefined();
+      expect(revokeBody).not.toBeNull();
+      expect(revokeBody!.get("token")).toBe("rt_raced");
     });
   });
 

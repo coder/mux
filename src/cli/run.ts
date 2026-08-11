@@ -19,6 +19,7 @@ import { DisposableTempDir } from "../node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
 import { CodexOauthService } from "../node/services/codexOauthService";
 import { CoderOauthService } from "../node/services/coderOauthService";
+import { ProviderService } from "../node/services/providerService";
 import { createCoreServices } from "../node/services/coreServices";
 import {
   isCaughtUpMessage,
@@ -587,7 +588,12 @@ async function main(): Promise<number> {
   const codexOauthService = new CodexOauthService(config, providerService);
   aiService.setCodexOauthService(codexOauthService);
   // Same for Coder OAuth: coder:* models need per-request token loading/refresh.
-  const coderOauthService = new CoderOauthService(config, providerService);
+  // Bind it to the REAL config (not the ephemeral tempDir copy): Coder rotates
+  // the refresh token on every use, so persisting rotations only to tempDir
+  // would strand ~/.mux/providers.jsonc with a consumed (dead) refresh token
+  // once this CLI session exits.
+  const realProviderService = new ProviderService(realConfig);
+  const coderOauthService = new CoderOauthService(realConfig, realProviderService);
   aiService.setCoderOauthService(coderOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
@@ -1431,6 +1437,7 @@ async function main(): Promise<number> {
     mcpServerManager.dispose();
     await codexOauthService.dispose();
     await coderOauthService.dispose();
+    realProviderService.dispose();
     if (!keepBackgroundProcesses) {
       await backgroundProcessManager.terminateAll();
     }
