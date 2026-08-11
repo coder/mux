@@ -10284,6 +10284,8 @@ export class TaskService {
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
     const isCompaction = event.metadata.agentId === "compact" || event.metadata.mode === "compact";
+    // AgentSession resolves true only after a durable compaction follow-up is accepted. Bare,
+    // rejected, and failed-to-dispatch compactions remain on the normal child recovery path.
     if (
       isCompaction &&
       (await this.workspaceService.waitForPendingCompactionCompletionDecision(
@@ -10291,19 +10293,7 @@ export class TaskService {
         event.messageId
       )) === true
     ) {
-      const history = await this.historyService.getHistoryFromLatestBoundary(event.workspaceId);
-      const summary = history.success
-        ? history.data.findLast((message) => message.metadata?.compactionBoundary === true)
-        : undefined;
-      const summaryMetadata = summary?.metadata?.muxMetadata;
-      // Defer only when successful compaction durably staged the next child turn. Bare /compact and
-      // rejected compactions must continue through normal completion recovery.
-      if (
-        summaryMetadata?.type === "compaction-summary" &&
-        summaryMetadata.pendingFollowUp != null
-      ) {
-        return;
-      }
+      return;
     }
 
     const workspaceId = event.workspaceId;

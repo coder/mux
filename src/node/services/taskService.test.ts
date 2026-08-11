@@ -102,22 +102,6 @@ function findWorkspaceInConfig(config: Config, workspaceId: string) {
     .find((workspace) => workspace.id === workspaceId);
 }
 
-function compactionSummaryMessage(id: string): MuxMessage {
-  return createMuxMessage(id, "assistant", "Compacted context", {
-    compactionBoundary: true,
-    compactionEpoch: 1,
-    compacted: "user",
-    muxMetadata: {
-      type: "compaction-summary",
-      pendingFollowUp: {
-        text: "Continue",
-        model: "anthropic:claude-sonnet-4-6",
-        agentId: "exec",
-      },
-    },
-  });
-}
-
 function createWorkspaceTurnMetadata(projectPath: string): WorkspaceMetadata {
   return {
     id: "childworkspace",
@@ -3987,11 +3971,7 @@ describe("TaskService", () => {
     // On-send compaction can consume a monitor-wake continuation mid-turn; the
     // compact turn's own stream-end is uncorrelated and must not supersede the
     // still-running delegated turn.
-    const { parentId, taskService, created, historyService } = await startWorkspaceTurnForTest();
-    await historyService.appendToHistory(
-      created.workspaceId,
-      compactionSummaryMessage("workspace-turn-compaction-summary")
-    );
+    const { parentId, taskService, created } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
@@ -4041,12 +4021,7 @@ describe("TaskService", () => {
     const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
       waitForPendingCompactionCompletionDecision,
     });
-    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
-    await historyService.appendToHistory(
-      childTaskId,
-      compactionSummaryMessage("persistent-child-compaction-summary")
-    );
-
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,
@@ -12159,7 +12134,7 @@ describe("TaskService", () => {
       return Ok(undefined);
     });
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
-    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     const reactivated = await taskService.sendMessageToDescendantAgentTask(
       parentWorkspaceId,
@@ -12177,10 +12152,6 @@ describe("TaskService", () => {
     const activeRecord = await taskHandleStore.getWorkspaceTurn(parentWorkspaceId, handleId);
     assert(activeRecord, "reactivated workspace-turn record is required");
 
-    await historyService.appendToHistory(
-      childTaskId,
-      compactionSummaryMessage("reactivated-compaction-boundary")
-    );
     await handleTaskServiceStreamEndForTest(taskService, {
       type: "stream-end",
       workspaceId: childTaskId,

@@ -4883,9 +4883,10 @@ export class AgentSession {
         streamEndedAtMs: number;
       } | null = null;
       let emittedStreamEnd = false;
+      const completedCompactionRequest = this.activeCompactionRequest;
+      let continuedAfterCompaction = false;
 
       try {
-        const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
         if (completedCompactionRequest != null) {
           this.beginCompactionCompletionDecision(streamEndPayload.messageId);
@@ -4900,14 +4901,7 @@ export class AgentSession {
         });
         this.clearLiveUsageState();
 
-        let handled = false;
-        try {
-          handled = await this.compactionHandler.handleCompletion(streamEndPayload);
-        } finally {
-          if (completedCompactionRequest != null) {
-            this.resolveCompactionCompletionDecision(streamEndPayload.messageId, handled);
-          }
-        }
+        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
 
         await this.recordGoalAccountingFromUsage({
           model: streamEndPayload.metadata.model,
@@ -4958,8 +4952,9 @@ export class AgentSession {
         this.resetActiveStreamState();
 
         if (handled) {
-          // Dispatch follow-up AFTER reset so it can set its own stream state.
-          await this.dispatchPendingFollowUp();
+          // Dispatch follow-up AFTER reset so it can set its own stream state. Child lifecycle
+          // settlement defers only when this durable continuation was actually accepted.
+          continuedAfterCompaction = await this.dispatchPendingFollowUp();
         }
 
         // Stream end: auto-send queued messages (for user messages typed during streaming)
@@ -5019,6 +5014,13 @@ export class AgentSession {
           }
         }
       } finally {
+        if (completedCompactionRequest != null) {
+          this.resolveCompactionCompletionDecision(
+            streamEndPayload.messageId,
+            continuedAfterCompaction
+          );
+        }
+
         // Only clean up if we're still in COMPLETING — a new turn started by
         // dispatchPendingFollowUp() or sendQueuedMessages()
         // owns the stream state now.
