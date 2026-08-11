@@ -664,13 +664,20 @@ export class CoderOauthService {
       return Err("Login was cancelled");
     }
 
-    // Persist the new credentials and clear the previous login's model catalog
-    // in ONE locked mutation: the flow resolves (and Settings refreshes)
-    // before discovery runs, so leaving the old deployment's models in place
-    // would offer them against the new deployment until — or indefinitely, if
-    // a catalog request stalls — discovery overwrites them.
+    // Persist the new credentials, the deployment URL they belong to, and a
+    // cleared model catalog in ONE locked mutation:
+    // - URL + auth together: overlapping login flows for different deployments
+    //   each persist their URL at start time, so a slower flow finishing last
+    //   must re-assert its own URL alongside its auth or it would store auth A
+    //   next to URL B and fail issuer validation. Last completed login wins
+    //   with a fully coherent section.
+    // - models cleared: the flow resolves (and Settings refreshes) before
+    //   discovery runs, so leaving the old deployment's models in place would
+    //   offer them against the new deployment until — or indefinitely, if a
+    //   catalog request stalls — discovery overwrites them.
     const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
       const next = { ...(section ?? {}) };
+      next.deploymentUrl = input.deploymentUrl;
       next.coderOauth = tokenResult.auth;
       next.models = [];
       return { value: next };

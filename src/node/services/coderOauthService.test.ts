@@ -834,6 +834,64 @@ describe("CoderOauthService", () => {
       await service.cancelDesktopFlow(result.data.flowId);
     });
 
+    it("re-asserts its own deployment URL when finishing after a login to another deployment", async () => {
+      // Overlapping flows: a login to deployment B starts (persisting B's URL)
+      // while this flow for deployment A is mid-exchange. When A finishes
+      // last, it must write its URL together with its auth — otherwise the
+      // section would pair A's auth with B's URL and fail issuer validation.
+      const OTHER_URL = "http://other.coder.test";
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          // Deployment B's flow start persists its URL while A's exchange
+          // round-trip is in flight.
+          (deps.providersConfig.coder as Record<string, unknown>).deploymentUrl = OTHER_URL;
+          return jsonResponse({
+            access_token: "at_slow_a",
+            refresh_token: "rt_slow_a",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          return new Response("no catalog", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_slow_a");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // The completed login owns a coherent section: URL matches auth issuer.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
+      expect((coderSection.coderOauth as CoderOauthAuth).deploymentUrl).toBe(DEPLOYMENT_URL);
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_slow_a");
+    });
+
     it("does not persist tokens when the flow is cancelled during the exchange", async () => {
       let releaseExchange!: () => void;
       const exchangeGate = new Promise<void>((resolve) => (releaseExchange = resolve));
