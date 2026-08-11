@@ -38,6 +38,7 @@ import {
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
+import { parseCoderOauthAuth } from "@/node/utils/coderOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 import { getErrorMessage } from "@/common/utils/errors";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
@@ -322,6 +323,10 @@ export class ProviderService {
         enabled?: unknown;
         /** OpenAI-only: stored Codex OAuth tokens (never sent to frontend). */
         codexOauth?: unknown;
+        /** Coder-only: deployment access URL. */
+        deploymentUrl?: string;
+        /** Coder-only: stored Coder OAuth tokens (never sent to frontend). */
+        coderOauth?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -433,6 +438,14 @@ export class ProviderService {
           accessKeyIdSet: !!config.accessKeyId,
           secretAccessKeySet: !!config.secretAccessKey,
         };
+      }
+
+      // Coder-specific fields: deployment URL + OAuth connection status.
+      if (provider === "coder") {
+        providerInfo.coderOauthSet = parseCoderOauthAuth(config.coderOauth) !== null;
+        if (typeof config.deploymentUrl === "string" && config.deploymentUrl) {
+          providerInfo.deploymentUrl = config.deploymentUrl;
+        }
       }
 
       // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher).

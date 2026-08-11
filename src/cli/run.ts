@@ -18,6 +18,7 @@ import { Config, type ProjectConfig } from "../node/config";
 import { DisposableTempDir } from "../node/services/tempDir";
 import { AgentSession, type AgentSessionChatEvent } from "../node/services/agentSession";
 import { CodexOauthService } from "../node/services/codexOauthService";
+import { CoderOauthService } from "../node/services/coderOauthService";
 import { createCoreServices } from "../node/services/coreServices";
 import {
   isCaughtUpMessage,
@@ -585,6 +586,9 @@ async function main(): Promise<number> {
   // OAuth tokens from providers.jsonc.
   const codexOauthService = new CodexOauthService(config, providerService);
   aiService.setCodexOauthService(codexOauthService);
+  // Same for Coder OAuth: coder:* models need per-request token loading/refresh.
+  const coderOauthService = new CoderOauthService(config, providerService);
+  aiService.setCoderOauthService(coderOauthService);
 
   // CLI-only exit code control: allows agent to set the process exit code
   // Useful for CI workflows where the agent should block merge on failure
@@ -1426,6 +1430,7 @@ async function main(): Promise<number> {
     session.dispose();
     mcpServerManager.dispose();
     await codexOauthService.dispose();
+    await coderOauthService.dispose();
     if (!keepBackgroundProcesses) {
       await backgroundProcessManager.terminateAll();
     }

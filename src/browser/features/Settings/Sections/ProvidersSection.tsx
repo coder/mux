@@ -216,6 +216,18 @@ function getProviderFields(provider: string, providerInfo?: ProviderConfigInfo):
     return []; // OAuth-based, no manual key entry
   }
 
+  if (provider === "coder") {
+    // OAuth-based ("Login with Coder"); only the deployment URL is entered manually.
+    return [
+      {
+        key: "deploymentUrl",
+        label: "Deployment URL",
+        placeholder: "https://coder.example.com",
+        type: "text",
+      },
+    ];
+  }
+
   // Default for most providers
   return [
     { key: "apiKey", label: "API Key", placeholder: "Enter API key", type: "secret" },
@@ -1081,6 +1093,128 @@ export function ProvidersSection() {
       const message = getErrorMessage(err);
       setCopilotLoginStatus("error");
       setCopilotLoginError(message);
+    }
+  };
+
+  // --- Coder OAuth ("Login with Coder") ---
+  const [coderLoginStatus, setCoderLoginStatus] = useState<CodexOauthFlowStatus>("idle");
+  const [coderLoginError, setCoderLoginError] = useState<string | null>(null);
+  const [coderFlowId, setCoderFlowId] = useState<string | null>(null);
+  const [coderAuthorizeUrl, setCoderAuthorizeUrl] = useState<string | null>(null);
+  const coderLoginAttemptRef = useRef(0);
+
+  const coderOauthIsConnected = config?.coder?.coderOauthSet === true;
+  const coderDeploymentUrl = config?.coder?.deploymentUrl ?? "";
+  const coderLoginInProgress = coderLoginStatus === "starting" || coderLoginStatus === "waiting";
+
+  const cancelCoderLogin = () => {
+    coderLoginAttemptRef.current++;
+    if (api && coderFlowId) {
+      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+    }
+    setCoderFlowId(null);
+    setCoderAuthorizeUrl(null);
+    setCoderLoginStatus("idle");
+    setCoderLoginError(null);
+  };
+
+  const startCoderLogin = async () => {
+    const attempt = ++coderLoginAttemptRef.current;
+
+    if (!api) {
+      setCoderLoginStatus("error");
+      setCoderLoginError("Mux API not connected.");
+      return;
+    }
+
+    // Best-effort: cancel any in-progress flow before starting a new one.
+    if (coderFlowId) {
+      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+    }
+
+    setCoderLoginError(null);
+    setCoderFlowId(null);
+    setCoderAuthorizeUrl(null);
+
+    const deploymentUrl = coderDeploymentUrl.trim();
+    if (!deploymentUrl) {
+      setCoderLoginStatus("error");
+      setCoderLoginError("Set the deployment URL first.");
+      return;
+    }
+
+    try {
+      setCoderLoginStatus("starting");
+      const startResult = await api.coderOauth.startDesktopFlow({ deploymentUrl });
+
+      if (attempt !== coderLoginAttemptRef.current) {
+        if (startResult.success) {
+          void api.coderOauth.cancelDesktopFlow({ flowId: startResult.data.flowId });
+        }
+        return;
+      }
+
+      if (!startResult.success) {
+        setCoderLoginStatus("error");
+        setCoderLoginError(startResult.error);
+        return;
+      }
+
+      const { flowId, authorizeUrl } = startResult.data;
+      setCoderFlowId(flowId);
+      setCoderAuthorizeUrl(authorizeUrl);
+      setCoderLoginStatus("waiting");
+
+      const waitResult = await api.coderOauth.waitForDesktopFlow({ flowId });
+
+      if (attempt !== coderLoginAttemptRef.current) return;
+
+      if (!waitResult.success) {
+        setCoderLoginStatus("error");
+        setCoderLoginError(waitResult.error);
+        return;
+      }
+
+      setCoderLoginStatus("idle");
+      setCoderFlowId(null);
+      setCoderAuthorizeUrl(null);
+      await refresh();
+    } catch (err) {
+      if (attempt !== coderLoginAttemptRef.current) return;
+      setCoderLoginStatus("error");
+      setCoderLoginError(getErrorMessage(err));
+    }
+  };
+
+  const disconnectCoderOauth = async () => {
+    const attempt = ++coderLoginAttemptRef.current;
+    if (!api) return;
+
+    if (coderFlowId) {
+      void api.coderOauth.cancelDesktopFlow({ flowId: coderFlowId });
+    }
+    setCoderFlowId(null);
+    setCoderAuthorizeUrl(null);
+    setCoderLoginError(null);
+    setCoderLoginStatus("idle");
+
+    try {
+      const result = await api.coderOauth.disconnect();
+
+      if (attempt !== coderLoginAttemptRef.current) return;
+
+      if (!result.success) {
+        setCoderLoginStatus("error");
+        setCoderLoginError(result.error);
+        return;
+      }
+
+      updateOptimistically("coder", { coderOauthSet: false });
+      await refresh();
+    } catch (err) {
+      if (attempt !== coderLoginAttemptRef.current) return;
+      setCoderLoginStatus("error");
+      setCoderLoginError(getErrorMessage(err));
     }
   };
 
@@ -2025,6 +2159,98 @@ export function ProvidersSection() {
                           </div>
                         );
                       })}
+
+                      {/* Coder: OAuth login against the configured deployment */}
+                      {provider === "coder" && (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="text-foreground block text-xs font-medium">
+                              Authentication
+                            </label>
+                            <span className="text-muted text-xs">
+                              {coderLoginStatus === "starting"
+                                ? "Starting..."
+                                : coderLoginStatus === "waiting"
+                                  ? "Waiting for login..."
+                                  : coderOauthIsConnected
+                                    ? "Connected"
+                                    : "Not connected"}
+                            </span>
+                          </div>
+
+                          {isRemoteServer ? (
+                            <p className="text-muted text-xs">
+                              Login with Coder requires the desktop app or a locally hosted Mux
+                              server: the OAuth callback must reach this machine, and Coder has no
+                              device-authorization grant for remote logins.
+                            </p>
+                          ) : (
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    void startCoderLogin();
+                                  }}
+                                  disabled={!api || coderLoginInProgress}
+                                >
+                                  {coderLoginStatus === "error"
+                                    ? "Try again"
+                                    : coderOauthIsConnected
+                                      ? "Re-login with Coder"
+                                      : "Login with Coder"}
+                                </Button>
+
+                                {coderLoginStatus === "waiting" && coderAuthorizeUrl && (
+                                  <Button
+                                    size="sm"
+                                    aria-label="Copy and open Coder authorization page"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(coderAuthorizeUrl);
+                                      window.open(coderAuthorizeUrl, "_blank", "noopener");
+                                    }}
+                                    className="h-8 px-3 text-xs"
+                                  >
+                                    Copy & Open Coder
+                                  </Button>
+                                )}
+
+                                {coderLoginInProgress && (
+                                  <Button variant="secondary" size="sm" onClick={cancelCoderLogin}>
+                                    Cancel
+                                  </Button>
+                                )}
+
+                                {coderOauthIsConnected && (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => {
+                                      void disconnectCoderOauth();
+                                    }}
+                                    disabled={!api || coderLoginInProgress}
+                                  >
+                                    Disconnect
+                                  </Button>
+                                )}
+                              </div>
+
+                              {coderLoginStatus === "waiting" && (
+                                <p className="text-muted inline-flex items-center gap-2 text-xs">
+                                  <Loader2 aria-hidden className="h-3.5 w-3.5 animate-spin" />
+                                  Waiting for authorization...
+                                </p>
+                              )}
+
+                              {coderLoginStatus === "error" && coderLoginError && (
+                                <p className="text-destructive text-xs">
+                                  Login failed: {coderLoginError}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Anthropic: prompt cache TTL */}
                       {provider === "anthropic" && (

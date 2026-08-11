@@ -265,6 +265,10 @@ export const ProviderConfigInfoSchema = z.object({
   couponCodeSet: z.boolean().optional(),
   /** Mux Gateway-specific: which models are enabled for gateway routing */
   gatewayModels: z.array(z.string()).optional(),
+  /** Coder-only: deployment access URL (e.g. https://coder.example.com) */
+  deploymentUrl: z.string().optional(),
+  /** Coder-only: whether Coder OAuth tokens are present in providers.jsonc */
+  coderOauthSet: z.boolean().optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);
@@ -522,6 +526,32 @@ export const codexOauth = {
     output: ResultSchema(z.void(), z.string()),
   },
 };
+
+// Coder OAuth ("Login with Coder" against a user-supplied deployment)
+export const coderOauth = {
+  startDesktopFlow: {
+    input: z.object({ deploymentUrl: z.string() }).strict(),
+    output: ResultSchema(z.object({ flowId: z.string(), authorizeUrl: z.string() }), z.string()),
+  },
+  waitForDesktopFlow: {
+    input: z
+      .object({
+        flowId: z.string(),
+        timeoutMs: z.number().int().positive().optional(),
+      })
+      .strict(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+  cancelDesktopFlow: {
+    input: z.object({ flowId: z.string() }).strict(),
+    output: z.void(),
+  },
+  disconnect: {
+    input: z.void(),
+    output: ResultSchema(z.void(), z.string()),
+  },
+};
+
 // Mux Gateway
 export const muxGateway = {
   getAccountStatus: {

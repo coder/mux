@@ -10,6 +10,7 @@ import { ProjectService } from "@/node/services/projectService";
 import { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import { CodexOauthService } from "@/node/services/codexOauthService";
+import { CoderOauthService } from "@/node/services/coderOauthService";
 import { CopilotOauthService } from "@/node/services/copilotOauthService";
 import { TerminalService } from "@/node/services/terminalService";
 import { BackupService } from "@/node/services/backup/backupService";
@@ -105,6 +106,7 @@ export class ServiceContainer {
   public readonly muxGatewayOauthService: MuxGatewayOauthService;
   public readonly muxGovernorOauthService: MuxGovernorOauthService;
   public readonly codexOauthService: CodexOauthService;
+  public readonly coderOauthService: CoderOauthService;
   public readonly copilotOauthService: CopilotOauthService;
   public readonly backupService: BackupService;
   public readonly terminalService: TerminalService;
@@ -299,6 +301,12 @@ export class ServiceContainer {
       this.windowService
     );
     this.aiService.setCodexOauthService(this.codexOauthService);
+    this.coderOauthService = new CoderOauthService(
+      config,
+      this.providerService,
+      this.windowService
+    );
+    this.aiService.setCoderOauthService(this.coderOauthService);
     this.copilotOauthService = new CopilotOauthService(this.providerService, this.windowService);
     // Terminal services - PTYService is cross-platform
     this.ptyService = new PTYService();
@@ -563,6 +571,7 @@ export class ServiceContainer {
       muxGatewayOauthService: this.muxGatewayOauthService,
       muxGovernorOauthService: this.muxGovernorOauthService,
       codexOauthService: this.codexOauthService,
+      coderOauthService: this.coderOauthService,
       copilotOauthService: this.copilotOauthService,
       backupService: this.backupService,
       terminalService: this.terminalService,
@@ -661,6 +670,7 @@ export class ServiceContainer {
     await this.muxGatewayOauthService.dispose();
     await this.muxGovernorOauthService.dispose();
     await this.codexOauthService.dispose();
+    await this.coderOauthService.dispose();
 
     this.copilotOauthService.dispose();
     this.serverAuthService.dispose();

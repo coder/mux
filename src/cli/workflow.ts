@@ -25,6 +25,7 @@ import { Config } from "@/node/config";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { AgentSession } from "@/node/services/agentSession";
 import { CodexOauthService } from "@/node/services/codexOauthService";
+import { CoderOauthService } from "@/node/services/coderOauthService";
 import { createCoreServices } from "@/node/services/coreServices";
 import { log, type LogLevel } from "@/node/services/log";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -82,6 +83,7 @@ interface WorkflowContext {
   services: WorkflowServices;
   session: AgentSession;
   codexOauthService: CodexOauthService;
+  coderOauthService: CoderOauthService;
 }
 
 export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<unknown> {
@@ -235,6 +237,7 @@ async function disposeWorkflowResources(input: {
   services?: WorkflowServices;
   session?: AgentSession;
   codexOauthService?: CodexOauthService;
+  coderOauthService?: CoderOauthService;
 }): Promise<void> {
   // Suppress monitor:stopped before session.dispose() triggers cleanup() so persisted
   // armed-monitor registry records survive shutdown (post-restart "monitor lost" wakes).
@@ -259,6 +262,13 @@ async function disposeWorkflowResources(input: {
     });
   }
   try {
+    await input.coderOauthService?.dispose();
+  } catch (error) {
+    log.warn("mux workflow: failed to dispose Coder OAuth service", {
+      error: getErrorMessage(error),
+    });
+  }
+  try {
     await input.services?.backgroundProcessManager.terminateAll();
   } catch (error) {
     log.warn("mux workflow: failed to terminate background processes", {
@@ -274,6 +284,7 @@ async function disposeWorkflowContext(ctx: WorkflowContext): Promise<void> {
     services: ctx.services,
     session: ctx.session,
     codexOauthService: ctx.codexOauthService,
+    coderOauthService: ctx.coderOauthService,
   });
 }
 
@@ -285,6 +296,7 @@ async function createWorkflowContext(options: {
   let services: WorkflowServices | undefined;
   let session: AgentSession | undefined;
   let codexOauthService: CodexOauthService | undefined;
+  let coderOauthService: CoderOauthService | undefined;
   try {
     const realConfig = new Config();
     const config = new Config(tempDir.path);
@@ -310,6 +322,8 @@ async function createWorkflowContext(options: {
     });
     codexOauthService = new CodexOauthService(config, services.providerService);
     services.aiService.setCodexOauthService(codexOauthService);
+    coderOauthService = new CoderOauthService(config, services.providerService);
+    services.aiService.setCoderOauthService(coderOauthService);
 
     session = new AgentSession({
       workspaceId,
@@ -342,9 +356,16 @@ async function createWorkflowContext(options: {
       services,
       session,
       codexOauthService,
+      coderOauthService,
     };
   } catch (error) {
-    await disposeWorkflowResources({ tempDir, services, session, codexOauthService });
+    await disposeWorkflowResources({
+      tempDir,
+      services,
+      session,
+      codexOauthService,
+      coderOauthService,
+    });
     throw error;
   }
 }

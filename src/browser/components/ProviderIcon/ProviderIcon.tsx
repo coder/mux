@@ -10,6 +10,7 @@ import DeepSeekIcon from "@/browser/assets/icons/deepseek.svg?react";
 import MoonshotAIIcon from "@/browser/assets/icons/moonshotai.svg?react";
 import AWSIcon from "@/browser/assets/icons/aws.svg?react";
 import GitHubIcon from "@/browser/assets/icons/github.svg?react";
+import CoderIcon from "@/browser/assets/icons/coder.svg?react";
 import { GatewayIcon } from "@/browser/components/icons/GatewayIcon/GatewayIcon";
 import {
   PROVIDER_DEFINITIONS,
@@ -34,6 +35,7 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   ollama: OllamaIcon,
   "mux-gateway": GatewayIcon,
   "github-copilot": GitHubIcon,
+  coder: CoderIcon,
 };
 
 /**

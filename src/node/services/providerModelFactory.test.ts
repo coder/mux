@@ -27,6 +27,7 @@ import {
 import { hasLanguageModelCleanup } from "./languageModelCleanup";
 import type { DevToolsService } from "./devToolsService";
 import { CodexOauthService } from "./codexOauthService";
+import type { CoderOauthService } from "./coderOauthService";
 import { PolicyService } from "./policyService";
 import { ProviderService } from "./providerService";
 
@@ -1896,5 +1897,196 @@ describe("wrapFetchWithAnthropicCacheControl — reasoning fields pass through u
       display: "summarized",
     });
     expect(sent.providerOptions.anthropic.effort).toBe("xhigh");
+  });
+});
+
+describe("ProviderModelFactory Coder", () => {
+  const CODER_DEPLOYMENT_URL = "https://coder.example.com";
+
+  function saveCoderConfig(config: Config, overrides: Record<string, unknown> = {}): void {
+    config.saveProvidersConfig({
+      coder: {
+        deploymentUrl: CODER_DEPLOYMENT_URL,
+        coderOauth: {
+          type: "oauth",
+          access: "at_factory",
+          refresh: "rt_factory",
+          expires: Date.now() + 3_600_000,
+          clientId: "c",
+          clientSecret: "s",
+        },
+        ...overrides,
+      },
+    } as Parameters<Config["saveProvidersConfig"]>[0]);
+  }
+
+  function stubCoderOauthService(access = "at_factory"): CoderOauthService {
+    return {
+      getValidAuth: () =>
+        Promise.resolve(
+          Ok({
+            type: "oauth" as const,
+            access,
+            refresh: "rt_factory",
+            expires: Date.now() + 3_600_000,
+            clientId: "c",
+            clientSecret: "s",
+          })
+        ),
+    } as unknown as CoderOauthService;
+  }
+
+  it("creates Anthropic-origin models against the deployment's AI Bridge", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+      let capturedBaseURL: string | undefined;
+
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService();
+
+      PROVIDER_REGISTRY.anthropic = async () => {
+        const module = await originalAnthropicRegistry();
+        return {
+          ...module,
+          createAnthropic: (options) => {
+            capturedBaseURL = options?.baseURL;
+            return module.createAnthropic(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(capturedBaseURL).toBe(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1`);
+        expect((result.data as { modelId?: unknown }).modelId).toBe("claude-sonnet-4-5");
+        expect((result.data as { provider?: unknown }).provider).toBe("anthropic.messages");
+      } finally {
+        PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+      }
+    });
+  });
+
+  it("creates OpenAI-origin models via the bridge's Responses endpoint", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+      let capturedBaseURL: string | undefined;
+
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService();
+
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            capturedBaseURL = options?.baseURL;
+            return module.createOpenAI(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("coder:openai/gpt-5.2");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(capturedBaseURL).toBe(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/openai/v1`);
+        expect((result.data as { modelId?: unknown }).modelId).toBe("gpt-5.2");
+        expect((result.data as { provider?: unknown }).provider).toBe("openai.responses");
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
+      }
+    });
+  });
+
+  it("injects a fresh Bearer token per request and strips the placeholder x-api-key", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+      const originalFetch = globalThis.fetch;
+      let capturedFetch: typeof fetch | undefined;
+      let forwardedHeaders: Headers | undefined;
+
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService("at_fresh");
+
+      PROVIDER_REGISTRY.anthropic = async () => {
+        const module = await originalAnthropicRegistry();
+        return {
+          ...module,
+          createAnthropic: (options) => {
+            capturedFetch = options?.fetch;
+            return module.createAnthropic(options);
+          },
+        };
+      };
+
+      globalThis.fetch = Object.assign(
+        (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          forwardedHeaders = new Headers(init?.headers);
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        },
+        { preconnect: () => undefined }
+      ) as typeof fetch;
+
+      try {
+        const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+        expect(result.success).toBe(true);
+        expect(capturedFetch).toBeDefined();
+
+        await capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+          method: "POST",
+          headers: { "x-api-key": "coder", "content-type": "application/json" },
+          body: JSON.stringify({ messages: [] }),
+        });
+
+        expect(forwardedHeaders).toBeDefined();
+        expect(forwardedHeaders!.get("authorization")).toBe("Bearer at_fresh");
+        expect(forwardedHeaders!.get("x-api-key")).toBeNull();
+      } finally {
+        globalThis.fetch = originalFetch;
+        PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+      }
+    });
+  });
+
+  it("rejects model ids without a supported bridge origin", async () => {
+    await withTempConfig(async (config, factory) => {
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService();
+
+      // Known direct origins (e.g. coder:google/...) canonicalize away from the
+      // gateway before reaching the coder branch, so only coder-scoped ids
+      // (unknown origins or missing separators) exercise the origin validation.
+      for (const modelString of ["coder:meta-llama/llama-3", "coder:claude-sonnet-4-5"]) {
+        const result = await factory.createModel(modelString);
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error.type).toBe("invalid_model_string");
+        }
+      }
+    });
+  });
+
+  it("fails with api_key_not_found when Coder OAuth is not connected", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Deployment URL alone is not enough - login is required. Use a
+      // coder-scoped id so canonicalization cannot reroute to a direct
+      // provider configured via workstation env keys.
+      saveCoderConfig(config, { coderOauth: undefined });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.createModel("coder:meta-llama/llama-3");
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.type).toBe("api_key_not_found");
+      }
+    });
   });
 });

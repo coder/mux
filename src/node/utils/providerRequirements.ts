@@ -18,11 +18,14 @@ import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers
 import type {
   BaseProviderConfig,
   BedrockProviderConfig,
+  CoderProviderConfig,
   MuxGatewayProviderConfig,
   OpenAIProviderConfig,
 } from "@/common/config/schemas/providersConfig";
 import type { ProviderConfig, ProvidersConfig } from "@/node/config";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
+import { parseCoderOauthAuth } from "@/node/utils/coderOauthAuth";
+import { normalizeCoderDeploymentUrl } from "@/common/constants/coderOAuth";
 
 // ============================================================================
 // Environment variable mappings - single source of truth
@@ -121,7 +124,11 @@ type ProviderSpecificCredentialFields = Partial<
     "region" | "profile" | "bearerToken" | "accessKeyId" | "secretAccessKey"
   > &
     Pick<MuxGatewayProviderConfig, "couponCode" | "voucher"> &
-    Pick<OpenAIProviderConfig, "organization">
+    Pick<OpenAIProviderConfig, "organization"> &
+    Pick<CoderProviderConfig, "deploymentUrl"> & {
+      // Wider than the schema type: callers pass raw (unvalidated) config.
+      coderOauth?: unknown;
+    }
 >;
 
 // Raw provider config as read from disk — before validation.
@@ -137,12 +144,13 @@ export type ProviderConfigRaw = Omit<ProviderConfig, "enabled" | "models"> & {
 export interface ResolvedCredentials {
   isConfigured: boolean;
   /** What's missing, if not configured (for error messages) */
-  missingRequirement?: "api_key" | "region" | "coupon_code";
+  missingRequirement?: "api_key" | "region" | "coupon_code" | "coder_login";
 
   // Resolved credential values - aiService uses these directly
   apiKey?: string; // anthropic, openai, etc.
   region?: string; // bedrock
   couponCode?: string; // mux-gateway
+  deploymentUrl?: string; // coder
   baseUrl?: string; // runtime value from config or env when API-key auth is active
   baseUrlResolved?: string; // display-only metadata, including when API key auth is missing
   organization?: string; // openai
@@ -338,6 +346,18 @@ export function resolveProviderCredentials(
     return couponCode
       ? { isConfigured: true, couponCode }
       : { isConfigured: false, missingRequirement: "coupon_code" };
+  }
+
+  // Coder: deployment URL + OAuth tokens from "Login with Coder" required
+  if (provider === "coder") {
+    const deploymentUrl =
+      typeof config.deploymentUrl === "string"
+        ? normalizeCoderDeploymentUrl(config.deploymentUrl)
+        : null;
+    const hasOauth = parseCoderOauthAuth(config.coderOauth) !== null;
+    return deploymentUrl && hasOauth
+      ? { isConfigured: true, deploymentUrl }
+      : { isConfigured: false, missingRequirement: "coder_login" };
   }
 
   // Keyless providers (e.g., ollama): require explicit opt-in via baseUrl/baseURL or models

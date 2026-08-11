@@ -164,6 +164,70 @@ describe("resolveProviderCredentials - legacy op:// references", () => {
   });
 });
 
+describe("resolveProviderCredentials - coder", () => {
+  const coderOauth = {
+    type: "oauth",
+    access: "at",
+    refresh: "rt",
+    expires: Date.now() + 3_600_000,
+    clientId: "c",
+    clientSecret: "s",
+  };
+
+  it("is configured with a deployment URL and OAuth tokens", () => {
+    const result = resolveProviderCredentials(
+      "coder",
+      { deploymentUrl: "https://coder.example.com", coderOauth },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(true);
+    expect(result.deploymentUrl).toBe("https://coder.example.com");
+  });
+
+  it("normalizes the deployment URL to its origin", () => {
+    const result = resolveProviderCredentials(
+      "coder",
+      { deploymentUrl: "https://coder.example.com/some/path/", coderOauth },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(true);
+    expect(result.deploymentUrl).toBe("https://coder.example.com");
+  });
+
+  it("is not configured without OAuth tokens", () => {
+    const result = resolveProviderCredentials(
+      "coder",
+      { deploymentUrl: "https://coder.example.com" },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(false);
+    expect(result.missingRequirement).toBe("coder_login");
+  });
+
+  it("is not configured without a deployment URL", () => {
+    const result = resolveProviderCredentials("coder", { coderOauth }, {});
+
+    expect(result.isConfigured).toBe(false);
+    expect(result.missingRequirement).toBe("coder_login");
+  });
+
+  it("is not configured with a malformed OAuth blob", () => {
+    const result = resolveProviderCredentials(
+      "coder",
+      {
+        deploymentUrl: "https://coder.example.com",
+        coderOauth: { type: "oauth", access: "at" },
+      },
+      {}
+    );
+
+    expect(result.isConfigured).toBe(false);
+  });
+});
+
 describe("resolveProviderCredentials base URL source", () => {
   it("marks OpenAI base URL from OPENAI_BASE_URL as env sourced", () => {
     const result = resolveProviderCredentials(

@@ -54,6 +54,43 @@ describe("ProvidersConfigSchema", () => {
     expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
   });
 
+  it("round-trips coder deploymentUrl, OAuth blob, models, and unknown fields", () => {
+    const valid = {
+      coder: {
+        deploymentUrl: "https://coder.example.com",
+        coderOauth: {
+          type: "oauth",
+          access: "at",
+          refresh: "rt",
+          expires: 1730000000000,
+          clientId: "c",
+          clientSecret: "s",
+        },
+        models: ["anthropic/claude-sonnet-4-5", { id: "openai/gpt-5.2" }],
+        // Unknown fields written by future versions must survive parsing
+        // (upgrade↔downgrade safety).
+        futureField: "keep-me",
+      },
+    };
+
+    const parsed = ProvidersConfigSchema.safeParse(valid);
+
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.coder?.deploymentUrl).toBe("https://coder.example.com");
+      expect((parsed.data.coder?.coderOauth as { access?: string })?.access).toBe("at");
+      expect((parsed.data.coder as { futureField?: string })?.futureField).toBe("keep-me");
+    }
+  });
+
+  it("rejects non-string coder deploymentUrl", () => {
+    const invalid = {
+      coder: { deploymentUrl: 42 },
+    };
+
+    expect(ProvidersConfigSchema.safeParse(invalid).success).toBe(false);
+  });
+
   it("rejects invalid cacheTtl for anthropic", () => {
     const invalid = {
       anthropic: { cacheTtl: "invalid" },

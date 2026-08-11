@@ -23,6 +23,7 @@ export type ProviderName =
   | "moonshotai"
   | "openrouter"
   | "github-copilot"
+  | "coder"
   | "bedrock"
   | "ollama";
 
@@ -159,6 +160,21 @@ export const PROVIDER_DEFINITIONS = {
     // Intentionally omit fromGatewayModelId: github-copilot:* model strings are canonical identities
     // with Copilot-specific pricing/capabilities, including non-OpenAI families like Claude.
     toGatewayModelId: (_origin, modelId) => modelId,
+  },
+  coder: {
+    displayName: "Coder",
+    // Nominal import only: the model factory branches per origin (anthropic/openai)
+    // because Coder's AI Bridge exposes per-origin endpoints.
+    import: () => import("@ai-sdk/openai"),
+    factoryName: "createOpenAI",
+    requiresApiKey: false, // Uses "Login with Coder" OAuth tokens
+    kind: "gateway",
+    routes: ["anthropic", "openai"],
+    // The AI Bridge is a transparent proxy to the configured upstreams, so
+    // canonical model identity (and providerOptions namespaces) are preserved.
+    passthrough: true,
+    toGatewayModelId: toSlashSeparatedGatewayModelId,
+    fromGatewayModelId: fromSlashSeparatedGatewayModelId,
   },
   bedrock: {
     displayName: "Bedrock",

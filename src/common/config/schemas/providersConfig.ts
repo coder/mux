@@ -73,6 +73,13 @@ export const MuxGatewayProviderConfigSchema = BaseProviderConfigSchema.extend({
   voucher: z.string().optional(),
 });
 
+export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
+  /** Coder deployment access URL (e.g. https://coder.example.com). */
+  deploymentUrl: z.string().optional(),
+  /** Stored Coder OAuth tokens + dynamic client registration (written by coderOauthService only). */
+  coderOauth: z.record(z.string(), z.unknown()).optional(),
+});
+
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;
 export const DeepSeekProviderConfigSchema = BaseProviderConfigSchema;
 export const MoonshotAIProviderConfigSchema = BaseProviderConfigSchema;
@@ -92,6 +99,7 @@ export const ProvidersConfigSchema = z
     moonshotai: MoonshotAIProviderConfigSchema.optional(),
     ollama: OllamaProviderConfigSchema.optional(),
     "github-copilot": GitHubCopilotProviderConfigSchema.optional(),
+    coder: CoderProviderConfigSchema.optional(),
   })
   .catchall(BaseProviderConfigSchema);
 
@@ -107,5 +115,6 @@ export type DeepSeekProviderConfig = z.infer<typeof DeepSeekProviderConfigSchema
 export type MoonshotAIProviderConfig = z.infer<typeof MoonshotAIProviderConfigSchema>;
 export type OllamaProviderConfig = z.infer<typeof OllamaProviderConfigSchema>;
 export type GitHubCopilotProviderConfig = z.infer<typeof GitHubCopilotProviderConfigSchema>;
+export type CoderProviderConfig = z.infer<typeof CoderProviderConfigSchema>;
 
 export type ProvidersConfig = z.infer<typeof ProvidersConfigSchema>;

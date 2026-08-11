@@ -41,6 +41,8 @@ import { CopilotResponsesLanguageModel } from "@/node/services/copilot/copilotRe
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { CoderOauthService } from "@/node/services/coderOauthService";
+import { coderAibridgeBaseUrl, isCoderAibridgeOrigin } from "@/common/constants/coderOAuth";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
@@ -907,6 +909,7 @@ export class ProviderModelFactory {
   private readonly policyService?: PolicyService;
   private readonly devToolsService?: DevToolsService;
   codexOauthService?: CodexOauthService;
+  coderOauthService?: CoderOauthService;
 
   constructor(
     config: Config,
@@ -1904,6 +1907,91 @@ export class ProviderModelFactory {
           fetch: providerFetch,
         });
         return Ok(provider.chat(outboundCopilotModelId));
+      }
+
+      // Coder AI Bridge: per-origin endpoints under <deployment>/api/v2/aibridge,
+      // authenticated with Coder OAuth access tokens (refreshed per request).
+      if (providerName === "coder") {
+        const creds = resolveProviderCredentials("coder", providerConfig);
+        if (!creds.isConfigured || !creds.deploymentUrl) {
+          return Err({ type: "api_key_not_found", provider: providerName });
+        }
+        const deploymentUrl = creds.deploymentUrl;
+
+        const coderOauthService = this.coderOauthService;
+        if (!coderOauthService) {
+          return Err({
+            type: "invalid_model_string",
+            message: "Coder OAuth service not initialized",
+          });
+        }
+
+        // Model IDs are <origin>/<modelId> (mux-gateway style) because the
+        // bridge has no cross-provider routing: Anthropic models must use
+        // /anthropic/v1/messages, OpenAI models /openai/v1/*.
+        const separatorIndex = modelId.indexOf("/");
+        const origin = separatorIndex > 0 ? modelId.slice(0, separatorIndex) : "";
+        const originModelId = separatorIndex > 0 ? modelId.slice(separatorIndex + 1) : "";
+        if (!isCoderAibridgeOrigin(origin) || !originModelId) {
+          return Err({
+            type: "invalid_model_string",
+            message: `Invalid Coder model "${modelId}". Expected coder:anthropic/<model> or coder:openai/<model>.`,
+          });
+        }
+
+        // Per-request auth wrapper: getValidAuth() transparently refreshes and
+        // persists rotated tokens, so long sessions never send stale tokens.
+        const baseFetch = getProviderFetch(providerConfig);
+        const coderFetchFn = async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ) => {
+          const authResult = await coderOauthService.getValidAuth();
+          if (!authResult.success) {
+            throw new Error(authResult.error);
+          }
+
+          const headers = new Headers(input instanceof Request ? input.headers : undefined);
+          if (init?.headers) {
+            for (const [key, value] of new Headers(init.headers).entries()) {
+              headers.set(key, value);
+            }
+          }
+          headers.set("Authorization", `Bearer ${authResult.data.access}`);
+          // The Anthropic SDK authenticates via x-api-key; the bridge reads the
+          // Bearer token instead, so drop the placeholder key.
+          headers.delete("x-api-key");
+          return baseFetch(input, { ...init, headers });
+        };
+        const coderFetch = Object.assign(coderFetchFn, baseFetch) as typeof fetch;
+
+        if (origin === "anthropic") {
+          const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
+          // Same cache_control normalization as direct Anthropic / mux-gateway:
+          // the bridge forwards origin-shaped payloads to the real Anthropic API.
+          const providerFetch = wrapFetchWithAnthropicCacheControl(
+            coderFetch,
+            effectiveAnthropicCacheTtl,
+            { injectCacheControl: !disableBeta }
+          );
+          const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
+          const provider = createAnthropic({
+            apiKey: "coder", // placeholder; real auth injected by the fetch wrapper
+            baseURL: coderAibridgeBaseUrl(deploymentUrl, origin),
+            fetch: providerFetch,
+          });
+          return Ok(provider(originModelId));
+        }
+
+        const { createOpenAI } = await PROVIDER_REGISTRY.openai();
+        const provider = createOpenAI({
+          apiKey: "coder", // placeholder; real auth injected by the fetch wrapper
+          baseURL: coderAibridgeBaseUrl(deploymentUrl, origin),
+          fetch: coderFetch,
+        });
+        // The bridge intercepts both /responses and /chat/completions; use the
+        // Responses API to match Mux's default OpenAI wire format.
+        return Ok(provider.responses(originModelId));
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

@@ -2621,6 +2621,36 @@ export const router = (authToken?: string) => {
           return context.codexOauthService.disconnect();
         }),
     },
+    coderOauth: {
+      startDesktopFlow: t
+        .input(schemas.coderOauth.startDesktopFlow.input)
+        .output(schemas.coderOauth.startDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.coderOauthService.startDesktopFlow({
+            deploymentUrl: input.deploymentUrl,
+          });
+        }),
+      waitForDesktopFlow: t
+        .input(schemas.coderOauth.waitForDesktopFlow.input)
+        .output(schemas.coderOauth.waitForDesktopFlow.output)
+        .handler(({ context, input }) => {
+          return context.coderOauthService.waitForDesktopFlow(input.flowId, {
+            timeoutMs: input.timeoutMs,
+          });
+        }),
+      cancelDesktopFlow: t
+        .input(schemas.coderOauth.cancelDesktopFlow.input)
+        .output(schemas.coderOauth.cancelDesktopFlow.output)
+        .handler(async ({ context, input }) => {
+          await context.coderOauthService.cancelDesktopFlow(input.flowId);
+        }),
+      disconnect: t
+        .input(schemas.coderOauth.disconnect.input)
+        .output(schemas.coderOauth.disconnect.output)
+        .handler(({ context }) => {
+          return context.coderOauthService.disconnect();
+        }),
+    },
     general: {
       listDirectory: t
         .input(schemas.general.listDirectory.input)

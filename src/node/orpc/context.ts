@@ -7,6 +7,7 @@ import type { WorkspaceService } from "@/node/services/workspaceService";
 import type { MuxGatewayOauthService } from "@/node/services/muxGatewayOauthService";
 import type { MuxGovernorOauthService } from "@/node/services/muxGovernorOauthService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
+import type { CoderOauthService } from "@/node/services/coderOauthService";
 import type { CopilotOauthService } from "@/node/services/copilotOauthService";
 import type { BackupService } from "@/node/services/backup/backupService";
 import type { ProviderService } from "@/node/services/providerService";
@@ -58,6 +59,7 @@ export interface ORPCContext {
   muxGatewayOauthService: MuxGatewayOauthService;
   muxGovernorOauthService: MuxGovernorOauthService;
   codexOauthService: CodexOauthService;
+  coderOauthService: CoderOauthService;
   copilotOauthService: CopilotOauthService;
   backupService: BackupService;
   terminalService: TerminalService;
