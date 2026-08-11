@@ -11447,6 +11447,113 @@ describe("TaskService", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  test("bulk task creation waits for task stop and rejects the interrupted parent", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-stop-create-many-race";
+    const childTaskId = "child-stop-create-many-race";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    let markStopStarted: (() => void) | undefined;
+    const stopStarted = new Promise<void>((resolve) => {
+      markStopStarted = resolve;
+    });
+    let releaseStop: (() => void) | undefined;
+    const stopGate = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const stopStream = mock(async (workspaceId: string) => {
+      if (workspaceId === childTaskId) {
+        markStopStarted?.();
+        await stopGate;
+      }
+    });
+    const isStreaming = mock((workspaceId: string) => workspaceId === childTaskId);
+    const { aiService } = createAIServiceMocks(config, { isStreaming, stopStream });
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+
+    const stopping = taskService.stopDescendantAgentTask(parentWorkspaceId, childTaskId);
+    await stopStarted;
+    const creation = taskService.createMany([
+      {
+        parentWorkspaceId: childTaskId,
+        kind: "agent",
+        agentId: "explore",
+        prompt: "Spawn workflow workers after stop",
+        title: "Workflow worker",
+      },
+    ]);
+    await Promise.resolve();
+
+    releaseStop?.();
+    expect(await stopping).toEqual(Ok({ stoppedTaskIds: [childTaskId] }));
+    expect(await creation).toEqual(Err("Task.createMany: cannot spawn new tasks after task_stop"));
+    expect(
+      Array.from(config.loadConfigOrDefault().projects.values())
+        .flatMap((project) => project.workspaces)
+        .filter((workspace) => workspace.parentWorkspaceId === childTaskId)
+    ).toHaveLength(0);
+  });
+
+  test("reawakened interrupted agents with active continuations can create children", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["nestedafterwake"]);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-reawakened-create";
+    const reawakenedTaskId = "child-reawakened-create";
+    const activeSiblingId = "sibling-reawakened-create";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "reawakened", reawakenedTaskId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "interrupted",
+          taskExecutionId: "wst_reawakened_create",
+          taskExecutionStatus: "running",
+        }),
+        projectWorkspace(projectPath, "sibling", activeSiblingId, {
+          parentWorkspaceId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "running",
+        }),
+      ],
+      { ...testTaskSettings(), maxParallelAgentTasks: 1 }
+    );
+    const { taskService } = createTaskServiceHarness(config);
+
+    const result = await createAgentTask(
+      taskService,
+      reawakenedTaskId,
+      "Delegate from the active continuation"
+    );
+
+    expect(result).toMatchObject({ success: true, data: { status: "queued" } });
+    expect(
+      Array.from(config.loadConfigOrDefault().projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.parentWorkspaceId === reawakenedTaskId)
+    ).toMatchObject({ taskStatus: "queued" });
+  });
+
   test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

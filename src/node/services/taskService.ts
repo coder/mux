@@ -2021,10 +2021,26 @@ export class TaskService {
 
   async withTaskTreeLifecycleLock<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
     assert(workspaceId.length > 0, "withTaskTreeLifecycleLock requires workspaceId");
-    return await this.workspaceTreeLifecycleLocks.withLock(
-      this.taskTreeRootId(workspaceId),
-      operation
-    );
+    return await this.withTaskTreeLifecycleLocks([workspaceId], operation);
+  }
+
+  private async withTaskTreeLifecycleLocks<T>(
+    workspaceIds: readonly string[],
+    operation: () => Promise<T>
+  ): Promise<T> {
+    const rootIds = [
+      ...new Set(workspaceIds.map((workspaceId) => this.taskTreeRootId(workspaceId))),
+    ]
+      .filter((workspaceId) => workspaceId.length > 0)
+      .sort();
+    const acquire = async (index: number): Promise<T> => {
+      const rootId = rootIds[index];
+      if (rootId == null) {
+        return await operation();
+      }
+      return await this.workspaceTreeLifecycleLocks.withLock(rootId, () => acquire(index + 1));
+    };
+    return await acquire(0);
   }
 
   private async editWorkspaceEntry(
@@ -2588,7 +2604,20 @@ export class TaskService {
     if (argsList.length === 0) {
       return Ok([]);
     }
+    const parentWorkspaceIds = argsList.map((args) => coerceNonEmptyString(args.parentWorkspaceId));
+    if (parentWorkspaceIds.some((workspaceId) => workspaceId == null)) {
+      return Err("Task.createMany: parentWorkspaceId is required");
+    }
+    return await this.withTaskTreeLifecycleLocks(
+      parentWorkspaceIds.filter((workspaceId): workspaceId is string => workspaceId != null),
+      () => this.createManyUnderTaskTreeLifecycleLocks(argsList, options)
+    );
+  }
 
+  private async createManyUnderTaskTreeLifecycleLocks(
+    argsList: TaskCreateArgs[],
+    options: TaskCreateManyOptions
+  ): Promise<Result<TaskCreateResult[], string>> {
     // sharedWorkspacePath is set for honored isolation: "none" plans; the entry is persisted
     // pointing at the parent's checkout and startReservedAgentTask reuses it without fork/init.
     const plans: Array<
@@ -2667,6 +2696,13 @@ export class TaskService {
         return Err(
           "This project must be trusted before creating workspaces. Trust the project in Settings → Security, or create a workspace from the project page."
         );
+      }
+
+      if (
+        parentEntry?.workspace.taskStatus === "interrupted" &&
+        !isActiveWorkspaceTurnTaskStatus(parentEntry.workspace.taskExecutionStatus)
+      ) {
+        return Err("Task.createMany: cannot spawn new tasks after task_stop");
       }
 
       if (parentEntry?.workspace.taskStatus === "reported") {
@@ -3814,7 +3850,10 @@ export class TaskService {
       );
     }
 
-    if (parentEntry?.workspace.taskStatus === "interrupted") {
+    if (
+      parentEntry?.workspace.taskStatus === "interrupted" &&
+      !isActiveWorkspaceTurnTaskStatus(parentEntry.workspace.taskExecutionStatus)
+    ) {
       return Err("Task.create: cannot spawn new tasks after task_stop");
     }
 
