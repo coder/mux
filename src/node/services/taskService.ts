@@ -7513,7 +7513,8 @@ export class TaskService {
 
   async getDescendantAgentTaskExecutionSnapshot(
     ancestorWorkspaceId: string,
-    taskId: string
+    taskId: string,
+    options: { consumingWorkspaceId?: string } = {}
   ): Promise<{
     ownerWorkspaceId: string;
     record: WorkspaceTurnTaskHandleRecord;
@@ -7542,7 +7543,11 @@ export class TaskService {
       index.parentById,
       taskId
     )) {
-      const record = await this.getWorkspaceTurnSnapshot(ownerWorkspaceId, executionTaskId);
+      const record = await this.getWorkspaceTurnSnapshot(
+        ownerWorkspaceId,
+        executionTaskId,
+        options
+      );
       if (record?.workspaceId === taskId) {
         return { ownerWorkspaceId, record };
       }
@@ -7936,12 +7941,39 @@ export class TaskService {
 
   async getWorkspaceTurnSnapshot(
     ownerWorkspaceId: string,
-    handleId: string
+    handleId: string,
+    options: { consumingWorkspaceId?: string } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     if (!isWorkspaceTurnTaskId(handleId)) {
       return null;
     }
-    const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+    const record = await this.workspaceTurnSettlementLocks.withLock(handleId, async () => {
+      const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, handleId);
+      if (
+        current == null ||
+        options.consumingWorkspaceId == null ||
+        current.directParentResultDeliveryRequiredAt == null ||
+        current.directParentResultDeliveredAt != null ||
+        !this.workspaceTurnRequiresDirectParentDelivery(current)
+      ) {
+        return current;
+      }
+
+      const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), current.workspaceId);
+      if (childEntry?.workspace.parentWorkspaceId !== options.consumingWorkspaceId) {
+        return current;
+      }
+
+      // A terminal task_await by the direct parent owns this result. Persist that fact while
+      // holding the same lock as continuation delivery, before returning the snapshot, so a
+      // late await cannot race the post-settlement history append and receive the output twice.
+      const consumed = {
+        ...current,
+        directParentResultDeliveredAt: getIsoNow(),
+      };
+      await this.taskHandleStore.upsertWorkspaceTurn(consumed);
+      return consumed;
+    });
     if (record == null) {
       return null;
     }

@@ -546,16 +546,19 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             taskService.getDescendantAgentTaskExecutionSnapshot?.bind(taskService);
           const resolvedExecution =
             isAgentContinuation && resolveAgentExecution != null
-              ? await resolveAgentExecution(workspaceId, taskId)
+              ? await resolveAgentExecution(workspaceId, taskId, {
+                  consumingWorkspaceId: workspaceId,
+                })
               : null;
           const workspaceTurnOwnerId = resolvedExecution?.ownerWorkspaceId ?? workspaceId;
+          const getWorkspaceTurnSnapshotForAwait = () =>
+            taskService.getWorkspaceTurnSnapshot(workspaceTurnOwnerId, workspaceTurnTaskId, {
+              consumingWorkspaceId: workspaceId,
+            });
           const snapshot =
             resolvedExecution?.record ??
             (resolveAgentExecution == null || !isAgentContinuation
-              ? await taskService.getWorkspaceTurnSnapshot(
-                  workspaceTurnOwnerId,
-                  workspaceTurnTaskId
-                )
+              ? await getWorkspaceTurnSnapshotForAwait()
               : null);
           if (snapshot == null) {
             const activeTaskIds = requestedIds
@@ -648,10 +651,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
           } catch (error: unknown) {
             const message = getErrorMessage(error);
             if (error instanceof ForegroundWaitBackgroundedError) {
-              const latest = await taskService.getWorkspaceTurnSnapshot(
-                workspaceTurnOwnerId,
-                workspaceTurnTaskId
-              );
+              const latest = await getWorkspaceTurnSnapshotForAwait();
               const status =
                 latest != null && isActiveWorkspaceTurnTaskStatus(latest.status)
                   ? latest.status
@@ -669,10 +669,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               return { status: "error" as const, taskId, error: "Interrupted" };
             }
             if (taskSignal.aborted) {
-              const latest = await taskService.getWorkspaceTurnSnapshot(
-                workspaceTurnOwnerId,
-                workspaceTurnTaskId
-              );
+              const latest = await getWorkspaceTurnSnapshotForAwait();
               if (latest == null) return { status: "not_found" as const, taskId };
               if (latest.status === "completed") {
                 await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
@@ -703,10 +700,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               };
             }
             if (/timed out/i.test(message)) {
-              const latest = await taskService.getWorkspaceTurnSnapshot(
-                workspaceTurnOwnerId,
-                workspaceTurnTaskId
-              );
+              const latest = await getWorkspaceTurnSnapshotForAwait();
               if (latest == null) return { status: "not_found" as const, taskId };
               if (latest.status === "completed") {
                 await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
@@ -738,9 +732,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             if (/out of scope/i.test(message) || /not found/i.test(message)) {
               return { status: "invalid_scope" as const, taskId };
             }
-            const latest = await taskService
-              .getWorkspaceTurnSnapshot(workspaceTurnOwnerId, workspaceTurnTaskId)
-              .catch(() => null);
+            const latest = await getWorkspaceTurnSnapshotForAwait().catch(() => null);
             if (latest?.status === "completed") {
               await markWorkspaceTurnTerminalAttentionConsumed(latest.status);
               return completedWorkspaceTurnResult(latest);

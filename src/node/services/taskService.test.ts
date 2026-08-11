@@ -1947,6 +1947,63 @@ describe("TaskService", () => {
     ).toBeDefined();
   });
 
+  test("late direct-parent snapshot consumption suppresses duplicate continuation delivery", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-late-direct-parent-await";
+    const handleId = "wst_late_direct_parent_await";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          title: "Late Await Reviewer",
+        })
+      );
+      return cfg;
+    });
+    const { historyService, taskService } = createTaskServiceHarness(config);
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const terminalRecord: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "late-direct-parent-await",
+      status: "completed",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      reportMarkdown: "Already returned by task_await.",
+      directParentResultDeliveryRequiredAt: "2026-08-11T00:00:01.000Z",
+    };
+    await taskHandleStore.upsertWorkspaceTurn(terminalRecord);
+
+    const consumed = await taskService.getWorkspaceTurnSnapshot(parentId, handleId, {
+      consumingWorkspaceId: parentId,
+    });
+    expect(consumed?.directParentResultDeliveredAt).toBeDefined();
+
+    await (
+      taskService as unknown as {
+        deliverPersistentChildWorkspaceTurnResult: (
+          record: WorkspaceTurnTaskHandleRecord,
+          waiterWorkspaceIds: ReadonlySet<string>
+        ) => Promise<void>;
+      }
+    ).deliverPersistentChildWorkspaceTurnResult(terminalRecord, new Set());
+
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(parentHistory.success).toBe(true);
+    expect(JSON.stringify(parentHistory)).not.toContain("Already returned by task_await.");
+  });
+
   test("terminal recovery skips legacy delivery records and contains per-record replay failures", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);

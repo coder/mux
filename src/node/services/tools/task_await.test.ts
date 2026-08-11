@@ -1717,7 +1717,9 @@ describe("task_await tool", () => {
       ],
     });
     expect(getWorkspaceTurnSnapshot).toHaveBeenCalledTimes(1);
-    expect(getWorkspaceTurnSnapshot).toHaveBeenCalledWith("parent-workspace", "wst_continuation");
+    expect(getWorkspaceTurnSnapshot).toHaveBeenCalledWith("parent-workspace", "wst_continuation", {
+      consumingWorkspaceId: "parent-workspace",
+    });
   });
 
   it("returns running status when foreground wait is backgrounded", async () => {
