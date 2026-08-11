@@ -1045,13 +1045,114 @@ describe("CoderOauthService", () => {
       releasePersist();
       await callbackPromise;
 
-      // Wait for the detached task's rollback branch to run.
-      await waitUntil(() =>
-        deps.setConfigValueCalls.some((c) => c.keyPath[0] === "coderOauth" && c.value === undefined)
+      // Cancellation won while the persist waited: the in-lock liveness check
+      // skips the write entirely and the raced tokens are revoked.
+      await waitUntil(() => revokeBody !== null);
+      expect((deps.providersConfig.coder as Record<string, unknown> | undefined)?.coderOauth).toBe(
+        undefined
       );
-      // The persisted write was undone and the raced tokens revoked.
-      expect(revokeBody).not.toBeNull();
       expect(revokeBody!.get("token")).toBe("rt_persist_race");
+    });
+
+    it("restores the prior login when a re-login is cancelled during its persist", async () => {
+      // A connected account re-logs in; Cancel lands while the new login's
+      // section mutation waits for the providers-file lock. The prior login
+      // (auth + URL + catalog) must survive intact.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: priorAuth,
+          models: ["anthropic/prior-model"],
+        },
+      };
+
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistStarted!: () => void;
+      const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
+      let revokeBody: URLSearchParams | null = null;
+
+      const gatedProviderService: Pick<
+        ProviderService,
+        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
+      > = {
+        setConfigValue: (provider, keyPath, value) =>
+          mockSetConfigValue(deps, provider, keyPath, value),
+        updateConfigValue: (provider, keyPath, update) =>
+          mockUpdateConfigValue(deps, provider, keyPath, update),
+        updateProviderSection: async (provider, update) => {
+          persistStarted();
+          await persistGate;
+          return mockUpdateProviderSection(deps, provider, update);
+        },
+        setModels: (provider, models) => {
+          deps.setModelsCalls.push({ provider, models });
+          return Promise.resolve(Ok(undefined));
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_relogin",
+            refresh_token: "rt_relogin",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_relogin");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      await persistStartedPromise;
+      await service.cancelDesktopFlow(flowId);
+      releasePersist();
+      await callbackPromise;
+
+      // The cancelled re-login's tokens were revoked...
+      await waitUntil(() => revokeBody !== null);
+      expect(revokeBody!.get("token")).toBe("rt_relogin");
+      // ...and the prior login survives untouched: auth, URL, and catalog.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_prior");
+      expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
+      expect(coderSection.models).toEqual(["anthropic/prior-model"]);
     });
 
     it("clears the persisted model catalog when the new deployment has no catalogs", async () => {

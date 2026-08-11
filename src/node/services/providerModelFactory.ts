@@ -42,11 +42,7 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CoderOauthService } from "@/node/services/coderOauthService";
-import {
-  coderAibridgeBaseUrl,
-  isCoderAibridgeOrigin,
-  normalizeCoderDeploymentUrl,
-} from "@/common/constants/coderOAuth";
+import { coderAibridgeBaseUrl, isCoderAibridgeOrigin } from "@/common/constants/coderOAuth";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
@@ -67,6 +63,7 @@ import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/
 import {
   resolveCustomProviderCredentials,
   resolveProviderCredentials,
+  type ProviderConfigRaw,
   type ProviderRequirementError,
 } from "@/node/utils/providerRequirements";
 import {
@@ -929,12 +926,30 @@ export class ProviderModelFactory {
     this.devToolsService = devToolsService;
   }
 
+  /**
+   * Apply an enforced policy forcedBaseUrl to the coder provider's
+   * user-editable deploymentUrl. Coder credentials are issuer-bound, so they
+   * must be resolved against the effective (policy-locked) deployment —
+   * validating against the still-editable config field would wrongly reject
+   * policy-bound credentials after a user edit.
+   */
+  private coderEffectiveProviderConfig(providerConfig: ProviderConfigRaw): ProviderConfigRaw {
+    const forced = this.policyService?.isEnforced()
+      ? this.policyService.getForcedBaseUrl("coder")
+      : undefined;
+    return forced ? { ...providerConfig, deploymentUrl: forced } : providerConfig;
+  }
+
   private isProviderAvailableForRouting(
     provider: ProviderName,
     providersConfig: ProvidersConfig,
     config: ReturnType<Config["loadConfigOrDefault"]>
   ): boolean {
-    const providerConfig = providersConfig[provider] ?? {};
+    const rawProviderConfig = providersConfig[provider] ?? {};
+    const providerConfig =
+      provider === "coder"
+        ? this.coderEffectiveProviderConfig(rawProviderConfig)
+        : rawProviderConfig;
     const credentials = resolveProviderCredentials(provider, providerConfig);
 
     // OpenAI Codex OAuth is a valid credential path even without an API key;
@@ -1916,35 +1931,22 @@ export class ProviderModelFactory {
       // Coder AI Bridge: per-origin endpoints under <deployment>/api/v2/aibridge,
       // authenticated with Coder OAuth access tokens (refreshed per request).
       if (providerName === "coder") {
-        const creds = resolveProviderCredentials("coder", providerConfig);
+        // Policy: an enforced forcedBaseUrl must win over the user-editable
+        // deploymentUrl, otherwise Coder traffic would bypass the policy-locked
+        // endpoint. Apply the forced URL BEFORE credential resolution (see
+        // coderEffectiveProviderConfig): credentials are issuer-bound, and
+        // tokens minted by any other deployment fail closed as "not
+        // configured". The login flow itself targets the forced URL
+        // (CoderOauthService is policy-aware), so re-login produces matching
+        // credentials.
+        const creds = resolveProviderCredentials(
+          "coder",
+          this.coderEffectiveProviderConfig(providerConfig)
+        );
         if (!creds.isConfigured || !creds.deploymentUrl) {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
-
-        // Policy: an enforced forcedBaseUrl must win over the user-editable
-        // deploymentUrl, otherwise Coder traffic would bypass the policy-locked
-        // endpoint. Tokens are issuer-bound (resolveProviderCredentials
-        // guarantees blob issuer === creds.deploymentUrl), so tokens minted by
-        // any other deployment fail closed as "not configured" — the login
-        // flow itself targets the forced URL (CoderOauthService is
-        // policy-aware), so re-login produces matching credentials.
-        const coderForcedBaseUrl = this.policyService?.isEnforced()
-          ? this.policyService.getForcedBaseUrl("coder")
-          : undefined;
-        let deploymentUrl = creds.deploymentUrl;
-        if (coderForcedBaseUrl) {
-          const normalizedForced = normalizeCoderDeploymentUrl(coderForcedBaseUrl);
-          if (!normalizedForced) {
-            return Err({
-              type: "invalid_model_string",
-              message: `Policy-forced Coder base URL is not a valid deployment URL: ${coderForcedBaseUrl}`,
-            });
-          }
-          if (normalizedForced !== deploymentUrl) {
-            return Err({ type: "api_key_not_found", provider: providerName });
-          }
-          deploymentUrl = normalizedForced;
-        }
+        const deploymentUrl = creds.deploymentUrl;
 
         const coderOauthService = this.coderOauthService;
         if (!coderOauthService) {

@@ -2115,6 +2115,60 @@ describe("ProviderModelFactory Coder", () => {
     );
   });
 
+  it("accepts policy-bound credentials even when the editable deploymentUrl was changed", async () => {
+    const LOCKED_URL = "https://locked.coder.example.com";
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder", base_url: LOCKED_URL }],
+      },
+      async (config, factory) => {
+        const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+        let capturedBaseURL: string | undefined;
+
+        // Tokens were minted by the forced deployment, but the user has since
+        // edited the (unlocked) deploymentUrl field to point elsewhere. The
+        // forced URL must be resolved FIRST so the valid policy-bound
+        // credentials are not rejected as issuer-mismatched.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://user-edited.example.com",
+            coderOauth: {
+              type: "oauth",
+              sessionId: "session_factory",
+              deploymentUrl: LOCKED_URL,
+              access: "at_factory",
+              refresh: "rt_factory",
+              expires: Date.now() + 3_600_000,
+              clientId: "c",
+              clientSecret: "s",
+            },
+          },
+        } as Parameters<Config["saveProvidersConfig"]>[0]);
+        factory.coderOauthService = stubCoderOauthService("at_factory", LOCKED_URL);
+
+        PROVIDER_REGISTRY.anthropic = async () => {
+          const module = await originalAnthropicRegistry();
+          return {
+            ...module,
+            createAnthropic: (options) => {
+              capturedBaseURL = options?.baseURL;
+              return module.createAnthropic(options);
+            },
+          };
+        };
+
+        try {
+          const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+          expect(result.success).toBe(true);
+          expect(capturedBaseURL).toBe(`${LOCKED_URL}/api/v2/aibridge/anthropic/v1`);
+        } finally {
+          PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+        }
+      }
+    );
+  });
+
   it("fails closed when tokens were not minted by the policy-forced deployment", async () => {
     await withTempPolicyProviderFactory(
       {
@@ -2124,14 +2178,16 @@ describe("ProviderModelFactory Coder", () => {
       async (config, factory) => {
         // Logged in to a different (user-chosen) deployment: those tokens must
         // not be used for the policy-locked endpoint, nor may traffic flow to
-        // the user-chosen deployment while policy is enforced.
+        // the user-chosen deployment while policy is enforced. The coder route
+        // is unavailable (issuer mismatch with the forced URL), so the model
+        // falls back to the direct origin — which the policy also denies.
         saveCoderConfig(config);
         factory.coderOauthService = stubCoderOauthService();
 
         const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
         expect(result.success).toBe(false);
         if (!result.success) {
-          expect(result.error.type).toBe("api_key_not_found");
+          expect(["api_key_not_found", "policy_denied"]).toContain(result.error.type);
         }
       }
     );

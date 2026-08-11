@@ -337,9 +337,13 @@ export class CoderOauthService {
 
       // Cancellation may also race the persist write itself. `has` + `finish`
       // below run with no intervening await, so exactly one of Cancel and
-      // completion wins the flow; if Cancel won mid-persist, roll back.
+      // completion wins the flow; if Cancel won mid-persist, restore the
+      // pre-login section (a previously connected account stays connected).
       if (!this.desktopFlows.has(flowId)) {
-        await this.rollbackPersistedAuth(exchangeResult.data);
+        await this.rollbackPersistedAuth(
+          exchangeResult.data.auth,
+          exchangeResult.data.previousSection
+        );
         return;
       }
 
@@ -350,7 +354,7 @@ export class CoderOauthService {
       // Model discovery runs only after the flow is committed: Cancel is no
       // longer possible, so this network await cannot strand half-cancelled
       // state (persisted auth with a cancelled flow).
-      await this.refreshBridgeModels(exchangeResult.data);
+      await this.refreshBridgeModels(exchangeResult.data.auth);
     })();
 
     log.debug(`[Coder OAuth] Desktop flow started (flowId=${flowId})`);
@@ -633,7 +637,7 @@ export class CoderOauthService {
     redirectUri: string;
     codeVerifier: string;
     isFlowAlive: () => boolean;
-  }): Promise<Result<CoderOauthAuth, string>> {
+  }): Promise<Result<{ auth: CoderOauthAuth; previousSection: Record<string, unknown> }, string>> {
     const tokenResult = await this.requestTokens(input.endpoints.tokenEndpoint, {
       kind: "exchange",
       deploymentUrl: input.deploymentUrl,
@@ -659,16 +663,26 @@ export class CoderOauthService {
 
     // Persist the new credentials, the deployment URL they belong to, and a
     // cleared model catalog in ONE locked mutation:
-    // - URL + auth together: overlapping login flows for different deployments
-    //   each persist their URL at start time, so a slower flow finishing last
-    //   must re-assert its own URL alongside its auth or it would store auth A
-    //   next to URL B and fail issuer validation. Last completed login wins
-    //   with a fully coherent section.
+    // - URL + auth together: a slower flow finishing after a login to another
+    //   deployment must re-assert its own URL alongside its auth or it would
+    //   store auth A next to URL B and fail issuer validation. Last completed
+    //   login wins with a fully coherent section.
     // - models cleared: the flow resolves (and Settings refreshes) before
     //   discovery runs, so leaving the old deployment's models in place would
     //   offer them against the new deployment until — or indefinitely, if a
     //   catalog request stalls — discovery overwrites them.
+    // The previous section is captured under the same lock so a post-persist
+    // cancellation can restore it verbatim (not just delete the new blob,
+    // which would log out a previously connected account).
+    let previousSection: Record<string, unknown> = {};
     const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
+      // Cancellation can also win while this mutation waits for the
+      // providers-file lock: re-check liveness at write time, inside the
+      // lock, so a cancelled flow never replaces the prior login's state.
+      if (!input.isFlowAlive()) {
+        return null;
+      }
+      previousSection = { ...(section ?? {}) };
       const next = { ...(section ?? {}) };
       next.deploymentUrl = input.deploymentUrl;
       next.coderOauth = tokenResult.auth;
@@ -679,25 +693,41 @@ export class CoderOauthService {
     if (!persistResult.success) {
       return Err(persistResult.error);
     }
+    if (!persistResult.data.applied) {
+      await this.revokeTokens(input.deploymentUrl, tokenResult.auth);
+      return Err("Login was cancelled");
+    }
 
     log.debug("[Coder OAuth] Desktop exchange completed");
 
-    return Ok(tokenResult.auth);
+    return Ok({ auth: tokenResult.auth, previousSection });
   }
 
   /**
-   * Undo a persisted login whose flow was cancelled mid-persist. The clear is
-   * conditional: persistAuth awaits post-write work (gateway lifecycle sync),
-   * so a newer login can land before this rollback runs — that newer
-   * credential must be kept, while the cancelled login's tokens are revoked
-   * either way.
+   * Undo a persisted login whose flow was cancelled between the persist write
+   * and the flow commit. Restores the section captured under the persist lock
+   * (a previously connected account stays connected with its URL and catalog)
+   * — but only while the stored credential is still the cancelled login's;
+   * a newer login that landed in between is kept. The cancelled login's
+   * tokens are revoked either way.
    */
-  private async rollbackPersistedAuth(auth: CoderOauthAuth): Promise<void> {
-    log.debug("[Coder OAuth] Flow cancelled during persist; rolling back credentials");
-    const clearResult = await this.clearStoredAuthIfMatches(auth);
-    if (!clearResult.success) {
-      log.warn(`[Coder OAuth] Failed to roll back cancelled login: ${clearResult.error}`);
-    } else if (!clearResult.data.applied) {
+  private async rollbackPersistedAuth(
+    auth: CoderOauthAuth,
+    previousSection: Record<string, unknown>
+  ): Promise<void> {
+    log.debug("[Coder OAuth] Flow cancelled during persist; restoring previous provider state");
+    this.cachedAuth = null;
+    const restoreResult = await this.providerService.updateProviderSection("coder", (section) => {
+      const stored = parseCoderOauthAuth(section?.coderOauth);
+      if (stored?.sessionId !== auth.sessionId) {
+        return null; // Superseded by a newer login; keep it.
+      }
+      return { value: previousSection };
+    });
+    this.cachedAuth = null;
+    if (!restoreResult.success) {
+      log.warn(`[Coder OAuth] Failed to roll back cancelled login: ${restoreResult.error}`);
+    } else if (!restoreResult.data.applied) {
       log.debug("[Coder OAuth] Rollback skipped: a newer login already replaced the credentials");
     }
     await this.revokeTokens(auth.deploymentUrl, auth);
