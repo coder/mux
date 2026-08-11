@@ -844,6 +844,7 @@ export class Config {
    * config writes remain downgrade-safe. Entries are keyed by stable child workspace ID.
    */
   private readonly legacyTaskVariantGroups = new Map<string, LegacyTaskVariantWorkspace>();
+  private readonly legacyTaskVariantMetadataOnlyIds = new Set<string>();
   /** Serializes editConfig calls; see editConfig for why. */
   private editConfigQueue: Promise<void> = Promise.resolve();
   /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
@@ -858,7 +859,11 @@ export class Config {
     this.secretsFile = path.join(this.rootDir, "secrets.json");
   }
 
-  private rememberLegacyTaskVariantWorkspace(projectPath: string, value: unknown): void {
+  private rememberLegacyTaskVariantWorkspace(
+    projectPath: string,
+    value: unknown,
+    source: "config" | "metadata" = "config"
+  ): void {
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return;
     }
@@ -881,6 +886,11 @@ export class Config {
         ? taskStatus
         : undefined;
 
+    if (source === "metadata") {
+      this.legacyTaskVariantMetadataOnlyIds.add(id);
+    } else {
+      this.legacyTaskVariantMetadataOnlyIds.delete(id);
+    }
     this.legacyTaskVariantGroups.set(id, {
       id,
       projectPath: stripTrailingSlashes(projectPath),
@@ -1090,6 +1100,13 @@ export class Config {
         // Migrate: normalize project paths by stripping trailing slashes
         // This fixes configs created with paths like "/home/user/project/"
         // Also filter out any malformed entries (null/undefined paths)
+        // Rebuild config-backed entries from the current on-disk snapshot. Metadata-only entries
+        // survive until the legacy metadata migration writes them into config.json below.
+        for (const workspaceId of this.legacyTaskVariantGroups.keys()) {
+          if (!this.legacyTaskVariantMetadataOnlyIds.has(workspaceId)) {
+            this.legacyTaskVariantGroups.delete(workspaceId);
+          }
+        }
         const normalizedPairs = rawPairs
           .filter(([projectPath]) => {
             if (!projectPath || typeof projectPath !== "string") {
@@ -1700,7 +1717,28 @@ export class Config {
         data.onePasswordAccountName = legacyOnePasswordAccountName;
       }
 
+      const persistedWorkspaceIds = new Set<string>();
+      for (const [, project] of data.projects) {
+        for (const workspace of project.workspaces) {
+          const workspaceId = parseOptionalNonEmptyString(workspace.id);
+          if (workspaceId) {
+            persistedWorkspaceIds.add(workspaceId);
+          }
+        }
+      }
       await writeFileAtomic(this.configFile, JSON.stringify(data, null, 2), "utf-8");
+      for (const workspaceId of this.legacyTaskVariantGroups.keys()) {
+        if (!persistedWorkspaceIds.has(workspaceId)) {
+          // A load-time settings migration can save before getAllWorkspaceMetadata's queued
+          // identity migration adds this legacy workspace ID. Keep metadata-only entries alive
+          // until a later save can attach them to the migrated config record.
+          if (!this.legacyTaskVariantMetadataOnlyIds.has(workspaceId)) {
+            this.legacyTaskVariantGroups.delete(workspaceId);
+          }
+        } else {
+          this.legacyTaskVariantMetadataOnlyIds.delete(workspaceId);
+        }
+      }
     } catch (error) {
       log.error("Error saving config:", error);
     }
@@ -1926,7 +1964,7 @@ export class Config {
             try {
               const data = fs.readFileSync(metadataPath, "utf-8");
               const metadata = JSON.parse(data) as WorkspaceMetadata;
-              this.rememberLegacyTaskVariantWorkspace(projectPath, metadata);
+              this.rememberLegacyTaskVariantWorkspace(projectPath, metadata, "metadata");
               if (metadata.id === workspaceId) {
                 return {
                   workspacePath: workspace.path,
@@ -2182,7 +2220,7 @@ export class Config {
           if (fs.existsSync(metadataPath)) {
             const data = fs.readFileSync(metadataPath, "utf-8");
             const metadata = JSON.parse(data) as WorkspaceMetadata;
-            this.rememberLegacyTaskVariantWorkspace(projectPath, metadata);
+            this.rememberLegacyTaskVariantWorkspace(projectPath, metadata, "metadata");
 
             // Ensure required fields are present
             if (!metadata.name) metadata.name = workspaceBasename;

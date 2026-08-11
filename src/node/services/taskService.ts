@@ -2565,7 +2565,9 @@ export class TaskService {
     const bestOfParentWorkspaceIds = new Set<string>();
     for (const task of completedReportTasks) {
       const parentWorkspaceId = coerceNonEmptyString(task.parentWorkspaceId);
-      if (!parentWorkspaceId || (task.bestOf?.total ?? 1) <= 1) {
+      const taskId = coerceNonEmptyString(task.id);
+      const bestOf = taskId ? this.getEffectiveTaskGroup(taskId, task) : undefined;
+      if (!parentWorkspaceId || (bestOf?.total ?? 1) <= 1) {
         continue;
       }
       if (this.aiService.isStreaming(parentWorkspaceId)) {
@@ -10074,7 +10076,7 @@ export class TaskService {
           skipInitHook,
           preferredTrunkBranch: task.taskTrunkBranch,
           workflowTask: task.workflowTask,
-          bestOf: task.bestOf,
+          bestOf: this.getEffectiveTaskGroup(taskId, task),
           experiments: task.taskExperiments,
         });
       }
@@ -11705,7 +11707,7 @@ export class TaskService {
     this.rejectWaiters(workspaceId, options?.rejectionError ?? new Error("Task interrupted"));
 
     const parentWorkspaceId = entry.workspace.parentWorkspaceId;
-    const bestOf = entry.workspace.bestOf;
+    const bestOf = this.getEffectiveTaskGroup(workspaceId, entry.workspace);
     if (
       parentWorkspaceId &&
       bestOf?.total != null &&
@@ -13173,6 +13175,17 @@ export class TaskService {
     );
   }
 
+  private getEffectiveTaskGroup(
+    workspaceId: string,
+    workspace: Pick<WorkspaceConfigEntry, "bestOf">
+  ): TaskCreateArgs["bestOf"] {
+    const bestOf = workspace.bestOf ?? this.config.getLegacyTaskVariantGroup(workspaceId);
+    if (!bestOf) {
+      return undefined;
+    }
+    return { groupId: bestOf.groupId, index: bestOf.index, total: bestOf.total };
+  }
+
   private async deliverReportToParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
@@ -13190,7 +13203,10 @@ export class TaskService {
     );
 
     let cleanupTaskIds: readonly string[] = [];
-    const bestOfTotal = childEntry?.workspace.bestOf?.total ?? 1;
+    const bestOf = childEntry
+      ? this.getEffectiveTaskGroup(childWorkspaceId, childEntry.workspace)
+      : undefined;
+    const bestOfTotal = bestOf?.total ?? 1;
     if (bestOfTotal > 1) {
       await this.deferredBestOfLocks.withLock(parentWorkspaceId, async () => {
         cleanupTaskIds = await this.deliverReportToParentUnlocked(
@@ -13267,7 +13283,10 @@ export class TaskService {
         return finalization.taskIds.filter((taskId) => taskId !== childWorkspaceId);
       }
 
-      if (childEntry?.workspace.bestOf?.total != null && childEntry.workspace.bestOf.total > 1) {
+      const bestOf = childEntry
+        ? this.getEffectiveTaskGroup(childWorkspaceId, childEntry.workspace)
+        : undefined;
+      if (bestOf?.total != null && bestOf.total > 1) {
         const parentTaskToolState = await this.getTaskToolPartialState(parentWorkspaceId);
 
         // Concurrent sibling completions can arrive after another sibling already finalized
@@ -13281,8 +13300,8 @@ export class TaskService {
           finalization.kind === "not_ready" &&
           (await this.shouldDeferBestOfFallback({
             parentWorkspaceId,
-            groupId: childEntry.workspace.bestOf.groupId,
-            total: childEntry.workspace.bestOf.total,
+            groupId: bestOf.groupId,
+            total: bestOf.total,
           }))
         ) {
           return [];
@@ -13483,12 +13502,13 @@ export class TaskService {
       return { ok: false, reason: "task_not_reported" };
     }
 
-    if (entry.workspace.bestOf?.total != null && entry.workspace.bestOf.total > 1) {
+    const bestOf = this.getEffectiveTaskGroup(workspaceId, entry.workspace);
+    if (bestOf?.total != null && bestOf.total > 1) {
       if (
         await this.shouldDeferBestOfFallback({
           parentWorkspaceId,
-          groupId: entry.workspace.bestOf.groupId,
-          total: entry.workspace.bestOf.total,
+          groupId: bestOf.groupId,
+          total: bestOf.total,
         })
       ) {
         return { ok: false, reason: "best_of_parent_partial_pending" };

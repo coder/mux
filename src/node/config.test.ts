@@ -378,6 +378,7 @@ describe("Config", () => {
       expect(metadata[0]?.parentWorkspaceId).toBe("parent");
       expect(metadata[0]?.bestOf).toBeUndefined();
 
+      await flushConfigEdits();
       const persisted = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         projects?: Array<
           [
