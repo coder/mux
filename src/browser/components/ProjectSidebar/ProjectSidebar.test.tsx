@@ -1645,7 +1645,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId(agentItemTestId("run-1"))).toBeTruthy();
   });
 
-  test("removes workflow groups from the sidebar when all members become inactive", () => {
+  test("retains an active workflow header between steps without showing inactive members", () => {
     window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
     projectContextValue = createProjectContextValue({
       userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
@@ -1682,7 +1682,9 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
 
     view.rerender(<ProjectSidebar {...renderProps(step("reported"))} />);
-    expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
+    expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
+    // The terminal member only anchors the workflow header during the inter-step gap; inactive
+    // sub-agent rows remain absent from the left sidebar.
     expect(view.queryByTestId(agentItemTestId("step-1"))).toBeNull();
   });
 

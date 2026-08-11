@@ -96,6 +96,7 @@ import {
   collectActiveWorkflowGroupKeys,
   computeSidebarTaskGroups,
   computeTaskGroupMemberRowMeta,
+  ensureWorkflowGroupMembersVisible,
   type SidebarTaskGroupsResult,
 } from "./sidebarTaskGroups";
 import { TitleEditProvider, useTitleEdit } from "@/browser/contexts/WorkspaceTitleEditContext";
@@ -2422,11 +2423,16 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               )) {
                                 sessionActiveTaskGroupKeysRef.current.add(key);
                               }
-                              const visibleWorkspacesForNormalRendering = filterVisibleAgentRows(
-                                workspacesForNormalRendering,
-                                expandedCompletedParentIds,
-                                { isWorkspaceLiveActive }
-                              );
+                              const visibleWorkspacesForNormalRendering =
+                                ensureWorkflowGroupMembersVisible({
+                                  allRows: workspacesForNormalRendering,
+                                  visibleRows: filterVisibleAgentRows(
+                                    workspacesForNormalRendering,
+                                    expandedCompletedParentIds,
+                                    { isWorkspaceLiveActive }
+                                  ),
+                                  sessionActiveGroupKeys: sessionActiveTaskGroupKeysRef.current,
+                                });
                               const baseRowMetaByWorkspaceId = computeAgentRowRenderMeta(
                                 workspacesForNormalRendering,
                                 depthByWorkspaceId,

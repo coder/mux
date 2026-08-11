@@ -365,9 +365,19 @@ export function computeSidebarTaskGroups(params: {
     let title: string;
     let totalCount: number;
     if (descriptor.kind === "workflow") {
-      // Inactive persistent children stay out of the left sidebar even when their workflow group is
-      // active or selected; the transcript decoration is the canonical hierarchy for those rows.
-      displayMembers = sortWorkflowMembers(visibleMembers);
+      // Retained terminal members may be present only to anchor a session-active workflow header
+      // between steps. Keep those inactive children out of the expanded member rows; the transcript
+      // decoration is the canonical persistent hierarchy for them.
+      displayMembers = sortWorkflowMembers(
+        visibleMembers.filter(
+          (member) =>
+            member.taskExecutionStatus === "queued" ||
+            member.taskStatus === "queued" ||
+            isWorkspaceDelegatedActivityActive(member, {
+              isWorkspaceLiveActive: params.isWorkspaceLiveActive,
+            })
+        )
+      );
       const workflowName = allMembers.find((member) => member.workflowTask?.workflowName != null)
         ?.workflowTask?.workflowName;
       title = workflowName ?? shortenWorkflowRunId(descriptor.id);

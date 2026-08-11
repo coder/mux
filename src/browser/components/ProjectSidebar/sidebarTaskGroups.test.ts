@@ -284,7 +284,7 @@ describe("computeTaskGroupMemberRowMeta", () => {
   };
 
   test("members form a sibling run under the header and inherit its trunks", () => {
-    const first = workflowChild("first", "wfr_alpha", { taskStatus: "reported" });
+    const first = workflowChild("first", "wfr_alpha", { taskStatus: "queued" });
     const second = workflowChild("second", "wfr_alpha", { taskStatus: "running" });
     const rows = [parent, first, second];
     const group = computeSidebarTaskGroups({ rows, allRows: rows }).groupsByStorageKey.get(
@@ -315,7 +315,7 @@ describe("computeTaskGroupMemberRowMeta", () => {
   });
 
   test("uses live activity for interrupted grouped-member connector state", () => {
-    const first = workflowChild("first", "wfr_live", { taskStatus: "reported" });
+    const first = workflowChild("first", "wfr_live", { taskStatus: "queued" });
     const interrupted = workflowChild("interrupted", "wfr_live", {
       taskStatus: "interrupted",
     });
