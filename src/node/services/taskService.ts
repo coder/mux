@@ -6315,7 +6315,47 @@ export class TaskService {
     );
   }
 
+  private async deletePersistentChildWorkspaceTurnAttention(
+    record: WorkspaceTurnTaskHandleRecord
+  ): Promise<void> {
+    const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
+    if (childEntry == null || childEntry.workspace.workflowTask != null) {
+      return;
+    }
+    const directParentWorkspaceId = childEntry.workspace.parentWorkspaceId;
+    if (directParentWorkspaceId == null) {
+      return;
+    }
+    await this.terminalAttentionStore.delete(
+      directParentWorkspaceId,
+      TerminalAttentionStore.notificationId("agent_task", record.workspaceId, record.handleId)
+    );
+  }
+
   private async deliverPersistentChildWorkspaceTurnResult(
+    record: WorkspaceTurnTaskHandleRecord,
+    foregroundWaiterWorkspaceIds: ReadonlySet<string>
+  ): Promise<void> {
+    await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
+      const current = await this.taskHandleStore.getWorkspaceTurn(
+        record.ownerWorkspaceId,
+        record.handleId
+      );
+      if (
+        current == null ||
+        current.status !== record.status ||
+        current.updatedAt !== record.updatedAt
+      ) {
+        return;
+      }
+      await this.deliverPersistentChildWorkspaceTurnResultUnlocked(
+        current,
+        foregroundWaiterWorkspaceIds
+      );
+    });
+  }
+
+  private async deliverPersistentChildWorkspaceTurnResultUnlocked(
     record: WorkspaceTurnTaskHandleRecord,
     foregroundWaiterWorkspaceIds: ReadonlySet<string>
   ): Promise<void> {
@@ -6338,14 +6378,8 @@ export class TaskService {
       return;
     }
     const markDirectParentResultDelivered = async () => {
-      await this.taskHandleStore.updateWorkspaceTurn(
-        record.ownerWorkspaceId,
-        record.handleId,
-        (current) => ({
-          ...current,
-          directParentResultDeliveredAt: current.directParentResultDeliveredAt ?? getIsoNow(),
-        })
-      );
+      record.directParentResultDeliveredAt = record.directParentResultDeliveredAt ?? getIsoNow();
+      await this.taskHandleStore.upsertWorkspaceTurn(record);
     };
     if (foregroundWaiterWorkspaceIds.has(directParentWorkspaceId)) {
       await markDirectParentResultDelivered();
@@ -6533,6 +6567,9 @@ export class TaskService {
         }
         if (this.workspaceTurnRequiresDirectParentDelivery(nextRecord)) {
           nextRecord.directParentResultDeliveryRequiredAt = getIsoNow();
+          if (resettleStaleTerminal) {
+            await this.deletePersistentChildWorkspaceTurnAttention(current);
+          }
           if (resettleStaleTerminal) {
             delete nextRecord.directParentResultDeliveredAt;
           }
@@ -7783,6 +7820,11 @@ export class TaskService {
       ) {
         return current;
       }
+      if (this.workspaceTurnRequiresDirectParentDelivery(recovered)) {
+        await this.deletePersistentChildWorkspaceTurnAttention(current);
+        recovered.directParentResultDeliveryRequiredAt = getIsoNow();
+        delete recovered.directParentResultDeliveredAt;
+      }
       log.debug("Workspace turn repaired from self-healed child history", {
         handleId: record.handleId,
         workspaceId: record.workspaceId,
@@ -7793,6 +7835,7 @@ export class TaskService {
       return recovered;
     });
     if (next === recovered) {
+      await this.deliverPersistentChildWorkspaceTurnResult(recovered, new Set());
       await this.cleanupDisposableWorkspaceTurn(recovered);
       const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(record.workspaceId);
       if (
@@ -7854,6 +7897,7 @@ export class TaskService {
         record.ownerWorkspaceId,
         TerminalAttentionStore.notificationId("workspace_turn", record.handleId)
       );
+      await this.deletePersistentChildWorkspaceTurnAttention(current);
       await this.taskHandleStore.upsertWorkspaceTurn(next);
       // Re-register so stream-end/abort/error settlement paths own the handle again.
       this.activeWorkspaceTurnHandleByWorkspaceId.set(record.workspaceId, {

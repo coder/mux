@@ -4880,6 +4880,17 @@ describe("TaskService", () => {
 
   test("getWorkspaceTurnSnapshot repairs a stale error handle from self-healed history", async () => {
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const child = Array.from(cfg.projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = parentId;
+      child.agentId = "explore";
+      child.agentType = "explore";
+      child.taskStatus = "reported";
+      return cfg;
+    });
     const muxMetadata = {
       type: "workspace-turn-task" as const,
       taskHandleId: "wst_handle",
@@ -4907,8 +4918,21 @@ describe("TaskService", () => {
       updatedAt: "2026-06-19T00:00:01.000Z",
       createdWorkspace: true,
       disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
       error: "Stream error: provider overloaded",
     });
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const staleAttention = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "agent_task",
+      sourceId: "childworkspace",
+      generationId: "wst_handle",
+      createdAt: "2026-06-19T00:00:01.750Z",
+    });
+    assert(staleAttention, "stale direct-parent attention must exist");
+    await terminalAttentionStore.markDelivered(parentId, staleAttention.id);
 
     // List paths skip history repair for settled handles (no runtime activity), so the
     // stale record stays visible there until a snapshot read reconciles it.
@@ -4921,6 +4945,23 @@ describe("TaskService", () => {
       messageId: "msg_selfhealed",
       reportMarkdown: "Self-healed final text",
     });
+    const deliveredSnapshot = await new TaskHandleStore(config).getWorkspaceTurn(
+      parentId,
+      "wst_handle"
+    );
+    expect(deliveredSnapshot?.directParentResultDeliveryRequiredAt).toBeDefined();
+    expect(deliveredSnapshot?.directParentResultDeliveredAt).toBeDefined();
+    expect(deliveredSnapshot?.directParentResultDeliveredAt).not.toBe("2026-06-19T00:00:01.750Z");
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(JSON.stringify(parentHistory)).toContain("Self-healed final text");
+    expect(
+      (
+        await terminalAttentionStore.get(
+          parentId,
+          TerminalAttentionStore.notificationId("agent_task", "childworkspace", "wst_handle")
+        )
+      )?.createdAt
+    ).not.toBe("2026-06-19T00:00:01.750Z");
     expect(snapshot?.error).toBeUndefined();
   });
 
