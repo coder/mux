@@ -1568,6 +1568,14 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         keywords: ["model", "custom", "add"],
         run: () => openSettings("models"),
       },
+      {
+        id: CommandIds.settingsOpenSection("providers-coder-login"),
+        title: "Settings: Login with Coder",
+        subtitle: "Connect to a Coder deployment (AI Bridge)",
+        section: section.settings,
+        keywords: ["coder", "login", "oauth", "aibridge", "deployment", "connect"],
+        run: () => openSettings("providers"),
+      },
     ]);
   }
 

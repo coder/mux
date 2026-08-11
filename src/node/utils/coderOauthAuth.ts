@@ -10,6 +10,14 @@
 export interface CoderOauthAuth {
   type: "oauth";
   /**
+   * Login-session lineage id: minted once per completed login (token
+   * exchange) and preserved across refresh rotations. Refresh tokens rotate
+   * on every use, so this is the only stable way to tell "the same login,
+   * rotated" apart from "a genuinely newer login" — disconnect must clear the
+   * former but preserve the latter.
+   */
+  sessionId: string;
+  /**
    * Normalized deployment URL (issuer) these tokens were obtained from.
    * Consumers must verify it matches the configured deployment URL so a URL
    * change can never send the old deployment's bearer token to a new host.
@@ -46,9 +54,11 @@ export function parseCoderOauthAuth(value: unknown): CoderOauthAuth | null {
     return null;
   }
 
-  const { type, deploymentUrl, access, refresh, expires, clientId, clientSecret } = value;
+  const { type, sessionId, deploymentUrl, access, refresh, expires, clientId, clientSecret } =
+    value;
 
   if (type !== "oauth") return null;
+  if (typeof sessionId !== "string" || !sessionId) return null;
   if (typeof deploymentUrl !== "string" || !deploymentUrl) return null;
   if (typeof access !== "string" || !access) return null;
   if (typeof refresh !== "string" || !refresh) return null;
@@ -63,6 +73,7 @@ export function parseCoderOauthAuth(value: unknown): CoderOauthAuth | null {
 
   return {
     type: "oauth",
+    sessionId,
     deploymentUrl,
     access,
     refresh,

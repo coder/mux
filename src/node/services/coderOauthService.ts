@@ -143,29 +143,26 @@ export class CoderOauthService {
   }
 
   async disconnect(): Promise<Result<void, string>> {
+    this.cachedAuth = null;
     const auth = this.readStoredAuth();
 
-    // Best-effort RFC 7009 revocation so the Coder-side API key is invalidated.
-    // Revoke against the issuer stored in the blob (not the currently configured
-    // deployment URL) so tokens are revoked on the deployment that minted them
-    // even if the user changed the URL since logging in.
-    if (auth) {
-      await this.revokeTokens(auth.deploymentUrl, auth);
-    }
-
-    // Revocation may be slow, and the UI keeps login available while it runs:
-    // a re-login can complete in the meantime. Only clear when the stored
-    // credential is still the one this disconnect captured. Tokens and models
-    // are cleared in ONE locked mutation so a racing discovery/login observes
-    // either the connected state or the fully disconnected state, never a mix.
-    this.cachedAuth = null;
+    // Clear FIRST, revoke after: disconnect must be authoritative over
+    // concurrent refreshes, and awaiting (possibly slow) revocation first
+    // would let a refresh rotate + persist in the meantime. The predicate
+    // matches on the session lineage id — stable across rotations, re-minted
+    // by each login — so it clears the disconnected session even if it just
+    // rotated, while a genuinely newer login is preserved. Tokens and models
+    // are cleared in ONE locked mutation so racing observers see either the
+    // connected state or the fully disconnected state, never a mix.
+    let removed: CoderOauthAuth | null = null;
     const clearResult = await this.providerService.updateProviderSection("coder", (section) => {
-      if (auth) {
-        const stored = parseCoderOauthAuth(section?.coderOauth);
-        if (stored && stored.refresh !== auth.refresh) {
-          return null; // A newer login landed while revocation ran; keep it.
-        }
+      const stored = parseCoderOauthAuth(section?.coderOauth);
+      if (stored && (!auth || stored.sessionId !== auth.sessionId)) {
+        return null; // A newer login landed since we captured `auth`; keep it.
       }
+      // Capture the freshest rotation of the session so revocation below
+      // targets a token that is actually still alive server-side.
+      removed = stored;
       const next = { ...(section ?? {}) };
       delete next.coderOauth;
       // Models were fetched from the deployment's AI Bridge at login time; they
@@ -179,6 +176,16 @@ export class CoderOauthService {
     }
     if (!clearResult.data.applied) {
       log.debug("[Coder OAuth] Disconnect raced a newer login; keeping the new credentials");
+    }
+
+    // Best-effort RFC 7009 revocation so the Coder-side API key is invalidated.
+    // Revoke against the issuer stored in the blob (not the currently configured
+    // deployment URL) so tokens are revoked on the deployment that minted them
+    // even if the user changed the URL since logging in. Runs after the clear:
+    // even if revocation fails or hangs, the account is already disconnected.
+    const toRevoke = removed ?? auth;
+    if (toRevoke) {
+      await this.revokeTokens(toRevoke.deploymentUrl, toRevoke);
     }
     return Ok(undefined);
   }
@@ -637,6 +644,9 @@ export class CoderOauthService {
     const tokenResult = await this.requestTokens(input.endpoints.tokenEndpoint, {
       kind: "exchange",
       deploymentUrl: input.deploymentUrl,
+      // Fresh session lineage: rotations preserve this id, a later login mints
+      // a new one, letting disconnect tell rotations and re-logins apart.
+      sessionId: randomBase64Url(16),
       client: input.client,
       code: input.code,
       redirectUri: input.redirectUri,
@@ -654,7 +664,18 @@ export class CoderOauthService {
       return Err("Login was cancelled");
     }
 
-    const persistResult = await this.persistAuth(tokenResult.auth);
+    // Persist the new credentials and clear the previous login's model catalog
+    // in ONE locked mutation: the flow resolves (and Settings refreshes)
+    // before discovery runs, so leaving the old deployment's models in place
+    // would offer them against the new deployment until — or indefinitely, if
+    // a catalog request stalls — discovery overwrites them.
+    const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
+      const next = { ...(section ?? {}) };
+      next.coderOauth = tokenResult.auth;
+      next.models = [];
+      return { value: next };
+    });
+    this.cachedAuth = null;
     if (!persistResult.success) {
       return Err(persistResult.error);
     }
@@ -690,6 +711,8 @@ export class CoderOauthService {
     const result = await this.requestTokens(tokenEndpoint, {
       kind: "refresh",
       deploymentUrl: current.deploymentUrl,
+      // Rotations stay in the same login session (see CoderOauthAuth.sessionId).
+      sessionId: current.sessionId,
       client: current,
       refreshToken: current.refresh,
     });
@@ -773,12 +796,19 @@ export class CoderOauthService {
       | {
           kind: "exchange";
           deploymentUrl: string;
+          sessionId: string;
           client: CoderOauthClient;
           code: string;
           redirectUri: string;
           codeVerifier: string;
         }
-      | { kind: "refresh"; deploymentUrl: string; client: CoderOauthClient; refreshToken: string }
+      | {
+          kind: "refresh";
+          deploymentUrl: string;
+          sessionId: string;
+          client: CoderOauthClient;
+          refreshToken: string;
+        }
   ): Promise<CoderTokenRequestResult> {
     const label = input.kind === "exchange" ? "exchange" : "refresh";
 
@@ -839,6 +869,7 @@ export class CoderOauthService {
         success: true,
         auth: {
           type: "oauth",
+          sessionId: input.sessionId,
           deploymentUrl: input.deploymentUrl,
           access: accessToken,
           refresh: refreshToken,
@@ -953,20 +984,6 @@ export class CoderOauthService {
     const auth = parseCoderOauthAuth(coderConfig?.coderOauth);
     this.cachedAuth = auth;
     return auth;
-  }
-
-  /** Unconditional credential write (logins): the newest login always wins. */
-  private async persistAuth(auth: CoderOauthAuth): Promise<Result<void, string>> {
-    // Route through updateConfigValue so every coderOauth write shares the
-    // cross-process providers.jsonc lock with the CAS paths.
-    const result = await this.providerService.updateConfigValue("coder", ["coderOauth"], () => ({
-      value: auth,
-    }));
-    // Invalidate cache so the next readStoredAuth() picks up the persisted value from disk.
-    // We clear rather than set because the write may have side-effects (e.g. file-write
-    // failures) and we want the next read to be authoritative.
-    this.cachedAuth = null;
-    return result.success ? Ok(undefined) : Err(result.error);
   }
 
   /**

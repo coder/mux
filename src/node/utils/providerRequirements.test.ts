@@ -167,6 +167,7 @@ describe("resolveProviderCredentials - legacy op:// references", () => {
 describe("resolveProviderCredentials - coder", () => {
   const coderOauth = {
     type: "oauth",
+    sessionId: "sess",
     deploymentUrl: "https://coder.example.com",
     access: "at",
     refresh: "rt",

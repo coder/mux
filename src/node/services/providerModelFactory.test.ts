@@ -1909,6 +1909,7 @@ describe("ProviderModelFactory Coder", () => {
         deploymentUrl: CODER_DEPLOYMENT_URL,
         coderOauth: {
           type: "oauth",
+          sessionId: "session_factory",
           deploymentUrl: CODER_DEPLOYMENT_URL,
           access: "at_factory",
           refresh: "rt_factory",
@@ -1930,6 +1931,7 @@ describe("ProviderModelFactory Coder", () => {
         Promise.resolve(
           Ok({
             type: "oauth" as const,
+            sessionId: "session_factory",
             deploymentUrl,
             access,
             refresh: "rt_factory",
@@ -2079,6 +2081,7 @@ describe("ProviderModelFactory Coder", () => {
             deploymentUrl: LOCKED_URL,
             coderOauth: {
               type: "oauth",
+              sessionId: "session_factory",
               deploymentUrl: LOCKED_URL,
               access: "at_factory",
               refresh: "rt_factory",

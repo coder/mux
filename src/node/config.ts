@@ -2539,13 +2539,24 @@ export class Config {
       try {
         fs.mkdirSync(lockPath);
         break;
-      } catch {
+      } catch (error) {
+        // Only contention (EEXIST) is retryable. Permanent filesystem errors
+        // (EACCES, EROFS, ...) would fail on every retry — rethrow so callers
+        // surface an error instead of spinning until the deadline (or forever
+        // on paths that skip it).
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw error;
+        }
         // Held by another process (or a crashed one): break stale locks.
         let stale = false;
         try {
           stale = Date.now() - fs.statSync(lockPath).mtimeMs > STALE_LOCK_MS;
         } catch {
-          continue; // Lock released between mkdir and stat; retry immediately.
+          // Lock released between mkdir and stat; retry (deadline-bounded).
+          if (Date.now() > deadline) {
+            throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
+          }
+          continue;
         }
         if (stale) {
           try {

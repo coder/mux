@@ -21,6 +21,7 @@ const DEPLOYMENT_URL = "http://coder.test";
 function validAuth(overrides?: Partial<CoderOauthAuth>): CoderOauthAuth {
   return {
     type: "oauth",
+    sessionId: "session_test",
     deploymentUrl: DEPLOYMENT_URL,
     access: "at_test",
     refresh: "rt_test",
@@ -628,23 +629,23 @@ describe("CoderOauthService", () => {
       // Normalized deployment URL + full auth blob persisted.
       const urlCall = deps.setConfigValueCalls.find((c) => c.keyPath[0] === "deploymentUrl");
       expect(urlCall?.value).toBe(DEPLOYMENT_URL);
-      const authCall = deps.setConfigValueCalls.find(
-        (c) => c.keyPath[0] === "coderOauth" && c.value !== undefined
-      );
-      expect(authCall).toBeDefined();
-      const persistedAuth = authCall!.value as CoderOauthAuth;
+      const persistedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as CoderOauthAuth;
       expect(persistedAuth.access).toBe("at_login");
       expect(persistedAuth.refresh).toBe("rt_login");
+      expect(persistedAuth.sessionId).toBeTruthy();
       expect(persistedAuth.clientId).toBe("client_new");
       expect(persistedAuth.clientSecret).toBe("secret_new");
       expect(persistedAuth.registrationAccessToken).toBe("reg_token_new");
 
       // Model list fetched from the reachable upstream only (openai 404 tolerated).
-      // Discovery runs after the flow resolves, so wait for the detached task.
-      await waitUntil(() => deps.setModelsCalls.length > 0);
-      expect(deps.setModelsCalls).toHaveLength(1);
-      expect(deps.setModelsCalls[0].provider).toBe("coder");
-      expect(deps.setModelsCalls[0].models).toEqual([
+      // The exchange clears the previous catalog atomically with the new auth,
+      // then discovery (after the flow resolves) populates the fresh one.
+      await waitUntil(() => deps.setModelsCalls.length >= 2);
+      expect(deps.setModelsCalls[0].models).toEqual([]);
+      const discoveryCall = deps.setModelsCalls[deps.setModelsCalls.length - 1];
+      expect(discoveryCall.provider).toBe("coder");
+      expect(discoveryCall.models).toEqual([
         "anthropic/claude-sonnet-4-5",
         "anthropic/claude-opus-4-1",
       ]);
@@ -921,16 +922,14 @@ describe("CoderOauthService", () => {
       > = {
         setConfigValue: (provider, keyPath, value) =>
           mockSetConfigValue(deps, provider, keyPath, value),
-        updateConfigValue: async (provider, keyPath, update) => {
-          // Gate credential writes (login persists route through updateConfigValue).
-          if (keyPath[0] === "coderOauth") {
-            persistStarted();
-            await persistGate;
-          }
-          return mockUpdateConfigValue(deps, provider, keyPath, update);
+        updateConfigValue: (provider, keyPath, update) =>
+          mockUpdateConfigValue(deps, provider, keyPath, update),
+        updateProviderSection: async (provider, update) => {
+          // Gate credential writes (login persists route through updateProviderSection).
+          persistStarted();
+          await persistGate;
+          return mockUpdateProviderSection(deps, provider, update);
         },
-        updateProviderSection: (provider, update) =>
-          mockUpdateProviderSection(deps, provider, update),
         setModels: (provider, models) => {
           deps.setModelsCalls.push({ provider, models });
           return Promise.resolve(Ok(undefined));
@@ -1106,8 +1105,13 @@ describe("CoderOauthService", () => {
       releaseCatalog();
 
       // The stale discovery must not commit its catalog over the newer login's.
+      // (The exchange-time atomic clear writes [], but the stale-model list
+      // fetched by the superseded discovery must never land.)
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(deps.setModelsCalls).toHaveLength(0);
+      const staleWrite = deps.setModelsCalls.find((c) =>
+        (c.models as unknown as string[]).some((m) => String(m).includes("stale-model"))
+      );
+      expect(staleWrite).toBeUndefined();
     });
   });
 
@@ -1179,26 +1183,100 @@ describe("CoderOauthService", () => {
       const oldAuth = validAuth({ refresh: "rt_old" });
       deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: oldAuth } };
 
-      const newAuth = validAuth({ access: "at_new", refresh: "rt_new" });
-      mockFetch((input) => {
+      // A newer LOGIN mints a new session lineage id (rotations of the same
+      // login keep it; see the concurrent-rotation test below).
+      const newAuth = validAuth({
+        sessionId: "session_new",
+        access: "at_new",
+        refresh: "rt_new",
+      });
+      let revokedToken: string | null = null;
+      mockFetch((input, init) => {
         const url = fetchUrl(input);
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
-          // Simulate a re-login completing while the (slow) revocation runs.
-          deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: newAuth } };
+          revokedToken = new URLSearchParams(fetchBodyText(init)).get("token");
           return Promise.resolve(new Response(null, { status: 200 }));
         }
         return Promise.resolve(new Response("unexpected", { status: 500 }));
       });
 
+      // Inject the newer login just before the section update runs (i.e. the
+      // re-login wins the race to the persisted state).
+      const injectingProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: newAuth } };
+          return mockUpdateProviderSection(deps, provider, update);
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        injectingProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
       const result = await service.disconnect();
       expect(result.success).toBe(true);
 
       // The new login's credential and models were left intact.
-      const cleared = deps.setConfigValueCalls.find(
-        (c) => c.keyPath[0] === "coderOauth" && c.value === undefined
-      );
-      expect(cleared).toBeUndefined();
+      expect(
+        ((deps.providersConfig.coder as Record<string, unknown>).coderOauth as CoderOauthAuth)
+          .access
+      ).toBe("at_new");
       expect(deps.setModelsCalls).toHaveLength(0);
+      // The disconnected (old) session's token was still revoked best-effort.
+      // TS narrows the closure-assigned variable to its initializer type; widen.
+      expect(revokedToken as string | null).toBe("rt_old");
+    });
+
+    it("clears a concurrent rotation of the same session (disconnect is authoritative)", async () => {
+      // A refresh that rotates the tokens while disconnect awaits must NOT be
+      // mistaken for a new login: same sessionId => still the session the user
+      // asked to disconnect.
+      const oldAuth = validAuth({ refresh: "rt_before_rotation" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: oldAuth } };
+
+      const rotated = validAuth({ access: "at_rotated", refresh: "rt_rotated" });
+      let revokedToken: string | null = null;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedToken = new URLSearchParams(fetchBodyText(init)).get("token");
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const injectingProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          // The concurrent refresh persists its rotation first.
+          deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: rotated } };
+          return mockUpdateProviderSection(deps, provider, update);
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        injectingProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      const result = await service.disconnect();
+      expect(result.success).toBe(true);
+
+      // Despite the rotation, the session was cleared and its FRESHEST token revoked.
+      expect((deps.providersConfig.coder as Record<string, unknown>).coderOauth).toBeUndefined();
+      expect(revokedToken as string | null).toBe("rt_rotated");
     });
 
     it("still clears auth when revocation fails", async () => {
