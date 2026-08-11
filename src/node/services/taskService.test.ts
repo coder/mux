@@ -11275,14 +11275,6 @@ describe("TaskService", () => {
     });
     const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
-    const terminalAttentionStore = new TerminalAttentionStore(config);
-    const previousAttention = await terminalAttentionStore.enqueueIfAbsent({
-      ownerWorkspaceId: parentWorkspaceId,
-      sourceKind: "agent_task",
-      sourceId: childTaskId,
-    });
-    assert(previousAttention, "previous terminal attention must be created");
-    await terminalAttentionStore.markDelivered(parentWorkspaceId, previousAttention.id);
 
     const reactivated = await taskService.sendMessageToDescendantAgentTask(
       parentWorkspaceId,
@@ -11293,15 +11285,6 @@ describe("TaskService", () => {
     expect(reactivated.success).toBe(true);
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("reported");
     expect(findWorkspaceInConfig(config, childTaskId)?.taskExecutionStatus).toBe("running");
-
-    expect(await terminalAttentionStore.get(parentWorkspaceId, previousAttention.id)).toBeNull();
-    expect(
-      await terminalAttentionStore.enqueueIfAbsent({
-        ownerWorkspaceId: parentWorkspaceId,
-        sourceKind: "agent_task",
-        sourceId: childTaskId,
-      })
-    ).not.toBeNull();
 
     await taskService.reportAgentProgress(childTaskId, "progress-call", {
       reportMarkdown: "The regression is in the effect cleanup path.",
@@ -11349,6 +11332,7 @@ describe("TaskService", () => {
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
       sourceId: childTaskId,
+      createdAt: "2026-08-10T00:00:00.000Z",
     });
     assert(pendingAttention, "pending terminal attention must be created");
 
@@ -11366,6 +11350,24 @@ describe("TaskService", () => {
     expect(await terminalAttentionStore.get(parentWorkspaceId, pendingAttention.id)).toMatchObject({
       status: "pending",
     });
+    // The old wake may drain while the new continuation is still running. When this generation
+    // later reports, its older timestamp identifies the delivered tombstone as stale and re-arms it.
+    await terminalAttentionStore.markDelivered(parentWorkspaceId, pendingAttention.id);
+    await (
+      taskService as unknown as {
+        rearmAgentTerminalAttentionForCurrentExecution: (
+          ownerWorkspaceId: string,
+          childTaskId: string
+        ) => Promise<void>;
+      }
+    ).rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childTaskId);
+    expect(
+      await terminalAttentionStore.enqueueIfAbsent({
+        ownerWorkspaceId: parentWorkspaceId,
+        sourceKind: "agent_task",
+        sourceId: childTaskId,
+      })
+    ).toMatchObject({ status: "pending" });
   });
 
   test("concurrent inactive-child messages create only one continuation execution", async () => {

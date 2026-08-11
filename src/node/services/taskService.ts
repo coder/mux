@@ -4505,21 +4505,6 @@ export class TaskService {
           if (!execution.success) {
             return Err({ code: "send_failed" as const, message: execution.error });
           }
-          const directParentWorkspaceId = refreshedEntry.workspace.parentWorkspaceId;
-          if (directParentWorkspaceId != null) {
-            // Terminal attention is keyed by stable child ID, so a delivered prior assignment would
-            // otherwise suppress every later continuation generation. Keep an undelivered prior
-            // notification intact, though: it still owes the direct parent a wake for already-injected
-            // context and the new continuation may be owned by a higher ancestor.
-            const notificationId = TerminalAttentionStore.notificationId("agent_task", taskId);
-            const previousAttention = await this.terminalAttentionStore.get(
-              directParentWorkspaceId,
-              notificationId
-            );
-            if (previousAttention != null && previousAttention.status !== "pending") {
-              await this.terminalAttentionStore.delete(directParentWorkspaceId, notificationId);
-            }
-          }
           return Ok({
             delivery: "reactivated" as const,
             executionTaskId: execution.data.taskId,
@@ -5685,6 +5670,41 @@ export class TaskService {
       params.ownerWorkspaceId,
       TerminalAttentionStore.notificationId(params.sourceKind, params.sourceId)
     );
+  }
+
+  private async rearmAgentTerminalAttentionForCurrentExecution(
+    ownerWorkspaceId: string,
+    childTaskId: string
+  ): Promise<void> {
+    const execution = await this.getDescendantAgentTaskExecutionSnapshot(
+      ownerWorkspaceId,
+      childTaskId
+    );
+    if (execution == null) {
+      return;
+    }
+
+    const notificationId = TerminalAttentionStore.notificationId("agent_task", childTaskId);
+    const previousAttention = await this.terminalAttentionStore.get(
+      ownerWorkspaceId,
+      notificationId
+    );
+    if (previousAttention == null || previousAttention.status === "pending") {
+      return;
+    }
+
+    const previousCreatedAt = Date.parse(previousAttention.createdAt);
+    const executionCreatedAt = Date.parse(execution.record.createdAt);
+    if (
+      Number.isFinite(previousCreatedAt) &&
+      Number.isFinite(executionCreatedAt) &&
+      previousCreatedAt < executionCreatedAt
+    ) {
+      // Re-arm only when the terminal result for a newer continuation generation is about to enqueue.
+      // A prior pending wake remains authoritative and can deliver all injected context; if it was
+      // delivered while this generation ran, its older timestamp proves the tombstone is now stale.
+      await this.terminalAttentionStore.delete(ownerWorkspaceId, notificationId);
+    }
   }
 
   private async enqueueTerminalAttention(params: {
@@ -11107,6 +11127,7 @@ export class TaskService {
     // The failure message is already injected above. Enqueue even when other children are active:
     // the drain defers on blocking work, and the later settling child may have a foreground waiter
     // that suppresses its own terminal wake-up.
+    await this.rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childWorkspaceId);
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
@@ -12099,6 +12120,7 @@ export class TaskService {
     // The report is already injected into parent history above (deliverReportToParent). Enqueue the
     // notification even when other children are still active: the drain defers on blocking work and
     // a later foreground-awaited sibling may suppress its own wake-up.
+    await this.rearmAgentTerminalAttentionForCurrentExecution(parentWorkspaceId, childWorkspaceId);
     await this.enqueueTerminalAttention({
       ownerWorkspaceId: parentWorkspaceId,
       sourceKind: "agent_task",
