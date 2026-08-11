@@ -56,17 +56,10 @@ import type { TaskReportLinking } from "@/browser/utils/messages/taskReportLinki
 import { formatGitPatchArtifactSummary } from "./taskPatchSummary";
 import { sanitizeDisplayableModelIntent } from "./bashCollapsedSummary";
 import {
-  formatTaskGroupCreationLabel,
   formatTaskGroupHeader,
-  formatTaskGroupItemsLabel,
   formatTaskGroupMemberLabel,
   formatTaskGroupSummary,
   getTaskGroupCount,
-  getTaskGroupKindFromArgs,
-  getTaskGroupKindFromMetadata,
-  getTaskGroupLabelAtIndex,
-  normalizeTaskGroupLabel,
-  type TaskGroupKind,
 } from "@/common/utils/tools/taskGroups";
 import { resolvePersistedAgentId } from "@/common/utils/agentIds";
 import { formatDuration } from "@/common/utils/formatDuration";
@@ -510,8 +503,6 @@ interface TaskToolDisplayEntry {
   title?: string;
   reportMarkdown?: string;
   openWorkspaceId?: string;
-  groupKind?: TaskGroupKind;
-  label?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
@@ -552,8 +543,6 @@ const TaskAiSettingsDisplay: React.FC<TaskAiSettingsInfo & { className?: string 
 interface TaskToolOwnReport {
   reportMarkdown: string;
   title?: string;
-  groupKind?: TaskGroupKind;
-  label?: string;
 }
 
 function hasNonEmptyText(value: unknown): value is string {
@@ -574,8 +563,6 @@ interface TaskToolWorkspaceEntry {
   status?: string;
   title?: string;
   createdAtMs?: number;
-  groupKind?: TaskGroupKind;
-  label?: string;
 }
 
 function normalizeTaskAgent(value: string | undefined): string | null {
@@ -644,7 +631,6 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
   requestedAgentType: string;
   requestedTitle: string | undefined;
   requestedCandidateCount: number;
-  requestedGroupKind: TaskGroupKind;
   knownTaskIds: readonly string[];
   toolStartedAt: number | undefined;
   workspaceMetadata: ReadonlyMap<string, FrontendWorkspaceMetadata> | undefined;
@@ -662,9 +648,6 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       continue;
     }
     if (metadata.bestOf?.total !== params.requestedCandidateCount) {
-      continue;
-    }
-    if (getTaskGroupKindFromMetadata(metadata.bestOf) !== params.requestedGroupKind) {
       continue;
     }
     if (requestedAgentType) {
@@ -690,8 +673,6 @@ function recoverTaskGroupTaskIdsFromWorkspaceMetadata(params: {
       status: getTaskToolWorkspaceStatus(metadata.taskStatus),
       title: metadataTitle,
       createdAtMs: parseWorkspaceCreatedAtMs(metadata.createdAt),
-      groupKind: getTaskGroupKindFromMetadata(metadata.bestOf),
-      label: normalizeTaskGroupLabel(metadata.bestOf.label),
     });
     groupedCandidates.set(metadata.bestOf.groupId, candidates);
   }
@@ -750,14 +731,12 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
   taskIds: string[];
   statusByTaskId: Map<string, string>;
   ownReportsByTaskId: Map<string, TaskToolOwnReport>;
-  taskGroupsByTaskId: Map<string, { groupKind?: TaskGroupKind; label?: string }>;
   workspaceIdByTaskId: Map<string, string>;
   aiSettingsByTaskId: Map<string, TaskAiSettingsInfo>;
 } {
   const taskIds = new Set<string>();
   const statusByTaskId = new Map<string, string>();
   const ownReportsByTaskId = new Map<string, TaskToolOwnReport>();
-  const taskGroupsByTaskId = new Map<string, { groupKind?: TaskGroupKind; label?: string }>();
   const workspaceIdByTaskId = new Map<string, string>();
   const aiSettingsByTaskId = new Map<string, TaskAiSettingsInfo>();
   if (!result) {
@@ -765,7 +744,6 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       taskIds: [],
       statusByTaskId,
       ownReportsByTaskId,
-      taskGroupsByTaskId,
       workspaceIdByTaskId,
       aiSettingsByTaskId,
     };
@@ -777,20 +755,6 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       taskIds.add(normalizedTaskId);
     }
     return normalizedTaskId;
-  };
-
-  const rememberTaskGroup = (
-    taskId: string,
-    details: { groupKind?: TaskGroupKind; label?: string | null }
-  ): void => {
-    const label = normalizeTaskGroupLabel(details.label);
-    if (!details.groupKind && !label) {
-      return;
-    }
-    taskGroupsByTaskId.set(taskId, {
-      groupKind: details.groupKind,
-      ...(label ? { label } : {}),
-    });
   };
 
   const rememberWorkspace = (taskId: string, workspaceId: unknown): void => {
@@ -837,7 +801,6 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
       if (taskId) {
         statusByTaskId.set(taskId, task.status);
         rememberWorkspace(taskId, task.workspaceId);
-        rememberTaskGroup(taskId, { groupKind: task.groupKind, label: task.label });
         rememberAiSettings(taskId, task);
       }
     }
@@ -850,11 +813,8 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
         ownReportsByTaskId.set(taskId, {
           reportMarkdown: report.reportMarkdown,
           title: report.title,
-          groupKind: report.groupKind,
-          label: normalizeTaskGroupLabel(report.label),
         });
         rememberWorkspace(taskId, report.workspaceId);
-        rememberTaskGroup(taskId, { groupKind: report.groupKind, label: report.label });
         rememberAiSettings(taskId, report);
       }
     }
@@ -871,7 +831,6 @@ function collectTaskToolResultDisplayData(result: TaskToolSuccessResult | null):
     taskIds: Array.from(taskIds),
     statusByTaskId,
     ownReportsByTaskId,
-    taskGroupsByTaskId,
     workspaceIdByTaskId,
     aiSettingsByTaskId,
   };
@@ -912,16 +871,11 @@ const TaskToolCandidateCard: React.FC<{
   entry: TaskToolDisplayEntry;
   index: number;
   total: number;
-  groupKind: TaskGroupKind;
   onOpenTranscript: (taskId: string) => void;
-}> = ({ entry, index, total, groupKind, onOpenTranscript }) => {
+}> = ({ entry, index, total, onOpenTranscript }) => {
   const canViewTranscript = entry.status === "completed";
   const hasReport = hasNonEmptyText(entry.reportMarkdown);
-  const memberLabel = formatTaskGroupMemberLabel({
-    kind: entry.groupKind ?? groupKind,
-    index,
-    label: entry.label,
-  });
+  const memberLabel = formatTaskGroupMemberLabel(index);
 
   return (
     <div className="bg-code-bg rounded-sm p-2">
@@ -976,13 +930,11 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     taskIds: resultTaskIds,
     statusByTaskId,
     ownReportsByTaskId,
-    taskGroupsByTaskId,
     workspaceIdByTaskId,
     aiSettingsByTaskId,
   } = collectTaskToolResultDisplayData(successResult);
 
   const requestedTaskGroupCount = getTaskGroupCount(args);
-  const taskGroupKind = getTaskGroupKindFromArgs(args);
   const title = args.title ?? "Task";
   const prompt = args.prompt ?? "";
   const taskKindLabel =
@@ -996,7 +948,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
     requestedAgentType: taskKindLabel,
     requestedTitle: title,
     requestedCandidateCount: requestedTaskGroupCount,
-    requestedGroupKind: taskGroupKind,
     knownTaskIds: [...resultTaskIds, ...liveTaskIds, ...recoveredTaskIdsRef.current],
     // Prefer the true execution start; fall back to the model-emission timestamp for
     // parts without execution-start tracking (history replay). Both are valid lower
@@ -1024,12 +975,11 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 
   const isBackground = args.run_in_background;
 
-  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId, index) => {
+  const displayEntries: TaskToolDisplayEntry[] = taskIds.map((taskId) => {
     const ownReport = ownReportsByTaskId.get(taskId);
     const linkedReport = taskReportLinking?.reportByTaskId.get(taskId);
     const openWorkspaceId = workspaceIdByTaskId.get(taskId);
     const metadata = findWorkspaceForTaskTarget(workspaceMetadata, taskId, openWorkspaceId);
-    const resultTaskGroup = taskGroupsByTaskId.get(taskId);
     const reportMarkdown = hasNonEmptyText(ownReport?.reportMarkdown)
       ? ownReport.reportMarkdown
       : linkedReport?.reportMarkdown;
@@ -1048,16 +998,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
       title: reportTitle ?? getTaskToolWorkspaceTitle(metadata) ?? title,
       reportMarkdown,
       openWorkspaceId,
-      groupKind:
-        ownReport?.groupKind ??
-        resultTaskGroup?.groupKind ??
-        (metadata?.bestOf ? getTaskGroupKindFromMetadata(metadata.bestOf) : undefined) ??
-        taskGroupKind,
-      label:
-        ownReport?.label ??
-        resultTaskGroup?.label ??
-        normalizeTaskGroupLabel(metadata?.bestOf?.label) ??
-        getTaskGroupLabelAtIndex(args, index),
       // Prefer live metadata while the workspace exists: a plan child's auto-handoff to
       // exec rewrites its settings after launch, so a spawn snapshot can go stale. After
       // cleanup, a linked task_await report carries report-time settings; the spawn
@@ -1097,7 +1037,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
   const [transcriptTaskId, setTranscriptTaskId] = useState<string | null>(null);
   const preview = prompt.length > 60 ? prompt.slice(0, 60).trim() + "…" : prompt.split("\n")[0];
   const collapsedPreview = isTaskGroup
-    ? formatTaskGroupHeader(taskGroupKind, totalTaskGroupCount, preview)
+    ? formatTaskGroupHeader(totalTaskGroupCount, preview)
     : preview;
   const singleEntry = !isTaskGroup ? displayEntries[0] : undefined;
   const kindBadge = (
@@ -1123,7 +1063,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
         {kindBadge}
         {isTaskGroup && (
           <span className="text-muted text-[10px]">
-            {formatTaskGroupSummary(taskGroupKind, totalTaskGroupCount).toLowerCase()}
+            {formatTaskGroupSummary(totalTaskGroupCount).toLowerCase()}
           </span>
         )}
         {isBackground && (
@@ -1153,7 +1093,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
             <div className="task-divider mb-2 flex flex-wrap items-center gap-2 border-b pb-2">
               <span className="text-task-mode text-[12px] font-semibold">
                 {isTaskGroup
-                  ? formatTaskGroupHeader(taskGroupKind, totalTaskGroupCount, title)
+                  ? formatTaskGroupHeader(totalTaskGroupCount, title)
                   : (singleEntry?.title ?? title)}
               </span>
               {isTaskGroup ? (
@@ -1198,7 +1138,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
             {isTaskGroup ? (
               <div className="task-divider border-t pt-2">
                 <div className="text-muted mb-2 text-[10px] tracking-wide uppercase">
-                  {formatTaskGroupItemsLabel(taskGroupKind)}
+                  Candidates
                 </div>
                 <div className="space-y-2">
                   {displayEntries.map((entry, index) => (
@@ -1207,7 +1147,6 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
                       entry={entry}
                       index={index}
                       total={totalTaskGroupCount}
-                      groupKind={taskGroupKind}
                       onOpenTranscript={setTranscriptTaskId}
                     />
                   ))}
@@ -1224,8 +1163,7 @@ export const TaskToolCall: React.FC<TaskToolCallProps> = ({
 
             {shouldShowCreationProgress && (
               <div className="text-muted mt-2 text-[11px] italic">
-                {formatTaskGroupCreationLabel(taskGroupKind)} ({createdTaskGroupCount}/
-                {totalTaskGroupCount})
+                Creating candidates ({createdTaskGroupCount}/{totalTaskGroupCount})
                 <LoadingDots />
               </div>
             )}

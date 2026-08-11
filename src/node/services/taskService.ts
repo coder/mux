@@ -49,13 +49,7 @@ import {
   findWorkspaceEntry,
 } from "@/node/services/taskUtils";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
-import {
-  TASK_GROUP_KIND,
-  getTaskGroupCount,
-  normalizeTaskGroupKind,
-  normalizeTaskGroupLabel,
-  type TaskGroupKind,
-} from "@/common/utils/tools/taskGroups";
+import { getTaskGroupCount } from "@/common/utils/tools/taskGroups";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 import { Ok, Err, type Result } from "@/common/types/result";
 import { DEFAULT_TASK_SETTINGS, type TaskSettings } from "@/common/types/tasks";
@@ -254,8 +248,6 @@ export interface TaskCreateArgs {
     groupId: string;
     index: number;
     total: number;
-    kind?: TaskGroupKind;
-    label?: string;
   };
   workflowTask?: {
     runId: string;
@@ -2680,20 +2672,10 @@ export class TaskService {
         if (bestOf.index >= bestOf.total) {
           return Err("Task.createMany: bestOf.index must be less than bestOf.total");
         }
-        const kind = normalizeTaskGroupKind(bestOf.kind);
-        const label = normalizeTaskGroupLabel(bestOf.label);
-        if (kind === TASK_GROUP_KIND.VARIANTS && !label) {
-          return Err("Task.createMany: bestOf.label is required when bestOf.kind is variants");
-        }
-        if (kind !== TASK_GROUP_KIND.VARIANTS && label) {
-          return Err("Task.createMany: bestOf.label is only allowed when bestOf.kind is variants");
-        }
         normalizedBestOf = {
           groupId,
           index: bestOf.index,
           total: bestOf.total,
-          kind,
-          ...(label ? { label } : {}),
         };
       }
 
@@ -3819,21 +3801,10 @@ export class TaskService {
         return Err("Task.create: bestOf.index must be less than bestOf.total");
       }
 
-      const kind = normalizeTaskGroupKind(bestOf.kind);
-      const label = normalizeTaskGroupLabel(bestOf.label);
-      if (kind === TASK_GROUP_KIND.VARIANTS && !label) {
-        return Err("Task.create: bestOf.label is required when bestOf.kind is variants");
-      }
-      if (kind !== TASK_GROUP_KIND.VARIANTS && label) {
-        return Err("Task.create: bestOf.label is only allowed when bestOf.kind is variants");
-      }
-
       normalizedBestOf = {
         groupId,
         index: bestOf.index,
         total: bestOf.total,
-        kind,
-        ...(label ? { label } : {}),
       };
     }
 
@@ -12908,8 +12879,6 @@ export class TaskService {
     index: number;
     agentId?: string;
     agentType?: string;
-    kind: TaskGroupKind;
-    label?: string;
     taskStatus?: WorkspaceConfigEntry["taskStatus"];
   }> {
     const cfg = this.config.loadConfigOrDefault();
@@ -12918,8 +12887,6 @@ export class TaskService {
       index: number;
       agentId?: string;
       agentType?: string;
-      kind: TaskGroupKind;
-      label?: string;
       taskStatus?: WorkspaceConfigEntry["taskStatus"];
     }> = [];
 
@@ -12944,10 +12911,6 @@ export class TaskService {
           index: workspace.bestOf.index,
           agentId: coerceNonEmptyString(workspace.agentId),
           agentType: coerceNonEmptyString(workspace.agentType),
-          kind: normalizeTaskGroupKind(workspace.bestOf.kind),
-          ...(normalizeTaskGroupLabel(workspace.bestOf.label)
-            ? { label: normalizeTaskGroupLabel(workspace.bestOf.label) }
-            : {}),
           taskStatus: workspace.taskStatus,
         });
       }
@@ -12993,8 +12956,6 @@ export class TaskService {
       title?: string;
       agentId?: string;
       agentType?: string;
-      groupKind?: TaskGroupKind;
-      label?: string;
       modelString?: string;
       thinkingLevel?: ThinkingLevel;
     }> = [];
@@ -13013,8 +12974,6 @@ export class TaskService {
         structuredOutput: artifact.structuredOutput,
         agentId: sibling.agentId,
         agentType: sibling.agentType,
-        groupKind: sibling.kind,
-        label: sibling.label,
         modelString: artifact.model,
         thinkingLevel: artifact.thinkingLevel,
       });

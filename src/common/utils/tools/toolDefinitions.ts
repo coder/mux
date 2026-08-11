@@ -58,7 +58,6 @@ import { THINKING_LEVELS } from "@/common/types/thinking";
 
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { extractToolFilePath } from "@/common/utils/tools/toolInputFilePath";
-import { TASK_VARIANT_PLACEHOLDER, TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 import { WorkspaceTurnFinalMessageRefSchema } from "@/common/types/workspaceTurn";
 
 import {
@@ -259,10 +258,6 @@ const TaskToolThinkingSchema = z.preprocess(
   z.string().trim().min(1)
 );
 
-const TaskToolVariantSchema = z.string().trim().min(1);
-
-const TaskToolVariantsSchema = z.array(TaskToolVariantSchema).min(1).max(20);
-
 /** Sub-agent workspace isolation modes. `fork` matches the historical default. */
 export const TASK_ISOLATION_VALUES = ["fork", "none"] as const;
 export type TaskIsolation = (typeof TASK_ISOLATION_VALUES)[number];
@@ -319,11 +314,8 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Spawn a sub-agent task (child workspace). " +
     "\n\nIMPORTANT: Whether a sub-agent can see uncommitted changes depends on the runtime. " +
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
-    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n or variants. For sub-agents, use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary. For kind=workspace, use a normal work-specific chat title. " +
-    `Use n when you want several agents to try the same prompt independently. Use variants when you want several agents to run the same prompt template with a different ${TASK_VARIANT_PLACEHOLDER} substituted into each run. ` +
-    "Examples: solve GitHub issues 45, 32, and 69 with one shared issue-solving template; investigate a regression across commit windows like A..B and B..C with one shared investigation template; or split a review into frontend/backend/tests/docs lanes with one shared review template. " +
-    `For variants, keep the shared template in the prompt and put the per-lane difference into ${TASK_VARIANT_PLACEHOLDER}. ` +
-    "n and variants are mutually exclusive; omit both for a single task. Leave n and variants unset unless the developer explicitly asks for parallel sibling tasks, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
+    "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. For sub-agents, use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary. For kind=workspace, use a normal work-specific chat title. " +
+    "Use n only when you want several agents to try the same prompt independently. Omit it for a single task, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
     "\n\nA terminal report makes the child inactive but leaves its workspace persistent. Reawaken it later with task_send_message; stop active work with task_stop and irreversibly delete inactive children with task_remove. " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
@@ -334,7 +326,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     "Sub-agents observe the same system instructions as the parent (project/global AGENTS.md and custom instructions), so do not restate that shared context in the prompt; spend the prompt on task-specific information the sub-agent cannot infer from those instructions. " +
     "Caveat: instruction files are read from the child's checkout, so uncommitted AGENTS.md edits in the parent follow the same runtime visibility rules above — commit them first or pass the relevant guidance in the prompt. " +
     "Avoid telling the sub-agent to read your plan file; child workspaces do not automatically have access to it. " +
-    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n or variants, the completed result includes one report per spawned task. " +
+    "\n\nIf run_in_background is false, waits for the sub-agent to finish and returns the completed report. When grouped sibling tasks are requested via n, the completed result includes one report per spawned task. " +
     "If the foreground wait times out, returns queued/starting/running task metadata with a note (the task continues running); use task_await to monitor progress. " +
     "If run_in_background is true, returns immediately with queued/starting/running task metadata and arranges a one-shot terminal wake when the task settles. Foreground waits that are later detached use the same terminal-wake path. " +
     "Prefer run_in_background: false when spawning a single task — it is equivalent to spawning background + immediately awaiting, but saves a round-trip. " +
@@ -372,7 +364,6 @@ function refineTaskToolAgentArgs(
     subagent_type?: string | null;
     prompt: string;
     n?: number | null;
-    variants?: string[] | null;
     workspace?: { mode?: "new" | "fork" | "existing" | null; workspaceId?: string | null } | null;
   },
   ctx: z.RefinementCtx
@@ -389,11 +380,11 @@ function refineTaskToolAgentArgs(
         path: ["agentId"],
       });
     }
-    if (args.n != null || args.variants != null) {
+    if (args.n != null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Workspace tasks do not support n or variants yet",
-        path: args.n != null ? ["n"] : ["variants"],
+        message: "Workspace tasks do not support n yet",
+        path: ["n"],
       });
     }
     if ((args.workspace?.mode ?? "new") === "fork") {
@@ -432,35 +423,6 @@ function refineTaskToolAgentArgs(
     });
     return;
   }
-
-  if (args.n != null && args.variants != null) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "n and variants are mutually exclusive",
-      path: ["variants"],
-    });
-  }
-
-  if (args.variants == null) {
-    return;
-  }
-
-  const uniqueVariants = new Set(args.variants);
-  if (uniqueVariants.size !== args.variants.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "variants must be unique",
-      path: ["variants"],
-    });
-  }
-
-  if (!args.prompt.includes(TASK_VARIANT_PLACEHOLDER)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: `prompt must reference ${TASK_VARIANT_PLACEHOLDER} when variants are provided`,
-      path: ["prompt"],
-    });
-  }
 }
 
 const taskToolBaseShape = {
@@ -481,10 +443,7 @@ const taskToolBaseShape = {
     ),
   run_in_background: z.boolean().default(false),
   n: TaskToolBestOfCountSchema.nullish().describe(
-    "Optional best-of count. Use n when several agents should try the same prompt independently. Mutually exclusive with variants; omit both for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
-  ),
-  variants: TaskToolVariantsSchema.nullish().describe(
-    `Optional labels for sibling runs of the same prompt template. Use variants when the task should be repeated across labeled lanes such as issue numbers, commit windows, or frontend/backend/tests/docs review lanes. Mutually exclusive with n. When provided, Mux launches one sibling per label and substitutes ${TASK_VARIANT_PLACEHOLDER} in the prompt.`
+    "Optional best-of count. Use n when several agents should try the same prompt independently; omit it for a single task. Only use grouped runs for sub-agents without interfering side effects, such as read-only agents like explore."
   ),
   workspace: WorkspaceTaskTargetSchema.nullish().describe(
     'Workspace target for kind="workspace". Omit for a new full workspace; use mode="existing" with workspaceId only for a workspace previously created by this caller.'
@@ -533,8 +492,6 @@ const TaskToolSpawnedTaskSchema = z
     status: z.enum(["queued", "starting", "running", "completed", "interrupted"]),
     handleKind: TaskHandleKindSchema.optional(),
     workspaceId: z.string().optional(),
-    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
-    label: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
   })
@@ -553,8 +510,6 @@ const TaskToolCompletedReportSchema = z
     workspaceId: z.string().optional(),
     messageId: z.string().optional(),
     finalMessageRef: WorkspaceTurnFinalMessageRefSchema.optional(),
-    groupKind: z.enum(TASK_GROUP_KIND_VALUES).optional(),
-    label: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
   })
@@ -2297,7 +2252,7 @@ export const TOOL_DEFINITIONS = {
       "WARNING: when using filter, non-matching lines are permanently discarded. " +
       "Use this tool to WAIT; do not poll task_list in a loop to wait for task completion (that is misuse and wastes tool calls). " +
       "\n\nBy default (min_completed=1) this returns as soon as the FIRST awaited task completes, so you can begin dependent work on that result while the rest keep running — then call task_await again for the remainder. " +
-      "This is ideal for independent lanes (variants) or any case where per-result work exists. " +
+      "This is ideal for independent tasks or any case where per-result work exists. " +
       "Set min_completed higher (up to the number of awaited tasks) when you genuinely need more before proceeding — e.g. best-of-N synthesis that must compare every candidate should pass min_completed equal to the batch size. " +
       "The result always includes every task complete at the moment it returns, plus current status for the rest; not-yet-completed tasks keep running and stay re-awaitable on a later call. " +
       "Active workflow-run results may include compact `workflowProgress` (latest phase, last progress timestamp, and step counts); use that to see that phased progress is still happening instead of treating elapsed time alone as a hang. " +
@@ -2309,7 +2264,7 @@ export const TOOL_DEFINITIONS = {
   task_send_message: {
     description:
       "Send guidance to a descendant sub-agent. Queued/running work is interrupted or queued at the requested boundary so the child can incorporate the update. An inactive child is reawakened in the same persistent workspace under a fresh internal execution. " +
-      "The stable sub-agent task ID and durable role title remain unchanged. If the new assignment changes the child's reusable responsibility, call task_retitle as well; do not retitle it for ordinary one-off assignments. Grouped n/variants children retain candidate/lane metadata, so reawaken them only to continue that same candidate or lane; use a standalone specialist for unrelated work. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
+      "The stable sub-agent task ID and durable role title remain unchanged. If the new assignment changes the child's reusable responsibility, call task_retitle as well; do not retitle it for ordinary one-off assignments. Best-of children retain candidate metadata, so reawaken them only to continue that same candidate; use a standalone specialist for unrelated work. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
   task_retitle: {

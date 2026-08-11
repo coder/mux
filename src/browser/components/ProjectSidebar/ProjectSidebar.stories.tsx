@@ -78,9 +78,8 @@ export const ProjectRemovalDisabled: AppStory = {
   },
 };
 
-// Phase 1 visual contract: a variant group nested inside a sub-agent tree must
-// keep continuous connector rails through the group header (no gap above/below),
-// and expanded members render label-only rows ("frontend", "backend").
+// A best-of group nested inside a sub-agent tree must keep continuous connector rails
+// through the group header, and expanded members render as candidate rows.
 export const NestedTaskGroupConnectors: AppStory = {
   parameters: {
     pixel: { matrix: PIXEL_DUAL_THEME },
@@ -105,22 +104,22 @@ export const NestedTaskGroupConnectors: AppStory = {
             taskStatus: "running",
           }),
           createWorkspace({
-            id: "variant-frontend",
-            name: "task/variant-frontend",
+            id: "candidate-a",
+            name: "task/candidate-a",
             projectName,
             title: "Compare designs",
             parentWorkspaceId: "sub-backend",
             taskStatus: "running",
-            bestOf: { groupId: "vg-1", index: 0, total: 2, kind: "variants", label: "frontend" },
+            bestOf: { groupId: "best-of-1", index: 0, total: 2 },
           }),
           createWorkspace({
-            id: "variant-backend",
-            name: "task/variant-backend",
+            id: "candidate-b",
+            name: "task/candidate-b",
             projectName,
             title: "Compare designs",
             parentWorkspaceId: "sub-backend",
             taskStatus: "queued",
-            bestOf: { groupId: "vg-1", index: 1, total: 2, kind: "variants", label: "backend" },
+            bestOf: { groupId: "best-of-1", index: 1, total: 2 },
           }),
           // Lower sibling: the parent trunk must continue through the group header.
           createWorkspace({
@@ -135,7 +134,7 @@ export const NestedTaskGroupConnectors: AppStory = {
         expandProjects([PROJECT_PATH]);
         localStorage.setItem(
           "expandedTaskGroups",
-          JSON.stringify({ "task:sub-backend:vg-1": true })
+          JSON.stringify({ "task:sub-backend:best-of-1": true })
         );
         return createMockORPCClient({
           projects: groupWorkspacesByProject(workspaces),
@@ -146,8 +145,8 @@ export const NestedTaskGroupConnectors: AppStory = {
   ),
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
     await waitFor(() => {
-      if (!canvasElement.querySelector('[data-testid="task-group-vg-1"]')) {
-        throw new Error("Variant group header not found");
+      if (!canvasElement.querySelector('[data-testid="task-group-best-of-1"]')) {
+        throw new Error("Best-of group header not found");
       }
     });
   },
@@ -257,22 +256,22 @@ export const WorkflowRunGroups: AppStory = {
             createdAt: new Date(Date.now() - 5 * 60_000).toISOString(),
           }),
           createWorkspace({
-            id: "var-a",
-            name: "task/var-a",
+            id: "candidate-review-a",
+            name: "task/candidate-review-a",
             projectName,
-            title: "Split review",
+            title: "Compare reviews",
             parentWorkspaceId: "ws-main",
             taskStatus: "queued",
-            bestOf: { groupId: "vg-2", index: 0, total: 2, kind: "variants", label: "frontend" },
+            bestOf: { groupId: "best-of-2", index: 0, total: 2 },
           }),
           createWorkspace({
-            id: "var-b",
-            name: "task/var-b",
+            id: "candidate-review-b",
+            name: "task/candidate-review-b",
             projectName,
-            title: "Split review",
+            title: "Compare reviews",
             parentWorkspaceId: "ws-main",
             taskStatus: "queued",
-            bestOf: { groupId: "vg-2", index: 1, total: 2, kind: "variants", label: "backend" },
+            bestOf: { groupId: "best-of-2", index: 1, total: 2 },
           }),
         ];
         expandProjects([PROJECT_PATH]);

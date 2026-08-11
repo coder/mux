@@ -19,7 +19,7 @@ import type { TaskCreatedEvent } from "@/common/types/stream";
 import { log } from "@/node/services/log";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 
-import { buildTaskGroupLaunches, type TaskGroupKind } from "@/common/utils/tools/taskGroups";
+import { buildTaskGroupLaunches } from "@/common/utils/tools/taskGroups";
 import {
   emitChatEventBestEffort,
   parseToolResult,
@@ -148,8 +148,6 @@ function parseTaskAiOverrides(args: { model?: string | null; thinking?: string |
 interface SpawnedTaskInfo {
   taskId: string;
   status: "queued" | "starting" | "running";
-  groupKind?: TaskGroupKind;
-  label?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
@@ -157,8 +155,6 @@ interface SpawnedTaskInfo {
 interface PendingTaskInfo {
   taskId: string;
   status: "queued" | "starting" | "running" | "completed" | "interrupted";
-  groupKind?: TaskGroupKind;
-  label?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
@@ -170,8 +166,6 @@ interface CompletedTaskInfo {
   title?: string;
   agentId: string;
   agentType: string;
-  groupKind?: TaskGroupKind;
-  label?: string;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
 }
@@ -227,8 +221,6 @@ function serializeCompletedReport(report: CompletedTaskInfo) {
     title: report.title,
     agentId: report.agentId,
     agentType: report.agentType,
-    groupKind: report.groupKind,
-    label: report.label,
     modelString: report.modelString,
     thinkingLevel: report.thinkingLevel,
   };
@@ -294,8 +286,6 @@ function buildPendingTaskResult(params: {
     tasks: params.tasks.map((task) => ({
       taskId: task.taskId,
       status: task.status,
-      groupKind: task.groupKind,
-      label: task.label,
       modelString: task.modelString,
       thinkingLevel: task.thinkingLevel,
     })),
@@ -344,8 +334,6 @@ function normalizePendingTaskStatuses(params: {
       return {
         taskId: createdTask.taskId,
         status: "completed",
-        groupKind: createdTask.groupKind,
-        label: createdTask.label,
         modelString: completedReport.modelString ?? createdTask.modelString,
         thinkingLevel: completedReport.thinkingLevel ?? createdTask.thinkingLevel,
       };
@@ -363,8 +351,6 @@ function normalizePendingTaskStatuses(params: {
             : currentStatus === "interrupted"
               ? "interrupted"
               : "running",
-      groupKind: createdTask.groupKind,
-      label: createdTask.label,
       modelString: createdTask.modelString,
       thinkingLevel: createdTask.thinkingLevel,
     };
@@ -411,7 +397,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         title,
         run_in_background,
         n,
-        variants,
         model,
         thinking,
         isolation,
@@ -532,7 +517,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
         throw new Error("task tool input validation failed: expected agent task args");
       }
 
-      const taskGroupLaunches = buildTaskGroupLaunches({ prompt, n, variants });
+      const taskGroupLaunches = buildTaskGroupLaunches({ prompt, n });
       const taskGroupCount = taskGroupLaunches.length;
       const taskGroupId =
         taskGroupCount > 1 ? buildTaskGroupId(workspaceId, toolCallId) : undefined;
@@ -577,8 +562,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                   groupId: taskGroupId,
                   index: launch.index,
                   total: launch.total,
-                  kind: launch.kind,
-                  ...(launch.label ? { label: launch.label } : {}),
                 }
               : undefined,
         });
@@ -606,9 +589,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           status: created.data.status,
           modelString: created.data.modelString,
           thinkingLevel: created.data.thinkingLevel,
-          ...(taskGroupCount > 1 || launch.label
-            ? { groupKind: launch.kind, ...(launch.label ? { label: launch.label } : {}) }
-            : {}),
         } satisfies SpawnedTaskInfo;
         createdTasks.push(task);
 
@@ -651,8 +631,6 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
                 title: report.title,
                 agentId: requestedAgentId,
                 agentType: requestedAgentId,
-                groupKind: createdTask.groupKind,
-                label: createdTask.label,
                 // Prefer the settings the report was produced with: a plan child that
                 // auto-handoffs to exec rewrites its task settings after launch.
                 modelString: report.model ?? createdTask.modelString,

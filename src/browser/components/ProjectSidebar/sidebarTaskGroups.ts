@@ -6,20 +6,10 @@ import {
 } from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
-import {
-  formatTaskGroupHeader,
-  formatTaskGroupItemsLabel,
-  getTaskGroupKindFromMetadata,
-  type TaskGroupKind,
-} from "@/common/utils/tools/taskGroups";
+import { formatTaskGroupHeader } from "@/common/utils/tools/taskGroups";
 
-/**
- * Sidebar-local group kind: task-tool groups (bestOf/variants) plus workflow
- * runs. Workflow semantics intentionally stay out of the tool-level
- * TaskGroupKind in src/common/utils/tools/taskGroups.ts - that utility
- * describes task-tool metadata, while workflow grouping is UI-only.
- */
-export type SidebarGroupKind = TaskGroupKind | "workflow";
+/** Sidebar-local distinction between best-of task groups and workflow runs. */
+export type SidebarGroupKind = "bestOf" | "workflow";
 
 export function formatSidebarTaskGroupHeader(
   kind: SidebarGroupKind,
@@ -29,14 +19,14 @@ export function formatSidebarTaskGroupHeader(
   if (kind === "workflow") {
     return `Workflow · ${title}`;
   }
-  return formatTaskGroupHeader(kind, totalCount, title);
+  return formatTaskGroupHeader(totalCount, title);
 }
 
 export function formatSidebarTaskGroupItemsLabel(kind: SidebarGroupKind): string {
   if (kind === "workflow") {
     return "Tasks";
   }
-  return formatTaskGroupItemsLabel(kind);
+  return "Candidates";
 }
 
 /** Compact fallback header label for workflow runs spawned before workflowName existed. */
@@ -121,7 +111,7 @@ function getGroupDescriptor(
     }
     return {
       id: bestOfGroupId,
-      kind: getTaskGroupKindFromMetadata(workspace.bestOf),
+      kind: "bestOf",
       parentWorkspaceId,
       storageKey: `task:${parentWorkspaceId}:${bestOfGroupId}`,
     };
@@ -202,7 +192,7 @@ function sortWorkflowMembers(members: FrontendWorkspaceMetadata[]): FrontendWork
 /**
  * Compute coalesced sidebar task groups for one ordered list of visible rows.
  *
- * Variant/best-of groups keep the legacy constraints (min 2 members, visible
+ * Best-of groups keep the legacy constraints (min 2 members, visible
  * members contiguous). Workflow run groups form from the first member and
  * gather non-contiguous members because steps spawn over time and interleave
  * with other rows (D5/D6).
@@ -268,7 +258,7 @@ export function computeSidebarTaskGroups(params: {
       if (visibleMembers.length < 2 || allMembers.length < 2) {
         continue;
       }
-      // Visible variant/best-of members must stay contiguous (spawned
+      // Visible best-of members must stay contiguous (spawned
       // atomically and sorted adjacent); bail out when other rows interleave.
       const indices = visibleMembers
         .map((workspace) => indexByRowId.get(workspace.id))

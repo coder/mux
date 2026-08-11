@@ -18,11 +18,6 @@ import {
 } from "@/browser/utils/ui/workspaceFiltering";
 import assert from "@/common/utils/assert";
 import { cn } from "@/common/lib/utils";
-import {
-  TASK_GROUP_KIND,
-  getTaskGroupKindFromMetadata,
-  normalizeTaskGroupLabel,
-} from "@/common/utils/tools/taskGroups";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { isDevcontainerRuntime } from "@/common/types/runtime";
 import { getWorkspaceLastReadKey } from "@/common/constants/storage";
@@ -514,17 +509,9 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
 
   // Display title (fallback to name for legacy workspaces without title)
   const workspaceTitle = metadata.title ?? metadata.name;
-  // Derive a short group label for grouped task children: explicit label for variants,
-  // alphabetical letter (A, B, C…) for best-of-n candidates.
-  const isBestOfCandidate =
-    metadata.bestOf != null &&
-    getTaskGroupKindFromMetadata(metadata.bestOf) !== TASK_GROUP_KIND.VARIANTS;
+  // Best-of children use a compact alphabetical candidate label (A, B, C…).
   const groupLabel =
-    metadata.bestOf != null
-      ? isBestOfCandidate
-        ? String.fromCharCode(65 + (metadata.bestOf.index ?? 0))
-        : normalizeTaskGroupLabel(metadata.bestOf.label)
-      : undefined;
+    metadata.bestOf != null ? String.fromCharCode(65 + (metadata.bestOf.index ?? 0)) : undefined;
   // D8: expanded group members drop a title that merely repeats the group
   // header; the remaining label must stay readable on its own, so bare best-of
   // letters render as "Candidate A". Custom titles still show (self-healing).
@@ -532,8 +519,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     props.taskGroupHeaderTitle !== undefined &&
     props.taskGroupHeaderTitle === workspaceTitle &&
     groupLabel !== undefined;
-  const memberOnlyLabel =
-    isBestOfCandidate && groupLabel !== undefined ? `Candidate ${groupLabel}` : groupLabel;
+  const memberOnlyLabel = groupLabel !== undefined ? `Candidate ${groupLabel}` : undefined;
   const displayTitle = suppressGroupMemberTitle
     ? (memberOnlyLabel ?? workspaceTitle)
     : groupLabel

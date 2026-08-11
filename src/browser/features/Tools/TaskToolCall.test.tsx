@@ -44,6 +44,7 @@ void mock.module("./Shared/ElapsedTimeDisplay", () => ({
   ),
 }));
 
+import { GenericToolCall } from "./GenericToolCall";
 import { getToolComponent } from "./Shared/getToolComponent";
 
 const workspaceTaskArgs = {
@@ -119,6 +120,17 @@ describe("TaskToolCall", () => {
     mock.restore();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+  });
+
+  test("renders legacy variants task calls generically", () => {
+    expect(
+      getToolComponent("task", {
+        subagent_type: "explore",
+        prompt: "Review ${variant}",
+        title: "Split review",
+        variants: ["frontend", "backend"],
+      })
+    ).toBe(GenericToolCall);
   });
 
   test("labels workspace tasks and opens their created workspace", () => {

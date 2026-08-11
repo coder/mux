@@ -2,7 +2,6 @@ import { z } from "zod";
 import { ThinkingLevelSchema } from "../../types/thinking";
 import { RuntimeConfigSchema } from "./runtime";
 import { WorkspaceAISettingsByAgentSchema, WorkspaceAISettingsSchema } from "./workspaceAiSettings";
-import { TASK_GROUP_KIND_VALUES } from "@/common/utils/tools/taskGroups";
 import { GoalSnapshotSchema } from "./goal";
 import {
   HEARTBEAT_CONTEXT_MODE_VALUES,
@@ -29,13 +28,6 @@ export const BestOfGroupSchema = z.object({
   }),
   total: z.number().int().min(2).meta({
     description: "Total number of sibling tasks spawned in the grouped task request.",
-  }),
-  kind: z.enum(TASK_GROUP_KIND_VALUES).optional().meta({
-    description:
-      'Optional grouped task mode ("bestOf" for repeated candidates or "variants" for labeled siblings). Missing values default to "bestOf" at read time for backward compatibility.',
-  }),
-  label: z.string().min(1).optional().meta({
-    description: "Optional per-sibling label for grouped task variants.",
   }),
 });
 

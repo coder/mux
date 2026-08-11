@@ -59,18 +59,10 @@ Picking the best candidate requires every report, so await the full batch (pass 
 If you are inside a best-of-n child workspace, complete only your candidate.
 </best-of-n>
 
-<task-variants>
-When the user gives a few items, scopes, ranges, or review lanes and the same prompt template applies to each, prefer the \`task\` tool's \`variants\` parameter instead of \`n\`.
-Keep parent setup light, then put the per-lane difference into \`\${variant}\` so each sibling receives the same task template with one labeled focus or scope change.
-Examples include solving several GitHub issues, investigating several commit windows, or splitting review work into frontend/backend/tests/docs lanes.
-Variant lanes are independent, so prefer \`run_in_background: true\` then \`task_await\` (which returns on the first completion by default): act on each lane's result as it lands and re-await for the rest, rather than blocking until the whole batch finishes.
-If you are inside a variants child workspace, complete only the slice described by that prompt.
-</task-variants>
-
 <subagent-lifecycle>
 Treat every sub-agent as one persistent child workspace with lifecycle active → inactive → removed:
 - Give each child a short, friendly role name such as \`Reviewer\` or \`Simplicity Auditor\`. Name the reusable expertise, not the current assignment, and avoid task-summary titles that read like ordinary workspace chats.
-- Grouped \`n\`/\`variants\` children retain candidate/lane metadata. Reawaken one only to continue that same candidate or lane; for unrelated work, use a standalone specialist instead of repurposing a variant child.
+- Best-of \`n\` children retain candidate metadata. Reawaken one only to continue that same candidate; for unrelated work, use a standalone specialist instead of repurposing a best-of child.
 - A terminal report or \`task_stop\` makes the child inactive but preserves its workspace and context. \`task_send_message\` steers active work or reawakens an inactive child under the same identity; \`task_retitle\` updates a stale role label without changing identity. Before assigning or reawakening a child, check whether its role name still describes its reusable responsibility. Retitle it when that responsibility changes, but keep the role stable for ordinary one-off assignments.
 - Before finishing a user turn, reconcile every active descendant: await work the answer depends on, cancel genuinely abandoned work with \`task_stop\`, and leave work active only when you intentionally want a later terminal wake-up. \`task_stop\` marks unfinished children \`interrupted\`; if a child has already delivered useful progress and should count as complete, ask it via \`task_send_message\` to finalize, then await its terminal report instead of stopping it. If a wake remains outstanding, tell the user another update may follow and do not present the current response as fully final.
 - After consuming a terminal result, decide whether the inactive child is reusable. Retain useful roles; remove clearly one-shot or obsolete children with \`task_remove\`. Before finishing a large task or PR, list \`reported\` and \`interrupted\` children and clean up stale ones deepest-first.
@@ -158,9 +150,8 @@ function buildEnvironmentContext(
   }
 
   if (bestOf && bestOf.total > 1) {
-    // Keep grouped-task system grounding cache-friendly across sibling runs.
-    // Child-specific steering (for example variant labels or per-slice instructions)
-    // belongs in the delegated prompt so siblings can still share the same system prompt.
+    // Keep grouped-task system grounding cache-friendly across sibling runs. Candidate-specific
+    // steering belongs in the delegated prompt so siblings can share the same system prompt.
     lines = [
       ...lines,
       "- This workspace is part of a grouped sub-agent batch launched by the parent",

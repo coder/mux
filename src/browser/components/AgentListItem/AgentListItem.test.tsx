@@ -317,88 +317,39 @@ describe("AgentListItem", () => {
     mock.restore();
   });
 
-  test("suppresses group-member titles that repeat the group header (D8)", () => {
-    // Variant member: label-only row keeps the variant label as the title text.
-    const variant = renderWorkspaceItem({
-      metadata: createMetadata({
-        title: "Split review",
-        parentWorkspaceId: "parent",
-        bestOf: { groupId: "g1", index: 0, total: 2, kind: "variants", label: "frontend" },
-      }),
-      subAgentConnectorLayout: "task-group-member",
-      taskGroupHeaderTitle: "Split review",
-    });
-    expect(variant.view.getByRole("button", { name: "Select workspace frontend" })).toBeTruthy();
-    expect(variant.view.queryByText("Split review")).toBeNull();
-    cleanup();
-
-    // Best-of member: bare letters become "Candidate A" so the row stays readable.
+  test("suppresses best-of member titles that repeat the group header (D8)", () => {
     const candidate = renderWorkspaceItem({
       metadata: createMetadata({
-        title: "Split review",
+        title: "Compare options",
         parentWorkspaceId: "parent",
         bestOf: { groupId: "g1", index: 0, total: 2 },
       }),
       subAgentConnectorLayout: "task-group-member",
-      taskGroupHeaderTitle: "Split review",
+      taskGroupHeaderTitle: "Compare options",
     });
     expect(
       candidate.view.getByRole("button", { name: "Select workspace Candidate A" })
     ).toBeTruthy();
+    expect(candidate.view.queryByText("Compare options")).toBeNull();
     cleanup();
 
-    // A custom (differing) title still renders alongside the label.
+    // A custom (differing) title still renders alongside the candidate label.
     const customTitle = renderWorkspaceItem({
       metadata: createMetadata({
         title: "My renamed run",
         parentWorkspaceId: "parent",
-        bestOf: { groupId: "g1", index: 1, total: 2, kind: "variants", label: "backend" },
+        bestOf: { groupId: "g1", index: 1, total: 2 },
       }),
       subAgentConnectorLayout: "task-group-member",
-      taskGroupHeaderTitle: "Split review",
+      taskGroupHeaderTitle: "Compare options",
     });
     expect(
       customTitle.view.getByRole("button", {
-        name: "Select workspace My renamed run, scope backend",
+        name: "Select workspace My renamed run, scope B",
       })
     ).toBeTruthy();
-    const roleTitle = customTitle.view.getByText("My renamed run");
-    const scopeLabel = customTitle.view.getByText("scope: backend");
-    expect(roleTitle.compareDocumentPosition(scopeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
-  });
-
-  test("renders a lone running variant as a role title with secondary scope", () => {
-    const variant = renderWorkspaceItem({
-      metadata: createMetadata({
-        title: "Reviewer",
-        parentWorkspaceId: "parent",
-        taskStatus: "running",
-        bestOf: {
-          groupId: "review-lanes",
-          index: 0,
-          total: 2,
-          kind: "variants",
-          label: "codebase simplicity and concurrency correctness",
-        },
-      }),
-    });
-
-    expect(
-      variant.view.getByRole("button", {
-        name: "Select workspace Reviewer, scope codebase simplicity and concurrency correctness",
-      })
-    ).toBeTruthy();
-    const roleTitle = variant.view.getByText("Reviewer");
-    const scopeLabel = variant.view.getByText(
-      "scope: codebase simplicity and concurrency correctness"
-    );
-    expect(roleTitle.className).toContain("text-[14px]");
-    expect(scopeLabel.className).toContain("text-[11px]");
-    expect(roleTitle.compareDocumentPosition(scopeLabel) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING
-    );
+    expect(customTitle.view.getByText("My renamed run")).toBeTruthy();
+    expect(customTitle.view.getByText("scope: B")).toBeTruthy();
   });
 
   test("shows workflow-only activity on idle workspace rows", () => {

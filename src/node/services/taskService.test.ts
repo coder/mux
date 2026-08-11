@@ -16249,27 +16249,6 @@ describe("TaskService", () => {
     expect(workspacePathExists).toBe(false);
   }, 20_000);
 
-  test("Task.create rejects variants metadata without a label", async () => {
-    const config = await createTestConfig(rootDir);
-    const { taskService } = createTaskServiceHarness(config);
-
-    const created = await createAgentTask(taskService, "parent-workspace", "review frontend", {
-      title: "Split review",
-      bestOf: {
-        groupId: "task-group-variants",
-        index: 0,
-        total: 2,
-        kind: "variants",
-      },
-    });
-
-    expect(created.success).toBe(false);
-    if (created.success) {
-      return;
-    }
-    expect(created.error).toContain("bestOf.label is required when bestOf.kind is variants");
-  });
-
   test("agent_report posts report to parent, finalizes pending task tool output, and triggers cleanup", async () => {
     const config = await createTestConfig(rootDir);
 
@@ -16496,7 +16475,6 @@ describe("TaskService", () => {
     toolCallId: string;
     title: string;
     n?: number;
-    variants?: string[];
     timestamp: number;
     prompt?: string;
     additionalParts?: MuxMessage["parts"];
@@ -16516,7 +16494,6 @@ describe("TaskService", () => {
             prompt: params.prompt ?? "compare options",
             title: params.title,
             ...(params.n != null ? { n: params.n } : {}),
-            ...(params.variants ? { variants: params.variants } : {}),
           },
           state: "input-available",
         },
@@ -16733,85 +16710,6 @@ describe("TaskService", () => {
     const remainingTaskIds = getConfiguredWorkspaceIds(config);
     expect(remainingTaskIds).toContain(childOneId);
     expect(remainingTaskIds).toContain(childTwoId);
-  });
-
-  test("agent_report finalizes variants parent output with labels", async () => {
-    const parentId = "parent-variants";
-    const childOneId = "child-variants-1";
-    const childTwoId = "child-variants-2";
-    const taskGroup = {
-      groupId: "task-group-variants",
-      index: 0,
-      total: 2,
-      kind: "variants",
-      label: "frontend",
-    } as const;
-
-    const { historyService, partialService, taskService } =
-      await createBestOfTaskServiceTestHarness({
-        parentId,
-        children: [
-          {
-            id: childOneId,
-            name: "agent_explore_frontend",
-            taskStatus: "running",
-            bestOf: taskGroup,
-          },
-          {
-            id: childTwoId,
-            name: "agent_explore_backend",
-            taskStatus: "running",
-            bestOf: { ...taskGroup, index: 1, label: "backend" },
-          },
-        ],
-      });
-
-    await writePendingBestOfParentPartial({
-      partialService,
-      parentId,
-      messageId: "assistant-parent-variants-partial",
-      toolCallId: "task-variants-call",
-      title: "Split review",
-      variants: ["frontend", "backend"],
-      prompt: "Review ${variant} for regressions",
-      timestamp: Date.now(),
-    });
-
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childOneId,
-      reportMarkdown: "Frontend findings",
-      title: "Frontend review",
-      prompt: "Review frontend for regressions",
-    });
-
-    const parentPartialAfterFirst = await partialService.readPartial(parentId);
-    expect(getTaskToolPart(parentPartialAfterFirst)?.state).toBe("input-available");
-
-    await finalizeReportedChildTaskForTest({
-      historyService,
-      partialService,
-      taskService,
-      childId: childTwoId,
-      reportMarkdown: "Backend findings",
-      title: "Backend review",
-      prompt: "Review backend for regressions",
-    });
-
-    const parentPartialAfterSecond = await partialService.readPartial(parentId);
-    expect(parentPartialAfterSecond).not.toBeNull();
-    const toolPart = getTaskToolPart(parentPartialAfterSecond);
-    expect(toolPart?.state).toBe("output-available");
-    const serializedOutput = JSON.stringify(toolPart?.output);
-    expect(serializedOutput).toContain(childOneId);
-    expect(serializedOutput).toContain(childTwoId);
-    expect(serializedOutput).toContain("Frontend findings");
-    expect(serializedOutput).toContain("Backend findings");
-    expect(serializedOutput).toContain('"groupKind":"variants"');
-    expect(serializedOutput).toContain('"label":"frontend"');
-    expect(serializedOutput).toContain('"label":"backend"');
   });
 
   // Test exercises real config + history + partial-on-disk I/O across many

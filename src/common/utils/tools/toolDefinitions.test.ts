@@ -46,7 +46,6 @@ describe("TOOL_DEFINITIONS", () => {
     expect(parsed.success).toBe(true);
     if (parsed.success) {
       expect(parsed.data.n).toBeUndefined();
-      expect(parsed.data.variants).toBeUndefined();
     }
   });
 
@@ -79,54 +78,6 @@ describe("TOOL_DEFINITIONS", () => {
     ).toBe(false);
   });
 
-  it("accepts variants when the prompt references ${variant}", () => {
-    const parsed = TaskToolArgsSchema.safeParse({
-      subagent_type: "explore",
-      prompt: "Review ${variant} for regressions",
-      title: "Split review",
-      variants: ["frontend", "backend"],
-    });
-
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.variants).toEqual(["frontend", "backend"]);
-    }
-  });
-
-  it("rejects variants when the prompt does not reference ${variant}", () => {
-    expect(
-      TaskToolArgsSchema.safeParse({
-        subagent_type: "explore",
-        prompt: "Review the codebase for regressions",
-        title: "Split review",
-        variants: ["frontend", "backend"],
-      }).success
-    ).toBe(false);
-  });
-
-  it("rejects variants when n is also provided", () => {
-    expect(
-      TaskToolArgsSchema.safeParse({
-        subagent_type: "explore",
-        prompt: "Review ${variant} for regressions",
-        title: "Split review",
-        n: 2,
-        variants: ["frontend", "backend"],
-      }).success
-    ).toBe(false);
-  });
-
-  it("rejects duplicate variants after trimming", () => {
-    expect(
-      TaskToolArgsSchema.safeParse({
-        subagent_type: "explore",
-        prompt: "Review ${variant} for regressions",
-        title: "Split review",
-        variants: ["frontend", " frontend "],
-      }).success
-    ).toBe(false);
-  });
-
   it("accepts workspace task args without an agent id", () => {
     const parsed = TaskToolArgsSchema.safeParse({
       kind: "workspace",
@@ -150,15 +101,6 @@ describe("TOOL_DEFINITIONS", () => {
         prompt: "Summarize this repository",
         title: "Repository summary",
         n: 2,
-      }).success
-    ).toBe(false);
-
-    expect(
-      TaskToolArgsSchema.safeParse({
-        kind: "workspace",
-        prompt: "Summarize ${variant}",
-        title: "Repository summary",
-        variants: ["frontend", "backend"],
       }).success
     ).toBe(false);
   });

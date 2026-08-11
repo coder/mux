@@ -145,6 +145,45 @@ function parseOptionalNonEmptyString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function isLegacyTaskVariantGroup(value: unknown): boolean {
+  return (
+    value != null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (value as Record<string, unknown>).kind === "variants"
+  );
+}
+
+function normalizeWorkspaceBestOf(value: unknown): WorkspaceMetadata["bestOf"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  // Variants were coupled to one-off sibling lanes. Persistent sub-agents need stable identities,
+  // so legacy variant children intentionally load as ordinary children instead of retaining a
+  // grouping that current code can no longer continue coherently.
+  if (isLegacyTaskVariantGroup(record)) {
+    return undefined;
+  }
+
+  const groupId = parseOptionalNonEmptyString(record.groupId);
+  const index = record.index;
+  const total = record.total;
+  if (
+    !groupId ||
+    !Number.isInteger(index) ||
+    (index as number) < 0 ||
+    !Number.isInteger(total) ||
+    (total as number) < 2 ||
+    (index as number) >= (total as number)
+  ) {
+    return undefined;
+  }
+
+  return { groupId, index: index as number, total: total as number };
+}
+
 function parseOptionalEnvBoolean(value: unknown): boolean | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -587,18 +626,31 @@ function normalizeProjectKind(value: unknown): "user" | "system" | undefined {
   return undefined;
 }
 
-function stripLegacyWorkspaceWorkflowSchedule(
+function normalizePersistedWorkspace(
   workspace: ProjectConfig["workspaces"][number]
 ): ProjectConfig["workspaces"][number] {
-  const workspaceWithLegacySchedule = workspace as ProjectConfig["workspaces"][number] & {
-    workflowSchedule?: unknown;
-  };
-  if (!Object.hasOwn(workspaceWithLegacySchedule, "workflowSchedule")) {
+  const persisted = workspace as ProjectConfig["workspaces"][number] &
+    Record<string, unknown> & {
+      workflowSchedule?: unknown;
+    };
+  const hasLegacyWorkflowSchedule = Object.hasOwn(persisted, "workflowSchedule");
+  const hasBestOf = Object.hasOwn(persisted, "bestOf");
+  if (!hasLegacyWorkflowSchedule && !hasBestOf) {
     return workspace;
   }
 
-  const nextWorkspace = { ...workspaceWithLegacySchedule };
+  const nextWorkspace = { ...persisted };
   delete nextWorkspace.workflowSchedule;
+
+  if (hasBestOf) {
+    const bestOf = normalizeWorkspaceBestOf(persisted.bestOf);
+    if (bestOf) {
+      nextWorkspace.bestOf = bestOf;
+    } else {
+      delete nextWorkspace.bestOf;
+    }
+  }
+
   return nextWorkspace;
 }
 
@@ -640,7 +692,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
   }
 
   const workspaces = Array.isArray(record.workspaces) ? record.workspaces : [];
-  next.workspaces = workspaces.map(stripLegacyWorkspaceWorkflowSchedule);
+  next.workspaces = workspaces.map(normalizePersistedWorkspace);
 
   const projectKind = normalizeProjectKind(record.projectKind);
   if (projectKind !== undefined) {
@@ -949,6 +1001,14 @@ export class Config {
             return true;
           })
           .map(([projectPath, projectConfig]) => {
+            if (
+              Array.isArray(projectConfig?.workspaces) &&
+              projectConfig.workspaces.some((workspace) =>
+                isLegacyTaskVariantGroup(workspace.bestOf)
+              )
+            ) {
+              configModified = true;
+            }
             const normalizedProjectConfig = normalizeProjectRuntimeSettings(projectConfig);
             return [stripTrailingSlashes(projectPath), normalizedProjectConfig] as [
               string,
@@ -1929,7 +1989,7 @@ export class Config {
               agentId: workspace.agentId,
               tags: workspace.tags,
               workflowTask: workspace.workflowTask,
-              bestOf: workspace.bestOf,
+              bestOf: normalizeWorkspaceBestOf(workspace.bestOf),
               taskStatus: workspace.taskStatus,
               taskPendingGuidance: workspace.taskPendingGuidance,
               taskLaunchError: workspace.taskLaunchError,
@@ -2044,7 +2104,10 @@ export class Config {
             metadata.agentType ??= workspace.agentType;
             metadata.agentId ??= workspace.agentId;
             metadata.workflowTask ??= workspace.workflowTask;
-            metadata.bestOf ??= workspace.bestOf;
+            metadata.bestOf = isLegacyTaskVariantGroup(metadata.bestOf)
+              ? undefined
+              : (normalizeWorkspaceBestOf(metadata.bestOf) ??
+                normalizeWorkspaceBestOf(workspace.bestOf));
             metadata.taskStatus ??= workspace.taskStatus;
             metadata.taskPendingGuidance ??= workspace.taskPendingGuidance;
             metadata.taskLaunchError ??= workspace.taskLaunchError;
@@ -2145,7 +2208,7 @@ export class Config {
               agentId: workspace.agentId,
               tags: workspace.tags,
               workflowTask: workspace.workflowTask,
-              bestOf: workspace.bestOf,
+              bestOf: normalizeWorkspaceBestOf(workspace.bestOf),
               taskStatus: workspace.taskStatus,
               taskPendingGuidance: workspace.taskPendingGuidance,
               taskLaunchError: workspace.taskLaunchError,
@@ -2310,7 +2373,7 @@ export class Config {
         agentId: metadata.agentId,
         tags: metadata.tags,
         workflowTask: metadata.workflowTask,
-        bestOf: metadata.bestOf,
+        bestOf: normalizeWorkspaceBestOf(metadata.bestOf),
         taskStatus: metadata.taskStatus,
         taskPendingGuidance: metadata.taskPendingGuidance,
         taskLaunchError: metadata.taskLaunchError,
