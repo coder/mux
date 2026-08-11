@@ -64,7 +64,12 @@ import {
   type BackgroundWorkAttentionPolicy,
 } from "@/common/types/backgroundWorkAttention";
 
-import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
+import {
+  createMuxMessage,
+  getCompactionFollowUpContent,
+  type MuxMessage,
+  type MuxMessageMetadata,
+} from "@/common/types/message";
 import {
   createCompactionSummaryMessageId,
   createTaskFailureMessageId,
@@ -10283,10 +10288,15 @@ export class TaskService {
   }
 
   private async handleStreamEnd(event: StreamEndEvent): Promise<void> {
-    // Compaction is a mechanical history rewrite, not a child execution boundary. Ignoring it here
-    // keeps active and reawakened sub-agents in their existing lifecycle state until the correlated
-    // post-compaction follow-up produces the delegated turn's real outcome.
-    if (event.metadata.agentId === "compact" || event.metadata.mode === "compact") {
+    const isCompaction = event.metadata.agentId === "compact" || event.metadata.mode === "compact";
+    const compactionMetadata = event.metadata.muxMetadata;
+    // A compact turn only defers child settlement when it durably staged the next turn. Bare
+    // /compact has no follow-up, so normal stream-end recovery must still run for idle children.
+    if (
+      isCompaction &&
+      compactionMetadata?.type === "compaction-request" &&
+      getCompactionFollowUpContent(compactionMetadata) != null
+    ) {
       return;
     }
 
@@ -10560,7 +10570,7 @@ export class TaskService {
     // collection may time out. Only explicit `stop` can promote the final assistant response to the
     // terminal report; otherwise recovery asks the child to finish instead of finalizing an update.
     const finalAgentReportArgs =
-      event.metadata.finishReason === "stop"
+      !isCompaction && event.metadata.finishReason === "stop"
         ? await this.resolveFinalAgentReportArgs(workspaceId, event.parts, {
             acceptSchemaShapedWorkflowReport: acceptsSchemaShapedWorkflowReport,
           })

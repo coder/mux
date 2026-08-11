@@ -62,7 +62,7 @@ import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { SendMessageError } from "@/common/types/errors";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
-import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage, type MuxMessageMetadata } from "@/common/types/message";
 import { isDynamicToolPart, type DynamicToolPart } from "@/common/types/toolParts";
 import {
   buildWorkflowRunCardMessage,
@@ -100,6 +100,22 @@ function findWorkspaceInConfig(config: Config, workspaceId: string) {
   return Array.from(config.loadConfigOrDefault().projects.values())
     .flatMap((project) => project.workspaces)
     .find((workspace) => workspace.id === workspaceId);
+}
+
+function compactionRequestMetadata(withFollowUp = true): MuxMessageMetadata {
+  return {
+    type: "compaction-request",
+    rawCommand: "/compact",
+    parsed: withFollowUp
+      ? {
+          followUpContent: {
+            text: "Continue",
+            model: "anthropic:claude-sonnet-4-6",
+            agentId: "exec",
+          },
+        }
+      : {},
+  };
 }
 
 function createWorkspaceTurnMetadata(projectPath: string): WorkspaceMetadata {
@@ -3977,6 +3993,7 @@ describe("TaskService", () => {
         model: "anthropic:claude-opus-4-6",
         agentId: "compact",
         finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted context" }],
     });
@@ -4016,6 +4033,7 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         agentId: "compact",
         finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted child context" }],
     });
@@ -4027,6 +4045,7 @@ describe("TaskService", () => {
         model: "anthropic:claude-sonnet-4-6",
         mode: "compact",
         finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted child context" }],
     });
@@ -4035,6 +4054,33 @@ describe("TaskService", () => {
     expect(child?.taskStatus).toBe("running");
     expect(child?.taskRecoveryAttempts).toBeUndefined();
     expect(sendMessage).not.toHaveBeenCalled();
+
+    await config.editConfig((cfg) => {
+      const child = cfg.projects
+        .get(projectPath)
+        ?.workspaces.find((workspace) => workspace.id === childTaskId);
+      assert(child, "child workspace must exist");
+      child.taskStatus = "awaiting_report";
+      return cfg;
+    });
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "standalone-child-compaction",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "compact",
+        finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(false),
+      },
+      parts: [{ type: "text", text: "Standalone compacted child context" }],
+    });
+
+    expect(findWorkspaceInConfig(config, childTaskId)).toMatchObject({
+      taskStatus: "awaiting_report",
+      taskRecoveryAttempts: 1,
+    });
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   test("workspace-turn tool-calls stream-end without continuation settles error", async () => {
@@ -12098,6 +12144,7 @@ describe("TaskService", () => {
         agentId: "compact",
         mode: "compact",
         finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(),
       },
       parts: [{ type: "text", text: "Compacted specialist context" }],
     });
