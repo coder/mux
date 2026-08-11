@@ -6275,6 +6275,81 @@ export class TaskService {
     }
   }
 
+  private async deliverPersistentChildWorkspaceTurnResult(
+    record: WorkspaceTurnTaskHandleRecord,
+    hadForegroundWaiter: boolean
+  ): Promise<void> {
+    if (record.status !== "completed" && record.status !== "error") {
+      return;
+    }
+
+    const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
+    if (childEntry == null || childEntry.workspace.workflowTask != null) {
+      return;
+    }
+    const directParentWorkspaceId = childEntry.workspace.parentWorkspaceId;
+    if (directParentWorkspaceId == null) {
+      return;
+    }
+    if (hadForegroundWaiter && record.ownerWorkspaceId === directParentWorkspaceId) {
+      // The direct parent's in-flight tool result already carries this output.
+      return;
+    }
+
+    const agentType = coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent";
+    const content =
+      record.status === "completed"
+        ? formatSubagentReportUserMessage({
+            childWorkspaceId: record.workspaceId,
+            agentType,
+            title:
+              coerceNonEmptyString(childEntry.workspace.title) ??
+              coerceNonEmptyString(childEntry.workspace.name) ??
+              record.title ??
+              "Subagent report",
+            reportMarkdown:
+              record.reportMarkdown ?? "Workspace turn completed without final text output.",
+            status: "completed",
+            ...(record.modelString != null ? { model: record.modelString } : {}),
+            ...(childEntry.workspace.taskThinkingLevel != null
+              ? { thinkingLevel: childEntry.workspace.taskThinkingLevel }
+              : {}),
+          })
+        : formatSubagentFailureUserMessage({
+            childWorkspaceId: record.workspaceId,
+            agentType,
+            errorType: "workspace_turn_error",
+            errorMessage: record.error ?? "Workspace turn failed",
+          });
+    const message = createMuxMessage(
+      record.status === "completed" ? createTaskReportMessageId() : createTaskFailureMessageId(),
+      "user",
+      content,
+      { timestamp: Date.now(), synthetic: true, uiVisible: true }
+    );
+    const appendResult = await this.historyService.appendToHistory(
+      directParentWorkspaceId,
+      message
+    );
+    if (!appendResult.success) {
+      log.error("Failed to append persistent child continuation result to direct parent", {
+        directParentWorkspaceId,
+        childWorkspaceId: record.workspaceId,
+        handleId: record.handleId,
+        error: appendResult.error,
+      });
+      return;
+    }
+    this.workspaceService.emitChatEvent(directParentWorkspaceId, { ...message, type: "message" });
+    await this.enqueueTerminalAttention({
+      ownerWorkspaceId: directParentWorkspaceId,
+      sourceKind: "agent_task",
+      sourceId: record.workspaceId,
+      generationId: record.handleId,
+      terminalOutcome: terminalAttentionOutcome(record.status),
+    });
+  }
+
   private async settleWorkspaceTurn(params: {
     record: WorkspaceTurnTaskHandleRecord;
     next: WorkspaceTurnTaskHandleRecord;
@@ -6305,6 +6380,8 @@ export class TaskService {
       async (): Promise<{
         pendingNotify: { kind: "notify"; resettled: boolean } | { kind: "drain_pending" } | null;
         winningStatus: WorkspaceTurnTaskStatus;
+        settledRecord?: WorkspaceTurnTaskHandleRecord;
+        hadForegroundWaiter?: boolean;
       } | null> => {
         const current = await this.taskHandleStore.getWorkspaceTurn(
           params.record.ownerWorkspaceId,
@@ -6405,14 +6482,23 @@ export class TaskService {
           return {
             pendingNotify: { kind: "drain_pending" },
             winningStatus: nextRecord.status,
+            settledRecord: nextRecord,
+            hadForegroundWaiter,
           };
         }
         if (!shouldNotify) {
-          return { pendingNotify: null, winningStatus: nextRecord.status };
+          return {
+            pendingNotify: null,
+            winningStatus: nextRecord.status,
+            settledRecord: nextRecord,
+            hadForegroundWaiter,
+          };
         }
         return {
           pendingNotify: { kind: "notify", resettled: resettleStaleTerminal },
           winningStatus: nextRecord.status,
+          settledRecord: nextRecord,
+          hadForegroundWaiter,
         };
       }
     );
@@ -6420,7 +6506,10 @@ export class TaskService {
     if (settlementResult == null) {
       return;
     }
-    const { pendingNotify } = settlementResult;
+    const { pendingNotify, settledRecord, hadForegroundWaiter = false } = settlementResult;
+    if (settledRecord != null) {
+      await this.deliverPersistentChildWorkspaceTurnResult(settledRecord, hadForegroundWaiter);
+    }
     if (pendingNotify == null) {
       return;
     }

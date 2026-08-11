@@ -1826,6 +1826,103 @@ describe("TaskService", () => {
     );
   });
 
+  test("continuation settlement delivers a stable child report and suppresses the private wake", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["continuationreporthandle", "continuationreportturn"]);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childWorkspaceId = "reported-child-continuation-result";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "reported-child", childWorkspaceId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          reportedAt: "2026-08-10T00:00:00.000Z",
+          title: "Tooling Mapper",
+        })
+      );
+      return cfg;
+    });
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const resumeStream = mock(
+      (): Promise<Result<{ started: boolean }>> => Promise.resolve(Ok({ started: true }))
+    );
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage, resumeStream });
+    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Map the remaining tooling surface.",
+      title: "Tooling Mapper",
+      allowAgentWorkspace: true,
+      attentionPolicy: "notify_on_terminal",
+      workspace: { mode: "existing", workspaceId: childWorkspaceId },
+    });
+    expect(created).toMatchObject({ success: true, data: { workspaceId: childWorkspaceId } });
+    if (!created.success) return;
+
+    await (
+      taskService as unknown as { handleStreamEnd: (event: StreamEndEvent) => Promise<void> }
+    ).handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childWorkspaceId,
+      messageId: "msg-continuation-result",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "explore",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: created.data.taskId,
+          ownerWorkspaceId: parentId,
+          turnId: "continuationreportturn",
+        },
+      },
+      parts: [{ type: "text", text: "Mapped the tooling surface." }],
+    });
+    await flushTerminalAttentionDrains(taskService);
+
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(parentHistory.success).toBe(true);
+    expect(JSON.stringify(parentHistory)).toContain("<mux_subagent_report>");
+    expect(JSON.stringify(parentHistory)).toContain(childWorkspaceId);
+    expect(JSON.stringify(parentHistory)).toContain("Mapped the tooling surface.");
+    expect(
+      sendMessage.mock.calls.some(
+        (call) =>
+          call[0] === parentId &&
+          typeof call[1] === "string" &&
+          call[1].includes("Background workspace turn(s) have reached a terminal state")
+      )
+    ).toBe(false);
+    expect(resumeStream).toHaveBeenCalledWith(
+      parentId,
+      expect.any(Object),
+      expect.objectContaining({ agentInitiated: true })
+    );
+
+    const attentionStore = new TerminalAttentionStore(config);
+    expect(
+      await attentionStore.get(
+        parentId,
+        TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, created.data.taskId)
+      )
+    ).toMatchObject({ status: "delivered" });
+    expect(
+      await attentionStore.get(
+        parentId,
+        TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
+      )
+    ).toMatchObject({ status: "superseded" });
+  });
+
   test("createWorkspaceTurn queues busy owner-created existing workspaces", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["firsthandle", "firstturn", "secondhandle", "secondturn"]);
