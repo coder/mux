@@ -97,7 +97,10 @@ import {
 } from "@/node/services/memoryService";
 import { formatHotMemoriesBlock } from "@/node/services/memoryHotSet";
 import { resolveMemoryAccessPolicy } from "@/node/services/tools/memory";
-import { isExecLikeEditingCapableInResolvedChain } from "@/common/utils/agentTools";
+import {
+  isExecLikeEditingCapableInResolvedChain,
+  isExploreLikeInResolvedChain,
+} from "@/common/utils/agentTools";
 import {
   buildProviderOptions,
   buildRequestHeaders,
@@ -2139,9 +2142,9 @@ export class AIService extends EventEmitter {
         xaiNativeToolsEnabled: routeProvider === "xai",
         xaiSearchParameters: effectiveMuxProviderOptions.xai?.searchParameters,
         backgroundProcessManager: this.backgroundProcessManager,
-        // Plan agent configuration for plan file access.
-        // - read: plan file is readable in all agents (useful context)
-        // - write: allowed in all agents; plan agents still lock other edits to the exact plan path
+        // Explore-derived agents inherit read-only delegation limits from the full agent chain.
+        taskExploreOnly: isExploreLikeInResolvedChain(agentInheritanceChain),
+        // Plan agents still lock edits to the exact plan path.
         planFileOnly: agentIsPlanLike,
         emitChatEvent: (event) => {
           // Defensive: tools should only emit events for the workspace they belong to.

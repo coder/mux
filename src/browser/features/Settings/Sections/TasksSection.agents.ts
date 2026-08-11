@@ -76,6 +76,15 @@ export const FALLBACK_AGENTS: AgentDefinitionDescriptor[] = [
     base: "exec",
   },
   {
+    id: "research_verifier",
+    scope: "built-in",
+    name: "Research Verifier",
+    description: "Read-only leaf agent for adversarial research verification",
+    uiSelectable: false,
+    subagentRunnable: false,
+    base: "explore",
+  },
+  {
     id: "name_workspace",
     scope: "built-in",
     name: "Name Workspace",

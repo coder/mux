@@ -13,6 +13,7 @@ describe("FALLBACK_AGENTS", () => {
     expect(fallbackAgentIds).toContain("desktop");
     expect(fallbackAgentIds).toContain("name_workspace");
     expect(fallbackAgentIds).toContain("dream");
+    expect(fallbackAgentIds).toContain("research_verifier");
   });
 });
 

@@ -2,6 +2,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { describe, expect, mock, test } from "bun:test";
+import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
 import { DisposableTempDir } from "@/node/services/tempDir";
@@ -88,6 +89,116 @@ describe("WorkflowRunner", () => {
     await runner.run("wfr_123");
 
     expect(lifecycle).toEqual(["agent", "ended"]);
+  });
+
+  test("deep research claim verification uses the workflow-only verifier agent", async () => {
+    using tmp = new DisposableTempDir("workflow-runner-deep-research-verifiers");
+    const store = new WorkflowRunStore({
+      sessionDir: tmp.path,
+      staleLeaseMs: WORKFLOW_RUNNER_TEST_STALE_LEASE_MS,
+    });
+    await store.createRun({
+      id: "wfr_deep_research_verifiers",
+      workspaceId: "workspace-1",
+      workflow: definition,
+      source: readBuiltInSkillFile("deep-research", "workflow.js").content,
+      args: { input: "Does this claim hold?" },
+      now: "2026-05-29T00:00:00.000Z",
+    });
+
+    const verifierSpecs: WorkflowAgentSpec[] = [];
+    const taskResults = new Map<
+      string,
+      { taskId: string; reportMarkdown: string; structuredOutput: Record<string, unknown> }
+    >();
+    let taskNumber = 0;
+    const createStructuredOutput = (spec: WorkflowAgentSpec): Record<string, unknown> => {
+      if (spec.id === "scope") {
+        return {
+          question: "Does this claim hold?",
+          summary: "Check the claim.",
+          angles: [
+            {
+              label: "Primary",
+              query: "primary evidence",
+              rationale: "Find primary evidence.",
+            },
+            { label: "Recent", query: "recent evidence", rationale: "Check recent evidence." },
+            {
+              label: "Contrary",
+              query: "contrary evidence",
+              rationale: "Find contradictions.",
+            },
+          ],
+        };
+      }
+      if (spec.id.startsWith("search-0-")) {
+        return {
+          results: [
+            {
+              url: "https://example.com/source",
+              title: "Example source",
+              snippet: "A test source.",
+              relevance: "high",
+            },
+          ],
+        };
+      }
+      if (spec.id.startsWith("search-")) return { results: [] };
+      if (spec.id.startsWith("fetch-")) {
+        return {
+          sourceQuality: "primary",
+          publishDate: "2026-01-01",
+          claims: [
+            {
+              claim: "The source supports the claim.",
+              quote: "Supporting text.",
+              importance: "central",
+            },
+          ],
+        };
+      }
+      if (spec.id.startsWith("verify-")) {
+        verifierSpecs.push(spec);
+        return {
+          refuted: true,
+          evidence: "The evidence does not support the claim.",
+          confidence: "high",
+          counterSource: "https://example.com/counter",
+        };
+      }
+      throw new Error(`Unexpected deep research step: ${spec.id}`);
+    };
+    const runner = createRunner(store, {
+      async runAgent() {
+        throw new Error("deep research pipelines require nonblocking agent starts");
+      },
+      async createAgentTasks(specs, lifecycle) {
+        const createdTasks = [];
+        for (const [index, spec] of specs.entries()) {
+          taskNumber += 1;
+          const taskId = `task_${taskNumber}`;
+          taskResults.set(taskId, {
+            taskId,
+            reportMarkdown: "ok",
+            structuredOutput: createStructuredOutput(spec),
+          });
+          await lifecycle?.onTaskCreated?.(index, taskId);
+          createdTasks.push({ taskId, status: "running" as const });
+        }
+        return createdTasks;
+      },
+      async waitForAgentTask(taskId) {
+        const result = taskResults.get(taskId);
+        if (!result) throw new Error(`Missing deep research task result: ${taskId}`);
+        return result;
+      },
+    });
+
+    await runner.run("wfr_deep_research_verifiers");
+
+    expect(verifierSpecs).toHaveLength(3);
+    expect(verifierSpecs.every((spec) => spec.agentId === "research_verifier")).toBe(true);
   });
 
   test("rejects schema on built-in plan agent steps", async () => {

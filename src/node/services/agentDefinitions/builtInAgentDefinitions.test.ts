@@ -75,6 +75,30 @@ describe("built-in agent definitions", () => {
     expect(removed).not.toContain("agent_skill_read_file");
   });
 
+  test("explore can delegate only through task without starting workflows", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const explore = byId.get("explore");
+    expect(explore).toBeTruthy();
+    const removed = explore?.frontmatter.tools?.remove ?? [];
+    expect(removed).not.toContain("task");
+    expect(removed).toContain("workflow_run");
+    expect(removed).toContain("workflow_resume");
+  });
+
+  test("research verifier is workflow-only and cannot orchestrate", () => {
+    const pkgs = getBuiltInAgentDefinitions();
+    const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));
+
+    const verifier = byId.get("research_verifier");
+    expect(verifier).toBeTruthy();
+    expect(verifier?.frontmatter.base).toBe("explore");
+    expect(verifier?.frontmatter.subagent?.runnable).toBe(false);
+    expect(verifier?.frontmatter.subagent?.workflow_runnable).toBe(true);
+    expect(verifier?.frontmatter.tools?.remove ?? []).toEqual(["task", "task_await"]);
+  });
+
   test("analytics_query remains unavailable in general-purpose built-in agents", () => {
     const pkgs = getBuiltInAgentDefinitions();
     const byId = new Map(pkgs.map((pkg) => [pkg.id, pkg] as const));

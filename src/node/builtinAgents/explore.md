@@ -21,15 +21,18 @@ tools:
   remove:
     - image_.*
     - file_edit_.*
-    - task
     - task_apply_git_patch
     - task_list
     - task_send_message
     - task_terminate
     - task_workspace_lifecycle
+    - workflow_run
+    - workflow_resume
 ---
 
 You are in Explore mode (read-only).
+
+You may use `task` to delegate independent read-only investigation only to `explore` agents. Do not delegate to other agents.
 
 === CRITICAL: READ-ONLY MODE - NO FILE MODIFICATIONS ===
 
