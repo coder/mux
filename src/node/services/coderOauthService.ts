@@ -115,6 +115,9 @@ function parseEndpointUrl(value: unknown): string | null {
 export class CoderOauthService {
   private readonly desktopFlows = new OAuthFlowManager();
   private readonly refreshMutex = new AsyncMutex();
+  // Serializes desktop-login persist -> commit/rollback critical sections
+  // across overlapping flows (see commitDesktopLogin for the invariant).
+  private readonly loginCommitMutex = new AsyncMutex();
 
   // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
   // Invalidated on every write (exchange, refresh, disconnect).
@@ -273,15 +276,16 @@ export class CoderOauthService {
       return Err(`Failed to start OAuth callback listener: ${getErrorMessage(error)}`);
     }
 
-    const clientResult = await this.ensureClient(deploymentUrl, endpoints, loopback.redirectUri);
-    if (!clientResult.success) {
-      await loopback.close();
-      return Err(clientResult.error);
-    }
-    const client = clientResult.data;
-
     const resultDeferred = createDeferred<Result<void, string>>();
 
+    // The flow is registered BEFORE the client-registration round-trip: the
+    // loopback listener is already open, and this network await would
+    // otherwise be uncancellable (no flow ID exists yet, so neither Cancel
+    // nor a flow timeout can reach it) — a registration endpoint that accepts
+    // the connection but stalls its response would leave one listener and RPC
+    // alive per retry until the requests eventually returned. Registering
+    // first puts the whole window under the flow timeout, and finishing the
+    // flow (cancel/timeout/shutdown) aborts the in-flight RPC below.
     this.desktopFlows.register(flowId, {
       server: loopback.server,
       resultDeferred,
@@ -292,6 +296,23 @@ export class CoderOauthService {
       }, DEFAULT_DESKTOP_TIMEOUT_MS),
     });
 
+    const registrationAbort = new AbortController();
+    void resultDeferred.promise.then(() => registrationAbort.abort());
+
+    const clientResult = await this.ensureClient(
+      deploymentUrl,
+      endpoints,
+      loopback.redirectUri,
+      registrationAbort.signal
+    );
+    if (!clientResult.success) {
+      // No-op if the flow already ended (its cancel/timeout aborted the RPC);
+      // otherwise this closes the loopback listener too.
+      await this.desktopFlows.finish(flowId, Err(clientResult.error));
+      return Err(clientResult.error);
+    }
+    const client = clientResult.data;
+
     const authorizeUrl = buildCoderAuthorizeUrl({
       authorizationEndpoint: endpoints.authorizationEndpoint,
       clientId: client.clientId,
@@ -301,7 +322,7 @@ export class CoderOauthService {
     });
 
     // Background task: wait for the loopback callback, exchange code for tokens,
-    // then finish the flow. Races against resultDeferred (which resolves on
+    // then commit the login. Races against resultDeferred (which resolves on
     // cancel/timeout) so the task exits cleanly if the flow is cancelled.
     void (async () => {
       const callbackResult = await Promise.race([
@@ -317,44 +338,40 @@ export class CoderOauthService {
         return;
       }
 
-      const exchangeResult = await this.exchangeAndPersist({
+      // The token exchange stays OUTSIDE the login commit lock: it is an
+      // unbounded network round-trip, and one stalled exchange must not block
+      // other logins from committing.
+      const tokenResult = await this.requestTokens(endpoints.tokenEndpoint, {
+        kind: "exchange",
         deploymentUrl,
-        endpoints,
+        // Fresh session lineage: rotations preserve this id, a later login
+        // mints a new one, letting disconnect tell rotations and re-logins
+        // apart.
+        sessionId: randomBase64Url(16),
         client,
         code: callbackResult.data.code,
         redirectUri: loopback.redirectUri,
         codeVerifier,
-        // Cancel/timeout can race the exchange round-trip; "Cancel" must stay
-        // authoritative, so the exchange re-checks liveness before persisting.
-        isFlowAlive: () => this.desktopFlows.has(flowId),
       });
-
-      if (!exchangeResult.success) {
-        loopback.sendFailureResponse(exchangeResult.error);
-        await this.desktopFlows.finish(flowId, Err(exchangeResult.error));
+      if (!tokenResult.success) {
+        loopback.sendFailureResponse(tokenResult.error);
+        await this.desktopFlows.finish(flowId, Err(tokenResult.error));
         return;
       }
 
-      // Cancellation may also race the persist write itself. `has` + `finish`
-      // below run with no intervening await, so exactly one of Cancel and
-      // completion wins the flow; if Cancel won mid-persist, restore the
-      // pre-login section (a previously connected account stays connected).
-      if (!this.desktopFlows.has(flowId)) {
-        await this.rollbackPersistedAuth(
-          exchangeResult.data.auth,
-          exchangeResult.data.previousSection
-        );
-        return;
-      }
-
-      loopback.sendSuccessResponse();
-      this.windowService?.focusMainWindow();
-      await this.desktopFlows.finish(flowId, Ok(undefined));
+      const committed = await this.commitDesktopLogin(
+        flowId,
+        deploymentUrl,
+        tokenResult.auth,
+        loopback
+      );
 
       // Model discovery runs only after the flow is committed: Cancel is no
       // longer possible, so this network await cannot strand half-cancelled
       // state (persisted auth with a cancelled flow).
-      await this.refreshBridgeModels(exchangeResult.data.auth);
+      if (committed) {
+        await this.refreshBridgeModels(tokenResult.auth);
+      }
     })();
 
     log.debug(`[Coder OAuth] Desktop flow started (flowId=${flowId})`);
@@ -516,7 +533,10 @@ export class CoderOauthService {
   private async ensureClient(
     deploymentUrl: string,
     endpoints: CoderOauthEndpoints,
-    redirectUri: string
+    redirectUri: string,
+    // Aborted when the owning flow finishes (cancel/timeout/shutdown), so a
+    // stalled registration endpoint cannot pin the RPC past the flow's life.
+    signal: AbortSignal
   ): Promise<Result<CoderOauthClient, string>> {
     const stored = this.readStoredAuth();
     // Only reuse a client registered on the SAME deployment; a client from a
@@ -527,7 +547,7 @@ export class CoderOauthService {
       stored.registrationAccessToken &&
       stored.registrationClientUri
     ) {
-      const updated = await this.updateClientRedirectUri(stored, redirectUri);
+      const updated = await this.updateClientRedirectUri(stored, redirectUri, signal);
       if (updated.success) {
         return updated;
       }
@@ -535,18 +555,20 @@ export class CoderOauthService {
       log.debug(`[Coder OAuth] Client update failed, re-registering: ${updated.error}`);
     }
 
-    return this.registerClient(endpoints.registrationEndpoint, redirectUri);
+    return this.registerClient(endpoints.registrationEndpoint, redirectUri, signal);
   }
 
   private async registerClient(
     registrationEndpoint: string,
-    redirectUri: string
+    redirectUri: string,
+    signal: AbortSignal
   ): Promise<Result<CoderOauthClient, string>> {
     try {
       const response = await fetch(registrationEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(buildCoderClientMetadata(redirectUri)),
+        signal,
       });
 
       if (!response.ok) {
@@ -586,7 +608,8 @@ export class CoderOauthService {
 
   private async updateClientRedirectUri(
     stored: CoderOauthAuth,
-    redirectUri: string
+    redirectUri: string,
+    signal: AbortSignal
   ): Promise<Result<CoderOauthClient, string>> {
     if (!stored.registrationAccessToken || !stored.registrationClientUri) {
       return Err("No registration access token stored");
@@ -605,6 +628,7 @@ export class CoderOauthService {
           ...buildCoderClientMetadata(redirectUri),
           client_id: stored.clientId,
         }),
+        signal,
       });
 
       if (!response.ok) {
@@ -629,36 +653,42 @@ export class CoderOauthService {
   // Token exchange + refresh
   // -------------------------------------------------------------------------
 
-  private async exchangeAndPersist(input: {
-    deploymentUrl: string;
-    endpoints: CoderOauthEndpoints;
-    client: CoderOauthClient;
-    code: string;
-    redirectUri: string;
-    codeVerifier: string;
-    isFlowAlive: () => boolean;
-  }): Promise<Result<{ auth: CoderOauthAuth; previousSection: Record<string, unknown> }, string>> {
-    const tokenResult = await this.requestTokens(input.endpoints.tokenEndpoint, {
-      kind: "exchange",
-      deploymentUrl: input.deploymentUrl,
-      // Fresh session lineage: rotations preserve this id, a later login mints
-      // a new one, letting disconnect tell rotations and re-logins apart.
-      sessionId: randomBase64Url(16),
-      client: input.client,
-      code: input.code,
-      redirectUri: input.redirectUri,
-      codeVerifier: input.codeVerifier,
-    });
-    if (!tokenResult.success) {
-      return Err(tokenResult.error);
-    }
+  /**
+   * Persist a completed login and finish its flow — or, when Cancel raced the
+   * commit, revoke/roll back instead — as ONE exclusive critical section.
+   *
+   * The process-local commit lock spans persist -> finish/rollback so
+   * overlapping login flows cannot interleave: a rollback snapshot
+   * (`previousSection`) can then only ever capture a committed section.
+   * Without serialization, flow B could snapshot flow A's
+   * persisted-but-uncommitted login; if both were then cancelled, A's
+   * rollback would skip (B's auth is current) and revoke A's tokens, after
+   * which B's rollback would restore that already-revoked auth over the
+   * original login. Desktop flows exist only in this process (they own local
+   * loopback servers), so a process-local mutex suffices; concurrent
+   * cross-process writers are handled by the CAS predicates inside the locked
+   * mutations.
+   *
+   * Returns true when the login was committed (flow finished with Ok).
+   */
+  private async commitDesktopLogin(
+    flowId: string,
+    deploymentUrl: string,
+    auth: CoderOauthAuth,
+    loopback: Pick<
+      Awaited<ReturnType<typeof startLoopbackServer>>,
+      "sendSuccessResponse" | "sendFailureResponse"
+    >
+  ): Promise<boolean> {
+    await using _commitLock = await this.loginCommitMutex.acquire();
 
     // The flow may have been cancelled (or timed out) while the exchange
-    // round-trip was in flight. Persisting anyway would leave the account
-    // connected after the user clicked Cancel — drop and revoke the tokens.
-    if (!input.isFlowAlive()) {
-      await this.revokeTokens(input.deploymentUrl, tokenResult.auth);
-      return Err("Login was cancelled");
+    // round-trip was in flight (or while waiting for this lock). Persisting
+    // anyway would leave the account connected after the user clicked
+    // Cancel — drop and revoke the tokens.
+    if (!this.desktopFlows.has(flowId)) {
+      await this.revokeTokens(deploymentUrl, auth);
+      return false;
     }
 
     // Persist the new credentials, the deployment URL they belong to, and a
@@ -679,28 +709,46 @@ export class CoderOauthService {
       // Cancellation can also win while this mutation waits for the
       // providers-file lock: re-check liveness at write time, inside the
       // lock, so a cancelled flow never replaces the prior login's state.
-      if (!input.isFlowAlive()) {
+      if (!this.desktopFlows.has(flowId)) {
         return null;
       }
       previousSection = { ...(section ?? {}) };
       const next = { ...(section ?? {}) };
-      next.deploymentUrl = input.deploymentUrl;
-      next.coderOauth = tokenResult.auth;
+      next.deploymentUrl = deploymentUrl;
+      next.coderOauth = auth;
       next.models = [];
       return { value: next };
     });
     this.cachedAuth = null;
     if (!persistResult.success) {
-      return Err(persistResult.error);
+      loopback.sendFailureResponse(persistResult.error);
+      await this.desktopFlows.finish(flowId, Err(persistResult.error));
+      return false;
     }
     if (!persistResult.data.applied) {
-      await this.revokeTokens(input.deploymentUrl, tokenResult.auth);
-      return Err("Login was cancelled");
+      // Cancel won while the mutation waited for the providers-file lock; the
+      // flow is already finished, so only the raced tokens need cleanup.
+      await this.revokeTokens(deploymentUrl, auth);
+      return false;
     }
 
-    log.debug("[Coder OAuth] Desktop exchange completed");
+    // Cancellation may also race the window between the persist write and
+    // this check. `has` + `finish` below run with no intervening await, so
+    // exactly one of Cancel and completion wins the flow; if Cancel won
+    // mid-persist, restore the pre-login section (a previously connected
+    // account stays connected).
+    if (!this.desktopFlows.has(flowId)) {
+      await this.rollbackPersistedAuth(auth, previousSection);
+      return false;
+    }
 
-    return Ok({ auth: tokenResult.auth, previousSection });
+    loopback.sendSuccessResponse();
+    this.windowService?.focusMainWindow();
+    await this.desktopFlows.finish(flowId, Ok(undefined));
+
+    log.debug("[Coder OAuth] Desktop login committed");
+
+    return true;
   }
 
   /**
@@ -708,8 +756,10 @@ export class CoderOauthService {
    * and the flow commit. Restores the section captured under the persist lock
    * (a previously connected account stays connected with its URL and catalog)
    * — but only while the stored credential is still the cancelled login's;
-   * a newer login that landed in between is kept. The cancelled login's
-   * tokens are revoked either way.
+   * a newer cross-process write that landed in between is kept. Runs under
+   * the login commit lock (see commitDesktopLogin), so the restored snapshot
+   * is always a committed section, never another in-process flow's pending
+   * login. The cancelled login's tokens are revoked either way.
    */
   private async rollbackPersistedAuth(
     auth: CoderOauthAuth,

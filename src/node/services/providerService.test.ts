@@ -615,6 +615,43 @@ describe("ProviderService.getConfig", () => {
       }
     );
   });
+
+  it("reports Coder connection state against the policy-forced deployment URL", async () => {
+    const LOCKED_URL = "https://locked.coder.example.com";
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder", base_url: LOCKED_URL }],
+      },
+      (config, service) => {
+        // Tokens were minted by the forced deployment, but the (unlocked)
+        // editable deploymentUrl field has since been pointed elsewhere.
+        // Connection status must follow routing — which uses the forced URL —
+        // or Settings would show "Not connected" (and hide Disconnect) while
+        // requests keep succeeding against the forced deployment.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://user-edited.example.com",
+            coderOauth: {
+              type: "oauth",
+              sessionId: "sess",
+              deploymentUrl: LOCKED_URL,
+              access: "at",
+              refresh: "rt",
+              expires: Date.now() + 3_600_000,
+              clientId: "c",
+              clientSecret: "s",
+            },
+          },
+        });
+
+        const cfg = service.getConfig();
+        expect(cfg.coder.coderOauthSet).toBe(true);
+        expect(cfg.coder.isConfigured).toBe(true);
+        expect(cfg.coder.deploymentUrl).toBe(LOCKED_URL);
+      }
+    );
+  });
 });
 
 describe("ProviderService model normalization", () => {

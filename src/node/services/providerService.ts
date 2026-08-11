@@ -442,20 +442,26 @@ export class ProviderService {
       }
 
       // Coder-specific fields: deployment URL + OAuth connection status.
-      // "Connected" only when the stored tokens were minted by the currently
-      // configured deployment (tokens are issuer-bound; see coderOauthAuth.ts).
+      // "Connected" only when the stored tokens were minted by the deployment
+      // actually used for routing (tokens are issuer-bound; see
+      // coderOauthAuth.ts). Policy can force that URL, in which case the raw
+      // editable field is ignored here exactly like it is for routing (see
+      // coderEffectiveProviderConfig in providerModelFactory.ts) — otherwise
+      // editing the unlocked field would report "Not connected" while
+      // requests keep working against the forced deployment.
       if (provider === "coder") {
         const coderOauth = parseCoderOauthAuth(config.coderOauth);
+        const effectiveDeploymentUrl = forcedBaseUrl ?? config.deploymentUrl;
         const configuredDeploymentUrl =
-          typeof config.deploymentUrl === "string"
-            ? normalizeCoderDeploymentUrl(config.deploymentUrl)
+          typeof effectiveDeploymentUrl === "string"
+            ? normalizeCoderDeploymentUrl(effectiveDeploymentUrl)
             : null;
         providerInfo.coderOauthSet =
           coderOauth !== null &&
           configuredDeploymentUrl !== null &&
           coderOauth.deploymentUrl === configuredDeploymentUrl;
-        if (typeof config.deploymentUrl === "string" && config.deploymentUrl) {
-          providerInfo.deploymentUrl = config.deploymentUrl;
+        if (typeof effectiveDeploymentUrl === "string" && effectiveDeploymentUrl) {
+          providerInfo.deploymentUrl = effectiveDeploymentUrl;
         }
       }
 
@@ -475,7 +481,14 @@ export class ProviderService {
       // Use providerInfo.isEnabled (not the local `isEnabled`) because gateway
       // overrides it from global config — using the providers.jsonc value would
       // make a disabled gateway appear configured.
-      const configCheck = checkProviderConfigured(provider, config);
+      // Coder credentials are issuer-bound: when policy forces the base URL,
+      // configured-state must resolve against that URL (mirroring routing),
+      // not the raw editable deploymentUrl field.
+      const effectiveCheckConfig =
+        provider === "coder" && forcedBaseUrl !== undefined
+          ? { ...config, deploymentUrl: forcedBaseUrl }
+          : config;
+      const configCheck = checkProviderConfigured(provider, effectiveCheckConfig);
       providerInfo.isConfigured = providerInfo.isEnabled && configCheck.isConfigured;
       providerInfo.apiKeySource = configCheck.apiKeySource;
       if (forcedBaseUrl === undefined && configCheck.baseUrlSource && configCheck.baseUrlResolved) {

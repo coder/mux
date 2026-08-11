@@ -1155,6 +1155,193 @@ describe("CoderOauthService", () => {
       expect(coderSection.models).toEqual(["anthropic/prior-model"]);
     });
 
+    it("keeps the original login when two overlapping logins are both cancelled", async () => {
+      // Regression: rollback snapshots must not compose across overlapping
+      // flows. Without commit serialization, flow B snapshots flow A's
+      // persisted-but-uncommitted login as its "previous section"; cancelling
+      // A then B revokes A's tokens yet restores them over the original
+      // login. The commit lock keeps B out of the persist->commit window
+      // while A is mid-commit, so the original login must survive both
+      // cancellations and both raced token sets must be revoked.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: priorAuth,
+          models: ["anthropic/prior-model"],
+        },
+      };
+
+      // Gate the first two section mutations AFTER their write lands so
+      // cancellation deterministically hits the persist->commit window;
+      // later mutations (rollbacks) pass straight through once released.
+      const releases: Array<() => void> = [];
+      const gates: Array<Promise<void>> = [
+        new Promise<void>((resolve) => releases.push(resolve)),
+        new Promise<void>((resolve) => releases.push(resolve)),
+      ];
+      let firstPersistApplied!: () => void;
+      const firstPersistAppliedPromise = new Promise<void>(
+        (resolve) => (firstPersistApplied = resolve)
+      );
+      let sectionCalls = 0;
+
+      const gatedProviderService: Pick<
+        ProviderService,
+        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
+      > = {
+        setConfigValue: (provider, keyPath, value) =>
+          mockSetConfigValue(deps, provider, keyPath, value),
+        updateConfigValue: (provider, keyPath, update) =>
+          mockUpdateConfigValue(deps, provider, keyPath, update),
+        updateProviderSection: async (provider, update) => {
+          const call = ++sectionCalls;
+          const result = await mockUpdateProviderSection(deps, provider, update);
+          if (call === 1) {
+            firstPersistApplied();
+          }
+          if (call <= gates.length) {
+            await gates[call - 1];
+          }
+          return result;
+        },
+        setModels: (provider, models) => {
+          deps.setModelsCalls.push({ provider, models });
+          return Promise.resolve(Ok(undefined));
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      const servedCodes = new Set<string>();
+      const revokedTokens: string[] = [];
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          const body = new URLSearchParams(fetchBodyText(init));
+          const code = body.get("code") ?? "";
+          servedCodes.add(code);
+          const suffix = code === "code_flow1" ? "flow1" : "flow2";
+          return jsonResponse({
+            access_token: `at_${suffix}`,
+            refresh_token: `rt_${suffix}`,
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const start1 = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      const start2 = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start1.success && start2.success).toBe(true);
+      if (!start1.success || !start2.success) return;
+
+      const callbackFor = (authorizeUrl: string, state: string, code: string): URL => {
+        const cb = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+        cb.searchParams.set("code", code);
+        cb.searchParams.set("state", state);
+        return cb;
+      };
+
+      // Flow 1 persists its login and blocks mid-commit (gate 1).
+      const cb1 = originalFetch(
+        callbackFor(start1.data.authorizeUrl, start1.data.flowId, "code_flow1")
+      ).catch(() => null);
+      await firstPersistAppliedPromise;
+
+      // Flow 2 exchanges its code; its commit then queues behind the lock.
+      const cb2 = originalFetch(
+        callbackFor(start2.data.authorizeUrl, start2.data.flowId, "code_flow2")
+      ).catch(() => null);
+      await waitUntil(() => servedCodes.has("code_flow2"));
+
+      // Cancel both flows in order, then let the gated commits proceed.
+      await service.cancelDesktopFlow(start1.data.flowId);
+      await service.cancelDesktopFlow(start2.data.flowId);
+      for (const release of releases) release();
+      await Promise.all([cb1, cb2]);
+
+      // Both raced logins' tokens are revoked...
+      await waitUntil(
+        () => revokedTokens.includes("rt_flow1") && revokedTokens.includes("rt_flow2")
+      );
+      // ...and the ORIGINAL login survives (not flow1's revoked tokens).
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_prior");
+      expect((coderSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_prior");
+      expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
+      expect(coderSection.models).toEqual(["anthropic/prior-model"]);
+    });
+
+    it("aborts a stalled client registration when the flow ends", async () => {
+      // The registration endpoint accepts the connection but never responds.
+      // The flow is registered BEFORE that await, so ending the flow
+      // (cancel/timeout/shutdown) aborts the in-flight RPC instead of leaving
+      // the loopback listener and request pinned until the network gives up.
+      let registerStarted!: () => void;
+      const registerStartedPromise = new Promise<void>((resolve) => (registerStarted = resolve));
+      let registerAborted = false;
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          registerStarted();
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              registerAborted = true;
+              reject(new Error("The operation was aborted"));
+            });
+          });
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const startPromise = service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      await registerStartedPromise;
+
+      // Shutdown stands in for any flow-ending event (cancel/timeout): it
+      // finishes the registered flow, which must abort the stalled RPC.
+      await service.dispose();
+
+      const startResult = await startPromise;
+      expect(registerAborted).toBe(true);
+      expect(startResult.success).toBe(false);
+      if (!startResult.success) {
+        expect(startResult.error).toContain("registration failed");
+      }
+    });
+
     it("clears the persisted model catalog when the new deployment has no catalogs", async () => {
       mockFetch(async (input, init) => {
         const url = fetchUrl(input);
