@@ -32,7 +32,7 @@ const IPHONE_16E = {
   height: 844,
 } as const;
 
-// NOTE: Mux's mobile UI tweaks are gated on `@media (max-width: 768px) and (pointer: coarse)`.
+// NOTE: Some phone-specific UI tweaks are gated on `@media (max-width: 768px) and (pointer: coarse)`.
 // Pixel does not emulate touch, so `pointer: coarse` never matches during snapshot
 // capture and touch-only affordances (hidden right sidebar, mobile header) are a
 // known coverage gap; these stories still validate the narrow-width layout.
