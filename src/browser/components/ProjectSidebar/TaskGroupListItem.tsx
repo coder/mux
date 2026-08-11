@@ -26,6 +26,8 @@ interface TaskGroupListItemProps {
   totalCount: number;
   visibleCount: number;
   completedCount: number;
+  /** Workflow run is active between transient worker steps; does not imply a running member. */
+  isRunActive?: boolean;
   runningCount: number;
   queuedCount: number;
   interruptedCount: number;
@@ -43,7 +45,7 @@ interface TaskGroupListItemProps {
  * running anymore.
  */
 function getAggregateVisualState(props: TaskGroupListItemProps): VisualState {
-  if (props.runningCount > 0) {
+  if (props.isRunActive === true || props.runningCount > 0) {
     return "active";
   }
   if (props.interruptedCount > 0) {
@@ -54,13 +56,16 @@ function getAggregateVisualState(props: TaskGroupListItemProps): VisualState {
 
 export function TaskGroupListItem(props: TaskGroupListItemProps) {
   const contextMenu = useContextMenuPosition();
-  const hasRunningWork = props.runningCount > 0;
+  const hasRunningWork = props.isRunActive === true || props.runningCount > 0;
   const aggregateState = getAggregateVisualState(props);
   const statusDescriptionId = `task-group-status-${props.groupId}`;
   const paddingLeft = getSidebarItemPaddingLeft(props.depth);
   const KindGlyph = props.kind === "workflow" ? Workflow : Layers3;
   const showProgressFraction = props.kind !== "workflow";
   const statusParts: string[] = [];
+  if (props.isRunActive === true) {
+    statusParts.push("Workflow running");
+  }
   if (props.runningCount > 0) {
     statusParts.push(`${props.runningCount} running`);
   }

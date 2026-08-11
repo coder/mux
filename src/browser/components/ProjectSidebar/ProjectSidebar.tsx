@@ -2600,6 +2600,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     totalCount={params.group.totalCount}
                                     visibleCount={params.group.displayMembers.length}
                                     completedCount={params.group.completedCount}
+                                    isRunActive={params.group.runActiveWithoutMembers === true}
                                     runningCount={params.group.runningCount}
                                     queuedCount={params.group.queuedCount}
                                     interruptedCount={params.group.interruptedCount}
@@ -2644,7 +2645,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                         headerDepth
                                       )}
                                       isSelected={isGroupSelected}
-                                      isElbowActive={params.group.runningCount > 0}
+                                      isElbowActive={
+                                        params.group.runActiveWithoutMembers === true ||
+                                        params.group.runningCount > 0
+                                      }
                                     >
                                       {headerRow}
                                     </SubAgentListItem>
@@ -2918,9 +2922,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     ...retainedGroup,
                                     displayMembers: [],
                                     // The workflow run itself remains active between transient worker
-                                    // steps, so keep the header and connector in the active visual state.
-                                    runningCount: 1,
+                                    // steps, without inventing a running member-task count.
+                                    runningCount: 0,
                                     queuedCount: 0,
+                                    runActiveWithoutMembers: true,
                                     hasActiveMember: true,
                                   });
                                   retainedWorkflowGroupsByParentId.set(

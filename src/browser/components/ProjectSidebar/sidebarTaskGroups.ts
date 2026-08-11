@@ -81,6 +81,8 @@ export interface SidebarTaskGroupModel {
   runningCount: number;
   queuedCount: number;
   interruptedCount: number;
+  /** Active workflow-run header retained between transient worker steps; not a member-task count. */
+  runActiveWithoutMembers?: boolean;
   /** True while any member is queued or actively working: drives default expansion (D6). */
   hasActiveMember: boolean;
 }
