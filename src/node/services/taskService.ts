@@ -7671,6 +7671,8 @@ export class TaskService {
        * historical terminal handle on each call.
        */
       repairSettledTurnsFromHistory?: boolean;
+      /** Direct parent whose task_await will return this snapshot, if any. */
+      consumingWorkspaceId?: string;
     } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     assert(record.ownerWorkspaceId.length > 0, "normalizeWorkspaceTurnRecord requires owner id");
@@ -7716,6 +7718,7 @@ export class TaskService {
     ) {
       return await this.reconcileSettledWorkspaceTurn(record, {
         repairFromHistory: options.repairSettledTurnsFromHistory === true,
+        consumingWorkspaceId: options.consumingWorkspaceId,
       });
     }
 
@@ -7731,7 +7734,7 @@ export class TaskService {
    */
   private async reconcileSettledWorkspaceTurn(
     record: WorkspaceTurnTaskHandleRecord,
-    options: { repairFromHistory: boolean }
+    options: { repairFromHistory: boolean; consumingWorkspaceId?: string }
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     assert(
       record.status === "interrupted" || record.status === "error",
@@ -7801,7 +7804,9 @@ export class TaskService {
         if (await deferredBlockersActive()) {
           return record;
         }
-        return await this.persistRepairedSettledWorkspaceTurn(record, recovered);
+        return await this.persistRepairedSettledWorkspaceTurn(record, recovered, {
+          consumingWorkspaceId: options.consumingWorkspaceId,
+        });
       }
       if (message.role !== "user") {
         continue;
@@ -7829,7 +7834,8 @@ export class TaskService {
 
   private async persistRepairedSettledWorkspaceTurn(
     record: WorkspaceTurnTaskHandleRecord,
-    recovered: WorkspaceTurnTaskHandleRecord
+    recovered: WorkspaceTurnTaskHandleRecord,
+    options: { consumingWorkspaceId?: string } = {}
   ): Promise<WorkspaceTurnTaskHandleRecord | null> {
     const next = await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
       const current = await this.taskHandleStore.getWorkspaceTurn(
@@ -7849,7 +7855,17 @@ export class TaskService {
       if (this.workspaceTurnRequiresDirectParentDelivery(recovered)) {
         await this.deletePersistentChildWorkspaceTurnAttention(current);
         recovered.directParentResultDeliveryRequiredAt = getIsoNow();
-        delete recovered.directParentResultDeliveredAt;
+        const childEntry = findWorkspaceEntry(
+          this.config.loadConfigOrDefault(),
+          recovered.workspaceId
+        );
+        if (childEntry?.workspace.parentWorkspaceId === options.consumingWorkspaceId) {
+          // History repair discovered the corrected result for this direct parent's task_await.
+          // Mark that corrected generation consumed before post-lock replay can append it too.
+          recovered.directParentResultDeliveredAt = getIsoNow();
+        } else {
+          delete recovered.directParentResultDeliveredAt;
+        }
       }
       log.debug("Workspace turn repaired from self-healed child history", {
         handleId: record.handleId,
@@ -7981,6 +7997,7 @@ export class TaskService {
     // a stale settlement (interrupted/error) was later corrected by a self-healed retry.
     return await this.normalizeWorkspaceTurnRecord(record, {
       repairSettledTurnsFromHistory: true,
+      consumingWorkspaceId: options.consumingWorkspaceId,
     });
   }
 

@@ -5051,6 +5051,78 @@ describe("TaskService", () => {
     expect(snapshot?.error).toBeUndefined();
   });
 
+  test("direct-parent snapshot consumption suppresses replay of a history-repaired outcome", async () => {
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const child = Array.from(cfg.projects.values())
+        .flatMap((project) => project.workspaces)
+        .find((workspace) => workspace.id === "childworkspace");
+      assert(child, "workspace-turn child must exist");
+      child.parentWorkspaceId = parentId;
+      child.agentId = "explore";
+      child.agentType = "explore";
+      child.taskStatus = "reported";
+      return cfg;
+    });
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_consumed_repair", "assistant", "Consumed repaired result", {
+            model: "anthropic:claude-opus-4-6",
+            agentId: "exec",
+            finishReason: "stop",
+            muxMetadata,
+          })
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-06-19T00:00:01.500Z",
+      directParentResultDeliveredAt: "2026-06-19T00:00:01.750Z",
+      error: "Stream error: provider overloaded",
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle", {
+      consumingWorkspaceId: parentId,
+    });
+    expect(snapshot).toMatchObject({
+      status: "completed",
+      messageId: "msg_consumed_repair",
+      reportMarkdown: "Consumed repaired result",
+    });
+    expect(snapshot?.directParentResultDeliveredAt).toBeDefined();
+    expect(snapshot?.directParentResultDeliveredAt).not.toBe("2026-06-19T00:00:01.750Z");
+
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(parentHistory.success).toBe(true);
+    expect(JSON.stringify(parentHistory)).not.toContain("Consumed repaired result");
+    assert(snapshot, "repaired terminal record must exist");
+    const correctedGenerationId = `${snapshot.handleId}:${snapshot.status}:${snapshot.updatedAt}`;
+    expect(
+      await new TerminalAttentionStore(config).get(
+        parentId,
+        TerminalAttentionStore.notificationId("agent_task", "childworkspace", correctedGenerationId)
+      )
+    ).toBeNull();
+  });
+
   test("getWorkspaceTurnSnapshot revives an interrupted handle while the child retries the same turn", async () => {
     const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
