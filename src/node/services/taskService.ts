@@ -5429,6 +5429,7 @@ export class TaskService {
         taskId,
         async (): Promise<{
           handleId: string;
+          generationId: string;
           terminalOutcome: TerminalAttentionOutcome;
         } | null> => {
           const current = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
@@ -5452,6 +5453,7 @@ export class TaskService {
           ) {
             return {
               handleId: updatedRecord.handleId,
+              generationId: this.workspaceTurnTerminalAttentionGenerationId(updatedRecord),
               terminalOutcome: terminalAttentionOutcome(updatedRecord.status),
             };
           }
@@ -5463,6 +5465,7 @@ export class TaskService {
           ownerWorkspaceId,
           sourceKind: "workspace_turn",
           sourceId: pendingNotification.handleId,
+          generationId: pendingNotification.generationId,
           terminalOutcome: pendingNotification.terminalOutcome,
         });
         await this.workspaceTurnSettlementLocks.withLock(taskId, async () => {
@@ -5564,15 +5567,30 @@ export class TaskService {
         continue;
       }
       try {
-        // Recovery may be repairing a corrected self-healed outcome while a delivered legacy
-        // tombstone still exists. Use the exact outcome version so that stale ID cannot suppress it.
-        await this.enqueueTerminalAttention({
-          ownerWorkspaceId: record.ownerWorkspaceId,
-          sourceKind: "workspace_turn",
-          terminalOutcome: terminalAttentionOutcome(record.status),
-          sourceId: record.handleId,
-          generationId: this.workspaceTurnTerminalAttentionGenerationId(record),
-        });
+        const outcome = terminalAttentionOutcome(record.status);
+        const legacyAttention = await this.terminalAttentionStore.get(
+          record.ownerWorkspaceId,
+          TerminalAttentionStore.notificationId("workspace_turn", record.handleId)
+        );
+        const legacyCreatedAt =
+          legacyAttention != null ? Date.parse(legacyAttention.createdAt) : Number.NaN;
+        const recordUpdatedAt = Date.parse(record.updatedAt);
+        const legacyRepresentsCurrentOutcome =
+          legacyAttention?.terminalOutcome === outcome &&
+          Number.isFinite(legacyCreatedAt) &&
+          Number.isFinite(recordUpdatedAt) &&
+          legacyCreatedAt >= recordUpdatedAt;
+        if (!legacyRepresentsCurrentOutcome) {
+          // Corrected outcomes must bypass a stale legacy tombstone. New settlements use this same
+          // versioned ID, while the timestamp check preserves old ordinary-settlement dedupe.
+          await this.enqueueTerminalAttention({
+            ownerWorkspaceId: record.ownerWorkspaceId,
+            sourceKind: "workspace_turn",
+            terminalOutcome: outcome,
+            sourceId: record.handleId,
+            generationId: this.workspaceTurnTerminalAttentionGenerationId(record),
+          });
+        }
         await this.workspaceTurnSettlementLocks.withLock(record.handleId, async () => {
           const current = await this.taskHandleStore.getWorkspaceTurn(
             record.ownerWorkspaceId,
@@ -6815,7 +6833,7 @@ export class TaskService {
       sourceKind: "workspace_turn",
       terminalOutcome: terminalAttentionOutcome(settlementResult.winningStatus),
       sourceId: params.record.handleId,
-      ...(pendingNotify.resettled && settledRecord != null
+      ...(settledRecord != null
         ? { generationId: this.workspaceTurnTerminalAttentionGenerationId(settledRecord) }
         : {}),
     });

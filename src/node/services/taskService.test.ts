@@ -1929,7 +1929,11 @@ describe("TaskService", () => {
     expect(
       await attentionStore.get(
         parentId,
-        TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
+        TerminalAttentionStore.notificationId(
+          "workspace_turn",
+          created.data.taskId,
+          attentionGenerationId
+        )
       )
     ).toMatchObject({ status: "superseded" });
     const recordWithoutDeliveryMarker = { ...terminalRecord };
@@ -2068,6 +2072,57 @@ describe("TaskService", () => {
     } finally {
       replay.mockRestore();
     }
+  });
+
+  test("terminal recovery dedupes a matching ordinary legacy workspace-turn notification", async () => {
+    const config = await createTestConfig(rootDir);
+    const { parentId } = await saveLocalParentWorkspace(config, rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+    const record: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId: "wst_legacy_ordinary_recovery",
+      ownerWorkspaceId: parentId,
+      workspaceId: parentId,
+      turnId: "legacy-ordinary-recovery",
+      status: "completed",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      attentionPolicy: "notify_on_terminal",
+      reportMarkdown: "Already delivered ordinary result",
+    };
+    const taskHandleStore = new TaskHandleStore(config);
+    await taskHandleStore.upsertWorkspaceTurn(record);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const legacy = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentId,
+      sourceKind: "workspace_turn",
+      sourceId: record.handleId,
+      terminalOutcome: "completed",
+      createdAt: "2026-08-11T00:00:01.500Z",
+    });
+    assert(legacy, "legacy ordinary attention must exist");
+    await terminalAttentionStore.markDelivered(parentId, legacy.id);
+
+    expect(
+      await (
+        taskService as unknown as {
+          recoverTerminalWorkspaceTurnAttentionNotifications: () => Promise<number>;
+        }
+      ).recoverTerminalWorkspaceTurnAttentionNotifications()
+    ).toBe(1);
+
+    const versionedId = TerminalAttentionStore.notificationId(
+      "workspace_turn",
+      record.handleId,
+      `${record.handleId}:${record.status}:${record.updatedAt}`
+    );
+    expect(await terminalAttentionStore.get(parentId, versionedId)).toBeNull();
+    expect(
+      (await taskHandleStore.getWorkspaceTurn(parentId, record.handleId))
+        ?.terminalAttentionNotifiedAt
+    ).toBeDefined();
   });
 
   test("terminal recovery versions corrected workspace-turn attention past a legacy tombstone", async () => {
@@ -2324,9 +2379,18 @@ describe("TaskService", () => {
 
     // The direct parent consumed the result through its waiter, so the distinct continuation
     // owner must retain terminal attention (pending until idle, or already delivered).
+    const terminalRecord = await new TaskHandleStore(config).getWorkspaceTurn(
+      rootWorkspaceId,
+      created.data.taskId
+    );
+    assert(terminalRecord, "terminal continuation record must exist");
     const ownerAttention = await new TerminalAttentionStore(config).get(
       rootWorkspaceId,
-      TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
+      TerminalAttentionStore.notificationId(
+        "workspace_turn",
+        created.data.taskId,
+        `${terminalRecord.handleId}:${terminalRecord.status}:${terminalRecord.updatedAt}`
+      )
     );
     expect(ownerAttention).toMatchObject({
       sourceKind: "workspace_turn",
@@ -3036,9 +3100,18 @@ describe("TaskService", () => {
     expect(prompt).toContain("timeout_secs: 0");
     expect(wakeCall?.[3]).toMatchObject({ synthetic: true, requireIdle: true });
 
-    // Restart-safe dedupe marker is persisted.
+    // Restart-safe dedupe marker and the exact terminal outcome notification are persisted.
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot?.terminalAttentionNotifiedAt).toBeDefined();
+    assert(snapshot, "terminal workspace-turn snapshot must exist");
+    const attentionId = TerminalAttentionStore.notificationId(
+      "workspace_turn",
+      snapshot.handleId,
+      `${snapshot.handleId}:${snapshot.status}:${snapshot.updatedAt}`
+    );
+    expect(await new TerminalAttentionStore(config).get(parentId, attentionId)).toMatchObject({
+      status: "delivered",
+    });
   });
 
   test("notify_on_terminal workspace turn defers wake-up while owner has a queued turn", async () => {
