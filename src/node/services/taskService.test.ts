@@ -404,6 +404,7 @@ function createWorkspaceServiceMocks(
     hasPendingAutoRetry: ReturnType<typeof mock>;
     waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
     waitForIdle: ReturnType<typeof mock>;
+    waitForPendingCompactionCompletionDecision: ReturnType<typeof mock>;
     waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
     archive: ReturnType<typeof mock>;
     unarchive: ReturnType<typeof mock>;
@@ -433,6 +434,7 @@ function createWorkspaceServiceMocks(
   waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
   hasPendingAutoRetry: ReturnType<typeof mock>;
+  waitForPendingCompactionCompletionDecision: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
   archive: ReturnType<typeof mock>;
   unarchive: ReturnType<typeof mock>;
@@ -468,6 +470,9 @@ function createWorkspaceServiceMocks(
   const waitForIdleAndNoQueuedMessages =
     overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
   const waitForIdle = overrides?.waitForIdle ?? mock((): Promise<void> => Promise.resolve());
+  const waitForPendingCompactionCompletionDecision =
+    overrides?.waitForPendingCompactionCompletionDecision ??
+    mock((): Promise<boolean> => Promise.resolve(true));
   const waitForPendingStreamErrorRecoveryDecision =
     overrides?.waitForPendingStreamErrorRecoveryDecision ??
     mock((): Promise<void> => Promise.resolve());
@@ -518,6 +523,7 @@ function createWorkspaceServiceMocks(
       hasPendingAutoRetry,
       waitForIdleAndNoQueuedMessages,
       waitForIdle,
+      waitForPendingCompactionCompletionDecision,
       waitForPendingStreamErrorRecoveryDecision,
       archive,
       unarchive,
@@ -546,6 +552,7 @@ function createWorkspaceServiceMocks(
     hasPendingAutoRetry,
     waitForIdleAndNoQueuedMessages,
     waitForIdle,
+    waitForPendingCompactionCompletionDecision,
     waitForPendingStreamErrorRecoveryDecision,
     archive,
     unarchive,
@@ -4022,7 +4029,13 @@ describe("TaskService", () => {
       ],
       testTaskSettings()
     );
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const waitForPendingCompactionCompletionDecision = mock(
+      (_workspaceId: string, messageId: string): Promise<boolean> =>
+        Promise.resolve(messageId !== "failed-child-compaction")
+    );
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks({
+      waitForPendingCompactionCompletionDecision,
+    });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
     await handleTaskServiceStreamEndForTest(taskService, {
@@ -4080,6 +4093,30 @@ describe("TaskService", () => {
       taskStatus: "awaiting_report",
       taskRecoveryAttempts: 1,
     });
+
+    await config.editConfig((cfg) => {
+      const child = cfg.projects
+        .get(projectPath)
+        ?.workspaces.find((workspace) => workspace.id === childTaskId);
+      assert(child, "child workspace must exist");
+      delete child.taskRecoveryAttempts;
+      return cfg;
+    });
+    sendMessage.mockClear();
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: childTaskId,
+      messageId: "failed-child-compaction",
+      metadata: {
+        model: "anthropic:claude-sonnet-4-6",
+        agentId: "compact",
+        finishReason: "stop",
+        muxMetadata: compactionRequestMetadata(),
+      },
+      parts: [{ type: "text", text: "Rejected compacted child context" }],
+    });
+
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskRecoveryAttempts).toBe(1);
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 

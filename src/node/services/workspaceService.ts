@@ -9414,6 +9414,14 @@ export class WorkspaceService extends EventEmitter {
     return this.sessions.get(workspaceId.trim())?.hasQueuedMessages(dispatchMode) ?? false;
   }
 
+  async waitForPendingCompactionCompletionDecision(
+    workspaceId: string,
+    messageId: string
+  ): Promise<boolean | undefined> {
+    const session = this.sessions.get(workspaceId.trim());
+    return session?.waitForPendingCompactionCompletionDecision(messageId);
+  }
+
   async waitForPendingStreamErrorRecoveryDecision(
     workspaceId: string,
     messageId: string

@@ -10295,7 +10295,11 @@ export class TaskService {
     if (
       isCompaction &&
       compactionMetadata?.type === "compaction-request" &&
-      getCompactionFollowUpContent(compactionMetadata) != null
+      getCompactionFollowUpContent(compactionMetadata) != null &&
+      (await this.workspaceService.waitForPendingCompactionCompletionDecision(
+        event.workspaceId,
+        event.messageId
+      )) === true
     ) {
       return;
     }

@@ -590,6 +590,12 @@ export class AgentSession {
     }
   >();
 
+  /** Compaction persistence outcomes keyed by the compact assistant message. */
+  private readonly compactionCompletionDecisions = new Map<
+    string,
+    { promise: Promise<boolean>; resolve: (handled: boolean) => void; outcome?: boolean }
+  >();
+
   /** Tracks whether the current stream included post-compaction attachments. */
   private activeStreamHadPostCompactionInjection = false;
 
@@ -899,6 +905,22 @@ export class AgentSession {
       return;
     }
     this.emitChatEvent(event);
+  }
+
+  private beginCompactionCompletionDecision(messageId: string): void {
+    if (this.compactionCompletionDecisions.has(messageId)) return;
+    let resolveDecision!: (handled: boolean) => void;
+    const promise = new Promise<boolean>((resolve) => {
+      resolveDecision = resolve;
+    });
+    this.compactionCompletionDecisions.set(messageId, { promise, resolve: resolveDecision });
+  }
+
+  private resolveCompactionCompletionDecision(messageId: string, handled: boolean): void {
+    const decision = this.compactionCompletionDecisions.get(messageId);
+    if (decision == null || decision.outcome != null) return;
+    decision.outcome = handled;
+    decision.resolve(handled);
   }
 
   private beginStreamErrorRecoveryDecision(messageId: string): void {
@@ -4865,6 +4887,9 @@ export class AgentSession {
       try {
         const completedCompactionRequest = this.activeCompactionRequest;
         this.activeCompactionRequest = undefined;
+        if (completedCompactionRequest != null) {
+          this.beginCompactionCompletionDecision(streamEndPayload.messageId);
+        }
         this.updateUsageStateFromModelUsage({
           model: streamEndPayload.metadata.model,
           usage: streamEndPayload.metadata.contextUsage,
@@ -4875,7 +4900,14 @@ export class AgentSession {
         });
         this.clearLiveUsageState();
 
-        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+        let handled = false;
+        try {
+          handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+        } finally {
+          if (completedCompactionRequest != null) {
+            this.resolveCompactionCompletionDecision(streamEndPayload.messageId, handled);
+          }
+        }
 
         await this.recordGoalAccountingFromUsage({
           model: streamEndPayload.metadata.model,
@@ -5417,6 +5449,13 @@ export class AgentSession {
 
     this.sendQueuedMessages();
     return true;
+  }
+
+  async waitForPendingCompactionCompletionDecision(messageId: string): Promise<boolean> {
+    this.beginCompactionCompletionDecision(messageId);
+    const decision = this.compactionCompletionDecisions.get(messageId);
+    assert(decision, "compaction completion decision must exist");
+    return decision.outcome ?? decision.promise;
   }
 
   /**
