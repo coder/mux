@@ -197,27 +197,7 @@ export interface AgentTaskTimestamps {
   reportedAt?: string;
 }
 
-type WorkspaceLifecycleAction = "archive" | "unarchive" | "delete_worktree" | "remove";
-interface WorkspaceLifecycleTarget {
-  taskId?: string;
-  workspaceId?: string;
-}
 type WorkspaceLifecycleResult = z.infer<typeof TaskWorkspaceLifecycleToolTargetResultSchema>;
-interface WorkspaceLifecycleOptions {
-  interruptActive?: boolean;
-  acknowledgedUntrackedPaths?: string[];
-  acknowledgedUntrackedPathsByWorkspaceId?: Record<string, string[]>;
-  force?: boolean;
-}
-
-interface ResolvedWorkspaceLifecycleTarget {
-  action: WorkspaceLifecycleAction;
-  targetKind: "agent_task" | "workspace_turn";
-  taskId?: string;
-  taskTitle?: string;
-  workspaceId: string;
-  metadata: WorkspaceMetadata | null;
-}
 
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
@@ -1219,11 +1199,8 @@ export class TaskService {
   // concurrently from multiple child stream-end handlers for the same parent, and it must remain
   // safe even when the parent stream-end already holds workspaceEventLocks for the parent itself.
   private readonly deferredBestOfLocks = new MutexMap<string>();
-  // Serialize lifecycle actions per resolved child workspace: a batch may include both the
-  // created handle and later existing-mode handles for the same workspace.
-  private readonly workspaceLifecycleLocks = new MutexMap<string>();
-  // Serialize lifecycle transitions across a whole parent/descendant tree. Reawakening/removal of a
-  // child and archiving an ancestor must never cross and leave active work hidden behind the archive.
+  // Serialize lifecycle transitions across a whole parent/descendant tree so reawakening and
+  // removal cannot cross and delete a child while its next execution starts.
   private readonly workspaceTreeLifecycleLocks = new MutexMap<string>();
   // Serialize terminal writes per workspace-turn handle so late completions/interruptions cannot
   // overwrite an already-settled handle.
@@ -8320,382 +8297,72 @@ export class TaskService {
     return Ok(didUnarchive);
   }
 
-  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
-  async archiveOwnedTaskWorkspace(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    return await this.archiveOwnedWorkspaceTurnWorkspace(ownerWorkspaceId, target, options);
-  }
-
-  /** Parent-scoped visibility restore for persistent sub-agents and workspace turns. */
-  async unarchiveOwnedTaskWorkspace(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    assert(ownerWorkspaceId.trim().length > 0, "unarchive lifecycle requires ownerWorkspaceId");
-    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
-      ownerWorkspaceId,
-      "unarchive",
-      target
-    );
-    if ("status" in resolved) return Ok(resolved);
-
-    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
-      if (resolved.metadata == null) {
-        return Ok({
-          status: "not_found",
-          action: "unarchive",
-          ...this.lifecycleTargetFields(resolved),
-          note: "Owned workspace metadata is absent and cannot be restored.",
-        });
-      }
-      if (resolved.targetKind === "agent_task") {
-        const result = await this.unarchiveAgentTaskAncestry(
-          ownerWorkspaceId,
-          resolved.workspaceId
-        );
-        if (!result.success) {
-          return Ok({
-            status: "error",
-            action: "unarchive",
-            ...this.lifecycleTargetFields(resolved),
-            error: result.error,
-          });
-        }
-        return Ok({
-          status: result.data ? "unarchived" : "already_unarchived",
-          action: "unarchive",
-          ...this.lifecycleTargetFields(resolved),
-        });
-      }
-
-      if (!isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
-        return Ok({
-          status: "already_unarchived",
-          action: "unarchive",
-          ...this.lifecycleTargetFields(resolved),
-        });
-      }
-      const result = await this.workspaceService.unarchive(resolved.workspaceId);
-      if (!result.success) {
-        return Ok({
-          status: "error",
-          action: "unarchive",
-          ...this.lifecycleTargetFields(resolved),
-          error: result.error,
-        });
-      }
-      return Ok({
-        status: "unarchived",
-        action: "unarchive",
-        ...this.lifecycleTargetFields(resolved),
-      });
-    });
-  }
-
-  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
-  async deleteOwnedTaskWorktree(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    return await this.deleteOwnedWorkspaceTurnWorktree(ownerWorkspaceId, target, options);
-  }
-
   async removeInactiveDescendantAgentTask(
     ownerWorkspaceId: string,
     taskId: string
   ): Promise<Result<WorkspaceLifecycleResult, string>> {
     assert(ownerWorkspaceId.length > 0, "removeInactiveDescendantAgentTask requires owner");
     assert(taskId.length > 0, "removeInactiveDescendantAgentTask requires taskId");
-    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(ownerWorkspaceId, "remove", {
-      taskId,
-    });
-    if ("status" in resolved) return Ok(resolved);
-    if (resolved.targetKind !== "agent_task") {
-      return Ok({ status: "invalid_scope", action: "remove", taskId });
-    }
 
-    return await this.withTaskTreeLifecycleLock(resolved.workspaceId, async () =>
-      this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (locked) => {
-        const descendantTaskIds = this.listDescendantAgentTasks(locked.workspaceId).map(
-          (task) => task.taskId
+    return await this.withTaskTreeLifecycleLock(taskId, async () => {
+      const config = this.config.loadConfigOrDefault();
+      const entry = findWorkspaceEntry(config, taskId);
+      if (entry == null) {
+        const wasOwned =
+          (await this.hasRemovedAgentTaskTombstone(ownerWorkspaceId, taskId)) ||
+          (await this.filterDescendantAgentTaskIds(ownerWorkspaceId, [taskId])).includes(taskId);
+        return Ok(
+          wasOwned
+            ? { status: "already_removed", action: "remove", taskId, workspaceId: taskId }
+            : { status: "invalid_scope", action: "remove", taskId }
         );
-        if (descendantTaskIds.length > 0) {
-          return Ok({
-            status: "error",
-            action: "remove",
-            ...this.lifecycleTargetFields(locked),
-            descendantTaskIds,
-            error: "Cannot remove a sub-agent while descendant sub-agents remain.",
-          });
-        }
-        if (locked.metadata == null) {
-          return Ok({
-            status: "already_removed",
-            action: "remove",
-            ...this.lifecycleTargetFields(locked),
-          });
-        }
-        const active = await this.handleActiveWorkspaceLifecycleTurns(
-          ownerWorkspaceId,
-          locked,
-          false
-        );
-        if (active != null) return Ok(active);
-        const tombstoneResult = await this.persistRemovedAgentTaskTombstones(locked.workspaceId);
-        if (!tombstoneResult.success) {
-          return Ok({
-            status: "error",
-            action: "remove",
-            ...this.lifecycleTargetFields(locked),
-            error: tombstoneResult.error,
-          });
-        }
-        const result = await this.workspaceService.removeWhileTaskTreeLocked(
-          locked.workspaceId,
-          true
-        );
-        if (!result.success) {
-          return Ok({
-            status: "error",
-            action: "remove",
-            ...this.lifecycleTargetFields(locked),
-            error: result.error,
-          });
-        }
-        return Ok({ status: "removed", action: "remove", ...this.lifecycleTargetFields(locked) });
-      })
-    );
-  }
-
-  /** Parent-scoped lifecycle entry point shared by persistent sub-agents and workspace turns. */
-  async removeOwnedTaskWorkspace(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    return await this.removeOwnedWorkspaceTurnWorkspace(ownerWorkspaceId, target, options);
-  }
-
-  async archiveOwnedWorkspaceTurnWorkspace(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    assert(ownerWorkspaceId.trim().length > 0, "archive lifecycle requires ownerWorkspaceId");
-    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
-      ownerWorkspaceId,
-      "archive",
-      target
-    );
-    if ("status" in resolved) return Ok(resolved);
-
-    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
-      if (resolved.metadata == null) {
-        return Ok({
-          status: "not_found",
-          action: "archive",
-          ...this.lifecycleTargetFields(resolved),
-          note: "Owned workspace metadata is already absent.",
-        });
-      }
-      if (isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
-        return Ok({
-          status: "already_archived",
-          action: "archive",
-          ...this.lifecycleTargetFields(resolved),
-        });
       }
 
-      const active = await this.handleActiveWorkspaceLifecycleTurns(
-        ownerWorkspaceId,
-        resolved,
-        options.interruptActive === true
-      );
-      if (active != null) return Ok(active);
-
-      const acknowledgedUntrackedPaths =
-        options.acknowledgedUntrackedPaths ??
-        options.acknowledgedUntrackedPathsByWorkspaceId?.[resolved.workspaceId];
-      const result = await this.workspaceService.archive(
-        resolved.workspaceId,
-        acknowledgedUntrackedPaths
-      );
-      if (!result.success) {
-        return Ok({
-          status: "error",
-          action: "archive",
-          ...this.lifecycleTargetFields(resolved),
-          error: result.error,
-        });
-      }
-      if (result.data.kind === "confirm-lossy-untracked-files") {
-        return Ok({
-          status: "requires_confirmation",
-          action: "archive",
-          ...this.lifecycleTargetFields(resolved),
-          paths: result.data.paths,
-        });
-      }
-      return Ok({ status: "archived", action: "archive", ...this.lifecycleTargetFields(resolved) });
-    });
-  }
-
-  async deleteOwnedWorkspaceTurnWorktree(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    assert(
-      ownerWorkspaceId.trim().length > 0,
-      "delete worktree lifecycle requires ownerWorkspaceId"
-    );
-    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
-      ownerWorkspaceId,
-      "delete_worktree",
-      target
-    );
-    if ("status" in resolved) return Ok(resolved);
-
-    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
-      if (resolved.metadata == null) {
-        return Ok({
-          status: "not_found",
-          action: "delete_worktree",
-          ...this.lifecycleTargetFields(resolved),
-          note: "Owned workspace metadata is already absent.",
-        });
-      }
-      if (!isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
-        return Ok({
-          status: "requires_archive",
-          action: "delete_worktree",
-          ...this.lifecycleTargetFields(resolved),
-        });
-      }
-      if (this.isTranscriptOnlyWorkspaceMetadata(resolved.metadata)) {
-        return Ok({
-          status: "already_transcript_only",
-          action: "delete_worktree",
-          ...this.lifecycleTargetFields(resolved),
-        });
+      const index = this.buildAgentTaskIndex(config);
+      if (!this.isDescendantAgentTaskUsingParentById(index.parentById, ownerWorkspaceId, taskId)) {
+        return Ok({ status: "invalid_scope", action: "remove", taskId });
       }
 
-      const active = await this.handleActiveWorkspaceLifecycleTurns(
-        ownerWorkspaceId,
-        resolved,
-        options.interruptActive === true
-      );
-      if (active != null) return Ok(active);
-
-      const result = await this.workspaceService.deleteWorktree(resolved.workspaceId);
-      if (!result.success) {
-        return Ok({
-          status: "error",
-          action: "delete_worktree",
-          ...this.lifecycleTargetFields(resolved),
-          error: result.error,
-        });
-      }
-      return Ok({
-        status: "deleted_worktree",
-        action: "delete_worktree",
-        ...this.lifecycleTargetFields(resolved),
-      });
-    });
-  }
-
-  async removeOwnedWorkspaceTurnWorkspace(
-    ownerWorkspaceId: string,
-    target: WorkspaceLifecycleTarget,
-    options: WorkspaceLifecycleOptions = {}
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    assert(ownerWorkspaceId.trim().length > 0, "remove lifecycle requires ownerWorkspaceId");
-    const resolved = await this.resolveOwnedWorkspaceLifecycleTarget(
-      ownerWorkspaceId,
-      "remove",
-      target
-    );
-    if ("status" in resolved) return Ok(resolved);
-
-    return await this.withWorkspaceLifecycleLock(ownerWorkspaceId, resolved, async (resolved) => {
-      const descendantTaskIds = this.listDescendantAgentTasks(resolved.workspaceId).map(
-        (task) => task.taskId
-      );
+      const displayName = coerceNonEmptyString(entry.workspace.title) ?? entry.workspace.name;
+      const target = {
+        taskId,
+        workspaceId: taskId,
+        ...(displayName != null ? { displayName } : {}),
+      };
+      const descendantTaskIds = this.listDescendantAgentTasks(taskId).map((task) => task.taskId);
       if (descendantTaskIds.length > 0) {
         return Ok({
           status: "error",
           action: "remove",
-          ...this.lifecycleTargetFields(resolved),
+          ...target,
           descendantTaskIds,
-          error:
-            "Cannot remove a workspace while descendant sub-agent workspaces remain. Remove descendants deepest-first.",
+          error: "Cannot remove a sub-agent while descendant sub-agents remain.",
         });
       }
 
-      if (resolved.metadata == null) {
+      if (
+        this.isActiveAgentTaskEntry({ ...entry.workspace, projectPath: entry.projectPath }) ||
+        this.aiService.isStreaming(taskId)
+      ) {
         return Ok({
-          status: "already_removed",
+          status: "active",
           action: "remove",
-          ...this.lifecycleTargetFields(resolved),
-        });
-      }
-      if (!isWorkspaceArchived(resolved.metadata.archivedAt, resolved.metadata.unarchivedAt)) {
-        return Ok({
-          status: "requires_archive",
-          action: "remove",
-          ...this.lifecycleTargetFields(resolved),
+          ...target,
+          activeTaskIds: [taskId],
+          note: "Stop the sub-agent before removing it.",
         });
       }
 
-      const active = await this.handleActiveWorkspaceLifecycleTurns(
-        ownerWorkspaceId,
-        resolved,
-        options.interruptActive === true
-      );
-      if (active != null) return Ok(active);
-
-      const result = await this.workspaceService.remove(
-        resolved.workspaceId,
-        options.force === true
-      );
-      if (!result.success) {
-        return Ok({
-          status: "error",
-          action: "remove",
-          ...this.lifecycleTargetFields(resolved),
-          error: result.error,
-        });
+      const tombstoneResult = await this.persistRemovedAgentTaskTombstones(taskId);
+      if (!tombstoneResult.success) {
+        return Ok({ status: "error", action: "remove", ...target, error: tombstoneResult.error });
       }
-      return Ok({ status: "removed", action: "remove", ...this.lifecycleTargetFields(resolved) });
-    });
-  }
-
-  private async withWorkspaceLifecycleLock(
-    ownerWorkspaceId: string,
-    resolved: ResolvedWorkspaceLifecycleTarget,
-    operation: (
-      lockedResolved: ResolvedWorkspaceLifecycleTarget
-    ) => Promise<Result<WorkspaceLifecycleResult, string>>
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
-    return await this.workspaceLifecycleLocks.withLock(resolved.workspaceId, async () => {
-      // Ownership can change while an archive/remove waits for the per-workspace lock. Re-resolve
-      // inside the lock so a reparented or otherwise out-of-scope child cannot be mutated by a
-      // stale authorization decision.
-      const lockedResolved = await this.resolveOwnedWorkspaceLifecycleTarget(
-        ownerWorkspaceId,
-        resolved.action,
-        resolved.taskId != null
-          ? { taskId: resolved.taskId }
-          : { workspaceId: resolved.workspaceId }
+      const result = await this.workspaceService.removeWhileTaskTreeLocked(taskId, true);
+      return Ok(
+        result.success
+          ? { status: "removed", action: "remove", ...target }
+          : { status: "error", action: "remove", ...target, error: result.error }
       );
-      if ("status" in lockedResolved) {
-        return Ok(lockedResolved);
-      }
-      return await operation(lockedResolved);
     });
   }
 
@@ -8770,203 +8437,6 @@ export class TaskService {
     } catch (error: unknown) {
       return Err(`Failed to persist removed sub-agent tombstone: ${getErrorMessage(error)}`);
     }
-  }
-
-  private async isAgentTaskLifecycleTargetInScope(
-    ownerWorkspaceId: string,
-    taskId: string
-  ): Promise<boolean> {
-    const config = this.config.loadConfigOrDefault();
-    const entry = findWorkspaceEntry(config, taskId);
-    if (entry != null) {
-      const index = this.buildAgentTaskIndex(config);
-      return this.isDescendantAgentTaskUsingParentById(index.parentById, ownerWorkspaceId, taskId);
-    }
-
-    if (await this.hasRemovedAgentTaskTombstone(ownerWorkspaceId, taskId)) {
-      return true;
-    }
-
-    // Removed tasks can still be addressed idempotently through their persisted report ancestry.
-    const scopedTaskIds = await this.filterDescendantAgentTaskIds(ownerWorkspaceId, [taskId]);
-    return scopedTaskIds.includes(taskId);
-  }
-
-  private async resolveOwnedWorkspaceLifecycleTarget(
-    ownerWorkspaceId: string,
-    action: WorkspaceLifecycleAction,
-    target: WorkspaceLifecycleTarget
-  ): Promise<ResolvedWorkspaceLifecycleTarget | WorkspaceLifecycleResult> {
-    assert(
-      ownerWorkspaceId.trim().length > 0,
-      "workspace lifecycle target resolution requires owner"
-    );
-    const hasTaskId = target.taskId != null && target.taskId.trim().length > 0;
-    const hasWorkspaceId = target.workspaceId != null && target.workspaceId.trim().length > 0;
-    assert(hasTaskId !== hasWorkspaceId, "workspace lifecycle target must have exactly one ID");
-
-    let targetKind: ResolvedWorkspaceLifecycleTarget["targetKind"];
-    let taskId: string | undefined;
-    let taskTitle: string | undefined;
-    let workspaceId: string;
-    if (hasTaskId) {
-      taskId = target.taskId;
-      assert(taskId != null, "workspace lifecycle taskId must be resolved");
-      if (isWorkspaceTurnTaskId(taskId)) {
-        const record = await this.taskHandleStore.getWorkspaceTurn(ownerWorkspaceId, taskId);
-        if (record == null) {
-          return { status: "invalid_scope", action, taskId };
-        }
-        if (
-          !(await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, record.workspaceId))
-        ) {
-          return { status: "invalid_scope", action, taskId, workspaceId: record.workspaceId };
-        }
-        targetKind = "workspace_turn";
-        taskTitle = record.title;
-        workspaceId = record.workspaceId;
-      } else {
-        // Agent task IDs are their workspace IDs. Current config lineage is authoritative while the
-        // workspace exists; persisted report ancestry keeps already-removed tasks idempotent.
-        if (!(await this.isAgentTaskLifecycleTargetInScope(ownerWorkspaceId, taskId))) {
-          return { status: "invalid_scope", action, taskId };
-        }
-        targetKind = "agent_task";
-        workspaceId = taskId;
-      }
-    } else {
-      assert(target.workspaceId != null, "workspace lifecycle workspaceId must be resolved");
-      workspaceId = target.workspaceId;
-      if (await this.taskHandleStore.isWorkspaceOwnedBy(ownerWorkspaceId, workspaceId)) {
-        targetKind = "workspace_turn";
-      } else {
-        if (!(await this.isAgentTaskLifecycleTargetInScope(ownerWorkspaceId, workspaceId))) {
-          return {
-            status: "invalid_scope",
-            action,
-            workspaceId,
-          };
-        }
-        targetKind = "agent_task";
-      }
-    }
-
-    const metadata = await this.findWorkspaceLifecycleMetadata(workspaceId);
-    return {
-      action,
-      targetKind,
-      ...(taskId != null ? { taskId } : {}),
-      ...(taskTitle != null ? { taskTitle } : {}),
-      workspaceId,
-      metadata,
-    };
-  }
-
-  private lifecycleTargetFields(resolved: ResolvedWorkspaceLifecycleTarget): {
-    taskId?: string;
-    workspaceId: string;
-    displayName?: string;
-  } {
-    // Match the sidebar label so completed lifecycle tool rows remain understandable after
-    // archive/remove hides the child workspace from the active list.
-    const displayName =
-      coerceNonEmptyString(resolved.metadata?.title) ??
-      coerceNonEmptyString(resolved.metadata?.name) ??
-      coerceNonEmptyString(resolved.taskTitle);
-    return {
-      ...(resolved.taskId != null ? { taskId: resolved.taskId } : {}),
-      workspaceId: resolved.workspaceId,
-      ...(displayName != null ? { displayName } : {}),
-    };
-  }
-
-  private async findWorkspaceLifecycleMetadata(
-    workspaceId: string
-  ): Promise<WorkspaceMetadata | null> {
-    assert(
-      workspaceId.trim().length > 0,
-      "workspace lifecycle metadata lookup requires workspaceId"
-    );
-    try {
-      const allMetadata = await this.config.getAllWorkspaceMetadata();
-      return allMetadata.find((metadata) => metadata.id === workspaceId) ?? null;
-    } catch (error: unknown) {
-      log.debug("Failed to load workspace metadata for workspace lifecycle", {
-        workspaceId,
-        error: getErrorMessage(error),
-      });
-      return null;
-    }
-  }
-
-  private isTranscriptOnlyWorkspaceMetadata(metadata: WorkspaceMetadata): boolean {
-    return "transcriptOnly" in metadata && metadata.transcriptOnly === true;
-  }
-
-  private async handleActiveWorkspaceLifecycleTurns(
-    ownerWorkspaceId: string,
-    resolved: ResolvedWorkspaceLifecycleTarget,
-    interruptActive: boolean
-  ): Promise<WorkspaceLifecycleResult | null> {
-    const activeRecords = (
-      await this.listWorkspaceTurnTasks(ownerWorkspaceId, {
-        statuses: ["queued", "starting", "running"],
-      })
-    ).filter((record) => record.workspaceId === resolved.workspaceId);
-    const activeWorkspaceTurnTaskIds = activeRecords.map((record) => record.handleId);
-
-    if (resolved.targetKind === "agent_task") {
-      const activeTaskIds = this.listActiveDescendantAgentTaskIds(resolved.workspaceId);
-      const taskStatus = resolved.metadata?.taskStatus;
-      if (
-        (taskStatus != null && ACTIVE_AGENT_TASK_STATUSES.has(taskStatus)) ||
-        this.aiService.isStreaming(resolved.workspaceId) ||
-        isActiveWorkspaceTurnTaskStatus(resolved.metadata?.taskExecutionStatus)
-      ) {
-        activeTaskIds.unshift(resolved.workspaceId);
-      }
-
-      const uniqueActiveTaskIds = Array.from(
-        new Set([...activeTaskIds, ...activeWorkspaceTurnTaskIds])
-      );
-      if (uniqueActiveTaskIds.length === 0) {
-        return null;
-      }
-
-      return {
-        status: "active",
-        action: resolved.action,
-        ...this.lifecycleTargetFields(resolved),
-        activeTaskIds: uniqueActiveTaskIds,
-        note: "Stop the sub-agent before removing it.",
-      };
-    }
-
-    if (activeWorkspaceTurnTaskIds.length === 0) {
-      return null;
-    }
-    if (!interruptActive) {
-      return {
-        status: "active",
-        action: resolved.action,
-        ...this.lifecycleTargetFields(resolved),
-        activeTaskIds: activeWorkspaceTurnTaskIds,
-      };
-    }
-
-    for (const activeTaskId of activeWorkspaceTurnTaskIds) {
-      const interruptResult = await this.interruptWorkspaceTurn(ownerWorkspaceId, activeTaskId);
-      if (!interruptResult.success) {
-        return {
-          status: "error",
-          action: resolved.action,
-          ...this.lifecycleTargetFields(resolved),
-          activeTaskIds: activeWorkspaceTurnTaskIds,
-          error: interruptResult.error,
-        };
-      }
-    }
-    return null;
   }
 
   listDescendantAgentTasks(

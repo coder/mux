@@ -762,471 +762,6 @@ describe("TaskService", () => {
     };
   }
 
-  async function createWorkspaceLifecycleHarness(
-    options: { archived?: boolean; archive?: ReturnType<typeof mock> } = {}
-  ) {
-    const config = await createTestConfig(rootDir);
-    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
-    await config.editConfig((cfg) => {
-      const project = cfg.projects.get(projectPath);
-      assert(project, "test project must exist");
-      project.workspaces.push({
-        path: path.join(projectPath, "child"),
-        id: "childworkspace",
-        name: "child",
-        title: "Child workspace",
-        createdAt: new Date().toISOString(),
-        runtimeConfig: { type: "local" },
-        ...(options.archived ? { archivedAt: new Date().toISOString() } : {}),
-      });
-      project.workspaces.push({
-        path: path.join(projectPath, "unowned"),
-        id: "unownedworkspace",
-        name: "unowned",
-        createdAt: new Date().toISOString(),
-        runtimeConfig: { type: "local" },
-      });
-      return cfg;
-    });
-
-    const workspaceMocks = createWorkspaceServiceMocks({ archive: options.archive });
-    const { taskService } = createTaskServiceHarness(config, {
-      workspaceService: workspaceMocks.workspaceService,
-    });
-    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
-      .taskHandleStore;
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_created",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-created",
-      status: "completed",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: true,
-      disposableWorkspace: false,
-      title: "Created child",
-    });
-    return { config, parentId, projectPath, taskService, taskHandleStore, ...workspaceMocks };
-  }
-
-  test("workspace lifecycle archives only parent-owned created workspace turns", async () => {
-    const { parentId, taskService, archive } = await createWorkspaceLifecycleHarness();
-
-    const archived = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      {}
-    );
-
-    expect(archived).toEqual(
-      Ok({
-        status: "archived",
-        action: "archive",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(archive).toHaveBeenCalledWith("childworkspace", undefined);
-
-    const unowned = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "unownedworkspace" },
-      {}
-    );
-
-    expect(unowned).toEqual(
-      Ok({ status: "invalid_scope", action: "archive", workspaceId: "unownedworkspace" })
-    );
-  });
-
-  test("workspace lifecycle treats existing follow-up handles as owned when the workspace was created by the parent", async () => {
-    const { parentId, taskService, taskHandleStore, archive } =
-      await createWorkspaceLifecycleHarness();
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_existing",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-existing",
-      status: "completed",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-      title: "Existing child",
-    });
-
-    const result = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { taskId: "wst_existing" },
-      {}
-    );
-
-    expect(result).toEqual(
-      Ok({
-        status: "archived",
-        action: "archive",
-        taskId: "wst_existing",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(archive).toHaveBeenCalledWith("childworkspace", undefined);
-  });
-
-  test("workspace lifecycle serializes concurrent handles that resolve to the same workspace", async () => {
-    let archiveCallCount = 0;
-    const harnessRefs: { config?: Config; projectPath?: string } = {};
-    const archive = mock(async (): Promise<Result<{ kind: "archived" }>> => {
-      archiveCallCount += 1;
-      await Promise.resolve();
-      const config = harnessRefs.config;
-      const projectPath = harnessRefs.projectPath;
-      assert(config, "harness config must be assigned before archive runs");
-      assert(projectPath, "harness project path must be assigned before archive runs");
-      await config.editConfig((cfg) => {
-        const child = cfg.projects
-          .get(projectPath)
-          ?.workspaces.find((workspace) => workspace.id === "childworkspace");
-        assert(child, "child workspace must exist");
-        child.archivedAt = new Date().toISOString();
-        return cfg;
-      });
-      return Ok({ kind: "archived" });
-    });
-    const harness = await createWorkspaceLifecycleHarness({ archive });
-    harnessRefs.config = harness.config;
-    harnessRefs.projectPath = harness.projectPath;
-    await harness.taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_existing",
-      ownerWorkspaceId: harness.parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-existing",
-      status: "completed",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-      title: "Existing child",
-    });
-
-    const results = await Promise.all([
-      harness.taskService.archiveOwnedWorkspaceTurnWorkspace(
-        harness.parentId,
-        { taskId: "wst_created" },
-        {}
-      ),
-      harness.taskService.archiveOwnedWorkspaceTurnWorkspace(
-        harness.parentId,
-        { taskId: "wst_existing" },
-        {}
-      ),
-    ]);
-
-    expect(results.map((result) => (result.success ? result.data.status : "error")).sort()).toEqual(
-      ["already_archived", "archived"]
-    );
-    expect(archiveCallCount).toBe(1);
-  });
-
-  test("workspace lifecycle rejects existing follow-up handles for workspaces this parent did not create", async () => {
-    const { parentId, taskService, taskHandleStore, archive } =
-      await createWorkspaceLifecycleHarness();
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_foreignexisting",
-      ownerWorkspaceId: parentId,
-      workspaceId: "unownedworkspace",
-      turnId: "turn-foreign-existing",
-      status: "completed",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-      title: "Unowned existing child",
-    });
-
-    const result = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { taskId: "wst_foreignexisting" },
-      {}
-    );
-
-    expect(result).toEqual(
-      Ok({
-        status: "invalid_scope",
-        action: "archive",
-        taskId: "wst_foreignexisting",
-        workspaceId: "unownedworkspace",
-      })
-    );
-    expect(archive).not.toHaveBeenCalled();
-  });
-
-  test("workspace lifecycle gates destructive actions on archived state before active turns", async () => {
-    const { parentId, taskService, taskHandleStore, deleteWorktree, remove } =
-      await createWorkspaceLifecycleHarness();
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_running",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-running",
-      status: "running",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-    });
-
-    const deleteResult = await taskService.deleteOwnedWorkspaceTurnWorktree(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { interruptActive: true }
-    );
-    const removeResult = await taskService.removeOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { interruptActive: true, force: true }
-    );
-
-    expect(deleteResult).toEqual(
-      Ok({
-        status: "requires_archive",
-        action: "delete_worktree",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(removeResult).toEqual(
-      Ok({
-        status: "requires_archive",
-        action: "remove",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(deleteWorktree).not.toHaveBeenCalled();
-    expect(remove).not.toHaveBeenCalled();
-  });
-
-  test("workspace lifecycle returns archive confirmation and treats already archived as idempotent", async () => {
-    const confirmationArchive = mock(
-      (): Promise<Result<{ kind: "confirm-lossy-untracked-files"; paths: string[] }>> =>
-        Promise.resolve(Ok({ kind: "confirm-lossy-untracked-files", paths: ["scratch.txt"] }))
-    );
-    const config = await createTestConfig(rootDir);
-    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
-    await config.editConfig((cfg) => {
-      const project = cfg.projects.get(projectPath);
-      assert(project, "test project must exist");
-      project.workspaces.push({
-        path: path.join(projectPath, "child"),
-        id: "childworkspace",
-        name: "child",
-        createdAt: new Date().toISOString(),
-        runtimeConfig: { type: "local" },
-      });
-      return cfg;
-    });
-    const workspaceMocks = createWorkspaceServiceMocks({ archive: confirmationArchive });
-    const { taskService } = createTaskServiceHarness(config, {
-      workspaceService: workspaceMocks.workspaceService,
-    });
-    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
-      .taskHandleStore;
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_created",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-created",
-      status: "completed",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: true,
-      disposableWorkspace: false,
-    });
-
-    const confirmation = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { acknowledgedUntrackedPaths: ["scratch.txt"] }
-    );
-
-    expect(confirmation).toEqual(
-      Ok({
-        status: "requires_confirmation",
-        action: "archive",
-        workspaceId: "childworkspace",
-        displayName: "child",
-        paths: ["scratch.txt"],
-      })
-    );
-    expect(confirmationArchive).toHaveBeenCalledWith("childworkspace", ["scratch.txt"]);
-
-    const confirmationByTaskId = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { taskId: "wst_created" },
-      { acknowledgedUntrackedPathsByWorkspaceId: { childworkspace: ["task-scratch.txt"] } }
-    );
-
-    expect(confirmationByTaskId).toEqual(
-      Ok({
-        status: "requires_confirmation",
-        action: "archive",
-        taskId: "wst_created",
-        workspaceId: "childworkspace",
-        displayName: "child",
-        paths: ["scratch.txt"],
-      })
-    );
-    expect(confirmationArchive).toHaveBeenCalledWith("childworkspace", ["task-scratch.txt"]);
-
-    await config.editConfig((cfg) => {
-      const child = cfg.projects
-        .get(projectPath)
-        ?.workspaces.find((workspace) => workspace.id === "childworkspace");
-      assert(child, "child workspace must exist");
-      child.archivedAt = new Date().toISOString();
-      return cfg;
-    });
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_running",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-running",
-      status: "running",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-    });
-
-    const alreadyArchived = await taskService.archiveOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { interruptActive: true }
-    );
-
-    expect(alreadyArchived).toEqual(
-      Ok({
-        status: "already_archived",
-        action: "archive",
-        workspaceId: "childworkspace",
-        displayName: "child",
-      })
-    );
-    expect(confirmationArchive).toHaveBeenCalledTimes(2);
-  });
-
-  test("workspace lifecycle requires explicit interruption for active archived workspace turns", async () => {
-    const { parentId, taskService, taskHandleStore, archive, deleteWorktree } =
-      await createWorkspaceLifecycleHarness({ archived: true });
-    await taskHandleStore.upsertWorkspaceTurn({
-      kind: "workspace_turn",
-      handleId: "wst_running",
-      ownerWorkspaceId: parentId,
-      workspaceId: "childworkspace",
-      turnId: "turn-running",
-      status: "running",
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      createdWorkspace: false,
-      disposableWorkspace: false,
-    });
-    (
-      taskService as unknown as {
-        activeWorkspaceTurnHandleByWorkspaceId: Map<
-          string,
-          { handleId: string; ownerWorkspaceId: string }
-        >;
-      }
-    ).activeWorkspaceTurnHandleByWorkspaceId.set("childworkspace", {
-      handleId: "wst_running",
-      ownerWorkspaceId: parentId,
-    });
-
-    const active = await taskService.deleteOwnedWorkspaceTurnWorktree(
-      parentId,
-      { workspaceId: "childworkspace" },
-      {}
-    );
-
-    expect(active).toEqual(
-      Ok({
-        status: "active",
-        action: "delete_worktree",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-        activeTaskIds: ["wst_running"],
-      })
-    );
-    expect(deleteWorktree).not.toHaveBeenCalled();
-
-    const interrupted = await taskService.deleteOwnedWorkspaceTurnWorktree(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { interruptActive: true }
-    );
-
-    expect(interrupted).toEqual(
-      Ok({
-        status: "deleted_worktree",
-        action: "delete_worktree",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(deleteWorktree).toHaveBeenCalledWith("childworkspace");
-    expect(archive).not.toHaveBeenCalled();
-  });
-
-  test("workspace lifecycle removes archived owned workspaces and treats missing metadata as already removed", async () => {
-    const { config, parentId, taskService, remove } = await createWorkspaceLifecycleHarness({
-      archived: true,
-    });
-
-    const removed = await taskService.removeOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { force: true }
-    );
-
-    expect(removed).toEqual(
-      Ok({
-        status: "removed",
-        action: "remove",
-        workspaceId: "childworkspace",
-        displayName: "Child workspace",
-      })
-    );
-    expect(remove).toHaveBeenCalledWith("childworkspace", true);
-
-    await config.editConfig((cfg) => {
-      for (const project of cfg.projects.values()) {
-        project.workspaces = project.workspaces.filter(
-          (workspace) => workspace.id !== "childworkspace"
-        );
-      }
-      return cfg;
-    });
-
-    const alreadyRemoved = await taskService.removeOwnedWorkspaceTurnWorkspace(
-      parentId,
-      { workspaceId: "childworkspace" },
-      { force: true }
-    );
-
-    expect(alreadyRemoved).toEqual(
-      Ok({ status: "already_removed", action: "remove", workspaceId: "childworkspace" })
-    );
-  });
-
   test("createWorkspaceTurn creates a normal workspace and starts a correlated turn", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["childworkspace", "turnhandle"]);
@@ -13056,11 +12591,12 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("interrupted");
   });
 
-  test("removeInactiveDescendantAgentTask removes inactive children without archive", async () => {
+  test("removeInactiveDescendantAgentTask enforces scope, leaf order, and idempotency", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
     const parentWorkspaceId = "parent-remove-child";
     const childTaskId = "child-remove-child";
+    const grandchildTaskId = "grandchild-remove-child";
     await saveWorkspaces(
       config,
       projectPath,
@@ -13070,6 +12606,10 @@ describe("TaskService", () => {
           parentWorkspaceId,
           taskStatus: "reported",
           title: "React lifecycle expert",
+        }),
+        projectWorkspace(projectPath, "grandchild", grandchildTaskId, {
+          parentWorkspaceId: childTaskId,
+          taskStatus: "reported",
         }),
       ],
       testTaskSettings()
@@ -13081,17 +12621,26 @@ describe("TaskService", () => {
     const { workspaceService } = createWorkspaceServiceMocks({ remove });
     const { taskService } = createTaskServiceHarness(config, { workspaceService });
 
-    const result = await taskService.removeInactiveDescendantAgentTask(
-      parentWorkspaceId,
-      childTaskId
-    );
-    expect(result).toMatchObject({ success: true, data: { status: "removed" } });
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, "foreign-child")
+    ).toMatchObject({ success: true, data: { status: "invalid_scope" } });
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
+    ).toMatchObject({
+      success: true,
+      data: { status: "error", descendantTaskIds: [grandchildTaskId] },
+    });
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, grandchildTaskId)
+    ).toMatchObject({ success: true, data: { status: "removed" } });
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
+    ).toMatchObject({ success: true, data: { status: "removed" } });
     expect(await taskService.isDescendantAgentTask(parentWorkspaceId, childTaskId)).toBe(true);
     expect(
       await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
     ).toMatchObject({ success: true, data: { status: "already_removed" } });
-    expect(remove).toHaveBeenCalledWith(childTaskId, true);
-    expect(findWorkspaceInConfig(config, childTaskId)).toBeUndefined();
+    expect(remove.mock.calls.map((call) => call[0])).toEqual([grandchildTaskId, childTaskId]);
     expect(
       await taskService.sendMessageToDescendantAgentTask(
         parentWorkspaceId,
@@ -23266,191 +22815,19 @@ describe("TaskService", () => {
         return Ok(undefined);
       });
       const { aiService } = createAIServiceMocks(config, { isStreaming });
-      const archive = mock(
-        (_workspaceId: string): Promise<Result<{ kind: "archived" }>> =>
-          Promise.resolve(Ok({ kind: "archived" }))
-      );
-      const unarchive = mock(
-        (_workspaceId: string): Promise<Result<void>> => Promise.resolve(Ok(undefined))
-      );
-      const { workspaceService } = createWorkspaceServiceMocks({ archive, unarchive, remove });
+      const { workspaceService } = createWorkspaceServiceMocks({ remove });
       const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
       const internal = taskService as unknown as TaskServiceCleanupInternals;
 
       return {
         config,
         taskService,
-        archive,
-        unarchive,
         remove,
         rootWorkspaceId,
         taskChain,
         internal,
       };
     }
-
-    test("parent lifecycle archives a completed descendant agent workspace", async () => {
-      const { archive, rootWorkspaceId, taskService, taskChain } = await setupReportedTaskChain();
-      const childTaskId = taskChain[1]?.id;
-      expect(childTaskId).toBe("child-333");
-      if (!childTaskId) return;
-
-      const result = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
-        taskId: childTaskId,
-      });
-
-      expect(result).toEqual(
-        Ok({
-          status: "archived",
-          action: "archive",
-          taskId: childTaskId,
-          workspaceId: childTaskId,
-          displayName: "agent_explore_child",
-        })
-      );
-      expect(archive).toHaveBeenCalledWith(childTaskId, undefined);
-    });
-
-    test("parent lifecycle unarchives a completed descendant agent workspace", async () => {
-      const { config, unarchive, rootWorkspaceId, taskService, taskChain } =
-        await setupReportedTaskChain();
-      const childTaskId = taskChain[1]?.id;
-      expect(childTaskId).toBe("child-333");
-      if (!childTaskId) return;
-      await archiveWorkspaceInTestConfig(config, childTaskId);
-
-      const result = await taskService.unarchiveOwnedTaskWorkspace(rootWorkspaceId, {
-        taskId: childTaskId,
-      });
-
-      expect(result).toEqual(
-        Ok({
-          status: "unarchived",
-          action: "unarchive",
-          taskId: childTaskId,
-          workspaceId: childTaskId,
-          displayName: "agent_explore_child",
-        })
-      );
-      expect(unarchive).toHaveBeenCalledWith(childTaskId);
-    });
-
-    test("parent lifecycle accepts descendant workspace IDs and rejects unrelated tasks", async () => {
-      const { archive, rootWorkspaceId, taskService, taskChain } = await setupReportedTaskChain();
-      const childTaskId = taskChain[1]?.id;
-      expect(childTaskId).toBe("child-333");
-      if (!childTaskId) return;
-
-      const byWorkspaceId = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
-        workspaceId: childTaskId,
-      });
-      const unrelated = await taskService.archiveOwnedTaskWorkspace(rootWorkspaceId, {
-        taskId: "unrelated-task",
-      });
-
-      expect(byWorkspaceId).toEqual(
-        Ok({
-          status: "archived",
-          action: "archive",
-          workspaceId: childTaskId,
-          displayName: "agent_explore_child",
-        })
-      );
-      expect(unrelated).toEqual(
-        Ok({ status: "invalid_scope", action: "archive", taskId: "unrelated-task" })
-      );
-      expect(archive).toHaveBeenCalledTimes(1);
-    });
-
-    test("parent lifecycle refuses to archive an active descendant agent workspace", async () => {
-      const activeTaskId = "active-222";
-      const { archive, rootWorkspaceId, taskService } = await setupReportedTaskChain({
-        taskChain: [
-          {
-            id: activeTaskId,
-            directoryName: "active-task",
-            name: "agent_exec_active",
-            agentType: "exec",
-            taskStatus: "running",
-          },
-        ],
-      });
-
-      const result = await taskService.archiveOwnedTaskWorkspace(
-        rootWorkspaceId,
-        { taskId: activeTaskId },
-        { interruptActive: true }
-      );
-
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect(result.data).toMatchObject({
-        status: "active",
-        action: "archive",
-        taskId: activeTaskId,
-        workspaceId: activeTaskId,
-        activeTaskIds: [activeTaskId],
-      });
-      expect(result.data.note).toContain("Stop the sub-agent");
-      expect(archive).not.toHaveBeenCalled();
-    });
-
-    test("parent lifecycle removes nested agent workspaces deepest-first", async () => {
-      const { config, remove, rootWorkspaceId, taskService, taskChain } =
-        await setupReportedTaskChain();
-      const parentTaskId = taskChain[0]?.id;
-      const childTaskId = taskChain[1]?.id;
-      expect(parentTaskId).toBe("parent-222");
-      expect(childTaskId).toBe("child-333");
-      if (!parentTaskId || !childTaskId) return;
-
-      await archiveWorkspaceInTestConfig(config, parentTaskId);
-      const blocked = await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, {
-        taskId: parentTaskId,
-      });
-
-      expect(blocked).toEqual(
-        Ok({
-          status: "error",
-          action: "remove",
-          taskId: parentTaskId,
-          workspaceId: parentTaskId,
-          displayName: "agent_exec_parent",
-          descendantTaskIds: [childTaskId],
-          error:
-            "Cannot remove a workspace while descendant sub-agent workspaces remain. Remove descendants deepest-first.",
-        })
-      );
-      expect(remove).not.toHaveBeenCalled();
-
-      await archiveWorkspaceInTestConfig(config, childTaskId);
-      expect(
-        await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, { taskId: childTaskId })
-      ).toEqual(
-        Ok({
-          status: "removed",
-          action: "remove",
-          taskId: childTaskId,
-          workspaceId: childTaskId,
-          displayName: "agent_explore_child",
-        })
-      );
-      expect(
-        await taskService.removeOwnedTaskWorkspace(rootWorkspaceId, { taskId: parentTaskId })
-      ).toEqual(
-        Ok({
-          status: "removed",
-          action: "remove",
-          taskId: parentTaskId,
-          workspaceId: parentTaskId,
-          displayName: "agent_exec_parent",
-        })
-      );
-      expect(remove.mock.calls).toEqual([
-        [childTaskId, false],
-        [parentTaskId, false],
-      ]);
-    });
 
     test("cleanup is blocked when toggle is on and no ancestor is archived", async () => {
       const { config, remove, taskChain, internal } = await setupReportedTaskChain();
