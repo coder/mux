@@ -189,6 +189,7 @@ export interface WorkspaceState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  activeWorkflowRunIds?: string[];
   activeWorkflowRunCount: number;
   activeBashMonitorCount: number;
   lastAbortReason: StreamAbortReasonSnapshot | null;
@@ -249,6 +250,7 @@ export interface WorkspaceSidebarState {
   loadedSkills: LoadedSkill[];
   skillLoadErrors: SkillLoadError[];
   agentStatus: { emoji: string; message: string; url?: string } | undefined;
+  activeWorkflowRunIds?: string[];
   activeWorkflowRunCount: number;
   activeBashMonitorCount: number;
   terminalActiveCount: number;
@@ -525,6 +527,21 @@ function collapsePinnedTodoOnStreamStop(workspaceId: string, hasTodos: boolean):
   }
 
   updatePersistedState(getPinnedTodoExpandedKey(workspaceId), false);
+}
+
+const EMPTY_ACTIVE_WORKFLOW_RUN_IDS: string[] = [];
+
+function areStringArraysEqual(
+  left: readonly string[] | undefined,
+  right: readonly string[] | undefined
+): boolean {
+  const leftValues = left ?? EMPTY_ACTIVE_WORKFLOW_RUN_IDS;
+  const rightValues = right ?? EMPTY_ACTIVE_WORKFLOW_RUN_IDS;
+  return (
+    leftValues === rightValues ||
+    (leftValues.length === rightValues.length &&
+      leftValues.every((value, index) => value === rightValues[index]))
+  );
 }
 
 function areAgentStatusesEqual(
@@ -2129,6 +2146,7 @@ export class WorkspaceStore {
           (activity?.hasTodos === false ? undefined : deriveTodoStatus(aggregatorTodos)));
       const agentStatus =
         displayStatus ?? liveTodoStatus ?? fallbackAgentStatus ?? persistedTodoStatus;
+      const activeWorkflowRunIds = activity?.activeWorkflowRunIds ?? EMPTY_ACTIVE_WORKFLOW_RUN_IDS;
       const activeWorkflowRunCount = activity?.activeWorkflowRunCount ?? 0;
       const activeBashMonitorCount = activity?.activeBashMonitorCount ?? 0;
       const goal = activity?.goal ?? null;
@@ -2155,6 +2173,7 @@ export class WorkspaceStore {
         skillLoadErrors: aggregator.getSkillLoadErrors(),
         lastAbortReason: aggregator.getLastAbortReason(),
         agentStatus,
+        activeWorkflowRunIds,
         activeWorkflowRunCount,
         activeBashMonitorCount,
         pendingStreamStartTime,
@@ -2263,6 +2282,7 @@ export class WorkspaceStore {
       cached.loadedSkills === fullState.loadedSkills &&
       cached.skillLoadErrors === fullState.skillLoadErrors &&
       cached.agentStatus === fullState.agentStatus &&
+      cached.activeWorkflowRunIds === fullState.activeWorkflowRunIds &&
       cached.activeWorkflowRunCount === fullState.activeWorkflowRunCount &&
       cached.activeBashMonitorCount === fullState.activeBashMonitorCount &&
       cached.terminalActiveCount === terminalActiveCount &&
@@ -2287,6 +2307,7 @@ export class WorkspaceStore {
       loadedSkills: fullState.loadedSkills,
       skillLoadErrors: fullState.skillLoadErrors,
       agentStatus: fullState.agentStatus,
+      activeWorkflowRunIds: fullState.activeWorkflowRunIds,
       activeWorkflowRunCount: fullState.activeWorkflowRunCount,
       activeBashMonitorCount: fullState.activeBashMonitorCount,
       terminalActiveCount,
@@ -3113,6 +3134,7 @@ export class WorkspaceStore {
       previous?.lastThinkingLevel !== snapshot?.lastThinkingLevel ||
       previous?.recency !== snapshot?.recency ||
       previous?.hasTodos !== snapshot?.hasTodos ||
+      !areStringArraysEqual(previous?.activeWorkflowRunIds, snapshot?.activeWorkflowRunIds) ||
       (previous?.activeWorkflowRunCount ?? 0) !== (snapshot?.activeWorkflowRunCount ?? 0) ||
       (previous?.activeBashMonitorCount ?? 0) !== (snapshot?.activeBashMonitorCount ?? 0) ||
       !areAgentStatusesEqual(previous?.displayStatus, snapshot?.displayStatus) ||

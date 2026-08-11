@@ -178,6 +178,7 @@ interface WorkspaceAttentionSignal {
   isWorking: boolean;
   awaitingUserQuestion: boolean;
   hasSystemError: boolean;
+  activeWorkflowRunIdsKey: string;
 }
 
 function getWorkspaceAttentionSignal(
@@ -197,6 +198,7 @@ function getWorkspaceAttentionSignal(
     return {
       isWorking,
       awaitingUserQuestion: sidebarState.awaitingUserQuestion,
+      activeWorkflowRunIdsKey: (sidebarState.activeWorkflowRunIds ?? []).join("\u0000"),
       hasSystemError: sidebarState.lastAbortReason?.reason === "system",
     };
   } catch {
@@ -213,6 +215,7 @@ function didWorkspaceAttentionSignalChange(
     return true;
   }
   return (
+    prev.activeWorkflowRunIdsKey !== next.activeWorkflowRunIdsKey ||
     prev.isWorking !== next.isWorking ||
     prev.awaitingUserQuestion !== next.awaitingUserQuestion ||
     prev.hasSystemError !== next.hasSystemError
@@ -1711,11 +1714,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
     return signal?.isWorking === true;
   };
-  const getActiveWorkflowRunCount = (workspaceId: string): number => {
+  const isWorkflowRunActive = (workspaceId: string, runId: string): boolean => {
     try {
-      return workspaceStore.getWorkspaceSidebarState(workspaceId).activeWorkflowRunCount;
+      return (
+        workspaceStore
+          .getWorkspaceSidebarState(workspaceId)
+          .activeWorkflowRunIds?.includes(runId) === true
+      );
     } catch {
-      return 0;
+      return false;
     }
   };
   const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
@@ -2890,7 +2897,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     continue;
                                   }
                                   if (
-                                    getActiveWorkflowRunCount(retainedGroup.parentWorkspaceId) === 0
+                                    !isWorkflowRunActive(
+                                      retainedGroup.parentWorkspaceId,
+                                      retainedGroup.id
+                                    )
                                   ) {
                                     retainedWorkflowTaskGroupsRef.current.delete(storageKey);
                                     sessionActiveTaskGroupKeysRef.current.delete(storageKey);

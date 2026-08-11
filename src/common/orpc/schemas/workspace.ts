@@ -343,6 +343,10 @@ export const WorkspaceActivitySnapshotSchema = z.object({
   isIdleCompaction: z.boolean().optional().meta({
     description: "Whether the current streaming activity is an idle (background) compaction",
   }),
+  activeWorkflowRunIds: z.array(z.string().min(1)).optional().meta({
+    description:
+      "IDs of top-level workflow runs in this workspace that are pending, running, or backgrounded.",
+  }),
   activeWorkflowRunCount: z.number().int().nonnegative().optional().meta({
     description:
       "Number of top-level workflow runs in this workspace that are pending, running, or backgrounded.",

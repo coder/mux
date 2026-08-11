@@ -1637,12 +1637,27 @@ function createDefaultActivitySnapshot(): WorkspaceActivitySnapshot {
   };
 }
 
-// Merge an optional "active X count" field into an activity snapshot: a positive count
-// sets the field, zero deletes it so the snapshot stays sparse (absent === none). The
-// active-workflow-run and armed-bash-monitor counts share this identical shape.
+function mergeActiveWorkflowRuns(
+  snapshot: WorkspaceActivitySnapshot | null,
+  activeRunIds: ReadonlySet<string>
+): WorkspaceActivitySnapshot {
+  const merged: WorkspaceActivitySnapshot = { ...(snapshot ?? createDefaultActivitySnapshot()) };
+  const sortedRunIds = [...activeRunIds].sort();
+  if (sortedRunIds.length > 0) {
+    merged.activeWorkflowRunIds = sortedRunIds;
+    merged.activeWorkflowRunCount = sortedRunIds.length;
+  } else {
+    delete merged.activeWorkflowRunIds;
+    delete merged.activeWorkflowRunCount;
+  }
+  return merged;
+}
+
+// Merge the optional armed-bash-monitor count into an activity snapshot: a positive count sets
+// the field, while zero deletes it so the snapshot stays sparse (absent === none).
 function mergeActiveCount(
   snapshot: WorkspaceActivitySnapshot | null,
-  key: "activeWorkflowRunCount" | "activeBashMonitorCount",
+  key: "activeBashMonitorCount",
   count: number
 ): WorkspaceActivitySnapshot {
   assert(count >= 0, `${key} must be non-negative`);
@@ -3061,10 +3076,6 @@ export class WorkspaceService extends EventEmitter {
     }
   }
 
-  private async getActiveWorkflowRunCount(workspaceId: string): Promise<number> {
-    return (await this.getActiveWorkflowRunIds(workspaceId)).size;
-  }
-
   private async updateActiveWorkflowRunCount(event: {
     workspaceId: string;
     runId: string;
@@ -3079,7 +3090,7 @@ export class WorkspaceService extends EventEmitter {
     return activeRunIds.size;
   }
 
-  private mergeCachedActiveWorkflowRunCount(
+  private mergeCachedActiveWorkflowRuns(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot | null
   ): WorkspaceActivitySnapshot | null {
@@ -3090,7 +3101,7 @@ export class WorkspaceService extends EventEmitter {
     if (snapshot == null && activeRunIds.size === 0) {
       return null;
     }
-    return mergeActiveCount(snapshot, "activeWorkflowRunCount", activeRunIds.size);
+    return mergeActiveWorkflowRuns(snapshot, activeRunIds);
   }
 
   private getActiveBashMonitorCount(workspaceId: string): number {
@@ -3113,15 +3124,11 @@ export class WorkspaceService extends EventEmitter {
     return mergeActiveCount(snapshot, "activeBashMonitorCount", count);
   }
 
-  private async mergeCurrentActiveWorkflowRunCount(
+  private async mergeCurrentActiveWorkflowRuns(
     workspaceId: string,
     snapshot: WorkspaceActivitySnapshot
   ): Promise<WorkspaceActivitySnapshot> {
-    return mergeActiveCount(
-      snapshot,
-      "activeWorkflowRunCount",
-      await this.getActiveWorkflowRunCount(workspaceId)
-    );
+    return mergeActiveWorkflowRuns(snapshot, await this.getActiveWorkflowRunIds(workspaceId));
   }
 
   public async emitWorkflowRunActivity(event: {
@@ -3151,7 +3158,7 @@ export class WorkspaceService extends EventEmitter {
       workspaceId,
       activity: this.mergeCurrentActiveBashMonitorCount(
         workspaceId,
-        this.mergeCachedActiveWorkflowRunCount(
+        this.mergeCachedActiveWorkflowRuns(
           workspaceId,
           this.overlayPendingGoal(workspaceId, snapshot)
         )
@@ -3196,7 +3203,7 @@ export class WorkspaceService extends EventEmitter {
     try {
       this.emitWorkspaceActivity(
         workspaceId,
-        await this.mergeCurrentActiveWorkflowRunCount(workspaceId, await update())
+        await this.mergeCurrentActiveWorkflowRuns(workspaceId, await update())
       );
     } catch (error) {
       log.error(`Failed to ${description}`, { workspaceId, error });
@@ -3286,7 +3293,7 @@ export class WorkspaceService extends EventEmitter {
       const shouldTagIdleCompaction = !streaming && this.idleCompactingWorkspaces.has(workspaceId);
       this.emitWorkspaceActivity(
         workspaceId,
-        await this.mergeCurrentActiveWorkflowRunCount(workspaceId, {
+        await this.mergeCurrentActiveWorkflowRuns(workspaceId, {
           ...snapshot,
           ...(shouldTagCompaction ? { isCompaction: true } : {}),
           ...(shouldTagIdleCompaction ? { isIdleCompaction: true } : {}),
@@ -9964,7 +9971,8 @@ export class WorkspaceService extends EventEmitter {
             // "watching" state survives reconnect. The seen-set is used instead of the
             // dedupe map because dedupe entries are dropped around in-flight/failed emits.
             const hadBashMonitorActivityCache = this.bashMonitorSeenWorkspaces.has(workspaceId);
-            const activeWorkflowRunCount = await this.getActiveWorkflowRunCount(workspaceId);
+            const activeWorkflowRunIds = await this.getActiveWorkflowRunIds(workspaceId);
+            const activeWorkflowRunCount = activeWorkflowRunIds.size;
             const activeBashMonitorCount = this.getActiveBashMonitorCount(workspaceId);
             if (activeBashMonitorCount > 0) {
               // A list-delivered non-zero count is a renderer-visible observation too:
@@ -9991,10 +9999,9 @@ export class WorkspaceService extends EventEmitter {
               // during a mid-stream goal set would seed the UI with the stale
               // goal until the next live emit or goal read.
               mergeActiveCount(
-                mergeActiveCount(
+                mergeActiveWorkflowRuns(
                   this.overlayPendingGoal(workspaceId, snapshot),
-                  "activeWorkflowRunCount",
-                  activeWorkflowRunCount
+                  activeWorkflowRunIds
                 ),
                 "activeBashMonitorCount",
                 activeBashMonitorCount

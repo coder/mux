@@ -2916,6 +2916,7 @@ describe("WorkspaceStore", () => {
         streaming: true,
         lastModel: "claude-sonnet-4",
         lastThinkingLevel: "high",
+        activeWorkflowRunIds: ["wfr_activity"],
         activeWorkflowRunCount: 1,
         todoStatus: { emoji: "🔄", message: "Run checks" },
         hasTodos: true,
@@ -2941,10 +2942,54 @@ describe("WorkspaceStore", () => {
       expect(state.canInterrupt).toBe(true);
       expect(state.currentModel).toBe(activitySnapshot.lastModel);
       expect(state.currentThinkingLevel).toBe(activitySnapshot.lastThinkingLevel);
+      expect(state.activeWorkflowRunIds).toEqual(["wfr_activity"]);
+      expect(store.getWorkspaceSidebarState(workspaceId).activeWorkflowRunIds).toEqual([
+        "wfr_activity",
+      ]);
       expect(state.activeWorkflowRunCount).toBe(1);
       expect(store.getWorkspaceSidebarState(workspaceId).activeWorkflowRunCount).toBe(1);
       expect(state.agentStatus).toEqual(activitySnapshot.todoStatus ?? undefined);
       expect(state.recencyTimestamp).toBe(activitySnapshot.recency);
+    });
+
+    it("publishes workflow run ID changes when the aggregate count stays constant", () => {
+      const workspaceId = "workflow-id-change";
+      createAndAddWorkspace(store, workspaceId, { createdAt: new Date(0).toISOString() }, false);
+      const storeAccess = store as unknown as {
+        applyWorkspaceActivitySnapshot: (
+          workspaceId: string,
+          snapshot: WorkspaceActivitySnapshot | null
+        ) => void;
+      };
+      const baseSnapshot: WorkspaceActivitySnapshot = {
+        recency: 1,
+        streaming: true,
+        lastModel: "claude-sonnet-4",
+        lastThinkingLevel: null,
+        activeWorkflowRunCount: 1,
+      };
+      storeAccess.applyWorkspaceActivitySnapshot(workspaceId, {
+        ...baseSnapshot,
+        activeWorkflowRunIds: ["wfr_alpha"],
+      });
+
+      let updateCount = 0;
+      const unsubscribe = store.subscribeKey(workspaceId, () => {
+        updateCount += 1;
+      });
+      try {
+        storeAccess.applyWorkspaceActivitySnapshot(workspaceId, {
+          ...baseSnapshot,
+          activeWorkflowRunIds: ["wfr_beta"],
+        });
+
+        expect(updateCount).toBe(1);
+        expect(store.getWorkspaceSidebarState(workspaceId).activeWorkflowRunIds).toEqual([
+          "wfr_beta",
+        ]);
+      } finally {
+        unsubscribe();
+      }
     });
 
     it("keeps activity snapshots authoritative for non-active stream state", async () => {

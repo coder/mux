@@ -2932,6 +2932,9 @@ describe("WorkspaceService workflow activity", () => {
         now: "2026-06-17T00:00:01.000Z",
       });
 
+      expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunIds).toEqual(
+        ["wfr_active"]
+      );
       expect((await workspaceService.getActivityList())[workspaceId]?.activeWorkflowRunCount).toBe(
         1
       );
@@ -2950,6 +2953,7 @@ describe("WorkspaceService workflow activity", () => {
         runId: "wfr_active",
         status: "completed",
       });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunIds).toBeUndefined();
       expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBeUndefined();
 
       const clearedActivityList = await workspaceService.getActivityList();
@@ -2961,6 +2965,7 @@ describe("WorkspaceService workflow activity", () => {
         runId: "wfr_next",
         status: "running",
       });
+      expect(activityEvents.at(-1)?.activity?.activeWorkflowRunIds).toEqual(["wfr_next"]);
       expect(activityEvents.at(-1)?.activity?.activeWorkflowRunCount).toBe(1);
       await workspaceService.updateAgentStatus(workspaceId, {
         emoji: "🔄",

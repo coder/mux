@@ -158,7 +158,9 @@ let archivePopoverShowErrorMock = mock(
   (_workspaceId: string, _error: string, _anchor?: { top: number; left: number }) => undefined
 );
 
-let activeWorkflowRunCountByWorkspaceId = new Map<string, number>();
+let interruptibleWorkspaceIds = new Set<string>();
+let workspaceStoreSubscriptions = new Map<string, () => void>();
+let activeWorkflowRunIdsByWorkspaceId = new Map<string, string[]>();
 
 function setupProjectSidebarDom(projectPath = "/projects/demo-project") {
   cleanupDom = installDom();
@@ -168,7 +170,9 @@ function setupProjectSidebarDom(projectPath = "/projects/demo-project") {
   projectContextValue = createProjectContextValue({
     userProjects: new Map([[projectPath, { workspaces: [] }]]),
   });
-  activeWorkflowRunCountByWorkspaceId = new Map();
+  interruptibleWorkspaceIds = new Set();
+  workspaceStoreSubscriptions = new Map();
+  activeWorkflowRunIdsByWorkspaceId = new Map();
   installProjectSidebarTestDoubles();
 }
 
@@ -551,14 +555,20 @@ function installProjectSidebarTestDoubles() {
       ({
         getWorkspaceMetadata: () => undefined,
         getWorkspaceSidebarState: (workspaceId: string) => ({
-          canInterrupt: false,
+          canInterrupt: interruptibleWorkspaceIds.has(workspaceId),
           isStarting: false,
           awaitingUserQuestion: false,
           lastAbortReason: null,
-          activeWorkflowRunCount: activeWorkflowRunCountByWorkspaceId.get(workspaceId) ?? 0,
+          activeWorkflowRunIds: activeWorkflowRunIdsByWorkspaceId.get(workspaceId) ?? [],
+          activeWorkflowRunCount: activeWorkflowRunIdsByWorkspaceId.get(workspaceId)?.length ?? 0,
         }),
         getAggregator: () => undefined,
-        subscribeKey: () => () => undefined,
+        subscribeKey: (workspaceId: string, callback: () => void) => {
+          workspaceStoreSubscriptions.set(workspaceId, callback);
+          return () => {
+            workspaceStoreSubscriptions.delete(workspaceId);
+          };
+        },
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
 
@@ -1684,7 +1694,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
         workspaceRecency: { parent: Date.now(), "step-1": Date.now() },
       }) as const;
 
-    activeWorkflowRunCountByWorkspaceId.set("parent", 1);
+    interruptibleWorkspaceIds.add("parent");
+    activeWorkflowRunIdsByWorkspaceId.set("parent", ["wfr_alpha", "wfr_beta"]);
     const view = render(<ProjectSidebar {...renderProps(step("running"))} />);
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
 
@@ -1694,8 +1705,13 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.getByTestId("task-group-wfr_alpha")).toBeTruthy();
     expect(view.queryByTestId(agentItemTestId("step-1"))).toBeNull();
 
-    activeWorkflowRunCountByWorkspaceId.set("parent", 0);
-    view.rerender(<ProjectSidebar {...renderProps()} />);
+    // Run alpha finishes while run beta and the parent stream remain active. The exact run-id
+    // subscription must prune only alpha even though both aggregate `isWorking` and the run count
+    // remain unchanged.
+    activeWorkflowRunIdsByWorkspaceId.set("parent", ["wfr_beta"]);
+    act(() => {
+      workspaceStoreSubscriptions.get("parent")?.();
+    });
     expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
   });
 
