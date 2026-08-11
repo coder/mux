@@ -6315,6 +6315,14 @@ export class TaskService {
     );
   }
 
+  private persistentChildWorkspaceTurnAttentionGenerationId(
+    record: WorkspaceTurnTaskHandleRecord
+  ): string {
+    // A handle can self-heal from an error into a corrected completion. Include the exact terminal
+    // outcome version so an in-flight stale drain cannot transition the replacement notification.
+    return `${record.handleId}:${record.status}:${record.updatedAt}`;
+  }
+
   private async deletePersistentChildWorkspaceTurnAttention(
     record: WorkspaceTurnTaskHandleRecord
   ): Promise<void> {
@@ -6328,7 +6336,11 @@ export class TaskService {
     }
     await this.terminalAttentionStore.delete(
       directParentWorkspaceId,
-      TerminalAttentionStore.notificationId("agent_task", record.workspaceId, record.handleId)
+      TerminalAttentionStore.notificationId(
+        "agent_task",
+        record.workspaceId,
+        this.persistentChildWorkspaceTurnAttentionGenerationId(record)
+      )
     );
   }
 
@@ -6455,7 +6467,7 @@ export class TaskService {
       ownerWorkspaceId: directParentWorkspaceId,
       sourceKind: "agent_task",
       sourceId: record.workspaceId,
-      generationId: record.handleId,
+      generationId: this.persistentChildWorkspaceTurnAttentionGenerationId(record),
       terminalOutcome: terminalAttentionOutcome(record.status),
     });
     await markDirectParentResultDelivered();

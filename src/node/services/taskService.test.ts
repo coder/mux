@@ -1911,11 +1911,16 @@ describe("TaskService", () => {
       expect.objectContaining({ agentInitiated: true })
     );
 
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const terminalRecord = await taskHandleStore.getWorkspaceTurn(parentId, created.data.taskId);
+    assert(terminalRecord, "terminal continuation record must exist");
+    const attentionGenerationId = `${terminalRecord.handleId}:${terminalRecord.status}:${terminalRecord.updatedAt}`;
     const attentionStore = new TerminalAttentionStore(config);
     expect(
       await attentionStore.get(
         parentId,
-        TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, created.data.taskId)
+        TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, attentionGenerationId)
       )
     ).toMatchObject({ status: "delivered" });
     expect(
@@ -1924,10 +1929,6 @@ describe("TaskService", () => {
         TerminalAttentionStore.notificationId("workspace_turn", created.data.taskId)
       )
     ).toMatchObject({ status: "superseded" });
-    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
-      .taskHandleStore;
-    const terminalRecord = await taskHandleStore.getWorkspaceTurn(parentId, created.data.taskId);
-    assert(terminalRecord, "terminal continuation record must exist");
     const recordWithoutDeliveryMarker = { ...terminalRecord };
     delete recordWithoutDeliveryMarker.directParentResultDeliveredAt;
     await taskHandleStore.upsertWorkspaceTurn(recordWithoutDeliveryMarker);
@@ -4928,7 +4929,7 @@ describe("TaskService", () => {
       ownerWorkspaceId: parentId,
       sourceKind: "agent_task",
       sourceId: "childworkspace",
-      generationId: "wst_handle",
+      generationId: "wst_handle:error:2026-06-19T00:00:01.000Z",
       createdAt: "2026-06-19T00:00:01.750Z",
     });
     assert(staleAttention, "stale direct-parent attention must exist");
@@ -4954,14 +4955,15 @@ describe("TaskService", () => {
     expect(deliveredSnapshot?.directParentResultDeliveredAt).not.toBe("2026-06-19T00:00:01.750Z");
     const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
     expect(JSON.stringify(parentHistory)).toContain("Self-healed final text");
+    assert(deliveredSnapshot, "repaired terminal record must exist");
+    const correctedGenerationId = `${deliveredSnapshot.handleId}:${deliveredSnapshot.status}:${deliveredSnapshot.updatedAt}`;
     expect(
-      (
-        await terminalAttentionStore.get(
-          parentId,
-          TerminalAttentionStore.notificationId("agent_task", "childworkspace", "wst_handle")
-        )
-      )?.createdAt
-    ).not.toBe("2026-06-19T00:00:01.750Z");
+      await terminalAttentionStore.get(
+        parentId,
+        TerminalAttentionStore.notificationId("agent_task", "childworkspace", correctedGenerationId)
+      )
+    ).not.toBeNull();
+    expect(await terminalAttentionStore.get(parentId, staleAttention.id)).toBeNull();
     expect(snapshot?.error).toBeUndefined();
   });
 
