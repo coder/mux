@@ -1330,6 +1330,11 @@ export function ProvidersSection() {
       });
     } else if (field === "apiKeyFile") {
       updateOptimistically(provider, { apiKeyFile: editValue || undefined });
+    } else if (field === "deploymentUrl") {
+      // The Coder login handler reads config.coder.deploymentUrl; without this
+      // optimistic update, clicking Login right after saving would use the
+      // previous URL until the async provider refresh lands.
+      updateOptimistically(provider, { deploymentUrl: editValue || undefined });
     }
 
     setEditingField(null);
@@ -1358,6 +1363,10 @@ export function ProvidersSection() {
         });
       } else if (field === "apiKeyFile") {
         updateOptimistically(provider, { apiKeyFile: undefined });
+      } else if (field === "deploymentUrl") {
+        // Keep the login handler's view (config.coder.deploymentUrl) in sync;
+        // see handleSaveEdit.
+        updateOptimistically(provider, { deploymentUrl: undefined });
       }
 
       // Save in background

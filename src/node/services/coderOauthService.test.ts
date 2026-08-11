@@ -626,11 +626,11 @@ describe("CoderOauthService", () => {
         authorize.searchParams.get("code_challenge")!
       );
 
-      // Normalized deployment URL + full auth blob persisted.
-      const urlCall = deps.setConfigValueCalls.find((c) => c.keyPath[0] === "deploymentUrl");
-      expect(urlCall?.value).toBe(DEPLOYMENT_URL);
-      const persistedAuth = (deps.providersConfig.coder as Record<string, unknown>)
-        .coderOauth as CoderOauthAuth;
+      // Normalized deployment URL + full auth blob persisted (atomically, at
+      // exchange time — flow start writes nothing).
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.deploymentUrl).toBe(DEPLOYMENT_URL);
+      const persistedAuth = coderSection.coderOauth as CoderOauthAuth;
       expect(persistedAuth.access).toBe("at_login");
       expect(persistedAuth.refresh).toBe("rt_login");
       expect(persistedAuth.sessionId).toBeTruthy();
@@ -782,9 +782,10 @@ describe("CoderOauthService", () => {
 
       expect(requestedHostCalls).toBe(0);
       expect(new URL(result.data.authorizeUrl).origin).toBe(FORCED_URL);
-      // The effective (forced) URL is what gets persisted for issuer binding.
+      // Nothing persisted at flow start: the (forced) URL is committed
+      // atomically with the auth blob only when the flow completes.
       const urlCall = deps.setConfigValueCalls.find((c) => c.keyPath[0] === "deploymentUrl");
-      expect(urlCall?.value).toBe(FORCED_URL);
+      expect(urlCall).toBeUndefined();
 
       await service.cancelDesktopFlow(result.data.flowId);
     });
@@ -856,8 +857,9 @@ describe("CoderOauthService", () => {
           return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
-          // Deployment B's flow start persists its URL while A's exchange
-          // round-trip is in flight.
+          // A login to deployment B completes while A's exchange round-trip is
+          // in flight, committing B's URL.
+          deps.providersConfig.coder ??= {};
           (deps.providersConfig.coder as Record<string, unknown>).deploymentUrl = OTHER_URL;
           return jsonResponse({
             access_token: "at_slow_a",

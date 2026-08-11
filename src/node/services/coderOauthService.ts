@@ -249,17 +249,10 @@ export class CoderOauthService {
     }
     const endpoints = endpointsResult.data;
 
-    // Persist the (normalized) deployment URL so the model factory and future
-    // logins agree on the deployment this provider points at.
-    const persistUrlResult = await this.providerService.setConfigValue(
-      "coder",
-      ["deploymentUrl"],
-      deploymentUrl
-    );
-    if (!persistUrlResult.success) {
-      return Err(persistUrlResult.error);
-    }
-
+    // The deployment URL is intentionally NOT persisted here: flow start races
+    // other flows/logins, and an abandoned flow's early URL write could strand
+    // a completed login with a mismatched issuer. The exchange commits the URL
+    // atomically with the auth blob when this flow actually completes.
     const flowId = randomBase64Url();
     const codeVerifier = randomBase64Url();
     const codeChallenge = sha256Base64Url(codeVerifier);
