@@ -153,17 +153,49 @@ async function mockUpdateConfigValue(
   return Ok({ applied: true });
 }
 
+/**
+ * Mirrors ProviderService.updateProviderSection: applies the section update to
+ * the in-memory config and records model-list changes in setModelsCalls so
+ * tests can assert on catalog writes.
+ */
+function mockUpdateProviderSection(
+  deps: MockDeps,
+  provider: string,
+  update: (
+    section: Record<string, unknown> | undefined
+  ) => { value: Record<string, unknown> } | null
+): Promise<Result<{ applied: boolean }, string>> {
+  const configRecord = deps.providersConfig as Record<string, Record<string, unknown> | undefined>;
+  const section = configRecord[provider];
+  const decision = update(section ? { ...section } : undefined);
+  if (!decision) {
+    return Promise.resolve(Ok({ applied: false }));
+  }
+  if (JSON.stringify(section?.models) !== JSON.stringify(decision.value.models)) {
+    deps.setModelsCalls.push({
+      provider,
+      models: (decision.value.models ?? []) as ProviderModelEntry[],
+    });
+  }
+  configRecord[provider] = decision.value;
+  return Promise.resolve(Ok({ applied: true }));
+}
+
 function createMockProviderService(
   deps: MockDeps
-): Pick<ProviderService, "setConfigValue" | "setModels" | "updateConfigValue"> {
+): Pick<
+  ProviderService,
+  "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
+> {
   return {
     setConfigValue: (provider, keyPath, value) =>
       mockSetConfigValue(deps, provider, keyPath, value),
     updateConfigValue: (provider, keyPath, update) =>
       mockUpdateConfigValue(deps, provider, keyPath, update),
-    setModels: (provider: string, models: ProviderModelEntry[]): Result<void, string> => {
+    updateProviderSection: (provider, update) => mockUpdateProviderSection(deps, provider, update),
+    setModels: (provider: string, models: ProviderModelEntry[]): Promise<Result<void, string>> => {
       deps.setModelsCalls.push({ provider, models });
-      return Ok(undefined);
+      return Promise.resolve(Ok(undefined));
     },
   };
 }
@@ -885,7 +917,7 @@ describe("CoderOauthService", () => {
 
       const gatedProviderService: Pick<
         ProviderService,
-        "setConfigValue" | "setModels" | "updateConfigValue"
+        "setConfigValue" | "setModels" | "updateConfigValue" | "updateProviderSection"
       > = {
         setConfigValue: (provider, keyPath, value) =>
           mockSetConfigValue(deps, provider, keyPath, value),
@@ -897,9 +929,11 @@ describe("CoderOauthService", () => {
           }
           return mockUpdateConfigValue(deps, provider, keyPath, update);
         },
+        updateProviderSection: (provider, update) =>
+          mockUpdateProviderSection(deps, provider, update),
         setModels: (provider, models) => {
           deps.setModelsCalls.push({ provider, models });
-          return Ok(undefined);
+          return Promise.resolve(Ok(undefined));
         },
       };
       service = new CoderOauthService(
@@ -1136,10 +1170,8 @@ describe("CoderOauthService", () => {
       expect(revokeBody).not.toBeNull();
       expect(revokeBody!.get("token")).toBe("rt_test");
 
-      const clearCall = deps.setConfigValueCalls.find(
-        (c) => c.provider === "coder" && c.keyPath[0] === "coderOauth" && c.value === undefined
-      );
-      expect(clearCall).toBeDefined();
+      // Tokens and models are cleared in one atomic section write.
+      expect((deps.providersConfig.coder as Record<string, unknown>).coderOauth).toBeUndefined();
       expect(deps.setModelsCalls).toEqual([{ provider: "coder", models: [] }]);
     });
 
@@ -1179,10 +1211,7 @@ describe("CoderOauthService", () => {
       const result = await service.disconnect();
       expect(result.success).toBe(true);
 
-      const clearCall = deps.setConfigValueCalls.find(
-        (c) => c.provider === "coder" && c.keyPath[0] === "coderOauth" && c.value === undefined
-      );
-      expect(clearCall).toBeDefined();
+      expect((deps.providersConfig.coder as Record<string, unknown>).coderOauth).toBeUndefined();
     });
   });
 });

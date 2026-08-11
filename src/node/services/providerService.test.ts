@@ -589,7 +589,7 @@ describe("ProviderService.getConfig", () => {
           },
         ],
       },
-      (config, service) => {
+      async (config, service) => {
         config.saveProvidersConfig({
           "local-vllm": localVllmConfig({ models: ["llama-3", "mistral"] }),
           "another-custom": {
@@ -607,7 +607,7 @@ describe("ProviderService.getConfig", () => {
         expect(service.list()).toContain("local-vllm");
         expect(service.list()).not.toContain("another-custom");
 
-        const result = service.setModels("another-custom", ["other-model"]);
+        const result = await service.setModels("another-custom", ["other-model"]);
         expect(result.success).toBe(false);
         if (!result.success) {
           expect(result.error).toContain("not allowed by policy");
@@ -643,9 +643,9 @@ describe("ProviderService model normalization", () => {
     });
   });
 
-  it("normalizes malformed model entries before persisting", () => {
-    withTempConfig((config, service) => {
-      const result = service.setModels("openai", [
+  it("normalizes malformed model entries before persisting", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.setModels("openai", [
         "  gpt-5  ",
         { id: "custom-model", contextWindowTokens: 100_000 },
         { id: "custom-model", contextWindowTokens: 64_000 },
@@ -666,9 +666,9 @@ describe("ProviderService model normalization", () => {
 });
 
 describe("ProviderService custom provider mutations", () => {
-  it("rejects adding a built-in provider id", () => {
-    withTempConfig((config, service) => {
-      const result = service.addCustomOpenAICompatibleProvider({
+  it("rejects adding a built-in provider id", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.addCustomOpenAICompatibleProvider({
         provider: "openai",
         baseUrl: "https://api.example.com/v1",
       });
@@ -681,9 +681,9 @@ describe("ProviderService custom provider mutations", () => {
     });
   });
 
-  it("rejects invalid custom provider ids with the validation reason", () => {
-    withTempConfig((config, service) => {
-      const result = service.addCustomOpenAICompatibleProvider({
+  it("rejects invalid custom provider ids with the validation reason", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.addCustomOpenAICompatibleProvider({
         provider: "Bad Provider",
         baseUrl: "https://api.example.com/v1",
       });
@@ -697,13 +697,13 @@ describe("ProviderService custom provider mutations", () => {
     });
   });
 
-  it("rejects duplicate custom provider ids", () => {
-    withTempConfig((config, service) => {
+  it("rejects duplicate custom provider ids", async () => {
+    await withTempConfigAsync(async (config, service) => {
       config.saveProvidersConfig({
         "local-vllm": localVllmConfig(),
       });
 
-      const result = service.addCustomOpenAICompatibleProvider({
+      const result = await service.addCustomOpenAICompatibleProvider({
         provider: "local-vllm",
         baseUrl: "https://api.example.com/v1",
       });
@@ -716,9 +716,9 @@ describe("ProviderService custom provider mutations", () => {
   });
 
   for (const baseUrl of ["", "   ", "not a url", "ftp://api.example.com/v1"] as const) {
-    it(`rejects invalid base URL ${JSON.stringify(baseUrl)}`, () => {
-      withTempConfig((config, service) => {
-        const result = service.addCustomOpenAICompatibleProvider({
+    it(`rejects invalid base URL ${JSON.stringify(baseUrl)}`, async () => {
+      await withTempConfigAsync(async (config, service) => {
+        const result = await service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
           baseUrl,
         });
@@ -732,9 +732,9 @@ describe("ProviderService custom provider mutations", () => {
     });
   }
 
-  it("adds a custom OpenAI-compatible provider and returns provider info", () => {
-    withTempConfig((config, service) => {
-      const result = service.addCustomOpenAICompatibleProvider({
+  it("adds a custom OpenAI-compatible provider and returns provider info", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      const result = await service.addCustomOpenAICompatibleProvider({
         provider: " local-vllm ",
         displayName: " Local vLLM ",
         baseUrl: " http://localhost:8000/v1 ",
@@ -788,8 +788,8 @@ describe("ProviderService custom provider mutations", () => {
         policy_format_version: "0.1",
         provider_access: [{ id: "openai" }],
       },
-      (config, service) => {
-        const result = service.addCustomOpenAICompatibleProvider({
+      async (config, service) => {
+        const result = await service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
           baseUrl: LOCAL_VLLM_BASE_URL,
         });
@@ -809,8 +809,8 @@ describe("ProviderService custom provider mutations", () => {
         policy_format_version: "0.1",
         provider_access: [{ id: "local-vllm", base_url: "http://policy.local/v1" }],
       },
-      (config, service) => {
-        const result = service.addCustomOpenAICompatibleProvider({
+      async (config, service) => {
+        const result = await service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
           baseUrl: LOCAL_VLLM_BASE_URL,
         });
@@ -830,8 +830,8 @@ describe("ProviderService custom provider mutations", () => {
         policy_format_version: "0.1",
         provider_access: [{ id: "local-vllm", model_access: ["llama-3"] }],
       },
-      (config, service) => {
-        const result = service.addCustomOpenAICompatibleProvider({
+      async (config, service) => {
+        const result = await service.addCustomOpenAICompatibleProvider({
           provider: "local-vllm",
           baseUrl: LOCAL_VLLM_BASE_URL,
           models: ["llama-3", "mixtral"],

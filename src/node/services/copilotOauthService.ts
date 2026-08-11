@@ -223,7 +223,7 @@ export class CopilotOauthService {
                   .map((m) => m.id)
                   .filter((id) => COPILOT_MODEL_PREFIXES.some((prefix) => id.startsWith(prefix)));
                 if (modelIds.length > 0) {
-                  this.providerService.setModels("github-copilot", modelIds);
+                  await this.providerService.setModels("github-copilot", modelIds);
                 }
               }
             }

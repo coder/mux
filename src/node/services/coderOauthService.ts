@@ -155,20 +155,32 @@ export class CoderOauthService {
 
     // Revocation may be slow, and the UI keeps login available while it runs:
     // a re-login can complete in the meantime. Only clear when the stored
-    // credential is still the one this disconnect captured (compare-and-clear
-    // so the check and the write cannot interleave with a concurrent login).
-    const clearResult = await this.clearStoredAuthIfMatches(auth);
+    // credential is still the one this disconnect captured. Tokens and models
+    // are cleared in ONE locked mutation so a racing discovery/login observes
+    // either the connected state or the fully disconnected state, never a mix.
+    this.cachedAuth = null;
+    const clearResult = await this.providerService.updateProviderSection("coder", (section) => {
+      if (auth) {
+        const stored = parseCoderOauthAuth(section?.coderOauth);
+        if (stored && stored.refresh !== auth.refresh) {
+          return null; // A newer login landed while revocation ran; keep it.
+        }
+      }
+      const next = { ...(section ?? {}) };
+      delete next.coderOauth;
+      // Models were fetched from the deployment's AI Bridge at login time; they
+      // are meaningless without credentials and are refetched on the next login.
+      next.models = [];
+      return { value: next };
+    });
+    this.cachedAuth = null;
     if (!clearResult.success) {
       return Err(clearResult.error);
     }
     if (!clearResult.data.applied) {
       log.debug("[Coder OAuth] Disconnect raced a newer login; keeping the new credentials");
-      return Ok(undefined);
     }
-
-    // Models were fetched from the deployment's AI Bridge at login time; they
-    // are meaningless without credentials and are refetched on the next login.
-    return this.providerService.setModels("coder", []);
+    return Ok(undefined);
   }
 
   /**
@@ -899,27 +911,32 @@ export class CoderOauthService {
       }
     }
 
-    // Discovery races logins/disconnects: the flow resolves before this runs,
-    // so a newer login (or a disconnect) may have replaced or cleared the
-    // stored credential while catalogs were fetched. Only the login whose
-    // tokens are still current may commit the catalog.
-    this.cachedAuth = null;
-    const current = this.readStoredAuth();
-    if (
-      !current ||
-      current.access !== auth.access ||
-      current.deploymentUrl !== auth.deploymentUrl
-    ) {
-      log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
-      return;
-    }
+    // Belt & suspenders: the factory enforces policy per model at creation
+    // time, but don't persist catalog entries a policy already disallows.
+    const allowedModelIds = this.policyService?.isEnforced()
+      ? modelIds.filter((id) => this.policyService?.isModelAllowed("coder", id) ?? true)
+      : modelIds;
 
-    // Always overwrite the persisted catalog — including with an empty list —
-    // so a re-login against a different deployment (whose catalogs may be
-    // empty or unentitled) never keeps offering the previous deployment's models.
-    const setResult = this.providerService.setModels("coder", modelIds);
+    // Discovery races logins/disconnects: the flow resolves before this runs,
+    // so a newer login (or a disconnect) may replace or clear the stored
+    // credential while catalogs are fetched. The credential check and the
+    // catalog write happen in ONE locked mutation, so only the login whose
+    // tokens are still current can commit — a stale discovery can never
+    // repopulate models over a disconnect or a newer deployment's catalog.
+    // The catalog is always overwritten — including with an empty list — so a
+    // re-login against a different deployment (whose catalogs may be empty or
+    // unentitled) never keeps offering the previous deployment's models.
+    const setResult = await this.providerService.updateProviderSection("coder", (section) => {
+      const stored = parseCoderOauthAuth(section?.coderOauth);
+      if (!stored || stored.access !== auth.access || stored.deploymentUrl !== auth.deploymentUrl) {
+        return null;
+      }
+      return { value: { ...(section ?? {}), models: allowedModelIds } };
+    });
     if (!setResult.success) {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);
+    } else if (!setResult.data.applied) {
+      log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
     }
   }
 

@@ -546,9 +546,9 @@ export class ProviderService {
       .filter((modelId) => !allowedModels.includes(modelId));
   }
 
-  public addCustomOpenAICompatibleProvider(
+  public async addCustomOpenAICompatibleProvider(
     input: AddCustomOpenAICompatibleProviderInput
-  ): CustomProviderMutationResult<ProviderConfigInfo> {
+  ): Promise<CustomProviderMutationResult<ProviderConfigInfo>> {
     const provider = input.provider.trim();
     if (isBuiltInProvider(provider)) {
       return {
@@ -574,72 +574,83 @@ export class ProviderService {
     const baseUrl = input.baseUrl.trim();
 
     try {
-      const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
-      if (Object.hasOwn(providersConfig, provider)) {
-        return {
-          success: false,
-          error: {
-            code: "duplicate_provider",
-            message: `Provider ${provider} already exists in providers config.`,
-          },
-        };
+      // Read-modify-write under the cross-process lock so concurrent writers
+      // (other windows, CLI processes) cannot clobber each other's saves.
+      // The callback returns an error result to bail, or null once saved.
+      const lockError = await this.config.withProvidersFileLock(
+        (): CustomProviderMutationResult<ProviderConfigInfo> | null => {
+          const providersConfig = getProviderConfigRecord(this.config.loadProvidersConfig() ?? {});
+          if (Object.hasOwn(providersConfig, provider)) {
+            return {
+              success: false,
+              error: {
+                code: "duplicate_provider",
+                message: `Provider ${provider} already exists in providers config.`,
+              },
+            };
+          }
+
+          if (!baseUrl || !isValidHttpBaseUrl(baseUrl)) {
+            return {
+              success: false,
+              error: {
+                code: "invalid_base_url",
+                message: "Custom OpenAI-compatible providers require an HTTP or HTTPS base URL.",
+              },
+            };
+          }
+
+          if (this.policyService?.isEnforced() && !this.policyService.isProviderAllowed(provider)) {
+            return {
+              success: false,
+              error: this.getPolicyDeniedError(`Provider ${provider} is not allowed by policy.`),
+            };
+          }
+
+          const providerPolicy = this.getProviderPolicy(provider);
+          const persistedBaseUrl = providerPolicy.forcedBaseUrl ?? baseUrl;
+          if (providerPolicy.forcedBaseUrl && baseUrl !== providerPolicy.forcedBaseUrl) {
+            return {
+              success: false,
+              error: this.getPolicyDeniedError(
+                `Provider ${provider} base URL is locked by policy.`,
+                `Expected ${providerPolicy.forcedBaseUrl}.`
+              ),
+            };
+          }
+
+          const normalizedModels = normalizeProviderModelEntries(input.models);
+          const disallowedModels = this.getDisallowedModelsByPolicy(provider, normalizedModels);
+          if (disallowedModels.length > 0) {
+            return {
+              success: false,
+              error: this.getPolicyDeniedError(
+                `One or more models are not allowed by policy: ${disallowedModels.join(", ")}`
+              ),
+            };
+          }
+
+          const displayName = input.displayName?.trim();
+          const apiKey = input.apiKey?.trim();
+          const apiKeyFile = input.apiKeyFile?.trim();
+          const providerConfig: BaseProviderConfig = {
+            providerType: "openai-compatible",
+            baseUrl: persistedBaseUrl,
+            enabled: true,
+            ...(displayName ? { displayName } : {}),
+            ...(apiKey ? { apiKey } : {}),
+            ...(apiKeyFile ? { apiKeyFile } : {}),
+            ...(normalizedModels.length > 0 ? { models: normalizedModels } : {}),
+          };
+
+          providersConfig[provider] = providerConfig;
+          this.config.saveProvidersConfig(providersConfig);
+          return null;
+        }
+      );
+      if (lockError) {
+        return lockError;
       }
-
-      if (!baseUrl || !isValidHttpBaseUrl(baseUrl)) {
-        return {
-          success: false,
-          error: {
-            code: "invalid_base_url",
-            message: "Custom OpenAI-compatible providers require an HTTP or HTTPS base URL.",
-          },
-        };
-      }
-
-      if (this.policyService?.isEnforced() && !this.policyService.isProviderAllowed(provider)) {
-        return {
-          success: false,
-          error: this.getPolicyDeniedError(`Provider ${provider} is not allowed by policy.`),
-        };
-      }
-
-      const providerPolicy = this.getProviderPolicy(provider);
-      const persistedBaseUrl = providerPolicy.forcedBaseUrl ?? baseUrl;
-      if (providerPolicy.forcedBaseUrl && baseUrl !== providerPolicy.forcedBaseUrl) {
-        return {
-          success: false,
-          error: this.getPolicyDeniedError(
-            `Provider ${provider} base URL is locked by policy.`,
-            `Expected ${providerPolicy.forcedBaseUrl}.`
-          ),
-        };
-      }
-
-      const normalizedModels = normalizeProviderModelEntries(input.models);
-      const disallowedModels = this.getDisallowedModelsByPolicy(provider, normalizedModels);
-      if (disallowedModels.length > 0) {
-        return {
-          success: false,
-          error: this.getPolicyDeniedError(
-            `One or more models are not allowed by policy: ${disallowedModels.join(", ")}`
-          ),
-        };
-      }
-
-      const displayName = input.displayName?.trim();
-      const apiKey = input.apiKey?.trim();
-      const apiKeyFile = input.apiKeyFile?.trim();
-      const providerConfig: BaseProviderConfig = {
-        providerType: "openai-compatible",
-        baseUrl: persistedBaseUrl,
-        enabled: true,
-        ...(displayName ? { displayName } : {}),
-        ...(apiKey ? { apiKey } : {}),
-        ...(apiKeyFile ? { apiKeyFile } : {}),
-        ...(normalizedModels.length > 0 ? { models: normalizedModels } : {}),
-      };
-
-      providersConfig[provider] = providerConfig;
-      this.config.saveProvidersConfig(providersConfig);
 
       const providerInfo = this.getConfig()[provider];
       if (!providerInfo) {
@@ -717,21 +728,30 @@ export class ProviderService {
     }
 
     try {
-      const latestProvidersConfig = getProviderConfigRecord(
-        this.config.loadProvidersConfig() ?? {}
-      );
-      if (!isCustomOpenAICompatibleProviderConfig(latestProvidersConfig[provider])) {
-        return {
-          success: false,
-          error: {
-            code: "not_custom_provider",
-            message: `Provider ${provider} is not a custom OpenAI-compatible provider.`,
-          },
-        };
-      }
+      // Re-validate and delete under the cross-process lock (see setConfigValue).
+      const lockError = await this.config.withProvidersFileLock(
+        (): CustomProviderMutationResult<void> | null => {
+          const latestProvidersConfig = getProviderConfigRecord(
+            this.config.loadProvidersConfig() ?? {}
+          );
+          if (!isCustomOpenAICompatibleProviderConfig(latestProvidersConfig[provider])) {
+            return {
+              success: false,
+              error: {
+                code: "not_custom_provider",
+                message: `Provider ${provider} is not a custom OpenAI-compatible provider.`,
+              },
+            };
+          }
 
-      delete latestProvidersConfig[provider];
-      this.config.saveProvidersConfig(latestProvidersConfig);
+          delete latestProvidersConfig[provider];
+          this.config.saveProvidersConfig(latestProvidersConfig);
+          return null;
+        }
+      );
+      if (lockError) {
+        return lockError;
+      }
     } catch (error) {
       return {
         success: false,
@@ -848,7 +868,10 @@ export class ProviderService {
   /**
    * Set custom models for a provider
    */
-  public setModels(provider: string, models: ProviderModelEntry[]): Result<void, string> {
+  public async setModels(
+    provider: string,
+    models: ProviderModelEntry[]
+  ): Promise<Result<void, string>> {
     try {
       const normalizedModels = normalizeProviderModelEntries(models);
 
@@ -874,14 +897,17 @@ export class ProviderService {
         }
       }
 
-      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      // Read-modify-write under the cross-process lock (see setConfigValue).
+      await this.config.withProvidersFileLock(() => {
+        const providersConfig = this.config.loadProvidersConfig() ?? {};
 
-      if (!providersConfig[provider]) {
-        providersConfig[provider] = {};
-      }
+        if (!providersConfig[provider]) {
+          providersConfig[provider] = {};
+        }
 
-      providersConfig[provider].models = normalizedModels;
-      this.config.saveProvidersConfig(providersConfig);
+        providersConfig[provider].models = normalizedModels;
+        this.config.saveProvidersConfig(providersConfig);
+      });
       this.notifyFromMutation();
 
       return { success: true, data: undefined };
@@ -961,9 +987,6 @@ export class ProviderService {
     }
 
     try {
-      // Load current providers config or create empty
-      const providersConfig = this.config.loadProvidersConfig() ?? {};
-
       if (this.policyService?.isEnforced()) {
         if (!this.policyService.isProviderAllowed(provider)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
@@ -977,41 +1000,48 @@ export class ProviderService {
         }
       }
 
-      // Ensure provider exists
-      if (!providersConfig[provider]) {
-        providersConfig[provider] = {};
-      }
+      // Read-modify-write under the cross-process lock: every providers.jsonc
+      // writer must cooperate or a whole-file save from one process could
+      // resurrect credentials another process just rotated/cleared.
+      await this.config.withProvidersFileLock(() => {
+        const providersConfig = this.config.loadProvidersConfig() ?? {};
 
-      // Set nested property value
-      let current = providersConfig[provider] as Record<string, unknown>;
-      for (let i = 0; i < keyPath.length - 1; i++) {
-        const key = keyPath[i];
-        if (!(key in current) || typeof current[key] !== "object" || current[key] === null) {
-          current[key] = {};
+        // Ensure provider exists
+        if (!providersConfig[provider]) {
+          providersConfig[provider] = {};
         }
-        current = current[key] as Record<string, unknown>;
-      }
 
-      if (keyPath.length > 0) {
-        const lastKey = keyPath[keyPath.length - 1];
-        const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
-
-        if (isProviderEnabledToggle) {
-          // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
-          if (value === false || value === "false") {
-            current[lastKey] = false;
-          } else {
-            delete current[lastKey];
+        // Set nested property value
+        let current = providersConfig[provider] as Record<string, unknown>;
+        for (let i = 0; i < keyPath.length - 1; i++) {
+          const key = keyPath[i];
+          if (!(key in current) || typeof current[key] !== "object" || current[key] === null) {
+            current[key] = {};
           }
-        } else if (value === undefined) {
-          delete current[lastKey];
-        } else {
-          current[lastKey] = value;
+          current = current[key] as Record<string, unknown>;
         }
-      }
 
-      // Save updated config
-      this.config.saveProvidersConfig(providersConfig);
+        if (keyPath.length > 0) {
+          const lastKey = keyPath[keyPath.length - 1];
+          const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
+
+          if (isProviderEnabledToggle) {
+            // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
+            if (value === false || value === "false") {
+              current[lastKey] = false;
+            } else {
+              delete current[lastKey];
+            }
+          } else if (value === undefined) {
+            delete current[lastKey];
+          } else {
+            current[lastKey] = value;
+          }
+        }
+
+        // Save updated config
+        this.config.saveProvidersConfig(providersConfig);
+      });
       this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
@@ -1101,6 +1131,57 @@ export class ProviderService {
     }
   }
 
+  /**
+   * Section-level sibling of updateConfigValue: the predicate receives the
+   * whole provider config section and returns a replacement section (or null
+   * to skip), all under the cross-process providers.jsonc lock. This lets
+   * callers make MULTIPLE fields change atomically with one credential check —
+   * e.g. Coder OAuth commits a discovered model catalog only while the login
+   * that fetched it is still the stored credential, and disconnect clears
+   * tokens + models in one write.
+   *
+   * Internal credential-management primitive: skips policy gating like
+   * updateConfigValue.
+   */
+  public async updateProviderSection(
+    provider: string,
+    update: (
+      section: Record<string, unknown> | undefined
+    ) => { value: Record<string, unknown> } | null
+  ): Promise<Result<{ applied: boolean }, string>> {
+    try {
+      const applied = await this.config.withProvidersFileLock(() => {
+        const providersConfig = this.config.loadProvidersConfig() ?? {};
+        const section = providersConfig[provider] as Record<string, unknown> | undefined;
+
+        const decision = update(section);
+        if (!decision) {
+          return false;
+        }
+
+        const deniedKey = Object.keys(decision.value).find((key) =>
+          DENIED_KEY_PATH_SEGMENTS.has(key)
+        );
+        if (deniedKey) {
+          throw new Error(`Denied key path segment: "${deniedKey}"`);
+        }
+
+        providersConfig[provider] = decision.value as BaseProviderConfig;
+        this.config.saveProvidersConfig(providersConfig);
+        return true;
+      });
+
+      if (applied) {
+        this.notifyFromMutation();
+        await this.syncGatewayLifecycle(provider);
+      }
+      return { success: true, data: { applied } };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      return { success: false, error: `Failed to update provider config: ${message}` };
+    }
+  }
+
   public async setConfig(
     provider: string,
     keyPath: string[],
@@ -1113,9 +1194,6 @@ export class ProviderService {
     }
 
     try {
-      // Load current providers config or create empty
-      const providersConfig = this.config.loadProvidersConfig() ?? {};
-
       if (this.policyService?.isEnforced()) {
         if (!this.policyService.isProviderAllowed(provider)) {
           return { success: false, error: `Provider ${provider} is not allowed by policy` };
@@ -1138,69 +1216,74 @@ export class ProviderService {
         }
       }
 
-      // Track if this is first time setting couponCode for mux-gateway
-      const isFirstMuxGatewayCoupon =
-        provider === "mux-gateway" &&
-        keyPath.length === 1 &&
-        keyPath[0] === "couponCode" &&
-        value !== "" &&
-        !providersConfig[provider]?.couponCode;
+      // Read-modify-write under the cross-process lock (see setConfigValue).
+      await this.config.withProvidersFileLock(() => {
+        const providersConfig = this.config.loadProvidersConfig() ?? {};
 
-      // Ensure provider exists
-      if (!providersConfig[provider]) {
-        providersConfig[provider] = {};
-      }
+        // Track if this is first time setting couponCode for mux-gateway
+        const isFirstMuxGatewayCoupon =
+          provider === "mux-gateway" &&
+          keyPath.length === 1 &&
+          keyPath[0] === "couponCode" &&
+          value !== "" &&
+          !providersConfig[provider]?.couponCode;
 
-      // Set nested property value
-      let current = providersConfig[provider] as Record<string, unknown>;
-      for (let i = 0; i < keyPath.length - 1; i++) {
-        const key = keyPath[i];
-        if (!(key in current) || typeof current[key] !== "object" || current[key] === null) {
-          current[key] = {};
-        }
-        current = current[key] as Record<string, unknown>;
-      }
-
-      if (keyPath.length > 0) {
-        const lastKey = keyPath[keyPath.length - 1];
-        const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
-        const isCanonicalBaseUrlEdit = keyPath.length === 1 && lastKey === "baseUrl";
-        if (isCanonicalBaseUrlEdit) {
-          // The UI writes `baseUrl`. Remove the SDK-style alias so old `baseURL`
-          // values cannot keep shadowing user edits or clears after save.
-          delete current.baseURL;
+        // Ensure provider exists
+        if (!providersConfig[provider]) {
+          providersConfig[provider] = {};
         }
 
-        if (isProviderEnabledToggle) {
-          // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
-          if (value === false || value === "false") {
-            current[lastKey] = false;
-          } else {
-            delete current[lastKey];
+        // Set nested property value
+        let current = providersConfig[provider] as Record<string, unknown>;
+        for (let i = 0; i < keyPath.length - 1; i++) {
+          const key = keyPath[i];
+          if (!(key in current) || typeof current[key] !== "object" || current[key] === null) {
+            current[key] = {};
           }
-        } else if (value === "") {
-          // Delete key if value is empty string (used for clearing API keys).
-          delete current[lastKey];
-        } else {
-          current[lastKey] = value;
+          current = current[key] as Record<string, unknown>;
         }
-      }
 
-      // Add default models when setting up mux-gateway for the first time
-      if (isFirstMuxGatewayCoupon) {
-        const providerConfig = providersConfig[provider] as Record<string, unknown>;
-        const existingModels = normalizeProviderModelEntries(providerConfig.models);
-        if (existingModels.length === 0) {
-          providerConfig.models = [
-            "anthropic/claude-sonnet-5",
-            "anthropic/claude-opus-5",
-            "openai/gpt-5.5",
-          ];
+        if (keyPath.length > 0) {
+          const lastKey = keyPath[keyPath.length - 1];
+          const isProviderEnabledToggle = keyPath.length === 1 && lastKey === "enabled";
+          const isCanonicalBaseUrlEdit = keyPath.length === 1 && lastKey === "baseUrl";
+          if (isCanonicalBaseUrlEdit) {
+            // The UI writes `baseUrl`. Remove the SDK-style alias so old `baseURL`
+            // values cannot keep shadowing user edits or clears after save.
+            delete current.baseURL;
+          }
+
+          if (isProviderEnabledToggle) {
+            // Persist only `enabled: false` and delete on enable so providers.jsonc stays minimal.
+            if (value === false || value === "false") {
+              current[lastKey] = false;
+            } else {
+              delete current[lastKey];
+            }
+          } else if (value === "") {
+            // Delete key if value is empty string (used for clearing API keys).
+            delete current[lastKey];
+          } else {
+            current[lastKey] = value;
+          }
         }
-      }
 
-      // Save updated config
-      this.config.saveProvidersConfig(providersConfig);
+        // Add default models when setting up mux-gateway for the first time
+        if (isFirstMuxGatewayCoupon) {
+          const providerConfig = providersConfig[provider] as Record<string, unknown>;
+          const existingModels = normalizeProviderModelEntries(providerConfig.models);
+          if (existingModels.length === 0) {
+            providerConfig.models = [
+              "anthropic/claude-sonnet-5",
+              "anthropic/claude-opus-5",
+              "openai/gpt-5.5",
+            ];
+          }
+        }
+
+        // Save updated config
+        this.config.saveProvidersConfig(providersConfig);
+      });
       this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
