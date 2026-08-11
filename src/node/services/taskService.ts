@@ -7886,6 +7886,7 @@ export class TaskService {
 
     const consumedAt = getIsoNow();
     const consumesTerminalAttention =
+      consumingWorkspaceId === record.ownerWorkspaceId &&
       resolveBackgroundWorkAttentionPolicy(record.attentionPolicy) === "notify_on_terminal";
     if (consumesTerminalAttention) {
       // Publish a delivered tombstone while the settlement lock is held. A concurrent settlement

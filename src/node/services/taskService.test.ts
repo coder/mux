@@ -5318,6 +5318,84 @@ describe("TaskService", () => {
     ).toEqual([]);
   });
 
+  test("direct-parent consumption preserves a higher continuation owner's terminal wake", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["ownerpreservehandle", "ownerpreserveturn"]);
+    const { parentId: rootWorkspaceId, projectPath } = await saveLocalParentWorkspace(
+      config,
+      rootDir
+    );
+    const directParentTaskId = "direct-parent-preserve-owner-wake";
+    const childTaskId = "child-preserve-owner-wake";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "direct-parent", directParentTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: directParentTaskId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          title: "Owner Wake Reviewer",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const { taskService } = createTaskServiceHarness(config);
+    const created = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: rootWorkspaceId,
+      prompt: "Continue work owned by the root ancestor.",
+      title: "Owner Wake Reviewer",
+      allowAgentWorkspace: true,
+      attentionPolicy: "notify_on_terminal",
+      workspace: { mode: "existing", workspaceId: childTaskId },
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+    const taskHandleStore = new TaskHandleStore(config);
+    const active = await taskHandleStore.getWorkspaceTurn(rootWorkspaceId, created.data.taskId);
+    assert(active, "continuation record must exist");
+    const terminal: WorkspaceTurnTaskHandleRecord = {
+      ...active,
+      status: "completed",
+      updatedAt: "2026-08-11T00:00:02.000Z",
+      reportMarkdown: "Higher owner result",
+      directParentResultDeliveryRequiredAt: "2026-08-11T00:00:02.000Z",
+      directParentResultDeliveredAt: "2026-08-11T00:00:02.500Z",
+    };
+    await taskHandleStore.upsertWorkspaceTurn(terminal);
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: rootWorkspaceId,
+      sourceKind: "workspace_turn",
+      sourceId: terminal.handleId,
+      terminalOutcome: "completed",
+    });
+
+    const consumed = await taskService.getWorkspaceTurnSnapshot(
+      rootWorkspaceId,
+      terminal.handleId,
+      {
+        consumingWorkspaceId: directParentTaskId,
+      }
+    );
+    expect(consumed?.directParentResultDeliveredAt).toBe("2026-08-11T00:00:02.500Z");
+    expect(consumed?.terminalAttentionNotifiedAt).toBeUndefined();
+    expect(
+      await terminalAttentionStore.get(
+        rootWorkspaceId,
+        TerminalAttentionStore.notificationId("workspace_turn", terminal.handleId)
+      )
+    ).toMatchObject({ status: "pending" });
+  });
+
   test("getWorkspaceTurnSnapshot revives an interrupted handle while the child retries the same turn", async () => {
     const hasPendingAutoRetry = mock((workspaceId: string) => workspaceId === "childworkspace");
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest({
