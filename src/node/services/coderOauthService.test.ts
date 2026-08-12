@@ -1212,6 +1212,146 @@ describe("CoderOauthService", () => {
       expect(revokeBody!.get("token")).toBe("rt_unpersisted");
     });
 
+    it("finishes the flow and revokes tokens when the cross-process commit lock fails", async () => {
+      // The commit lock itself can reject (acquisition timeout, EACCES on the
+      // lock directory). That rejection must not escape the detached flow
+      // task: the flow must finish with the error immediately (not hang until
+      // the five-minute timeout) and the exchanged tokens must be revoked.
+      service = new CoderOauthService(
+        {
+          ...createMockConfig(deps),
+          withCoderOauthLoginCommitLock: <T>(_fn: () => Promise<T> | T): Promise<T> =>
+            Promise.reject(new Error("EACCES: permission denied, mkdir lock")),
+        } as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      let revokeBody: URLSearchParams | null = null;
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_lockfail",
+            refresh_token: "rt_lockfail",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_lockfail");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl).catch(() => null);
+
+      // The flow surfaces the lock failure without hanging...
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(false);
+      if (!waitResult.success) {
+        expect(waitResult.error).toContain("Failed to commit Coder login");
+      }
+      // ...and the exchanged tokens are revoked.
+      await waitUntil(() => revokeBody !== null);
+      expect(revokeBody!.get("token")).toBe("rt_lockfail");
+      // Nothing was persisted.
+      expect(deps.providersConfig.coder?.coderOauth).toBeUndefined();
+    });
+
+    it("revokes the credential a successful re-login replaced", async () => {
+      // An already-connected account re-logs in: the previous OAuth blob is
+      // replaced by the new one, and nothing else references it — Disconnect
+      // only knows the new blob. The superseded refresh token must be revoked
+      // after the commit, or it would stay valid forever untracked.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: priorAuth },
+      };
+
+      const revokedTokens: string[] = [];
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_relogin",
+            refresh_token: "rt_relogin",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_relogin");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // The new login is persisted...
+      const storedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as CoderOauthAuth;
+      expect(storedAuth.access).toBe("at_relogin");
+      // ...and the superseded credential was revoked (only that one).
+      await waitUntil(() => revokedTokens.length > 0);
+      expect(revokedTokens).toEqual(["rt_prior"]);
+    });
+
     it("rolls back persisted credentials when cancelled during the persist write", async () => {
       // Gate the persist (setConfigValue) write so cancellation can land in the
       // window between the pre-persist liveness check and the flow commit.

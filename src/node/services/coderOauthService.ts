@@ -814,28 +814,36 @@ export class CoderOauthService {
       "sendSuccessResponse" | "sendFailureResponse"
     >
   ): Promise<boolean> {
-    const outcome = await this.commitDesktopLoginLocked(flowId, deploymentUrl, auth, loopback);
+    const result = await this.commitDesktopLoginLocked(flowId, deploymentUrl, auth, loopback);
 
-    // Revocation of an uncommitted login's tokens is best-effort network I/O
-    // against a possibly stalled endpoint: it runs AFTER the commit lock is
-    // released so one abandoned flow's cleanup can never block later logins
-    // from committing (the fetch is additionally time-bounded, see
-    // REVOKE_TIMEOUT_MS). Both non-committed outcomes need it: a failed
-    // persist (unwritable providers.jsonc, lock timeout) would otherwise
-    // leave the freshly exchanged tokens active and untracked on the
-    // deployment while the UI reports the login as failed.
-    if (outcome !== "committed") {
+    // Revocation is best-effort network I/O against a possibly stalled
+    // endpoint: it runs AFTER the commit lock is released so one abandoned
+    // flow's cleanup can never block later logins from committing (the fetch
+    // is additionally time-bounded, see REVOKE_TIMEOUT_MS).
+    if (result.outcome !== "committed") {
+      // Every non-committed outcome revokes the exchanged tokens: a failed
+      // persist (unwritable providers.jsonc, lock timeout) would otherwise
+      // leave them active and untracked on the deployment while the UI
+      // reports the login as failed.
       await this.revokeTokens(deploymentUrl, auth);
+    } else if (result.replacedAuth && result.replacedAuth.refresh !== auth.refresh) {
+      // A successful re-login replaced a previous credential: revoke it, or
+      // the old full-privilege token would stay valid forever with nothing
+      // tracking it (Disconnect only knows the new blob). Revoked against its
+      // own issuer — the replaced blob may belong to a different deployment.
+      await this.revokeTokens(result.replacedAuth.deploymentUrl, result.replacedAuth);
     }
 
-    return outcome === "committed";
+    return result.outcome === "committed";
   }
 
   /**
-   * The persist -> finish/rollback critical section of commitDesktopLogin;
-   * any non-"committed" outcome means the caller must revoke the login's
+   * The persist -> finish/rollback critical section of commitDesktopLogin.
+   * Any non-"committed" outcome means the caller must revoke the login's
    * tokens (after the lock is released) — they were exchanged but never
-   * persisted, so nothing else references them.
+   * persisted, so nothing else references them. A committed outcome carries
+   * the auth blob it replaced (if any) so the caller can revoke the
+   * superseded credential.
    */
   private async commitDesktopLoginLocked(
     flowId: string,
@@ -845,16 +853,41 @@ export class CoderOauthService {
       Awaited<ReturnType<typeof startLoopbackServer>>,
       "sendSuccessResponse" | "sendFailureResponse"
     >
-  ): Promise<"committed" | "cancelled" | "failed"> {
+  ): Promise<{ outcome: "committed" | "cancelled" | "failed"; replacedAuth?: CoderOauthAuth }> {
     await using _commitLock = await this.loginCommitMutex.acquire();
 
+    // The cross-process lock itself can fail (acquisition timeout, EACCES on
+    // the lock directory). That rejection must not escape this detached
+    // flow task: the flow would stay pending until its five-minute timeout
+    // while the exchanged tokens stayed active — finish the flow with the
+    // error and report "failed" so the caller's revocation still runs.
+    try {
+      return await this.commitDesktopLoginCrossProcess(flowId, deploymentUrl, auth, loopback);
+    } catch (error) {
+      const message = `Failed to commit Coder login: ${getErrorMessage(error)}`;
+      log.warn(`[Coder OAuth] ${message}`);
+      loopback.sendFailureResponse(message);
+      await this.desktopFlows.finish(flowId, Err(message));
+      return { outcome: "failed" };
+    }
+  }
+
+  private async commitDesktopLoginCrossProcess(
+    flowId: string,
+    deploymentUrl: string,
+    auth: CoderOauthAuth,
+    loopback: Pick<
+      Awaited<ReturnType<typeof startLoopbackServer>>,
+      "sendSuccessResponse" | "sendFailureResponse"
+    >
+  ): Promise<{ outcome: "committed" | "cancelled" | "failed"; replacedAuth?: CoderOauthAuth }> {
     return await this.config.withCoderOauthLoginCommitLock(async () => {
       // The flow may have been cancelled (or timed out) while the exchange
       // round-trip was in flight (or while waiting for the locks). Persisting
       // anyway would leave the account connected after the user clicked
       // Cancel — drop and revoke the tokens.
       if (!this.desktopFlows.has(flowId)) {
-        return "cancelled";
+        return { outcome: "cancelled" as const };
       }
 
       // Persist the new credentials, the deployment URL they belong to, and a
@@ -889,12 +922,12 @@ export class CoderOauthService {
       if (!persistResult.success) {
         loopback.sendFailureResponse(persistResult.error);
         await this.desktopFlows.finish(flowId, Err(persistResult.error));
-        return "failed";
+        return { outcome: "failed" as const };
       }
       if (!persistResult.data.applied) {
         // Cancel won while the mutation waited for the providers-file lock; the
         // flow is already finished, so only the raced tokens need cleanup.
-        return "cancelled";
+        return { outcome: "cancelled" as const };
       }
 
       // Cancellation may also race the window between the persist write and
@@ -904,7 +937,7 @@ export class CoderOauthService {
       // account stays connected).
       if (!this.desktopFlows.has(flowId)) {
         await this.rollbackPersistedAuth(auth, previousSection);
-        return "cancelled";
+        return { outcome: "cancelled" as const };
       }
 
       loopback.sendSuccessResponse();
@@ -913,7 +946,13 @@ export class CoderOauthService {
 
       log.debug("[Coder OAuth] Desktop login committed");
 
-      return "committed";
+      // The credential this login replaced (from the same snapshot the
+      // rollback path restores): the caller revokes it after the lock is
+      // released, otherwise the superseded full-privilege token would stay
+      // valid forever with nothing tracking it.
+      const replacedAuth = parseCoderOauthAuth(previousSection.coderOauth) ?? undefined;
+
+      return { outcome: "committed" as const, replacedAuth };
     });
   }
 
