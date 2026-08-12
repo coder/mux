@@ -1142,6 +1142,76 @@ describe("CoderOauthService", () => {
       expect(revokeBody!.get("token")).toBe("rt_raced");
     });
 
+    it("revokes exchanged tokens when persisting the login fails", async () => {
+      // Token exchange succeeds but the provider-section write errors (e.g.
+      // providers.jsonc unwritable or its lock timed out). The flow fails —
+      // and the freshly minted tokens must be revoked, or they would stay
+      // active and untracked on the deployment while the UI shows a failed
+      // login.
+      const failingProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: () =>
+          Promise.resolve({ success: false as const, error: "providers.jsonc is unwritable" }),
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        failingProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      let revokeBody: URLSearchParams | null = null;
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_unpersisted",
+            refresh_token: "rt_unpersisted",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokeBody = new URLSearchParams(fetchBodyText(init));
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_failed_persist");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl).catch(() => null);
+
+      // The flow surfaces the persist failure...
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(false);
+      if (!waitResult.success) {
+        expect(waitResult.error).toContain("unwritable");
+      }
+      // ...and the exchanged (never persisted) tokens are revoked.
+      await waitUntil(() => revokeBody !== null);
+      expect(revokeBody!.get("token")).toBe("rt_unpersisted");
+    });
+
     it("rolls back persisted credentials when cancelled during the persist write", async () => {
       // Gate the persist (setConfigValue) write so cancellation can land in the
       // window between the pre-persist liveness check and the flow commit.

@@ -816,12 +816,15 @@ export class CoderOauthService {
   ): Promise<boolean> {
     const outcome = await this.commitDesktopLoginLocked(flowId, deploymentUrl, auth, loopback);
 
-    // Revocation of a cancelled login's tokens is best-effort network I/O
+    // Revocation of an uncommitted login's tokens is best-effort network I/O
     // against a possibly stalled endpoint: it runs AFTER the commit lock is
     // released so one abandoned flow's cleanup can never block later logins
     // from committing (the fetch is additionally time-bounded, see
-    // REVOKE_TIMEOUT_MS).
-    if (outcome === "cancelled") {
+    // REVOKE_TIMEOUT_MS). Both non-committed outcomes need it: a failed
+    // persist (unwritable providers.jsonc, lock timeout) would otherwise
+    // leave the freshly exchanged tokens active and untracked on the
+    // deployment while the UI reports the login as failed.
+    if (outcome !== "committed") {
       await this.revokeTokens(deploymentUrl, auth);
     }
 
@@ -830,8 +833,9 @@ export class CoderOauthService {
 
   /**
    * The persist -> finish/rollback critical section of commitDesktopLogin;
-   * "cancelled" means the caller must revoke the raced login's tokens (after
-   * the lock is released).
+   * any non-"committed" outcome means the caller must revoke the login's
+   * tokens (after the lock is released) — they were exchanged but never
+   * persisted, so nothing else references them.
    */
   private async commitDesktopLoginLocked(
     flowId: string,
