@@ -357,7 +357,7 @@ describe("WorkspaceFooterBar last prompt", () => {
     }
   });
 
-  it("reveals the last prompt from the timeline shortcut while the popup is open", async () => {
+  it("reveals the last prompt from its shortcut while the popup is open", async () => {
     workspaceState = {
       messages: [makeUserMessage("prompt-shortcut")],
       muxMessages: [],
@@ -374,7 +374,7 @@ describe("WorkspaceFooterBar last prompt", () => {
     try {
       const view = renderFooter();
       fireEvent.click(view.getByTestId("workspace-footer-last-prompt"));
-      fireEvent.keyDown(window, { key: "Enter", ctrlKey: true, shiftKey: true });
+      fireEvent.keyDown(window, { key: "Enter", ctrlKey: true, altKey: true });
 
       await waitFor(() => expect(revealed).toHaveLength(1));
       expect((revealed[0] as CustomEvent).detail).toEqual({
