@@ -1383,6 +1383,38 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("keeps gateway-form model IDs on a shadowed custom provider's endpoint", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Regression: an upgraded install can carry a custom OpenAI-compatible
+      // provider named "coder" from before the built-in existed. Its
+      // slash-form model IDs (coder:openai/foo) must NOT be canonicalized by
+      // the new gateway definition into openai:foo — that would silently
+      // bypass the user's custom endpoint. The shadow check must inspect the
+      // RAW prefix before gateway canonicalization.
+      config.saveProvidersConfig({
+        coder: {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:9000/v1",
+          apiKey: "sk-custom",
+          models: ["openai/foo"],
+        },
+        openai: {
+          apiKey: "sk-openai",
+        },
+      });
+
+      const resolved = factory.resolveGatewayModelString("coder:openai/foo", "coder:openai/foo");
+      expect(resolved).toBe("coder:openai/foo");
+
+      // And creation targets the custom provider, not built-in OpenAI/Coder.
+      const created = await factory.createModel("coder:openai/foo");
+      expect(created.success).toBe(true);
+      if (created.success) {
+        expect((created.data as { modelId?: unknown }).modelId).toBe("openai/foo");
+      }
+    });
+  });
+
   it("falls back deterministically to the next configured route", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

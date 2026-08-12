@@ -545,6 +545,29 @@ export class ProviderService {
       );
     }
 
+    // A policy that denies coder hides the provider entirely (above), but a
+    // stored OAuth credential is still live on its deployment. Surface its
+    // PRESENCE so the Disconnect command stays reachable — otherwise the
+    // full-privilege credential would have no revocation path until the
+    // policy broadens. Presence only: no URL/models/config leaks, the entry
+    // is unconfigured/disabled, and the policy-filtered Providers UI still
+    // hides the card (this map key is consumed by the palette command's
+    // visibility gate). Skipped when a custom provider shadows "coder" —
+    // that entry owns the key and has no OAuth flow.
+    if (!result.coder && !shadowedCustomProviderIds.has("coder")) {
+      const coderOauth = parseCoderOauthAuth(
+        (providersConfig.coder as { coderOauth?: unknown } | undefined)?.coderOauth
+      );
+      if (coderOauth !== null) {
+        result.coder = {
+          apiKeySet: false,
+          isEnabled: false,
+          isConfigured: false,
+          coderOauthCredentialStored: true,
+        };
+      }
+    }
+
     return result;
   }
 

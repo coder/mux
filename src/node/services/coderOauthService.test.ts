@@ -1555,9 +1555,6 @@ describe("CoderOauthService", () => {
 
         // A's persist is gated; B (unaware of A's flow) disconnects.
         await persistStartedPromise;
-        // Tombstone resolution is millisecond epoch time: ensure A's start
-        // and B's disconnect do not share a timestamp.
-        await new Promise((resolve) => setTimeout(resolve, 2));
         const disconnectResult = await serviceB.disconnect();
         expect(disconnectResult.success).toBe(true);
         expect(revokedTokens).toContain("rt_prior");
@@ -3095,19 +3092,47 @@ describe("CoderOauthService", () => {
       expect(new URL(start.data.authorizeUrl).searchParams.get("client_id")).toBe("client_fresh");
 
       await service.cancelDesktopFlow(start.data.flowId);
-      // Flow teardown must NOT release the lease after an uncertain outcome.
-      expect(deps.coderClientLeaseHeld).toBe(true);
+      // The lease is released only after the uncertain client generation is
+      // QUARANTINED in the persisted blob: the orphaned PUT may land at any
+      // later time, so the stored client's RFC 7592 fields must be gone
+      // before any flow may reuse the redirect slot.
+      await waitUntil(() => !deps.coderClientLeaseHeld);
+      const storedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as Record<string, unknown>;
+      expect(storedAuth.registrationAccessToken).toBeUndefined();
+      expect(storedAuth.registrationClientUri).toBeUndefined();
+      // The credential itself survives — only client reuse is disabled.
+      expect(storedAuth.clientId).toBe("client_test");
+      expect(storedAuth.refresh).toBeDefined();
+
+      // A follow-up login registers a fresh client (no PUT to the
+      // quarantined one) instead of racing the orphaned update.
+      const secondStart = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(secondStart.success).toBe(true);
+      if (!secondStart.success) return;
+      expect(new URL(secondStart.data.authorizeUrl).searchParams.get("client_id")).toBe(
+        "client_fresh"
+      );
+      await service.cancelDesktopFlow(secondStart.data.flowId);
     });
 
-    it("releases the quarantined lease after the uncertain-update window expires", async () => {
-      // Regression: the stale-break path refuses to reclaim a lease whose
-      // owner PID is alive, so a long-lived Mux process must release its own
-      // uncertain-update quarantine after a bounded window — otherwise every
-      // re-login until process exit registers a fresh OAuth client.
-      service.clientLeaseQuarantineMs = 50;
+    it("keeps the lease reserved when the client quarantine cannot be persisted", async () => {
+      // If the quarantine write fails (providers file unwritable), the lease
+      // must stay held as the fallback guard: releasing would let another
+      // flow PUT the stored client while the orphaned update may still land.
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
       };
+
+      const failingProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: () => Promise.resolve(Err("disk full")),
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        failingProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
 
       mockFetch((input, init) => {
         const url = fetchUrl(input);
@@ -3131,12 +3156,11 @@ describe("CoderOauthService", () => {
       const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
       expect(start.success).toBe(true);
       if (!start.success) return;
-
       await service.cancelDesktopFlow(start.data.flowId);
-      // Still quarantined immediately after teardown...
+
+      // Give the release handler every chance to (wrongly) fire.
+      await new Promise((resolve) => setTimeout(resolve, 50));
       expect(deps.coderClientLeaseHeld).toBe(true);
-      // ...but reclaimed once the bounded window passes.
-      await waitUntil(() => !deps.coderClientLeaseHeld);
     });
 
     it("persists the complete discovered catalog even when a policy restricts models", async () => {

@@ -2226,6 +2226,22 @@ export class ProviderModelFactory {
           ? explicitGatewayOrLegacyFlag
           : undefined;
 
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+
+    // Shadow check on the RAW prefix, BEFORE gateway canonicalization: a
+    // custom OpenAI-compatible provider can shadow a built-in gateway id
+    // (an upgraded install may already have one named "coder"). Left to the
+    // canonical check below, fromGatewayModelId would rewrite
+    // coder:openai/foo to openai:foo first and silently route it through
+    // the built-in machinery instead of the user's custom endpoint.
+    const [rawProviderName] = parseModelString(modelString);
+    if (
+      rawProviderName &&
+      isCustomOpenAICompatibleProviderConfig(providersConfig[rawProviderName])
+    ) {
+      return modelString;
+    }
+
     // Backend-authoritative routing avoids frontend localStorage races (issue #1769).
     const canonicalModelString = normalizeToCanonical(modelString);
     const [originProviderName, originModelId] = parseModelString(canonicalModelString);
@@ -2238,7 +2254,6 @@ export class ProviderModelFactory {
       return canonicalModelString;
     }
 
-    const providersConfig = this.config.loadProvidersConfig() ?? {};
     if (isCustomOpenAICompatibleProviderConfig(providersConfig[originProviderName])) {
       // Manual providers.jsonc edits can shadow a built-in provider id. Custom providers
       // are direct-only, so keep the user's model pointed at the custom endpoint.

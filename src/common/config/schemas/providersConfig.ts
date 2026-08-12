@@ -95,13 +95,15 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    */
   removedModels: z.array(z.string()).optional(),
   /**
-   * Cross-process disconnect tombstone (epoch ms, written by
-   * coderOauthService.disconnect). Login flows started BEFORE this instant —
-   * in any Mux process sharing the file — refuse to commit, so an in-flight
-   * login in another process cannot silently reconnect a just-disconnected
-   * account. Compared under the commit lock against each flow's start time.
+   * Cross-process disconnect generation (monotonic counter, incremented by
+   * coderOauthService.disconnect). Each login flow snapshots the persisted
+   * value at start; a flow whose snapshot no longer matches at commit time —
+   * in any Mux process sharing the file — refuses to commit, so an in-flight
+   * login cannot silently reconnect a just-disconnected account. A counter,
+   * not a wall-clock timestamp: clock skew/corrections must not let a
+   * pre-disconnect flow commit or lock out post-disconnect logins.
    */
-  coderDisconnectedAt: z.number().optional(),
+  coderDisconnectGeneration: z.number().optional(),
 });
 
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;

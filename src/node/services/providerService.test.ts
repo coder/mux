@@ -653,6 +653,52 @@ describe("ProviderService.getConfig", () => {
     );
   });
 
+  it("exposes stored Coder credential presence even when policy denies the provider", async () => {
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai" }], // coder denied
+      },
+      (config, service) => {
+        // A policy refresh that drops coder hides the provider, but the
+        // stored full-privilege credential is still live on its deployment.
+        // getConfig() must surface its PRESENCE (nothing else) so the
+        // Disconnect command keeps a revocation path.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://coder.example.com",
+            models: ["anthropic/model-a"],
+            coderOauth: {
+              type: "oauth",
+              sessionId: "sess",
+              deploymentUrl: "https://coder.example.com",
+              access: "at",
+              refresh: "rt",
+              expires: Date.now() + 3_600_000,
+              clientId: "c",
+              clientSecret: "s",
+            },
+          },
+        });
+
+        const cfg = service.getConfig();
+        expect(cfg.coder).toBeDefined();
+        expect(cfg.coder.coderOauthCredentialStored).toBe(true);
+        // Presence only: unconfigured/disabled, no deployment URL or models.
+        expect(cfg.coder.isConfigured).toBe(false);
+        expect(cfg.coder.isEnabled).toBe(false);
+        expect(cfg.coder.deploymentUrl).toBeUndefined();
+        expect(cfg.coder.models).toBeUndefined();
+
+        // Without a stored credential the denied provider stays fully hidden.
+        config.saveProvidersConfig({
+          coder: { deploymentUrl: "https://coder.example.com" },
+        });
+        expect(service.getConfig().coder).toBeUndefined();
+      }
+    );
+  });
+
   it("keeps a stored Coder credential disconnectable after the deployment URL is edited", () => {
     withTempConfig((config, service) => {
       // The stored blob no longer matches the configured URL: not routable

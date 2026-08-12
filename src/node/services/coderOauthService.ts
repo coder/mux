@@ -211,13 +211,6 @@ export class CoderOauthService {
   // replacement login the user never asked for.
   private disconnectGeneration = 0;
 
-  // How long an uncertain stored-client update keeps the client lease
-  // reserved before this process releases it (see the lease-release handler
-  // in startDesktopFlow). Matches the lease's stale TTL so in-process reclaim
-  // and cross-process stale-break agree on the quarantine length.
-  // Overridable by tests (a five-minute timer is untestable directly).
-  clientLeaseQuarantineMs = DEFAULT_DESKTOP_TIMEOUT_MS;
-
   // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
   // Invalidated on every write (exchange, refresh, disconnect) AND on every
   // provider-config change notification (below).
@@ -326,12 +319,15 @@ export class CoderOauthService {
           delete next.coderOauth;
           // Cross-process tombstone: cancelAll/disconnectGeneration above only
           // reach flows in THIS process. A login flow in another Mux process
-          // sharing this file compares its start time against this stamp under
-          // the commit lock and refuses to commit, so it cannot silently
-          // reconnect the account (see commitDesktopLoginCrossProcess). Kept in
-          // the section permanently — later logins start after it and commit
-          // normally.
-          next.coderDisconnectedAt = Date.now();
+          // sharing this file snapshots this counter at start and refuses to
+          // commit under the commit lock once it changed, so it cannot
+          // silently reconnect the account (see
+          // commitDesktopLoginCrossProcess). A monotonic counter, not a
+          // wall-clock stamp — clock skew must not reorder disconnects and
+          // flow starts. Kept in the section permanently — later logins
+          // snapshot the new value and commit normally.
+          next.coderDisconnectGeneration =
+            (parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0) + 1;
           // Discovered models were fetched from the deployment's AI Bridge at
           // login time; they are meaningless without credentials and are refetched
           // on the next login. discoveredModels stays PRESENT (as []) so the
@@ -414,10 +410,10 @@ export class CoderOauthService {
     // Snapshot before the first await: a disconnect() during any of the
     // probes below must abort this attempt (see disconnectGeneration), and a
     // disconnect in ANOTHER process must beat this flow's commit (compared
-    // against the persisted coderDisconnectedAt tombstone under the commit
-    // lock — the in-memory generation cannot cross processes).
+    // against the persisted coderDisconnectGeneration counter under the
+    // commit lock — the in-memory generation cannot cross processes).
     const initialDisconnectGeneration = this.disconnectGeneration;
-    const flowStartedAt = Date.now();
+    const flowStartPersistedGeneration = this.readPersistedDisconnectGeneration();
 
     // Policy gate BEFORE any network I/O: a deny-all/provider-restricted (or
     // blocked) policy must stop direct backend RPCs from registering OAuth
@@ -540,20 +536,19 @@ export class CoderOauthService {
     }
     const ownsStoredClient = releaseClientLease !== null;
 
-    // Set when the stored-client redirect PUT ended without a definitive
-    // server answer (timeout/network error before a response): the mutation
-    // may STILL land later, so the lease is quarantined — other flows
-    // register fresh clients instead of racing the orphaned update for the
-    // redirect slot — and released after a bounded window (below).
-    let storedClientUpdateUncertain = false;
+    // Set (to the stored client's id) when its redirect PUT ended without a
+    // definitive server answer (timeout/network error before a response):
+    // the mutation may STILL land later, so that client generation must be
+    // quarantined before the lease can be released (below).
+    let uncertainClientId: string | null = null;
     const ensureClientPromise = this.ensureClient(
       deploymentUrl,
       endpoints,
       loopback.redirectUri,
       flowAbort.signal,
       ownsStoredClient,
-      () => {
-        storedClientUpdateUncertain = true;
+      (clientId) => {
+        uncertainClientId = clientId;
       }
     );
     if (releaseClientLease !== null) {
@@ -565,20 +560,21 @@ export class CoderOauthService {
       // replacement flow write redirect B before the earlier PUT lands with
       // redirect A, invalidating the replacement's authorization URL.
       void Promise.allSettled([resultDeferred.promise, ensureClientPromise]).then(() => {
-        if (storedClientUpdateUncertain) {
-          // The PUT ended without a server answer and may still land. Hold
-          // the lease for a bounded quarantine, then release it OURSELVES:
-          // the cross-process stale-break path cannot reclaim it while this
-          // process lives (it refuses live-owner markers by design), so an
-          // unreleased lease would force every re-login to register a fresh
-          // OAuth client until Mux exits. After the quarantine the orphaned
-          // request can no longer land (its socket was torn down at
-          // CLIENT_UPDATE_TIMEOUT_MS; the window is generous), so it cannot
-          // clobber a successor's redirect registration.
-          const quarantine = setTimeout(release, this.clientLeaseQuarantineMs);
-          if (typeof quarantine !== "number") {
-            quarantine.unref?.();
-          }
+        if (uncertainClientId !== null) {
+          // The PUT ended without a server answer and may land at ANY later
+          // time (a fully received request can stay queued server-side —
+          // elapsed time settles nothing). Quarantine that client generation
+          // in the persisted blob FIRST — after it, no flow in any process
+          // reuses or redirect-updates the client, so the lease is safe to
+          // release; without releasing, every re-login until Mux exits would
+          // register a fresh client (the stale-break path rightly refuses
+          // live-owner markers). If the quarantine cannot be persisted, keep
+          // the lease held as the fallback guard.
+          void this.quarantineStoredClient(uncertainClientId).then((quarantined) => {
+            if (quarantined) {
+              release();
+            }
+          });
           return;
         }
         release();
@@ -654,7 +650,7 @@ export class CoderOauthService {
 
       const committed = await this.commitDesktopLogin(
         flowId,
-        flowStartedAt,
+        flowStartPersistedGeneration,
         deploymentUrl,
         tokenResult.auth,
         loopback
@@ -692,6 +688,18 @@ export class CoderOauthService {
     // living on as an orphan until the flow timeout.
     this.prunePreCancelled();
     this.preCancelledFlowIds.set(flowId, Date.now());
+  }
+
+  /**
+   * The persisted cross-process disconnect generation (0 when never
+   * disconnected). Login flows snapshot this at start; the commit predicate
+   * refuses once it changed (see coderDisconnectGeneration in the schema).
+   */
+  private readPersistedDisconnectGeneration(): number {
+    const section = this.config.loadProvidersConfig()?.coder as
+      | { coderDisconnectGeneration?: unknown }
+      | undefined;
+    return parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0;
   }
 
   /** True (and consumes the record) when `flowId` was cancelled before the flow registered. */
@@ -882,9 +890,10 @@ export class CoderOauthService {
     // Only the flow holding the stored-client lease may reuse (and
     // redirect-update) it; see the lease wiring in startDesktopFlow.
     allowStoredClient: boolean,
-    // Invoked when the stored-client update ended without a definitive server
-    // answer — the caller must then keep the client lease reserved.
-    onStoredClientUpdateUncertain: () => void
+    // Invoked with the stored client's id when its update ended without a
+    // definitive server answer — the caller must then quarantine that client
+    // generation before the lease may be released.
+    onStoredClientUpdateUncertain: (clientId: string) => void
   ): Promise<Result<CoderOauthClient, string>> {
     const stored = this.readStoredAuth();
     // Only reuse a client registered on the SAME deployment; a client from a
@@ -963,7 +972,7 @@ export class CoderOauthService {
     stored: CoderOauthAuth,
     redirectUri: string,
     // Reports an outcome the server may still commit (no response received).
-    onUncertainOutcome: () => void
+    onUncertainOutcome: (clientId: string) => void
   ): Promise<Result<CoderOauthClient, string>> {
     if (!stored.registrationAccessToken || !stored.registrationClientUri) {
       return Err("No registration access token stored");
@@ -1004,8 +1013,53 @@ export class CoderOauthService {
     } catch (error) {
       // Thrown before any response arrived (timeout / connection error): the
       // deployment may have received the request and could still commit it.
-      onUncertainOutcome();
+      onUncertainOutcome(stored.clientId);
       return Err(`Coder OAuth client update failed: ${getErrorMessage(error)}`);
+    }
+  }
+
+  /**
+   * Mark a stored dynamic client unusable after an uncertain redirect update:
+   * the server may commit the orphaned PUT at ANY later time (a fully
+   * received request can stay queued server-side — no amount of waiting
+   * settles it), so the client's redirect registration can no longer be
+   * trusted. Deleting the RFC 7592 management fields makes ensureClient skip
+   * reuse permanently; the next committed login replaces the whole blob with
+   * a fresh client, which is the only event that actually supersedes the
+   * orphan. Runs under the cross-process refresh lock so an in-flight token
+   * rotation (which rebuilds the persisted blob from its pre-rotation read)
+   * cannot resurrect the deleted fields.
+   *
+   * Returns true when the quarantine is effective (fields removed, or the
+   * client was already replaced/cleared) — only then may the caller release
+   * the client lease.
+   */
+  private async quarantineStoredClient(clientId: string): Promise<boolean> {
+    try {
+      const result = await this.config.withCoderOauthRefreshLock(() =>
+        this.providerService.updateProviderSection("coder", (section) => {
+          const stored = parseCoderOauthAuth(section?.coderOauth);
+          if (stored?.clientId !== clientId) {
+            return null; // Already replaced or cleared; nothing to quarantine.
+          }
+          const next = { ...(section ?? {}) };
+          next.coderOauth = {
+            ...stored,
+            registrationAccessToken: undefined,
+            registrationClientUri: undefined,
+          };
+          return { value: next };
+        })
+      );
+      this.cachedAuth = null;
+      if (!result.success) {
+        log.warn(`[Coder OAuth] Failed to quarantine stored client: ${result.error}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      log.warn(`[Coder OAuth] Failed to quarantine stored client: ${getErrorMessage(error)}`);
+      return false;
     }
   }
 
@@ -1035,7 +1089,7 @@ export class CoderOauthService {
    */
   private async commitDesktopLogin(
     flowId: string,
-    flowStartedAt: number,
+    flowStartPersistedGeneration: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1045,7 +1099,7 @@ export class CoderOauthService {
   ): Promise<boolean> {
     const result = await this.commitDesktopLoginLocked(
       flowId,
-      flowStartedAt,
+      flowStartPersistedGeneration,
       deploymentUrl,
       auth,
       loopback
@@ -1095,7 +1149,7 @@ export class CoderOauthService {
    */
   private async commitDesktopLoginLocked(
     flowId: string,
-    flowStartedAt: number,
+    flowStartPersistedGeneration: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1113,7 +1167,7 @@ export class CoderOauthService {
     try {
       return await this.commitDesktopLoginCrossProcess(
         flowId,
-        flowStartedAt,
+        flowStartPersistedGeneration,
         deploymentUrl,
         auth,
         loopback
@@ -1129,7 +1183,7 @@ export class CoderOauthService {
 
   private async commitDesktopLoginCrossProcess(
     flowId: string,
-    flowStartedAt: number,
+    flowStartPersistedGeneration: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1175,11 +1229,14 @@ export class CoderOauthService {
         }
         // Cross-process disconnect check: cancelAll/disconnectGeneration only
         // reach flows in THIS process, but a disconnect in another Mux
-        // process stamps coderDisconnectedAt into the shared section. A flow
-        // started before that instant must not commit — it would silently
-        // reconnect the account the user just disconnected.
-        const disconnectedAt = parseOptionalNumber(section?.coderDisconnectedAt);
-        if (disconnectedAt !== null && flowStartedAt <= disconnectedAt) {
+        // process increments coderDisconnectGeneration in the shared section.
+        // A flow whose start-time snapshot no longer matches must not commit
+        // — it would silently reconnect the account the user just
+        // disconnected. A counter comparison, not wall-clock ordering: clock
+        // skew must neither let a pre-disconnect flow slip through nor lock
+        // out every post-disconnect login.
+        const disconnectGeneration = parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0;
+        if (disconnectGeneration !== flowStartPersistedGeneration) {
           commitRefusalMessage = "Login was superseded by a disconnect";
           return null;
         }
