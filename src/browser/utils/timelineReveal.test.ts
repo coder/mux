@@ -103,6 +103,43 @@ describe("revealTimelineTarget", () => {
     }
   });
 
+  it("does not dispatch a target after cancellation during history loading", async () => {
+    const store = createStore({ hasOlderHistory: true });
+    let resolveLoad: ((result: "loaded") => void) | undefined;
+    const loadOlderHistory = mock(
+      () =>
+        new Promise<"loaded">((resolve) => {
+          resolveLoad = resolve;
+        })
+    );
+    store.loadOlderHistory = loadOlderHistory;
+    const pinTarget = mock(() => undefined);
+    const listener = mock(() => undefined);
+    let cancelled = false;
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      const revealPromise = revealTimelineTarget({
+        workspaceId,
+        getTarget: () => ({ messageId: "prompt-cancelled" }),
+        workspaceStore: store,
+        pinTarget,
+        isCancelled: () => cancelled,
+      });
+      await Promise.resolve();
+      cancelled = true;
+      store.state.messages = [makeUserMessage("prompt-cancelled")];
+      store.state.hasOlderHistory = false;
+      resolveLoad?.("loaded");
+
+      const result = await revealPromise;
+      expect(result).toBe("cancelled");
+      expect(listener).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
+  });
+
   it("loads older history before dispatching a target that is not yet loaded", async () => {
     const store = createStore({ hasOlderHistory: true });
     const loadOlderHistory = mock(() => {

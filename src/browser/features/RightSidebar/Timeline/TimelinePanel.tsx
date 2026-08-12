@@ -450,8 +450,9 @@ function TimelinePreviewCard(props: {
         getTarget: () => resolveRevealTarget(anchor),
         workspaceStore,
         pinTarget: pinTimelineRevealTarget,
+        isCancelled: () => operation !== revealOperationRef.current,
       });
-      if (operation !== revealOperationRef.current) {
+      if (result === "cancelled") {
         return;
       }
       setRevealState(result === "revealed" ? "idle" : result);

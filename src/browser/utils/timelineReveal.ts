@@ -10,7 +10,7 @@ export interface TimelineRevealStore {
   loadOlderHistory: (workspaceId: string) => Promise<HistoryLoadResult>;
 }
 
-export type TimelineRevealResult = "revealed" | "not-found" | "error";
+export type TimelineRevealResult = "revealed" | "not-found" | "error" | "cancelled";
 
 export interface TimelineRevealTarget {
   messageId?: string;
@@ -54,18 +54,35 @@ export async function revealTimelineTarget(options: {
   workspaceStore: TimelineRevealStore;
   pinTarget: (workspaceId: string, target: TimelineRevealTarget) => void;
   maxHistoryPages?: number;
+  isCancelled?: () => boolean;
 }): Promise<TimelineRevealResult> {
-  const { workspaceId, getTarget, workspaceStore, pinTarget } = options;
+  const { workspaceId, getTarget, workspaceStore, pinTarget, isCancelled } = options;
   const maxHistoryPages = options.maxHistoryPages ?? DEFAULT_MAX_REVEAL_HISTORY_PAGES;
+  const cancelled = () => isCancelled?.() === true;
 
   let target = getTarget();
   if (hasTimelineRevealTarget(target)) {
+    if (cancelled()) {
+      return "cancelled";
+    }
     if (isRevealTargetLoaded(workspaceStore.getWorkspaceState(workspaceId), target)) {
+      if (cancelled()) {
+        return "cancelled";
+      }
       dispatchTimelineReveal(workspaceId, target);
       return "revealed";
     }
+    if (cancelled()) {
+      return "cancelled";
+    }
     pinTarget(workspaceId, target);
+    if (cancelled()) {
+      return "cancelled";
+    }
     if (isRevealTargetLoaded(workspaceStore.getWorkspaceState(workspaceId), target)) {
+      if (cancelled()) {
+        return "cancelled";
+      }
       dispatchTimelineReveal(workspaceId, target);
       return "revealed";
     }
@@ -77,14 +94,26 @@ export async function revealTimelineTarget(options: {
     }
 
     const loadResult = await workspaceStore.loadOlderHistory(workspaceId);
+    if (cancelled()) {
+      return "cancelled";
+    }
     if (loadResult === "failed" || loadResult === "busy" || loadResult === "unavailable") {
       return "error";
     }
 
     target = getTarget();
     if (hasTimelineRevealTarget(target)) {
+      if (cancelled()) {
+        return "cancelled";
+      }
       pinTarget(workspaceId, target);
+      if (cancelled()) {
+        return "cancelled";
+      }
       if (isRevealTargetLoaded(workspaceStore.getWorkspaceState(workspaceId), target)) {
+        if (cancelled()) {
+          return "cancelled";
+        }
         dispatchTimelineReveal(workspaceId, target);
         return "revealed";
       }

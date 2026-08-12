@@ -252,6 +252,9 @@ function FooterLastPrompt(props: { workspaceId: string }) {
       pinTarget: pinTimelineRevealTarget,
     })
       .then((result: TimelineRevealResult) => {
+        if (result === "cancelled") {
+          return;
+        }
         if (result === "revealed") {
           setOpen(false);
           setRevealState("idle");
