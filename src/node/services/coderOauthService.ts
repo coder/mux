@@ -306,6 +306,14 @@ export class CoderOauthService {
       removed = stored;
       const next = { ...(section ?? {}) };
       delete next.coderOauth;
+      // Cross-process tombstone: cancelAll/disconnectGeneration above only
+      // reach flows in THIS process. A login flow in another Mux process
+      // sharing this file compares its start time against this stamp under
+      // the commit lock and refuses to commit, so it cannot silently
+      // reconnect the account (see commitDesktopLoginCrossProcess). Kept in
+      // the section permanently — later logins start after it and commit
+      // normally.
+      next.coderDisconnectedAt = Date.now();
       // Discovered models were fetched from the deployment's AI Bridge at
       // login time; they are meaningless without credentials and are refetched
       // on the next login. discoveredModels stays PRESENT (as []) so the
@@ -378,8 +386,12 @@ export class CoderOauthService {
     }
     const flowId = input.flowId ?? randomBase64Url();
     // Snapshot before the first await: a disconnect() during any of the
-    // probes below must abort this attempt (see disconnectGeneration).
+    // probes below must abort this attempt (see disconnectGeneration), and a
+    // disconnect in ANOTHER process must beat this flow's commit (compared
+    // against the persisted coderDisconnectedAt tombstone under the commit
+    // lock — the in-memory generation cannot cross processes).
     const initialDisconnectGeneration = this.disconnectGeneration;
+    const flowStartedAt = Date.now();
 
     // Policy gate BEFORE any network I/O: a deny-all/provider-restricted (or
     // blocked) policy must stop direct backend RPCs from registering OAuth
@@ -616,6 +628,7 @@ export class CoderOauthService {
 
       const committed = await this.commitDesktopLogin(
         flowId,
+        flowStartedAt,
         deploymentUrl,
         tokenResult.auth,
         loopback
@@ -996,6 +1009,7 @@ export class CoderOauthService {
    */
   private async commitDesktopLogin(
     flowId: string,
+    flowStartedAt: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1003,7 +1017,13 @@ export class CoderOauthService {
       "sendSuccessResponse" | "sendFailureResponse"
     >
   ): Promise<boolean> {
-    const result = await this.commitDesktopLoginLocked(flowId, deploymentUrl, auth, loopback);
+    const result = await this.commitDesktopLoginLocked(
+      flowId,
+      flowStartedAt,
+      deploymentUrl,
+      auth,
+      loopback
+    );
 
     // Revocation is best-effort network I/O against a possibly stalled
     // endpoint: it runs AFTER the commit lock is released so one abandoned
@@ -1049,6 +1069,7 @@ export class CoderOauthService {
    */
   private async commitDesktopLoginLocked(
     flowId: string,
+    flowStartedAt: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1064,7 +1085,13 @@ export class CoderOauthService {
     // while the exchanged tokens stayed active — finish the flow with the
     // error and report "failed" so the caller's revocation still runs.
     try {
-      return await this.commitDesktopLoginCrossProcess(flowId, deploymentUrl, auth, loopback);
+      return await this.commitDesktopLoginCrossProcess(
+        flowId,
+        flowStartedAt,
+        deploymentUrl,
+        auth,
+        loopback
+      );
     } catch (error) {
       const message = `Failed to commit Coder login: ${getErrorMessage(error)}`;
       log.warn(`[Coder OAuth] ${message}`);
@@ -1076,6 +1103,7 @@ export class CoderOauthService {
 
   private async commitDesktopLoginCrossProcess(
     flowId: string,
+    flowStartedAt: number,
     deploymentUrl: string,
     auth: CoderOauthAuth,
     loopback: Pick<
@@ -1103,6 +1131,18 @@ export class CoderOauthService {
         return { outcome: "failed" as const };
       }
 
+      // The policy's forcedBaseUrl can also change mid-flow (deployment A ->
+      // B while the browser authorization was pending). Persisting A's
+      // credential then strands it: routing and Settings resolve against B
+      // and reject the issuer mismatch, while the login reported success.
+      // Fail instead so the caller revokes the exchanged tokens.
+      if (this.effectiveDeploymentUrl(deploymentUrl) !== deploymentUrl) {
+        const message = "The policy-enforced Coder deployment URL changed during login";
+        loopback.sendFailureResponse(message);
+        await this.desktopFlows.finish(flowId, Err(message));
+        return { outcome: "failed" as const };
+      }
+
       // Persist the new credentials, the deployment URL they belong to, and a
       // reset model catalog in ONE locked mutation:
       // - URL + auth together: a slower flow finishing after a login to another
@@ -1122,11 +1162,22 @@ export class CoderOauthService {
       // cancellation can restore it verbatim (not just delete the new blob,
       // which would log out a previously connected account).
       let previousSection: Record<string, unknown> = {};
+      let refusedByDisconnectTombstone = false;
       const persistResult = await this.providerService.updateProviderSection("coder", (section) => {
         // Cancellation can also win while this mutation waits for the
         // providers-file lock: re-check liveness at write time, inside the
         // lock, so a cancelled flow never replaces the prior login's state.
         if (!this.desktopFlows.has(flowId)) {
+          return null;
+        }
+        // Cross-process disconnect check: cancelAll/disconnectGeneration only
+        // reach flows in THIS process, but a disconnect in another Mux
+        // process stamps coderDisconnectedAt into the shared section. A flow
+        // started before that instant must not commit — it would silently
+        // reconnect the account the user just disconnected.
+        const disconnectedAt = parseOptionalNumber(section?.coderDisconnectedAt);
+        if (disconnectedAt !== null && flowStartedAt <= disconnectedAt) {
+          refusedByDisconnectTombstone = true;
           return null;
         }
         previousSection = { ...(section ?? {}) };
@@ -1149,6 +1200,15 @@ export class CoderOauthService {
         return { outcome: "failed" as const };
       }
       if (!persistResult.data.applied) {
+        if (refusedByDisconnectTombstone) {
+          // Unlike the local-cancel case below, this flow is still live in
+          // this process: finish it so the waiter and browser callback see
+          // the failure instead of hanging until the flow timeout.
+          const message = "Login was superseded by a disconnect";
+          loopback.sendFailureResponse(message);
+          await this.desktopFlows.finish(flowId, Err(message));
+          return { outcome: "failed" as const };
+        }
         // Cancel won while the mutation waited for the providers-file lock; the
         // flow is already finished, so only the raced tokens need cleanup.
         return { outcome: "cancelled" as const };
