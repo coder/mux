@@ -1876,10 +1876,10 @@ export class TaskService {
     reasoningMode?: OpenAIReasoningMode;
   }> {
     // 1) Try stream-end hint metadata (available in handleStreamEnd path)
-    // Compaction is an internal mechanical turn, never a valid identity for resuming user work.
+    // Compaction is internal bookkeeping, not an identity for resuming user work.
     let agentId = hint?.agentId === "compact" ? undefined : hint?.agentId;
 
-    // 2) Fall back to latest non-compaction assistant message metadata in history (restart-safe)
+    // Durable history preserves the parent identity across process restarts.
     if (!agentId) {
       try {
         const historyResult = await this.historyService.getLastMessages(parentWorkspaceId, 20);
