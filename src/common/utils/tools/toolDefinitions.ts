@@ -26,7 +26,7 @@
  * by our own backend code and always use `undefined` for absent fields.
  */
 
-import { isGrok45Model } from "@/common/types/thinking";
+import { isGrokFrontierModel } from "@/common/types/thinking";
 import { z } from "zod";
 import {
   AgentIdSchema,
@@ -3313,7 +3313,7 @@ export function getAvailableTools(
       }
       return baseTools;
     case "xai":
-      return isGrok45Model(modelString) ? [...baseTools, "web_search", "x_search"] : baseTools;
+      return isGrokFrontierModel(modelString) ? [...baseTools, "web_search", "x_search"] : baseTools;
     case "google":
       if (supportsGoogleNativeToolsWithFunctionTools(modelId)) {
         return [...baseTools, "google_search", "url_context"];

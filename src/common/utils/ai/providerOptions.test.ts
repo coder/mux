@@ -1650,6 +1650,21 @@ describe("buildProviderOptions - xAI", () => {
     });
   });
 
+  test("passes native xhigh through for Grok 4.6 while Grok 4.5 clamps to high", () => {
+    expect(buildProviderOptions("xai:grok-4.6", "xhigh")).toEqual({
+      xai: { reasoningEffort: "xhigh", store: false },
+    });
+    expect(buildProviderOptions("xai:grok-4.6", "max")).toEqual({
+      xai: { reasoningEffort: "xhigh", store: false },
+    });
+    expect(buildProviderOptions("xai:grok-4.6", "medium")).toEqual({
+      xai: { reasoningEffort: "medium", store: false },
+    });
+    expect(buildProviderOptions("xai:grok-4.5", "xhigh")).toEqual({
+      xai: { reasoningEffort: "high", store: false },
+    });
+  });
+
   test("omits deprecated search parameters and strips service tier from Grok 4.5 SDK options", () => {
     expect(
       buildProviderOptions("xai:grok-4.5", "high", undefined, undefined, {

@@ -185,18 +185,18 @@ const MODEL_DEFINITIONS = {
     aliases: ["gemini-flash"],
     tokenizerOverride: "google/gemini-2.5-pro",
   },
-  // Grok 4.5 - xAI's flagship coding and agentic model, released July 2026.
-  // Legacy Grok 4.1 Fast and Grok Code remain usable as custom model strings but are
-  // intentionally omitted from the curated index after their May 15, 2026 retirement.
-  GROK_45: {
+  // Grok 4.6 - xAI's frontier coding and agentic model, released August 12, 2026.
+  // Supersedes Grok 4.5 at the same headline price; Grok 4.5 remains usable as the
+  // custom model string `xai:grok-4.5`.
+  GROK_46: {
     provider: "xai",
-    providerModelId: "grok-4.5",
-    aliases: ["grok", "grok-4.5"],
+    providerModelId: "grok-4.6",
+    aliases: ["grok", "grok-4.6"],
   },
   // DeepSeek V4 Pro is the flagship V4 tier (1.6T total / 49B active params, 1M context,
   // 384K max output). Bare `deepseek` alias points here per the convention that the
   // shortest alias tracks each provider's flagship model (mirrors `gemini` → Gemini Pro,
-  // `grok` → Grok 4.5).
+  // `grok` → Grok 4.6).
   DEEPSEEK_V4_PRO: {
     provider: "deepseek",
     providerModelId: "deepseek-v4-pro",

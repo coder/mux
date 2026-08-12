@@ -421,7 +421,7 @@ export function ProvidersSection() {
   const [xaiServiceTierSaving, setXAIServiceTierSaving] = useState(false);
   // Persist OpenAI ZDR store toggles before publishing UI state so a failed write
   // cannot leave the dropdown claiming disabled while requests still send store=true.
-  // xAI Grok 4.5 always uses store=false in the request path (no settings surface).
+  // xAI frontier Grok always uses store=false in the request path (no settings surface).
   const [openaiStoreSaving, setOpenAIStoreSaving] = useState(false);
 
   const routing = useRouting();

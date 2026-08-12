@@ -42,10 +42,10 @@ async function waitForTerminal(
     collector.waitForEvent("stream-error", timeoutMs),
   ]);
   if (!terminalEvent) {
-    throw new Error("Expected terminal stream event from Grok 4.5");
+    throw new Error("Expected terminal stream event from Grok 4.6");
   }
   if (terminalEvent.type === "stream-error") {
-    throw new Error(`Grok 4.5 stream failed: ${terminalEvent.error}`);
+    throw new Error(`Grok 4.6 stream failed: ${terminalEvent.error}`);
   }
   if (!isStreamEnd(terminalEvent)) {
     throw new Error(`Expected stream-end event, received ${terminalEvent.type}`);
@@ -53,11 +53,11 @@ async function waitForTerminal(
   return terminalEvent;
 }
 
-describeIntegration("xAI Grok 4.5 integration", () => {
+describeIntegration("xAI Grok 4.6 integration", () => {
   configureTestRetries(3);
 
   test("streams a priority request and reports exact billed cost metadata", async () => {
-    const { env, workspaceId, cleanup } = await setupWorkspace("xai", "grok-4-5");
+    const { env, workspaceId, cleanup } = await setupWorkspace("xai", "grok-4-6");
     const collector = createStreamCollector(env.orpc, workspaceId);
     collector.start();
 
@@ -65,10 +65,10 @@ describeIntegration("xAI Grok 4.5 integration", () => {
       const result = await sendMessageWithModel(
         env,
         workspaceId,
-        "Reply with exactly: GROK45_OK",
-        KNOWN_MODELS.GROK_45.id,
+        "Reply with exactly: GROK46_OK",
+        KNOWN_MODELS.GROK_46.id,
         {
-          // Grok 4.5's built-in minimum thinking floor is medium.
+          // Grok 4.6's built-in minimum thinking floor is medium.
           thinkingLevel: "medium",
           providerOptions: {
             xai: {
@@ -84,7 +84,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
       const streamEnd = await waitForTerminal(collector, 60_000);
 
       assertStreamSuccess(collector);
-      expect(streamEnd.metadata.model).toBe(KNOWN_MODELS.GROK_45.id);
+      expect(streamEnd.metadata.model).toBe(KNOWN_MODELS.GROK_46.id);
       expect(streamEnd.metadata.thinkingLevel).toBe("medium");
 
       const xaiMetadata = streamEnd.metadata.providerMetadata?.xai as
@@ -100,10 +100,10 @@ describeIntegration("xAI Grok 4.5 integration", () => {
   }, 90_000);
 
   test("multi-turn with default store=false keeps encrypted reasoning and continues cleanly", async () => {
-    // Grok 4.5 Responses always use store=false in Mux (ZDR-safe default).
+    // Grok 4.6 Responses always use store=false in Mux (ZDR-safe default).
     // With store=false, xAI returns reasoning.encrypted_content which Mux must
     // persist and replay; otherwise the second turn fails or loses quality.
-    const { env, workspaceId, cleanup } = await setupWorkspace("xai", "grok-4-5-zdr");
+    const { env, workspaceId, cleanup } = await setupWorkspace("xai", "grok-4-6-zdr");
     const historyService = new HistoryService(env.config);
 
     try {
@@ -119,7 +119,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
           "Do not mention the codeword yet.",
           "Reply with exactly: READY",
         ].join(" "),
-        KNOWN_MODELS.GROK_45.id,
+        KNOWN_MODELS.GROK_46.id,
         {
           thinkingLevel: "medium",
           toolPolicy: DISABLE_TOOLS,
@@ -155,7 +155,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
         env,
         workspaceId,
         "Now reply with exactly the secret codeword and nothing else.",
-        KNOWN_MODELS.GROK_45.id,
+        KNOWN_MODELS.GROK_46.id,
         {
           thinkingLevel: "medium",
           toolPolicy: DISABLE_TOOLS,
@@ -172,7 +172,7 @@ describeIntegration("xAI Grok 4.5 integration", () => {
       assertStreamSuccess(secondCollector);
 
       expect(secondCollector.getStreamContent()).toMatch(/MUXZDR42/);
-      expect(firstEnd.metadata.model).toBe(KNOWN_MODELS.GROK_45.id);
+      expect(firstEnd.metadata.model).toBe(KNOWN_MODELS.GROK_46.id);
       secondCollector.stop();
     } finally {
       await cleanup();

@@ -3212,7 +3212,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       "| Codex Max 5.1          | openai:gpt-5.1-codex-max      | `codex-max`                                                  |         |",
       "| Gemini 3.1 Pro Preview | google:gemini-3.1-pro-preview | `gemini`, `gemini-pro`                                       |         |",
       "| Gemini 3.6 Flash       | google:gemini-3.6-flash       | `gemini-flash`                                               |         |",
-      "| Grok 4.5               | xai:grok-4.5                  | `grok`, `grok-4.5`                                           |         |",
+      "| Grok 4.6               | xai:grok-4.6                  | `grok`, `grok-4.6`                                           |         |",
       "| DeepSeek V4 Pro        | deepseek:deepseek-v4-pro      | `deepseek`, `deepseek-pro`, `deepseek-v4`, `deepseek-v4-pro` |         |",
       "| DeepSeek V4 Flash      | deepseek:deepseek-v4-flash    | `deepseek-flash`, `deepseek-v4-flash`                        |         |",
       "| Kimi K3                | moonshotai:kimi-k3            | `kimi`, `k3`, `kimi-k3`                                      |         |",

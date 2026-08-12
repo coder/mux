@@ -752,8 +752,13 @@ describe("TOOL_DEFINITIONS", () => {
     }
   });
 
-  it("exposes xAI native search tools only for Grok 4.5", () => {
-    for (const modelString of ["xai:grok-4.5", "xai:grok-4.5-latest"]) {
+  it("exposes xAI native search tools only for frontier Grok", () => {
+    for (const modelString of [
+      "xai:grok-4.6",
+      "xai:grok-4.6-latest",
+      "xai:grok-4.5",
+      "xai:grok-4.5-latest",
+    ]) {
       expect(getAvailableTools(modelString)).toEqual(
         expect.arrayContaining(["web_search", "x_search"])
       );

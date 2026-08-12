@@ -5,7 +5,7 @@ import type {
 } from "@/common/config/schemas/providersConfig";
 import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
-import { isGrok45Model } from "@/common/types/thinking";
+import { isGrokFrontierModel } from "@/common/types/thinking";
 import { getExplicitGatewayPrefix, normalizeToCanonical } from "@/common/utils/ai/models";
 import { openaiDirectProviderOptionsAvailable } from "@/common/utils/ai/openaiProviderOptionsAvailability";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
@@ -37,7 +37,7 @@ export function getFastModeProvider(
   const normalized = normalizeToCanonical(modelString);
   const [origin] = normalized.split(":", 2);
   const capabilityModel = resolveModelForMetadata(normalized, options?.providersConfig ?? null);
-  if (origin !== "xai" || !isGrok45Model(capabilityModel)) return null;
+  if (origin !== "xai" || !isGrokFrontierModel(capabilityModel)) return null;
 
   // xAI service_tier is also provider-native and cannot survive a gateway route.
   const explicitGateway = getExplicitGatewayPrefix(modelString);

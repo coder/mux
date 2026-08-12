@@ -3,7 +3,7 @@ import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { wrapLanguageModel, type LanguageModel } from "ai";
-import { isGrok45Model, type ThinkingLevel } from "@/common/types/thinking";
+import { isGrokFrontierModel, type ThinkingLevel } from "@/common/types/thinking";
 import { Ok, Err } from "@/common/types/result";
 import type { Result } from "@/common/types/result";
 import type { SendMessageError } from "@/common/types/errors";
@@ -213,12 +213,12 @@ export function resolveOpenAIWebSocketResponsesUrl(baseURL: unknown): string | u
 }
 
 /**
- * Force Grok 4.5 Responses onto store=false by default (ZDR-safe).
+ * Force frontier Grok Responses onto store=false by default (ZDR-safe).
  * Applied for both direct xAI and gateway-routed Grok so callers that omit
  * providerOptions (identity generation, memory harvest, headless tools) never
  * hit the upstream store=true default. Explicit request-level store wins.
  */
-function injectGrok45StoreDefault(
+function injectGrokStoreDefault(
   model: {
     doStream: (options: never) => unknown;
     doGenerate: (options: never) => unknown;
@@ -1549,20 +1549,20 @@ export class ProviderModelFactory {
           ...restOptions,
           fetch: providerFetch,
         });
-        // Grok 4.5 uses the Responses API so @ai-sdk/xai surfaces exact billed
+        // Frontier Grok uses the Responses API so @ai-sdk/xai surfaces exact billed
         // cost metadata (including Priority Processing). Mapped provider aliases inherit
         // that capability; older custom model strings stay on Chat Completions for
         // legacy search_parameters compatibility.
         const capabilityModel = resolveModelForMetadata(`xai:${modelId}`, providersConfig);
-        const model = isGrok45Model(capabilityModel)
+        const model = isGrokFrontierModel(capabilityModel)
           ? provider.responses(modelId)
           : provider.chat(modelId);
 
-        // Grok 4.5 Responses: force store=false by default so ZDR and non-ZDR share
+        // Frontier Grok Responses: force store=false by default so ZDR and non-ZDR share
         // one path. buildProviderOptions already defaults this; inject here too so
         // callers that omit providerOptions still get ZDR-safe requests.
-        if (isGrok45Model(capabilityModel)) {
-          injectGrok45StoreDefault(model, muxProviderOptions?.xai?.store);
+        if (isGrokFrontierModel(capabilityModel)) {
+          injectGrokStoreDefault(model, muxProviderOptions?.xai?.store);
         }
 
         return Ok(model);
@@ -1822,13 +1822,13 @@ export class ProviderModelFactory {
           model.doGenerate = (options) => originalDoGenerate(injectStoreFlag(options));
         }
 
-        // Gateway-routed Grok 4.5 must get the same store=false default as direct xAI.
+        // Gateway-routed frontier Grok must get the same store=false default as direct xAI.
         // Route form is mux-gateway:xai/<model>; capability lookup uses canonical xai:id.
         if (modelId.startsWith("xai/")) {
           const gatewayGrokModel = `xai:${modelId.slice("xai/".length)}`;
           const capabilityModel = resolveModelForMetadata(gatewayGrokModel, providersConfig);
-          if (isGrok45Model(capabilityModel)) {
-            injectGrok45StoreDefault(model, muxProviderOptions?.xai?.store);
+          if (isGrokFrontierModel(capabilityModel)) {
+            injectGrokStoreDefault(model, muxProviderOptions?.xai?.store);
           }
         }
 

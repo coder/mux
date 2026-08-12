@@ -12,7 +12,7 @@ import type { OpenAIResponsesProviderOptions } from "@ai-sdk/openai";
 import type { JSONValue } from "@ai-sdk/provider";
 import type {
   XaiProviderOptions,
-  // Chat options alias does not include store; Responses options do (Grok 4.5 / ZDR).
+  // Chat options alias does not include store; Responses options do (frontier Grok / ZDR).
   XaiResponsesProviderOptions,
 } from "@ai-sdk/xai";
 import type { ProviderName } from "@/common/constants/providers";
@@ -26,7 +26,8 @@ import {
   ANTHROPIC_THINKING_BUDGETS,
   GEMINI_THINKING_BUDGETS,
   getOpenAIReasoningEffort,
-  isGrok45Model,
+  isGrok46Model,
+  isGrokFrontierModel,
   isKimiK3Model,
   openaiSupportsProMode,
   OPENROUTER_REASONING_EFFORT,
@@ -78,7 +79,7 @@ interface MoonshotAIProviderOptions {
 }
 
 /**
- * xAI providerOptions payload. Chat models use XaiProviderOptions; Grok 4.5
+ * xAI providerOptions payload. Chat models use XaiProviderOptions; frontier Grok
  * Responses also accepts store (ZDR). Union keeps both families assignable.
  */
 type XaiBuiltProviderOptions = XaiProviderOptions & Pick<XaiResponsesProviderOptions, "store">;
@@ -558,10 +559,12 @@ export function buildProviderOptions(
       store,
       ...overrides
     } = muxProviderOptions?.xai ?? {};
-    const isGrok45 = isGrok45Model(capabilityModel);
-    const reasoningEffort: XaiProviderOptions["reasoningEffort"] = isGrok45
+    const isGrokFrontier = isGrokFrontierModel(capabilityModel);
+    // Grok 4.6 supports native xhigh effort; Grok 4.5 tops out at high.
+    const topEffort = isGrok46Model(capabilityModel) ? "xhigh" : "high";
+    const reasoningEffort: XaiProviderOptions["reasoningEffort"] = isGrokFrontier
       ? effectiveThinking === "xhigh" || effectiveThinking === "max"
-        ? "high"
+        ? topEffort
         : effectiveThinking === "off"
           ? "low"
           : effectiveThinking
@@ -572,21 +575,21 @@ export function buildProviderOptions(
       returnCitations: true,
     };
 
-    // Grok 4.5 Responses: always prefer store=false.
+    // Frontier Grok Responses: always prefer store=false.
     // Mux already resends full history explicitly and persists encrypted reasoning
     // client-side, so server storage is unnecessary. Forcing store=false means ZDR
     // and non-ZDR orgs share one code path and one quality bar (no settings surface).
     // Explicit muxProviderOptions.xai.store still wins for tests/escapes.
-    const effectiveStore = isGrok45 ? (store ?? false) : store;
+    const effectiveStore = isGrokFrontier ? (store ?? false) : store;
 
     const options = {
       xai: {
         ...overrides,
         ...(reasoningEffort != null && { reasoningEffort }),
         ...(effectiveStore != null && { store: effectiveStore }),
-        // Grok 4.5 uses xAI's modern Responses tools; getToolsForModel translates
+        // Frontier Grok uses xAI's modern Responses tools; getToolsForModel translates
         // legacy Live Search settings instead of sending deprecated search_parameters.
-        ...(!isGrok45 && {
+        ...(!isGrokFrontier && {
           searchParameters: searchParameters ?? defaultSearchParameters,
         }),
       },

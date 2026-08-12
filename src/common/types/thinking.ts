@@ -47,6 +47,9 @@ export function getThinkingDisplayLabel(level: ThinkingLevel, modelString?: stri
 
     // Anthropic Opus 4.7+: xhigh is a distinct effort level from max
     if (level === "xhigh" && anthropicSupportsNativeXhigh(modelString)) return "XHIGH";
+
+    // Grok 4.6: xhigh is a distinct native reasoning effort (its policy has no max).
+    if (level === "xhigh" && isGrok46Model(modelString)) return "XHIGH";
   }
   return THINKING_DISPLAY_LABELS[level];
 }
@@ -304,12 +307,22 @@ export function openaiSupportsProMode(modelString: string): boolean {
 }
 
 /**
- * Whether the model is Grok 4.5 (including provider/gateway prefixes and aliases).
- * Grok 4.5 always reasons and accepts low, medium, or high effort.
+ * Whether the model is a frontier Grok (4.5 or 4.6, including provider/gateway
+ * prefixes and aliases). These models always reason and are served over xAI's
+ * Responses API. Extend the regex when xAI ships the next frontier version.
  */
-export function isGrok45Model(modelString: string): boolean {
+export function isGrokFrontierModel(modelString: string): boolean {
   const withoutPrefix = stripModelProviderPrefixes(modelString);
-  return /^grok-4\.5(?:$|-)/.test(withoutPrefix);
+  return /^grok-4\.[56](?:$|-)/.test(withoutPrefix);
+}
+
+/**
+ * Whether the model is Grok 4.6, the first Grok with native xhigh reasoning
+ * effort (Grok 4.5 tops out at high).
+ */
+export function isGrok46Model(modelString: string): boolean {
+  const withoutPrefix = stripModelProviderPrefixes(modelString);
+  return /^grok-4\.6(?:$|-)/.test(withoutPrefix);
 }
 
 /**

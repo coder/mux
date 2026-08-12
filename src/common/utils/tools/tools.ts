@@ -2,7 +2,7 @@ import { xai } from "@ai-sdk/xai";
 import { type LanguageModel, type Tool } from "ai";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import { isGrok45Model } from "@/common/types/thinking";
+import { isGrokFrontierModel } from "@/common/types/thinking";
 import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
@@ -700,7 +700,7 @@ export function getForcedXaiSearchToolNames(
   modelString: string,
   searchParameters: ToolConfiguration["xaiSearchParameters"]
 ): string[] | undefined {
-  if (!isGrok45Model(modelString) || searchParameters?.mode !== "on") {
+  if (!isGrokFrontierModel(modelString) || searchParameters?.mode !== "on") {
     return undefined;
   }
 
@@ -907,7 +907,7 @@ export async function getToolsForModel(
       }
 
       case "xai": {
-        if (isGrok45Model(capabilityModelString) && config.xaiNativeToolsEnabled !== false) {
+        if (isGrokFrontierModel(capabilityModelString) && config.xaiNativeToolsEnabled !== false) {
           const nativeSearch = getXaiNativeSearchConfiguration(config.xaiSearchParameters);
           allTools = {
             ...baseTools,

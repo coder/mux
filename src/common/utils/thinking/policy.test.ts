@@ -906,6 +906,15 @@ describe("Grok 4.5 thinking policy", () => {
   });
 });
 
+describe("Grok 4.6 thinking policy", () => {
+  test("adds native xhigh on top of the frontier Grok ladder", () => {
+    expect(getThinkingPolicyForModel("xai:grok-4.6")).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(getDefaultMinimumThinkingLevel("xai:grok-4.6")).toBe("medium");
+    expect(enforceThinkingPolicy("xai:grok-4.6", "off")).toBe("low");
+    expect(enforceThinkingPolicy("xai:grok-4.6", "max")).toBe("xhigh");
+  });
+});
+
 describe("getAvailableThinkingLevels", () => {
   test("returns the raw capability when no floor is provided", () => {
     expect(getAvailableThinkingLevels("anthropic:claude-sonnet-4-5")).toEqual([

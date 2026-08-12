@@ -61,9 +61,10 @@ describe("getEffectiveContextLimit", () => {
     expect(toggledLimit).toBe(1_050_000);
   });
 
-  test("uses Grok 4.5's published 500K context window", () => {
-    expect(getEffectiveContextLimit(KNOWN_MODELS.GROK_45.id, false, null)).toBe(500_000);
-    expect(getEffectiveContextLimit("xai:grok-4.5-latest", false, null)).toBe(500_000);
+  test("uses frontier Grok's published 500K context window", () => {
+    expect(getEffectiveContextLimit(KNOWN_MODELS.GROK_46.id, false, null)).toBe(500_000);
+    expect(getEffectiveContextLimit("xai:grok-4.6-latest", false, null)).toBe(500_000);
+    expect(getEffectiveContextLimit("xai:grok-4.5", false, null)).toBe(500_000);
   });
 
   test("caps GPT-5.5 at the Codex OAuth context window when OAuth is the active auth route", () => {

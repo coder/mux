@@ -469,15 +469,17 @@ describe("ProviderModelFactory.createModel", () => {
 });
 
 describe("ProviderModelFactory xAI API selection", () => {
-  it("uses Responses for Grok 4.5 so exact billed cost metadata is available", async () => {
+  it("uses Responses for frontier Grok so exact billed cost metadata is available", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({ xai: { apiKey: "xai-test-key" } });
 
-      const result = await factory.createModel("xai:grok-4.5");
+      for (const model of ["xai:grok-4.6", "xai:grok-4.5"]) {
+        const result = await factory.createModel(model);
 
-      expect(result.success).toBe(true);
-      if (!result.success) return;
-      expect((result.data as { provider?: unknown }).provider).toBe("xai.responses");
+        expect(result.success).toBe(true);
+        if (!result.success) return;
+        expect((result.data as { provider?: unknown }).provider).toBe("xai.responses");
+      }
     });
   });
 
