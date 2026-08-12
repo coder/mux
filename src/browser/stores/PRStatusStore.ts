@@ -380,6 +380,7 @@ export class PRStatusStore {
     this.refreshController.requestImmediate();
   }
 
+  /** Subscriptions drive refresh, so consumers do not monitor workspaces separately. */
   subscribeWorkspace = (workspaceId: string, listener: () => void) => {
     const unsubscribe = this.workspacePRSubscriptions.subscribeKey(workspaceId, listener);
 
@@ -917,6 +918,7 @@ export class PRStatusStore {
             () => {
               firedSynchronously = true;
               this.runtimeRetryUnsubscribers.delete(workspaceId);
+              // Clear due entries so cache TTLs cannot suppress the deferred refresh.
               if (shouldFetchPR) {
                 this.workspacePRCache.delete(workspaceId);
               }

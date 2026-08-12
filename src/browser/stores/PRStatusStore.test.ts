@@ -74,7 +74,7 @@ async function runPassiveRefreshScenario(
   shouldRun: boolean
 ): Promise<number> {
   const executeBash = mock(() => {
-    // These tests only care whether passive refresh attempted both gh commands.
+    // Return failures because these tests only assert whether runtime gating invokes both commands.
     return Promise.resolve({ success: false as const, error: "gh unavailable" });
   });
 
