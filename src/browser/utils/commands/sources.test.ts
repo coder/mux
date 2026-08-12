@@ -503,6 +503,38 @@ test("Login with Coder command opens providers expanded on Coder and starts the 
   });
 });
 
+test("Login with Coder command hides itself when a custom provider shadows the coder id", () => {
+  // Regression: an upgraded install can carry a custom OpenAI-compatible
+  // provider named "coder". ProvidersSection hides the OAuth block for
+  // shadowed providers, so the login hint would either surface an invisible
+  // "Set the deployment URL first" error or inject built-in OAuth credentials
+  // into the custom provider's section. The command must follow the UI's
+  // shadow handling and hide itself.
+  const onOpenSettings = mock();
+  const shadowed = getActions({
+    onOpenSettings,
+    providersConfig: {
+      coder: { isCustom: true, baseUrl: "http://localhost:9000/v1" },
+    } as unknown as Parameters<typeof buildCoreSources>[0]["providersConfig"],
+  }).find((a) => a.title === "Settings: Login with Coder");
+  expect(shadowed).toBeDefined();
+  expect(shadowed?.visible?.()).toBe(false);
+
+  // Built-in Coder (no shadow): visible, including when no config exists yet.
+  const builtIn = getActions({
+    onOpenSettings,
+    providersConfig: {
+      coder: { coderOauthSet: false },
+    } as unknown as Parameters<typeof buildCoreSources>[0]["providersConfig"],
+  }).find((a) => a.title === "Settings: Login with Coder");
+  expect(builtIn?.visible?.()).toBe(true);
+
+  const noConfig = getActions({ onOpenSettings }).find(
+    (a) => a.title === "Settings: Login with Coder"
+  );
+  expect(noConfig?.visible?.()).toBe(true);
+});
+
 test("Disconnect Coder command revokes via RPC and is gated on a stored credential", async () => {
   // Regression: Disconnect must be keyboard-reachable and must key its
   // visibility off credential PRESENCE (coderOauthCredentialStored), not

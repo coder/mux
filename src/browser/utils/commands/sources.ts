@@ -1575,6 +1575,13 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         subtitle: "Connect to a Coder deployment (AI Bridge)",
         section: section.settings,
         keywords: ["coder", "login", "oauth", "aibridge", "deployment", "connect"],
+        // Hidden when a custom OpenAI-compatible provider shadows the "coder"
+        // id (an upgraded install may carry one): ProvidersSection hides the
+        // OAuth block for shadowed providers, so the login hint would either
+        // surface an invisible "Set the deployment URL first" error or —
+        // if the custom section happens to have a deploymentUrl — inject
+        // built-in OAuth credentials into the custom provider's section.
+        visible: () => p.providersConfig?.coder?.isCustom !== true,
         // Expands the Coder provider and starts the OAuth login (one-shot
         // hints consumed by ProvidersSection) instead of only opening the
         // generic Providers list.

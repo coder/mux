@@ -2128,6 +2128,111 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("rechecks policy per request, not only at model creation", async () => {
+    // Regression: an enforced policy can refresh mid-stream (or during the
+    // awaited setup between resolveAndCreateModel and the first fetch) to
+    // deny Coder or the specific model. getValidAuth() only validates the
+    // credential/issuer, so without a per-request policy gate the wrapper
+    // would keep attaching the OAuth token for the remainder of a long
+    // multi-step stream.
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder" }],
+      },
+      async (config, factory, policyService) => {
+        const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+        const originalFetch = globalThis.fetch;
+        let capturedFetch: typeof fetch | undefined;
+        let upstreamCalls = 0;
+
+        saveCoderConfig(config);
+        factory.coderOauthService = stubCoderOauthService();
+
+        PROVIDER_REGISTRY.anthropic = async () => {
+          const module = await originalAnthropicRegistry();
+          return {
+            ...module,
+            createAnthropic: (options) => {
+              capturedFetch = options?.fetch;
+              return module.createAnthropic(options);
+            },
+          };
+        };
+
+        globalThis.fetch = Object.assign(
+          (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
+            upstreamCalls++;
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          },
+          { preconnect: () => undefined }
+        ) as typeof fetch;
+
+        try {
+          // Model creation succeeds under the permissive policy.
+          const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+          expect(result.success).toBe(true);
+          expect(capturedFetch).toBeDefined();
+
+          // First request under the permissive policy goes through.
+          await capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+            method: "POST",
+            headers: { "x-api-key": "coder" },
+            body: "{}",
+          });
+          expect(upstreamCalls).toBe(1);
+
+          // The policy refreshes mid-session: coder allows only another model.
+          await writeFile(
+            process.env.MUX_POLICY_FILE!,
+            JSON.stringify({
+              policy_format_version: "0.1",
+              provider_access: [{ id: "coder", model_access: ["openai/gpt-5.2"] }],
+            }),
+            "utf-8"
+          );
+          const refresh = await policyService.refreshNow();
+          expect(refresh.success).toBe(true);
+
+          // The SAME created model's next request must fail closed without
+          // hitting the upstream (no token attached, no bypass).
+          // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+          await expect(
+            capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+              method: "POST",
+              headers: { "x-api-key": "coder" },
+              body: "{}",
+            })
+          ).rejects.toThrow("not allowed by policy");
+          expect(upstreamCalls).toBe(1);
+
+          // A refresh that denies the provider entirely fails the same way.
+          await writeFile(
+            process.env.MUX_POLICY_FILE!,
+            JSON.stringify({
+              policy_format_version: "0.1",
+              provider_access: [{ id: "openai" }],
+            }),
+            "utf-8"
+          );
+          expect((await policyService.refreshNow()).success).toBe(true);
+          // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+          await expect(
+            capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+              method: "POST",
+              headers: { "x-api-key": "coder" },
+              body: "{}",
+            })
+          ).rejects.toThrow("not allowed by policy");
+          expect(upstreamCalls).toBe(1);
+        } finally {
+          globalThis.fetch = originalFetch;
+          PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+        }
+      }
+    );
+  });
+
   it("routes through the policy-forced base URL when the login matches it", async () => {
     const LOCKED_URL = "https://locked.coder.example.com";
     await withTempPolicyProviderFactory(

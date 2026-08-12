@@ -1997,10 +1997,25 @@ export class ProviderModelFactory {
         // Per-request auth wrapper: getValidAuth() transparently refreshes and
         // persists rotated tokens, so long sessions never send stale tokens.
         const baseFetch = getProviderFetch(providerConfig);
+        const policyService = this.policyService;
         const coderFetchFn = async (
           input: Parameters<typeof fetch>[0],
           init?: Parameters<typeof fetch>[1]
         ) => {
+          // Policy recheck per REQUEST, not just at model creation: an
+          // enforced policy can refresh mid-stream (or during the awaited
+          // setup between resolveAndCreateModel and the first fetch) to deny
+          // Coder or this model. getValidAuth() only validates the
+          // credential/issuer, so without this gate the wrapper would keep
+          // attaching the OAuth token and bypass the newly effective
+          // restriction for the remainder of a long multi-step stream.
+          if (
+            policyService?.isEnforced() &&
+            (!policyService.isProviderAllowed("coder") ||
+              !policyService.isModelAllowed("coder", modelId))
+          ) {
+            throw new Error(`Model coder:${modelId} is not allowed by policy`);
+          }
           const authResult = await coderOauthService.getValidAuth();
           if (!authResult.success) {
             throw new Error(authResult.error);
