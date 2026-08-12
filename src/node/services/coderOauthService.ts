@@ -433,9 +433,10 @@ export class CoderOauthService {
 
     // Set when the stored-client redirect PUT ended without a definitive
     // server answer (timeout/network error before a response): the mutation
-    // may STILL land later, so the lease must not be released — it goes stale
-    // after the flow timeout, and until then other flows register fresh
-    // clients instead of racing the orphaned update for the redirect slot.
+    // may STILL land later, so the lease must not be released — it is left to
+    // the stale-break path (TTL + owner-gone check), and until then other
+    // flows register fresh clients instead of racing the orphaned update for
+    // the redirect slot.
     let storedClientUpdateUncertain = false;
     const ensureClientPromise = this.ensureClient(
       deploymentUrl,
@@ -457,7 +458,7 @@ export class CoderOauthService {
       // redirect A, invalidating the replacement's authorization URL.
       void Promise.allSettled([resultDeferred.promise, ensureClientPromise]).then(() => {
         if (storedClientUpdateUncertain) {
-          return; // Lease expires via its stale TTL instead.
+          return; // Deliberately leaked; reclaimed by the stale-break path.
         }
         release();
       });

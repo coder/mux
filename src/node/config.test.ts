@@ -2508,6 +2508,21 @@ describe("Config", () => {
     });
   });
 
+  /**
+   * Simulate a crashed lock/lease holder: backdate every generation marker
+   * past the TTL and rewrite its owner PID to one that provably does not
+   * exist (stale-breaking requires BOTH — a live process's lock is never
+   * broken).
+   */
+  function markCrashedHolder(lockPath: string, ttlMs: number): void {
+    const staleTime = new Date(Date.now() - ttlMs - 1_000);
+    for (const entry of fs.readdirSync(lockPath)) {
+      const entryPath = path.join(lockPath, entry);
+      fs.writeFileSync(entryPath, "999999999");
+      fs.utimesSync(entryPath, staleTime, staleTime);
+    }
+  }
+
   describe("tryAcquireCoderOauthClientLease", () => {
     const TTL_MS = 60_000;
 
@@ -2557,19 +2572,37 @@ describe("Config", () => {
       release!();
     });
 
+    it("does not stale-break a lease whose holder process is still alive", () => {
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+
+      // The holder outlives the TTL but its process (this one) is alive —
+      // e.g. a suspended laptop or a stalled event loop. Breaking it would
+      // let a second flow enter the same critical section and race the
+      // resumed original; contenders must fail acquisition instead.
+      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
+      for (const entry of fs.readdirSync(leasePath)) {
+        fs.utimesSync(path.join(leasePath, entry), staleTime, staleTime);
+      }
+
+      const otherProcess = new Config(tempDir);
+      expect(otherProcess.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
+      release!();
+    });
+
     it("does not release a lease that was stale-broken and reacquired by another process", () => {
       const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
 
       const originalRelease = config.tryAcquireCoderOauthClientLease(TTL_MS);
       expect(originalRelease).not.toBeNull();
 
-      // The lease crosses the staleness boundary (staleness binds to the
-      // holder's generation marker); another process breaks it and acquires
-      // its own generation of the same path.
-      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
-      for (const entry of fs.readdirSync(leasePath)) {
-        fs.utimesSync(path.join(leasePath, entry), staleTime, staleTime);
-      }
+      // The lease crosses the staleness boundary and its holder "crashes"
+      // (staleness binds to the holder's generation marker + a gone owner
+      // PID); another process breaks it and acquires its own generation of
+      // the same path.
+      markCrashedHolder(leasePath, TTL_MS);
       const otherProcess = new Config(tempDir);
       const otherRelease = otherProcess.tryAcquireCoderOauthClientLease(TTL_MS);
       expect(otherRelease).not.toBeNull();
@@ -2637,12 +2670,10 @@ describe("Config", () => {
       });
       await firstEnteredPromise;
 
-      // The first holder stalls past the staleness boundary (backdate its
-      // generation marker), and a second process stale-breaks + reacquires.
-      const staleTime = new Date(Date.now() - 120_000);
-      for (const entry of fs.readdirSync(lockPath)) {
-        fs.utimesSync(path.join(lockPath, entry), staleTime, staleTime);
-      }
+      // The first holder's process "crashes" past the staleness boundary
+      // (backdated marker + gone owner PID) while its release closure is
+      // still pending, and a second process stale-breaks + reacquires.
+      markCrashedHolder(lockPath, 120_000);
       let releaseSecond!: () => void;
       const secondGate = new Promise<void>((resolve) => (releaseSecond = resolve));
       let secondEntered!: () => void;

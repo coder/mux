@@ -187,6 +187,20 @@ function parseWorktreeArchiveBehavior(value: unknown): WorktreeArchiveBehavior |
   return isWorktreeArchiveBehavior(value) ? value : undefined;
 }
 
+/**
+ * Whether a process with `pid` currently exists. Signal 0 performs only the
+ * existence/permission check; EPERM means the process exists but belongs to
+ * another user (still alive for lock-liveness purposes).
+ */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
 function resolveDeleteWorktreeOnArchive(deleteWorktreeOnArchive: unknown): boolean {
   return parseOptionalBoolean(deleteWorktreeOnArchive) ?? false;
 }
@@ -2572,8 +2586,10 @@ export class Config {
 
   /**
    * Shared mkdir-based advisory lock: exclusive directory creation is atomic
-   * on all platforms; locks orphaned by crashed processes are broken after
-   * `staleLockMs`.
+   * on all platforms; locks orphaned by crashed processes are broken once
+   * they are older than `staleLockMs` AND their owner process is gone
+   * (see tryBreakStaleDirLock — live-but-stalled holders are never broken;
+   * contenders instead fail acquisition at the bounded timeout).
    *
    * Ownership generations: a holder that runs past `staleLockMs` (suspended
    * process, stalled event loop) can be stale-broken and the lock reacquired
@@ -2623,7 +2639,9 @@ export class Config {
 
       ownerFile = path.join(lockPath, `owner-${crypto.randomBytes(16).toString("hex")}`);
       try {
-        fs.writeFileSync(ownerFile, "");
+        // Marker content is the holder's PID: stale-breaking is gated on the
+        // owner process being GONE, not merely old (see tryBreakStaleDirLock).
+        fs.writeFileSync(ownerFile, String(process.pid));
         break;
       } catch (error) {
         // Without a generation marker this lock could never be released
@@ -2669,8 +2687,9 @@ export class Config {
    * sub-second file mutations), this lease spans a whole login flow — the
    * redirect URI must stay registered until the user finishes authorizing —
    * so staleness is judged against `ttlMs` (the flow timeout). A crashed
-   * holder's lease is broken after that, and in the interim other flows
-   * degrade gracefully to fresh client registrations.
+   * holder's lease is broken after that (only once its process is provably
+   * gone, see tryBreakStaleDirLock), and in the interim other flows degrade
+   * gracefully to fresh client registrations.
    *
    * Ownership safety: a lease that crosses the staleness boundary can be
    * broken and reacquired by another process at any instant, so neither
@@ -2704,7 +2723,9 @@ export class Config {
 
       const ownerFile = path.join(leasePath, `owner-${crypto.randomBytes(16).toString("hex")}`);
       try {
-        fs.writeFileSync(ownerFile, "");
+        // Marker content is the holder's PID: stale-breaking is gated on the
+        // owner process being GONE, not merely old (see tryBreakStaleDirLock).
+        fs.writeFileSync(ownerFile, String(process.pid));
       } catch (error) {
         // Without a generation marker this lease could never be released
         // safely (and looks like a crashed acquisition to breakers); abandon
@@ -2787,6 +2808,28 @@ export class Config {
         }
       } catch {
         continue; // Vanished mid-check; the conditional cleanup below is safe.
+      }
+      // A stale mtime alone must not break the lock: the holder may be a LIVE
+      // process that merely outlived the TTL (suspended laptop, stalled event
+      // loop). Breaking it would let a second process enter the same critical
+      // section, and for the refresh lock the resumed original could then
+      // race the successor over the same rotating refresh token — both sides
+      // clearing/revoking the only valid credential. The marker carries the
+      // owner's PID: only break when that process is provably gone; otherwise
+      // acquisition fails bounded (withDirLock times out, the client lease
+      // falls back to a fresh registration).
+      // Residual risk: a recycled PID belonging to an unrelated live process
+      // keeps an orphaned lock alive until that process exits — rare, and
+      // strictly safer than destroying a live holder's lock.
+      let ownerPid: number | null = null;
+      try {
+        const content = fs.readFileSync(entryPath, "utf8").trim();
+        ownerPid = /^\d+$/.test(content) ? Number(content) : null;
+      } catch {
+        continue; // Vanished mid-check; the conditional cleanup below is safe.
+      }
+      if (ownerPid !== null && isProcessAlive(ownerPid)) {
+        return false;
       }
       try {
         fs.unlinkSync(entryPath);
