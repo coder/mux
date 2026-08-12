@@ -309,7 +309,7 @@ export function openaiSupportsProMode(modelString: string): boolean {
 /**
  * Whether the model is a frontier Grok (4.5 or 4.6, including provider/gateway
  * prefixes and aliases). These models always reason and are served over xAI's
- * Responses API. Extend the regex when xAI ships the next frontier version.
+ * Responses API.
  */
 export function isGrokFrontierModel(modelString: string): boolean {
   const withoutPrefix = stripModelProviderPrefixes(modelString);
@@ -317,8 +317,8 @@ export function isGrokFrontierModel(modelString: string): boolean {
 }
 
 /**
- * Whether the model is Grok 4.6, the first Grok with native xhigh reasoning
- * effort (Grok 4.5 tops out at high).
+ * Whether the model is Grok 4.6, which supports native xhigh reasoning effort
+ * (Grok 4.5 tops out at high).
  */
 export function isGrok46Model(modelString: string): boolean {
   const withoutPrefix = stripModelProviderPrefixes(modelString);

@@ -56,7 +56,7 @@ describe("getModelStats", () => {
     expect(grok46.output_cost_per_token_above_200k_tokens).toBe(0.000012);
     expect(grok46.cache_read_input_token_cost_above_200k_tokens).toBe(0.000001);
 
-    // Grok 4.5 stays servable as a custom model string with its own (cheaper) cache rate.
+    // Grok 4.5 keeps its distinct cheaper cache rate.
     const grok45 = expectStats("xai:grok-4.5");
     expect(grok45.cache_read_input_token_cost).toBe(0.0000003);
   });
