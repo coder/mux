@@ -1857,7 +1857,7 @@ export class TaskService {
    * Derives auto-resume send options (agentId, model, thinkingLevel) from durable
    * conversation metadata, so synthetic resumes preserve the parent's active agent.
    *
-   * Precedence: stream-end event metadata → last assistant message in history → workspace AI settings → defaults.
+   * Precedence: stream-end event metadata → last non-compaction assistant message in history → workspace AI settings → defaults.
    */
   private async resolveParentAutoResumeOptions(
     parentWorkspaceId: string,
@@ -1876,16 +1876,21 @@ export class TaskService {
     reasoningMode?: OpenAIReasoningMode;
   }> {
     // 1) Try stream-end hint metadata (available in handleStreamEnd path)
-    let agentId = hint?.agentId;
+    // Compaction is an internal mechanical turn, never a valid identity for resuming user work.
+    let agentId = hint?.agentId === "compact" ? undefined : hint?.agentId;
 
-    // 2) Fall back to latest assistant message metadata in history (restart-safe)
+    // 2) Fall back to latest non-compaction assistant message metadata in history (restart-safe)
     if (!agentId) {
       try {
         const historyResult = await this.historyService.getLastMessages(parentWorkspaceId, 20);
         if (historyResult.success) {
           for (let i = historyResult.data.length - 1; i >= 0; i--) {
             const msg = historyResult.data[i];
-            if (msg?.role === "assistant" && msg.metadata?.agentId) {
+            if (
+              msg?.role === "assistant" &&
+              msg.metadata?.agentId &&
+              msg.metadata.agentId !== "compact"
+            ) {
               agentId = msg.metadata.agentId;
               break;
             }
