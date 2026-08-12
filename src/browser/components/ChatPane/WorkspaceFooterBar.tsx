@@ -33,7 +33,12 @@ import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
 import { revealTimelineTarget, type TimelineRevealResult } from "@/browser/utils/timelineReveal";
-import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import {
+  formatKeybind,
+  isEditableElement,
+  KEYBINDS,
+  matchesKeybind,
+} from "@/browser/utils/ui/keybinds";
 
 interface WorkspaceFooterBarProps {
   workspaceId: string;
@@ -211,6 +216,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   const workspaceStore = useWorkspaceStoreRaw();
   const [open, setOpen] = React.useState(false);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
+  const revealButtonRef = React.useRef<HTMLButtonElement>(null);
   const revealOperationRef = React.useRef(0);
   const lastPromptMessageId = lastPrompt?.messageId;
   const [revealState, setRevealState] = React.useState<
@@ -241,6 +247,24 @@ function FooterLastPrompt(props: { workspaceId: string }) {
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [lastPromptMessageId]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (
+        !open ||
+        !matchesKeybind(event, KEYBINDS.REVEAL_TIMELINE_EVENT) ||
+        isEditableElement(event.target)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (revealButtonRef.current && !revealButtonRef.current.disabled) {
+        revealButtonRef.current.click();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open]);
 
   if (lastPrompt === null) {
     return null;
@@ -310,6 +334,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
         <div className="whitespace-pre-wrap">{lastPrompt.text}</div>
         <button
           type="button"
+          ref={revealButtonRef}
           data-testid="workspace-footer-last-prompt-reveal"
           disabled={revealState === "revealing"}
           onClick={handleReveal}
