@@ -410,6 +410,7 @@ export const WorkspaceFooterBar: React.FC<WorkspaceFooterBarProps> = (props) => 
         <WorkspaceLinks
           workspaceId={props.workspaceId}
           className="[@media(max-width:768px)]:hidden"
+          menuDirection="up"
         />
         {hasRepository && (
           <>

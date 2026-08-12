@@ -557,10 +557,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         </Popover>
       </div>
       <div className={cn("flex items-center gap-2", isDesktop && "titlebar-no-drag")}>
-        {/* The footer info bar hides its PR badge at this width, so the header carries it there. */}
+        {/* The footer hides these links at this width, so the header carries them. */}
         <WorkspaceLinks
           workspaceId={workspaceId}
           className="hidden [@media(max-width:768px)]:inline-flex"
+          menuDirection="down"
         />
         <Popover open={notificationPopoverOpen} onOpenChange={setNotificationPopoverOpen}>
           <Tooltip {...(notificationPopoverOpen ? { open: false } : {})}>
