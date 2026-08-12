@@ -53,25 +53,47 @@ const BUCKET_TIME_COMPONENT_PATTERN = /(?:^|[ T])\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)
 const BUCKET_DATE_TIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?/;
 
-function parseBucketWallTimeAsUtc(bucket: string): Date | null {
+function parseBucketWallTime(bucket: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} | null {
   const match = BUCKET_DATE_TIME_PATTERN.exec(bucket);
   if (!match) {
     return null;
   }
 
-  const [, year, month, day, hour, minute, second = "0"] = match;
-  const parsedDate = new Date(
-    Date.UTC(
-      Number(year),
-      Number(month) - 1,
-      Number(day),
-      Number(hour),
-      Number(minute),
-      Number(second)
-    )
-  );
+  const [, year, month, day, hour, minute] = match;
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+  };
+}
 
-  return Number.isFinite(parsedDate.getTime()) ? parsedDate : null;
+function formatBucketWallTime(bucket: string): string | null {
+  const parts = parseBucketWallTime(bucket);
+  if (!parts) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  if (!Number.isFinite(date.getTime())) {
+    return null;
+  }
+
+  return (
+    date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      timeZone: "UTC",
+    }) +
+    `, ${parts.hour % 12 || 12}:${String(parts.minute).padStart(2, "0")} ${parts.hour >= 12 ? "PM" : "AM"}`
+  );
 }
 
 export function formatUsd(amount: number): string {
@@ -105,17 +127,13 @@ export function formatProjectDisplayName(projectPath: string): string {
 
 export function formatBucketLabel(bucket: string): string {
   const includesTime = BUCKET_TIME_COMPONENT_PATTERN.test(bucket);
-  const parsedDate = includesTime ? parseBucketWallTimeAsUtc(bucket) : new Date(bucket);
-  if (!parsedDate || !Number.isFinite(parsedDate.getTime())) {
-    return bucket;
+  if (includesTime) {
+    return formatBucketWallTime(bucket) ?? bucket;
   }
 
-  if (includesTime) {
-    return parsedDate.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "numeric",
-    });
+  const parsedDate = new Date(bucket);
+  if (!Number.isFinite(parsedDate.getTime())) {
+    return bucket;
   }
 
   // Date-only buckets (YYYY-MM-DD) are UTC midnight. Render with
@@ -137,7 +155,7 @@ export function formatBucketTooltipLabel(
 ): string {
   if (granularity !== "week") return formatBucketLabel(bucket);
 
-  const start = parseBucketWallTimeAsUtc(bucket) ?? new Date(bucket);
+  const start = new Date(bucket);
   if (!Number.isFinite(start.getTime())) return bucket;
 
   const end = new Date(start);
