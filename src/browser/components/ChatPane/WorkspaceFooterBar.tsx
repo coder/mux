@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { ChevronDown, Github, MessageCircle } from "lucide-react";
+import { ArrowLeftRight, Github, MessageCircle } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { GIT_STATUS_INDICATOR_MODE_KEY } from "@/common/constants/storage";
@@ -107,7 +107,7 @@ function DriftModeToggle() {
           onKeyDown={stopKeyboardPropagation}
         >
           {isLineDelta ? "Lines" : "Commits"}
-          <ChevronDown className="h-3 w-3 shrink-0" aria-hidden="true" />
+          <ArrowLeftRight className="h-3 w-3 shrink-0" aria-hidden="true" />
         </button>
       </TooltipTrigger>
       <TooltipContent side="top">
