@@ -58,6 +58,44 @@ describe("gatewayModelCatalog", () => {
     ).toBe(false);
   });
 
+  test("accepts Coder models present in the discovered bridge catalog", () => {
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("coder", "anthropic/claude-sonnet-4-5", [
+        "anthropic/claude-sonnet-4-5",
+        "openai/gpt-5",
+      ])
+    ).toBe(true);
+  });
+
+  test("rejects Coder models absent from the discovered bridge catalog", () => {
+    // The AI Bridge only serves models its upstreams expose: an anthropic
+    // model missing from coder.models must not be routed through Coder (it
+    // should fall back to a configured direct provider instead).
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("coder", "anthropic/claude-opus-4-1", [
+        "openai/gpt-5",
+      ])
+    ).toBe(false);
+  });
+
+  test("treats an empty Coder catalog as exhaustive (nothing accessible)", () => {
+    // Login always overwrites the catalog — an empty list means the bridge
+    // exposed no models (e.g. not entitled), not that discovery is pending.
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog("coder", "anthropic/claude-sonnet-4-5", [])
+    ).toBe(false);
+  });
+
+  test("fails closed when the Coder catalog is missing entirely", () => {
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog(
+        "coder",
+        "anthropic/claude-sonnet-4-5",
+        undefined
+      )
+    ).toBe(false);
+  });
+
   test("accepts Codex models when the Copilot catalog includes them", () => {
     expect(
       isProviderModelAccessibleFromAuthoritativeCatalog("github-copilot", "gpt-5.3-codex", [

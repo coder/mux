@@ -2115,6 +2115,61 @@ describe("ProviderModelFactory Coder", () => {
     );
   });
 
+  it("only routes models from the discovered bridge catalog through Coder", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Coder is logged in and preferred over direct, but its discovered
+      // catalog only contains one anthropic model. The AI Bridge cannot serve
+      // models outside its catalog, so any other model must fall back to the
+      // configured direct provider instead of being rewritten to coder:.
+      saveCoderConfig(config, { models: ["anthropic/claude-sonnet-4-5"] });
+      const providersConfig = config.loadProvidersConfig() ?? {};
+      config.saveProvidersConfig({
+        ...providersConfig,
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      await saveRoutePriority(config, ["coder", "direct"]);
+
+      // In the catalog: routed through Coder.
+      expect(
+        factory.resolveGatewayModelString(
+          "anthropic:claude-sonnet-4-5",
+          "anthropic:claude-sonnet-4-5"
+        )
+      ).toBe("coder:anthropic/claude-sonnet-4-5");
+
+      // Absent from the catalog: falls back to the direct provider.
+      expect(
+        factory.resolveGatewayModelString("anthropic:claude-opus-4-1", "anthropic:claude-opus-4-1")
+      ).toBe("anthropic:claude-opus-4-1");
+    });
+  });
+
+  it("routes nothing through Coder when the discovered catalog is empty", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Login always overwrites the catalog — empty means the bridge exposed
+      // no models (e.g. AI Bridge not entitled). Auto-routing must skip Coder
+      // entirely rather than send every model to a bridge that rejects them.
+      saveCoderConfig(config, { models: [] });
+      const providersConfig = config.loadProvidersConfig() ?? {};
+      config.saveProvidersConfig({
+        ...providersConfig,
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      await saveRoutePriority(config, ["coder", "direct"]);
+
+      expect(
+        factory.resolveGatewayModelString(
+          "anthropic:claude-sonnet-4-5",
+          "anthropic:claude-sonnet-4-5"
+        )
+      ).toBe("anthropic:claude-sonnet-4-5");
+    });
+  });
+
   it("accepts policy-bound credentials even when the editable deploymentUrl was changed", async () => {
     const LOCKED_URL = "https://locked.coder.example.com";
     await withTempPolicyProviderFactory(

@@ -216,7 +216,11 @@ function getProviderFields(provider: string, providerInfo?: ProviderConfigInfo):
     return []; // OAuth-based, no manual key entry
   }
 
-  if (provider === "coder") {
+  // Guarded on isCustom: an upgraded install may carry a custom
+  // OpenAI-compatible provider named "coder" that intentionally shadows the
+  // built-in (see detectAndLogShadowedProviders); it must keep its custom
+  // API key/base URL fields instead of the built-in deployment field.
+  if (provider === "coder" && providerInfo?.isCustom !== true) {
     // OAuth-based ("Login with Coder"); only the deployment URL is entered manually.
     return [
       {
@@ -2200,8 +2204,11 @@ export function ProvidersSection() {
                         );
                       })}
 
-                      {/* Coder: OAuth login against the configured deployment */}
-                      {provider === "coder" && (
+                      {/* Coder: OAuth login against the configured deployment.
+                          Hidden when a custom OpenAI-compatible provider named
+                          "coder" shadows the built-in — that entry keeps its
+                          custom config and has no OAuth flow. */}
+                      {provider === "coder" && !isCustomOpenAICompatible && (
                         <div className="space-y-2">
                           <div>
                             <label className="text-foreground block text-xs font-medium">
