@@ -2634,6 +2634,42 @@ describe("Config", () => {
       expect(release).not.toBeNull();
       release!();
     });
+
+    it("reclaims an EMPTY orphaned lease directory immediately, before the TTL elapses", () => {
+      // Regression: acquisition installs the owner marker atomically with the
+      // lock directory (staged rename), so an empty directory can only be a
+      // crash remnant — never a live acquisition. A fresh-mtime empty orphan
+      // previously read as live until the TTL, and every acquisition timeout
+      // is shorter than its TTL, so the first operation after such a crash
+      // always failed.
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+      fs.mkdirSync(leasePath, { recursive: true }); // Fresh mtime, no marker.
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+      release!();
+      expect(fs.existsSync(leasePath)).toBe(false);
+    });
+
+    it("sweeps stage directories abandoned by a crashed acquisition", () => {
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+      const abandonedStage = `${leasePath}.stage-deadbeef`;
+      fs.mkdirSync(abandonedStage, { recursive: true });
+      fs.writeFileSync(path.join(abandonedStage, "owner-orphan"), "999999999");
+      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
+      fs.utimesSync(abandonedStage, staleTime, staleTime);
+      // A FRESH stage may belong to a concurrent in-flight acquisition and
+      // must survive the sweep.
+      const freshStage = `${leasePath}.stage-cafebabe`;
+      fs.mkdirSync(freshStage, { recursive: true });
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+      release!();
+
+      expect(fs.existsSync(abandonedStage)).toBe(false);
+      expect(fs.existsSync(freshStage)).toBe(true);
+    });
   });
 
   describe("withProvidersFileLock", () => {
@@ -2651,6 +2687,23 @@ describe("Config", () => {
       expect(result).toBe("ran");
       // Well under the 5s acquisition timeout: the orphan was reclaimed on
       // the first contention check, not waited out.
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
+
+    it("acquires over an EMPTY orphaned lock directory immediately, before the TTL elapses", async () => {
+      // Regression: acquisition installs the owner marker atomically with the
+      // lock directory (staged rename), so an empty directory can only be a
+      // crash remnant — never a live acquisition. Previously a fresh-mtime
+      // empty orphan read as live until the 10s TTL, and the 5s acquisition
+      // timeout always fired first, so the first config write after such a
+      // crash always timed out.
+      const lockPath = path.join(tempDir, "providers.jsonc.lock");
+      fs.mkdirSync(lockPath, { recursive: true }); // Fresh mtime, no marker.
+
+      const startedAt = Date.now();
+      const result = await config.withProvidersFileLock(() => "ran");
+      expect(result).toBe("ran");
       expect(Date.now() - startedAt).toBeLessThan(2_000);
       expect(fs.existsSync(lockPath)).toBe(false);
     });

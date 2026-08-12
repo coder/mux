@@ -128,6 +128,22 @@ function parseOptionalNumber(value: unknown): number | null {
   return null;
 }
 
+/**
+ * Normalize a persisted coderDisconnectGeneration to a non-negative safe
+ * integer, treating anything else as 0. providers.jsonc is hand-editable, and
+ * a finite-but-unsafe value such as Number.MAX_VALUE would freeze the
+ * tombstone (MAX_VALUE + 1 === MAX_VALUE): Disconnect could no longer advance
+ * it, so an in-flight login in another process would see its unchanged
+ * start-time snapshot and commit AFTER the credential was cleared — silently
+ * reconnecting the account. Every reader and the disconnect incrementer MUST
+ * share this normalization, or their generation comparison would diverge on
+ * malformed input.
+ */
+function sanitizeDisconnectGeneration(value: unknown): number {
+  const parsed = parseOptionalNumber(value);
+  return parsed != null && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 function isInvalidGrantError(errorText: string): boolean {
   const trimmed = errorText.trim();
   if (trimmed.length === 0) {
@@ -327,7 +343,7 @@ export class CoderOauthService {
           // flow starts. Kept in the section permanently — later logins
           // snapshot the new value and commit normally.
           next.coderDisconnectGeneration =
-            (parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0) + 1;
+            sanitizeDisconnectGeneration(section?.coderDisconnectGeneration) + 1;
           // Discovered models were fetched from the deployment's AI Bridge at
           // login time; they are meaningless without credentials and are refetched
           // on the next login. discoveredModels stays PRESENT (as []) so the
@@ -699,7 +715,7 @@ export class CoderOauthService {
     const section = this.config.loadProvidersConfig()?.coder as
       | { coderDisconnectGeneration?: unknown }
       | undefined;
-    return parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0;
+    return sanitizeDisconnectGeneration(section?.coderDisconnectGeneration);
   }
 
   /** True (and consumes the record) when `flowId` was cancelled before the flow registered. */
@@ -1235,7 +1251,9 @@ export class CoderOauthService {
         // disconnected. A counter comparison, not wall-clock ordering: clock
         // skew must neither let a pre-disconnect flow slip through nor lock
         // out every post-disconnect login.
-        const disconnectGeneration = parseOptionalNumber(section?.coderDisconnectGeneration) ?? 0;
+        const disconnectGeneration = sanitizeDisconnectGeneration(
+          section?.coderDisconnectGeneration
+        );
         if (disconnectGeneration !== flowStartPersistedGeneration) {
           commitRefusalMessage = "Login was superseded by a disconnect";
           return null;

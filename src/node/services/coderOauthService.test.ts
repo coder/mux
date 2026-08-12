@@ -4033,6 +4033,43 @@ describe("CoderOauthService", () => {
       expect((deps.providersConfig.coder as Record<string, unknown>).discoveredModels).toEqual([]);
     });
 
+    it("advances a malformed persisted disconnect generation so the tombstone self-heals", async () => {
+      // Regression: providers.jsonc is hand-editable. With a finite-but-unsafe
+      // persisted generation such as Number.MAX_VALUE, MAX_VALUE + 1 ===
+      // MAX_VALUE — disconnect would not advance the shared tombstone, so an
+      // in-flight login in another process would see its unchanged start-time
+      // snapshot and commit after the credential was cleared. Malformed values
+      // must be sanitized before incrementing so the counter provably moves.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          coderDisconnectGeneration: Number.MAX_VALUE,
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const before = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderDisconnectGeneration;
+      const result = await service.disconnect();
+      expect(result.success).toBe(true);
+
+      const after = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderDisconnectGeneration;
+      // The persisted counter must actually move (MAX_VALUE + 1 would not)
+      // and land back on a safe integer so future increments keep advancing.
+      expect(after).not.toBe(before);
+      expect(Number.isSafeInteger(after)).toBe(true);
+      expect(after).toBe(1);
+    });
+
     it("keeps manually added models when disconnecting", async () => {
       // Discovered catalog entries are meaningless without credentials, but
       // manually added ones are user-managed data and must survive.

@@ -2585,9 +2585,86 @@ export class Config {
   }
 
   /**
-   * Shared mkdir-based advisory lock: exclusive directory creation is atomic
-   * on all platforms; locks orphaned by crashed processes are broken once
-   * they are older than `staleLockMs` AND their owner process is gone
+   * Atomically install a generation-marked lock directory at `lockPath`: the
+   * owner marker (content = holder PID, see tryBreakStaleDirLock) is written
+   * into a staged sibling directory which is then rename(2)d into place.
+   * Acquisition and marker creation are therefore a single atomic step — a
+   * live acquisition is never observable as an EMPTY lock directory, so an
+   * empty directory is always a crash remnant (the unlink→rmdir window of
+   * release/stale-break) that breakers may reclaim immediately. Without this,
+   * a crash between mkdir and marker write would look live until the mtime
+   * TTL, and every acquisition timeout is shorter than its TTL — the first
+   * operation after such a crash would always time out.
+   *
+   * On POSIX, rename onto an existing EMPTY directory atomically replaces it
+   * (instant orphan recovery); onto a non-empty one it fails ENOTEMPTY. On
+   * Windows, rename onto any existing directory fails — contenders recover
+   * empty orphans via tryBreakStaleDirLock instead.
+   *
+   * Returns the installed marker path, or null when the lock is held
+   * (contended). Unexpected filesystem errors (EACCES, EROFS, ...) are
+   * rethrown after the stage directory is cleaned up.
+   */
+  private tryInstallDirLock(lockPath: string): string | null {
+    const stagePath = `${lockPath}.stage-${crypto.randomBytes(8).toString("hex")}`;
+    const markerName = `owner-${crypto.randomBytes(16).toString("hex")}`;
+    fs.mkdirSync(stagePath);
+    try {
+      fs.writeFileSync(path.join(stagePath, markerName), String(process.pid));
+      fs.renameSync(stagePath, lockPath);
+    } catch (error) {
+      try {
+        fs.rmSync(stagePath, { recursive: true, force: true });
+      } catch {
+        // Best effort; abandoned stages are swept by cleanupAbandonedStageDirs.
+      }
+      const code = (error as NodeJS.ErrnoException).code;
+      // POSIX rename refuses a non-empty target with ENOTEMPTY (some
+      // platforms report EEXIST); Windows refuses any existing target with
+      // EPERM/EEXIST.
+      if (code === "EEXIST" || code === "ENOTEMPTY" || code === "EPERM") {
+        return null;
+      }
+      throw error;
+    }
+    return path.join(lockPath, markerName);
+  }
+
+  /**
+   * Remove stage directories abandoned by a crash between staging and the
+   * rename in tryInstallDirLock. TTL-gated on mtime so a concurrent
+   * acquisition's in-flight stage (a microseconds-wide window) is never
+   * destroyed under a live process.
+   */
+  private cleanupAbandonedStageDirs(lockPath: string, ttlMs: number): void {
+    const parent = path.dirname(lockPath);
+    const prefix = `${path.basename(lockPath)}.stage-`;
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(parent);
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.startsWith(prefix)) {
+        continue;
+      }
+      const stagePath = path.join(parent, entry);
+      try {
+        if (Date.now() - fs.statSync(stagePath).mtimeMs > ttlMs) {
+          fs.rmSync(stagePath, { recursive: true, force: true });
+        }
+      } catch {
+        // Best effort (already removed, or racing its own install).
+      }
+    }
+  }
+
+  /**
+   * Shared advisory directory lock: acquisition atomically installs the lock
+   * directory together with its generation marker (see tryInstallDirLock);
+   * locks orphaned by crashed processes are broken once they are older than
+   * `staleLockMs` AND their owner process is gone
    * (see tryBreakStaleDirLock — live-but-stalled holders are never broken;
    * contenders instead fail acquisition at the bounded timeout).
    *
@@ -2611,49 +2688,28 @@ export class Config {
     if (!fs.existsSync(this.rootDir)) {
       ensurePrivateDirSync(this.rootDir);
     }
+    this.cleanupAbandonedStageDirs(lockPath, staleLockMs);
 
     let ownerFile: string;
     for (;;) {
-      try {
-        fs.mkdirSync(lockPath);
-      } catch (error) {
-        // Only contention (EEXIST) is retryable. Permanent filesystem errors
-        // (EACCES, EROFS, ...) would fail on every retry — rethrow so callers
-        // surface an error instead of spinning until the deadline (or forever
-        // on paths that skip it).
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-          throw error;
-        }
-        if (Date.now() > deadline) {
-          throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
-        }
-        // Held by another process (or a crashed one): break stale locks, then
-        // retry — immediately after a break/vanish, with a delay for a live
-        // holder.
-        if (this.tryBreakStaleDirLock(lockPath, staleLockMs)) {
-          continue;
-        }
-        await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+      // tryInstallDirLock rethrows permanent filesystem errors (EACCES,
+      // EROFS, ...) — they would fail on every retry, so callers surface an
+      // error instead of spinning until the deadline.
+      const installed = this.tryInstallDirLock(lockPath);
+      if (installed != null) {
+        ownerFile = installed;
+        break;
+      }
+      if (Date.now() > deadline) {
+        throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
+      }
+      // Held by another process (or a crashed one): break stale locks, then
+      // retry — immediately after a break/vanish, with a delay for a live
+      // holder.
+      if (this.tryBreakStaleDirLock(lockPath, staleLockMs)) {
         continue;
       }
-
-      ownerFile = path.join(lockPath, `owner-${crypto.randomBytes(16).toString("hex")}`);
-      try {
-        // Marker content is the holder's PID: stale-breaking is gated on the
-        // owner process being GONE, not merely old (see tryBreakStaleDirLock).
-        fs.writeFileSync(ownerFile, String(process.pid));
-        break;
-      } catch (error) {
-        // Without a generation marker this lock could never be released
-        // safely; give the (empty, thus safely non-recursive) directory back
-        // and surface the filesystem error instead of deadlocking peers.
-        try {
-          fs.rmdirSync(lockPath);
-        } catch {
-          // Best effort; a leftover empty directory is stale-broken later.
-        }
-        throw error;
-      }
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
     }
 
     try {
@@ -2708,34 +2764,26 @@ export class Config {
       ensurePrivateDirSync(this.rootDir);
     }
 
-    for (let attempt = 0; attempt < 2; attempt++) {
-      try {
-        fs.mkdirSync(leasePath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-          throw error;
-        }
-        if (!this.tryBreakStaleDirLock(leasePath, ttlMs)) {
-          return null; // Held by a live flow.
-        }
-        continue; // Stale lease broken (or it vanished); retry the mkdir once.
-      }
+    this.cleanupAbandonedStageDirs(leasePath, ttlMs);
 
-      const ownerFile = path.join(leasePath, `owner-${crypto.randomBytes(16).toString("hex")}`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let ownerFile: string;
       try {
-        // Marker content is the holder's PID: stale-breaking is gated on the
-        // owner process being GONE, not merely old (see tryBreakStaleDirLock).
-        fs.writeFileSync(ownerFile, String(process.pid));
-      } catch (error) {
-        // Without a generation marker this lease could never be released
-        // safely (and looks like a crashed acquisition to breakers); abandon
-        // it rather than hold an unreleasable lock.
-        log.debug("Failed to write Coder OAuth client lease marker:", error);
-        try {
-          fs.rmdirSync(leasePath);
-        } catch {
-          // Best effort; a leftover empty directory is stale-broken later.
+        const installed = this.tryInstallDirLock(leasePath);
+        if (installed == null) {
+          // Contended: held by another flow (or a crash remnant).
+          if (!this.tryBreakStaleDirLock(leasePath, ttlMs)) {
+            return null; // Held by a live flow.
+          }
+          continue; // Stale lease broken (or it vanished); retry once.
         }
+        ownerFile = installed;
+      } catch (error) {
+        // Filesystem errors mean the lease was never installed. The lease is
+        // an optimization with a documented degradation path — callers fall
+        // back to registering a fresh client — so prefer a working login
+        // over surfacing an acquisition error.
+        log.debug("Failed to install Coder OAuth client lease:", error);
         return null;
       }
 
@@ -2776,22 +2824,20 @@ export class Config {
     const isStale = (mtimeMs: number) => Date.now() - mtimeMs > ttlMs;
 
     if (entries.length === 0) {
-      // A holder crashed between mkdir and marker write (or a breaker crashed
-      // mid-break). Only the directory's own mtime is available to judge
-      // staleness; the non-recursive rmdir keeps this safe regardless — it
-      // cannot destroy a marker a concurrent acquisition writes.
-      try {
-        if (!isStale(fs.statSync(leasePath).mtimeMs)) {
-          return false;
-        }
-      } catch {
-        return true;
-      }
+      // Acquisition installs the marker atomically with the directory
+      // (staged rename — see tryInstallDirLock), so an empty lock directory
+      // is never a live acquisition: it can only be a crash remnant from the
+      // unlink→rmdir window of release/stale-break. Reclaim it immediately —
+      // waiting out the mtime TTL would make every acquisition timeout (all
+      // shorter than their TTLs) fire first, so the first operation after
+      // such a crash would always fail despite being deterministically
+      // recoverable. The non-recursive rmdir keeps the race with a concurrent
+      // installer safe: it cannot destroy a renamed-in full generation.
       try {
         fs.rmdirSync(leasePath);
       } catch {
-        // ENOTEMPTY (a generation appeared) or ENOENT (another breaker won);
-        // the retried mkdir/staleness check sorts either out.
+        // ENOTEMPTY (a generation was renamed into place) or ENOENT (another
+        // breaker won); the retried install/staleness check sorts either out.
       }
       return true;
     }
