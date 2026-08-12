@@ -35,6 +35,12 @@ describe("getThinkingDisplayLabel", () => {
     expect(getThinkingDisplayLabel("max", "openai:gpt-5.5-pro")).toBe("XHIGH");
   });
 
+  test("returns XHIGH for xhigh on Grok 4.6 (native effort), MAX on Grok 4.5", () => {
+    expect(getThinkingDisplayLabel("xhigh", "xai:grok-4.6")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("xhigh", "mux-gateway:xai/grok-4.6")).toBe("XHIGH");
+    expect(getThinkingDisplayLabel("xhigh", "xai:grok-4.5")).toBe("MAX");
+  });
+
   test("returns MAX for xhigh/max when no model specified (default)", () => {
     expect(getThinkingDisplayLabel("xhigh")).toBe("MAX");
     expect(getThinkingDisplayLabel("max")).toBe("MAX");

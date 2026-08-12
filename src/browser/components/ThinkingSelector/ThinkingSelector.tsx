@@ -18,6 +18,7 @@ import { getThinkingDisplayLabel, type ThinkingLevel } from "@/common/types/thin
 import { openaiProModeAvailable } from "@/common/utils/ai/proMode";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
+import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { COMPOSER_PRO_HIDE_CLASS } from "@/constants/layout";
 import { COMPOSER_PICKER_PANEL_CLASS, composerPickerOptionClass } from "../composerPickerStyles";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../Tooltip/Tooltip";
@@ -60,7 +61,10 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
     minimum,
     providersConfig
   );
-  const displayLabel = getThinkingDisplayLabel(effectiveThinkingLevel, props.modelString);
+  // Label from the capability model so mapped aliases (e.g. xai:team-grok ->
+  // xai:grok-4.6) show the same provider-aware xhigh/max wording as the ladder.
+  const capabilityModel = resolveModelForMetadata(props.modelString, providersConfig ?? null);
+  const displayLabel = getThinkingDisplayLabel(effectiveThinkingLevel, capabilityModel);
   const resolvedRoute = routing.resolveRoute(normalizeToCanonical(props.modelString)).route;
   const proModeAvailable =
     props.allowProMode !== false &&
@@ -132,12 +136,12 @@ export const ThinkingSelector: React.FC<ThinkingSelectorProps> = (props) => {
             className="text-foreground w-[5ch] shrink-0 text-center text-[11px] font-medium select-none"
             aria-label={`Thinking level fixed to ${fixedLevel}`}
           >
-            {getThinkingDisplayLabel(fixedLevel, props.modelString)}
+            {getThinkingDisplayLabel(fixedLevel, capabilityModel)}
           </span>
         </TooltipTrigger>
         <TooltipContent align="center">
           Model {props.modelString} locks thinking at{" "}
-          {getThinkingDisplayLabel(fixedLevel, props.modelString)} to match its capabilities.
+          {getThinkingDisplayLabel(fixedLevel, capabilityModel)} to match its capabilities.
         </TooltipContent>
       </Tooltip>
     );
