@@ -441,6 +441,9 @@ export const KEYBINDS = {
   /** Reveal the selected timeline event in the transcript */
   REVEAL_TIMELINE_EVENT: { key: "Enter", ctrl: true, shift: true },
 
+  /** Reveal the last prompt in the transcript while its popup is open */
+  REVEAL_LAST_PROMPT: { key: "Enter", ctrl: true, alt: true },
+
   /** Switch to tab by position in right sidebar (1-9) */
   // macOS: Cmd+N, Win/Linux: Ctrl+N
   // NOTE: Both Ctrl and Cmd work for switching tabs on Mac (macOS has no standard Cmd+number behavior)

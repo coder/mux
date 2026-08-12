@@ -253,7 +253,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
     const handler = (event: KeyboardEvent) => {
       if (
         !open ||
-        !matchesKeybind(event, KEYBINDS.REVEAL_TIMELINE_EVENT) ||
+        !matchesKeybind(event, KEYBINDS.REVEAL_LAST_PROMPT) ||
         isEditableElement(event.target)
       ) {
         return;
