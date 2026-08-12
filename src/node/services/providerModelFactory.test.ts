@@ -1415,6 +1415,39 @@ describe("ProviderModelFactory routing", () => {
     });
   });
 
+  it("resolveAndCreateModel keeps shadowed custom provider models outside built-in Coder routes", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Regression: the production AIService path goes through
+      // resolveAndCreateModel, which canonicalizes BEFORE calling
+      // resolveGatewayModelString — so its raw-prefix guard alone can't help.
+      // For a model whose origin is outside the built-in Coder routes
+      // (google is not in ["anthropic", "openai"]), the explicit-prefix
+      // restoration can never recover the custom model either:
+      // coder:google/gemini-2.5-pro would be rewritten to
+      // google:gemini-2.5-pro and bypass the user's custom endpoint.
+      config.saveProvidersConfig({
+        coder: {
+          providerType: "openai-compatible",
+          baseUrl: "http://localhost:9000/v1",
+          apiKey: "sk-custom",
+          models: ["google/gemini-2.5-pro"],
+        },
+        google: {
+          apiKey: "g-key",
+        },
+      });
+
+      const result = await factory.resolveAndCreateModel("coder:google/gemini-2.5-pro", "off");
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.effectiveModelString).toBe("coder:google/gemini-2.5-pro");
+        expect(result.data.canonicalModelString).toBe("coder:google/gemini-2.5-pro");
+        expect(result.data.routedThroughGateway).toBe(false);
+        expect((result.data.model as { modelId?: unknown }).modelId).toBe("google/gemini-2.5-pro");
+      }
+    });
+  });
+
   it("falls back deterministically to the next configured route", async () => {
     await withTempConfig(async (config, factory) => {
       config.saveProvidersConfig({

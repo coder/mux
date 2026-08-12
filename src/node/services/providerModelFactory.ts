@@ -2139,8 +2139,26 @@ export class ProviderModelFactory {
       SendMessageError
     >
   > {
-    const explicitGateway = getExplicitGatewayProvider(modelString);
-    const canonicalModelString = normalizeToCanonical(modelString);
+    // Shadow check on the RAW prefix, BEFORE the first normalization: a custom
+    // OpenAI-compatible provider can shadow a built-in gateway id (an upgraded
+    // install may already have one named "coder"). normalizeToCanonical would
+    // rewrite e.g. coder:google/gemini-2.5-pro to google:gemini-2.5-pro, and —
+    // because the built-in Coder definition routes only OpenAI/Anthropic — the
+    // explicit-prefix restoration below could never recover the custom model,
+    // silently bypassing the user's custom endpoint. The equivalent guard in
+    // resolveGatewayModelString only protects callers that pass raw strings.
+    const providersConfigForShadowCheck = this.config.loadProvidersConfig() ?? {};
+    const [rawProviderName] = parseModelString(modelString);
+    const rawPrefixShadowedByCustomProvider =
+      rawProviderName.length > 0 &&
+      isCustomOpenAICompatibleProviderConfig(providersConfigForShadowCheck[rawProviderName]);
+
+    const explicitGateway = rawPrefixShadowedByCustomProvider
+      ? undefined
+      : getExplicitGatewayProvider(modelString);
+    const canonicalModelString = rawPrefixShadowedByCustomProvider
+      ? modelString
+      : normalizeToCanonical(modelString);
     let effectiveModelString = canonicalModelString;
     const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
 
