@@ -2154,6 +2154,87 @@ describe("CoderOauthService", () => {
       expect(deps.coderClientLeaseHeld).toBe(true);
     });
 
+    it("preserves user-edited settings on discovered models across a re-login", async () => {
+      // A discovered model the user edited in Models settings (context window
+      // override / model mapping) becomes an object entry while its ID stays
+      // recorded in discoveredModels. Re-login + catalog merge must keep the
+      // object (user-authored data), not collapse it back to a plain string.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ sessionId: "session_prior" }),
+          models: [
+            { id: "anthropic/tuned-model", contextWindowTokens: 200_000 },
+            "anthropic/plain-model",
+          ],
+          discoveredModels: ["anthropic/tuned-model", "anthropic/plain-model"],
+        },
+      };
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_tuned",
+            refresh_token: "rt_tuned",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return jsonResponse({ data: [{ id: "tuned-model" }, { id: "plain-model" }] });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_tuned");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      await waitUntil(() => {
+        const section = deps.providersConfig.coder as Record<string, unknown> | undefined;
+        return Array.isArray(section?.discoveredModels) && section.discoveredModels.length > 0;
+      });
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // The edited entry survived (ahead of the fresh catalog, no duplicate);
+      // the unedited discovered entry was reset to the plain catalog string.
+      expect(coderSection.models).toEqual([
+        { id: "anthropic/tuned-model", contextWindowTokens: 200_000 },
+        "anthropic/plain-model",
+      ]);
+      expect(coderSection.discoveredModels).toEqual([
+        "anthropic/tuned-model",
+        "anthropic/plain-model",
+      ]);
+    });
+
     it("registers a fresh client for a second overlapping flow instead of re-updating the stored one", async () => {
       // The stored dynamic client has a single redirect_uris slot: if two
       // overlapping flows both PUT-updated it, the later update would clobber

@@ -955,10 +955,20 @@ export class ProviderService {
     if (def.kind !== "gateway") return;
 
     const providersConfig = this.config.loadProvidersConfig() ?? {};
-    const isAutoRouteEligible = isProviderAutoRouteEligible(
-      providerName,
-      providersConfig[providerName] ?? {}
-    );
+    const rawProviderConfig = providersConfig[providerName] ?? {};
+    // Coder credentials are issuer-bound and its deploymentUrl field stays
+    // editable under an enforced forcedBaseUrl: lifecycle checks must resolve
+    // against the forced URL (mirroring getConfig and routing), or editing
+    // the unlocked field would evict coder from routePriority while Settings
+    // and runtime model creation stay connected to the forced deployment.
+    const forcedBaseUrl = this.policyService?.isEnforced()
+      ? this.policyService.getForcedBaseUrl(providerName)
+      : undefined;
+    const providerConfig =
+      providerName === "coder" && forcedBaseUrl !== undefined
+        ? { ...rawProviderConfig, deploymentUrl: forcedBaseUrl }
+        : rawProviderConfig;
+    const isAutoRouteEligible = isProviderAutoRouteEligible(providerName, providerConfig);
     const config = this.config.loadConfigOrDefault();
     const priority = config.routePriority ?? ["direct"];
 
@@ -981,7 +991,6 @@ export class ProviderService {
       // or explicitly disabled. Configured-but-not-auto-eligible providers
       // (e.g., Bedrock with IAM role auth that has no observable credentials)
       // should keep any manually added route.
-      const providerConfig = providersConfig[providerName] ?? {};
       const credentials = resolveProviderCredentials(providerName, providerConfig);
       const shouldRemove = !credentials.isConfigured || isProviderDisabledInConfig(providerConfig);
       if (shouldRemove) {
@@ -1144,14 +1153,32 @@ export class ProviderService {
         return true;
       });
 
-      if (applied) {
-        this.notifyFromMutation();
-        await this.syncGatewayLifecycle(provider);
-      }
+      await this.afterAppliedMutation(provider, applied);
       return { success: true, data: { applied } };
     } catch (error) {
       const message = getErrorMessage(error);
       return { success: false, error: `Failed to update provider config: ${message}` };
+    }
+  }
+
+  /**
+   * Post-write side effects for the internal mutation primitives
+   * (updateConfigValue / updateProviderSection). Best-effort by design: the
+   * mutation has already landed on disk, so a failure syncing routePriority
+   * in the MAIN config (or notifying listeners) must not convert a persisted
+   * write into a reported failure — Coder's login commit revokes tokens for
+   * any non-success result, which would strand a credential that IS stored
+   * (and reported as connected) in a revoked state.
+   */
+  private async afterAppliedMutation(provider: string, applied: boolean): Promise<void> {
+    if (!applied) {
+      return;
+    }
+    try {
+      this.notifyFromMutation();
+      await this.syncGatewayLifecycle(provider);
+    } catch (error) {
+      log.error(`Post-write route sync failed for provider ${provider}:`, error);
     }
   }
 
@@ -1195,10 +1222,9 @@ export class ProviderService {
         return true;
       });
 
-      if (applied) {
-        this.notifyFromMutation();
-        await this.syncGatewayLifecycle(provider);
-      }
+      // Best-effort: a landed write must not be reported as failed (see
+      // afterAppliedMutation).
+      await this.afterAppliedMutation(provider, applied);
       return { success: true, data: { applied } };
     } catch (error) {
       const message = getErrorMessage(error);

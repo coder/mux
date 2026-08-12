@@ -150,11 +150,13 @@ function parseEndpointUrl(value: unknown): string | null {
 }
 
 /**
- * Entries of the coder section's `models` list the user added manually —
+ * Entries of the coder section's `models` list that carry user-managed data:
  * everything NOT recorded in `discoveredModels` (the bookkeeping of what
- * catalog discovery wrote). Manual entries are user-managed data: logins,
- * catalog refreshes, and disconnects must carry them forward instead of
- * clobbering them with the server catalog.
+ * catalog discovery wrote), plus any object-form entry — normalization
+ * collapses override-free objects to plain strings, so an object entry means
+ * the user edited it (context window override, model mapping) even when its
+ * ID was discovered. Logins, catalog refreshes, and disconnects must carry
+ * these forward instead of clobbering them with the server catalog.
  */
 function manualModelEntries(section: Record<string, unknown> | undefined): ProviderModelEntry[] {
   if (!Array.isArray(section?.models)) {
@@ -166,6 +168,9 @@ function manualModelEntries(section: Record<string, unknown> | undefined): Provi
       : []
   );
   return normalizeProviderModelEntries(section.models).filter((entry) => {
+    if (typeof entry !== "string") {
+      return true; // User-authored settings on a (possibly discovered) model.
+    }
     const id = maybeGetProviderModelEntryId(entry);
     return id == null || !discovered.has(id);
   });

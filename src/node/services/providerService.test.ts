@@ -1725,6 +1725,87 @@ describe("ProviderService gateway lifecycle", () => {
     });
   });
 
+  it("reports success when the section write lands but the route sync fails", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      await saveRoutePriority(config, ["direct"]);
+
+      // The Coder login write below is auto-route eligible, so the lifecycle
+      // sync wants to edit the MAIN config. That edit failing (e.g. the main
+      // config is unwritable) must not convert the landed providers.jsonc
+      // write into a reported failure: Coder's login commit revokes tokens
+      // for any non-success result, which would strand a credential that IS
+      // stored (and reported as connected) in a revoked state.
+      const editSpy = spyOn(config, "editConfig").mockRejectedValueOnce(
+        new Error("main config unwritable")
+      );
+      try {
+        const result = await service.updateProviderSection("coder", () => ({
+          value: {
+            deploymentUrl: "https://coder.example.com",
+            coderOauth: {
+              type: "oauth",
+              sessionId: "sess",
+              deploymentUrl: "https://coder.example.com",
+              access: "at",
+              refresh: "rt",
+              expires: Date.now() + 3_600_000,
+              clientId: "c",
+              clientSecret: "s",
+            },
+          },
+        }));
+
+        expect(result).toEqual({ success: true, data: { applied: true } });
+        // The credential write itself landed.
+        const stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+        expect(stored.coderOauth).toBeDefined();
+      } finally {
+        editSpy.mockRestore();
+      }
+    });
+  });
+
+  it("keeps coder in routePriority under a forced base URL when the editable deploymentUrl differs", async () => {
+    const LOCKED_URL = "https://locked.coder.example.com";
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder", base_url: LOCKED_URL }],
+      },
+      async (config, service) => {
+        await saveRoutePriority(config, ["coder", "direct"]);
+        // Tokens minted by the forced deployment; the (unlocked) editable
+        // deploymentUrl field has since been pointed elsewhere. Lifecycle
+        // checks must resolve against the forced URL — like Settings status
+        // and runtime model creation — or this write would evict coder from
+        // routePriority while requests keep working against the forced
+        // deployment.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://user-edited.example.com",
+            coderOauth: {
+              type: "oauth",
+              sessionId: "sess",
+              deploymentUrl: LOCKED_URL,
+              access: "at",
+              refresh: "rt",
+              expires: Date.now() + 3_600_000,
+              clientId: "c",
+              clientSecret: "s",
+            },
+          },
+        });
+
+        const result = await service.updateProviderSection("coder", (section) => ({
+          value: { ...(section ?? {}) },
+        }));
+
+        expect(result.success).toBe(true);
+        expect(config.loadConfigOrDefault().routePriority).toContain("coder");
+      }
+    );
+  });
+
   it("does not duplicate gateway already in routePriority", async () => {
     await withTempConfigAsync(async (config, service) => {
       await saveRoutePriority(config, ["mux-gateway", "direct"]);
