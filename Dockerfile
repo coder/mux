@@ -36,7 +36,11 @@ COPY patches/ patches/
 COPY scripts/postinstall.sh scripts/
 
 # Install dependencies and create Makefile sentinel so build targets don't reinstall.
-RUN bun install --frozen-lockfile && \
+# tsgo typechecks electron-importing sources, so the optional electron package must
+# install even though the server image never runs it. Its binary download can fail
+# transiently, and bun then silently drops the package instead of failing the install.
+# Skip the unused download, and Electron-ABI native rebuilds via MUX_HEADLESS.
+RUN MUX_HEADLESS=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile && \
     touch node_modules/.installed
 
 # Copy build orchestration files used by Make targets.
