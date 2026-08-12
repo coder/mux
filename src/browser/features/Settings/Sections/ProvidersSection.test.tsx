@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { APIClient } from "@/browser/contexts/API";
+import { useSettings } from "@/browser/contexts/SettingsContext";
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import type {
@@ -503,5 +504,60 @@ describe("ProvidersSection", () => {
     });
     expect(confirmMock).toHaveBeenCalledTimes(1);
     expect(repairRemovedProviderMock).toHaveBeenCalledWith(CUSTOM_PROVIDER_ID, expect.any(Set));
+  });
+
+  test("startCoderLogin hint launches the Coder OAuth flow against the configured deployment", async () => {
+    // Regression: the "Settings: Login with Coder" palette command passes a
+    // one-shot startCoderLogin hint through SettingsContext; ProvidersSection
+    // must consume it by actually starting the OAuth flow, not just opening
+    // the Providers list.
+    const providersConfig = createProvidersConfig();
+    providersConfig.coder = {
+      apiKeySet: false,
+      isEnabled: true,
+      isConfigured: true,
+      deploymentUrl: "https://coder.example.com",
+    };
+    providersConfigMock = providersConfig;
+    const client = setupSettingsStory({ providersConfig: {} });
+    apiMock = client;
+
+    const startDesktopFlow = mock((_input: { deploymentUrl: string; flowId?: string }) =>
+      Promise.resolve({
+        success: true as const,
+        data: { flowId: "flow", authorizeUrl: "https://coder.example.com/oauth2/authorize" },
+      })
+    );
+    (client as unknown as Record<string, unknown>).coderOauth = {
+      startDesktopFlow,
+      // Never resolves — the user would complete the login in the browser.
+      waitForDesktopFlow: () => new Promise(() => undefined),
+      cancelDesktopFlow: () => Promise.resolve(undefined),
+    };
+
+    function StartCoderLoginHint() {
+      const { open } = useSettings();
+      return (
+        <button onClick={() => open("providers", { startCoderLogin: true })}>
+          trigger-coder-login
+        </button>
+      );
+    }
+
+    const view = render(
+      <SettingsSectionStory setup={() => client}>
+        <StartCoderLoginHint />
+        <ProvidersSection />
+      </SettingsSectionStory>
+    );
+
+    fireEvent.click(view.getByText("trigger-coder-login"));
+
+    await waitFor(() => {
+      expect(startDesktopFlow).toHaveBeenCalled();
+    });
+    expect(startDesktopFlow.mock.calls[0][0]).toMatchObject({
+      deploymentUrl: "https://coder.example.com",
+    });
   });
 });

@@ -395,10 +395,15 @@ export function ProvidersSection() {
   const effectivePolicy =
     policyState.status.state === "enforced" ? (policyState.policy ?? null) : null;
 
-  const { providersExpandedProvider, setProvidersExpandedProvider } = useSettings();
+  const {
+    providersExpandedProvider,
+    setProvidersExpandedProvider,
+    providersStartCoderLogin,
+    setProvidersStartCoderLogin,
+  } = useSettings();
 
   const { api } = useAPI();
-  const { config, refresh, updateOptimistically } = useProvidersConfig();
+  const { config, loading: configLoading, refresh, updateOptimistically } = useProvidersConfig();
   const { workspaceMetadata, selectedWorkspace, refreshWorkspaceMetadata } = useWorkspaceContext();
   const visibleProviders = useMemo(
     () => getAllowedProvidersForUi(effectivePolicy, config),
@@ -1134,7 +1139,9 @@ export function ProvidersSection() {
     await refresh();
   };
 
-  const startCoderLogin = async () => {
+  // useCallback for effect-dep stability, not memoization: the one-shot
+  // startCoderLogin hint effect below lists this function as a dependency.
+  const startCoderLogin = useCallback(async () => {
     const attempt = ++coderLoginAttemptRef.current;
 
     if (!api) {
@@ -1212,7 +1219,7 @@ export function ProvidersSection() {
       setCoderLoginStatus("error");
       setCoderLoginError(getErrorMessage(err));
     }
-  };
+  }, [api, coderFlowId, coderDeploymentUrl, refresh]);
 
   const disconnectCoderOauth = async () => {
     const attempt = ++coderLoginAttemptRef.current;
@@ -1284,6 +1291,31 @@ export function ProvidersSection() {
     setExpandedProvider(providersExpandedProvider);
     setProvidersExpandedProvider(null);
   }, [providersExpandedProvider, setProvidersExpandedProvider]);
+
+  // One-shot hint from the "Settings: Login with Coder" command: start the
+  // OAuth login as soon as the providers config has loaded (startCoderLogin
+  // reads the configured deployment URL from it — invoking earlier would
+  // always fail with "Set the deployment URL first."). Remote servers render
+  // an explanation instead of the login control, so the hint is consumed
+  // without starting a login there; startCoderLogin handles the remaining
+  // error cases (missing URL, no API) with inline feedback in the expanded
+  // Coder section.
+  useEffect(() => {
+    if (!providersStartCoderLogin || configLoading) {
+      return;
+    }
+
+    setProvidersStartCoderLogin(false);
+    if (!isRemoteServer) {
+      void startCoderLogin();
+    }
+  }, [
+    providersStartCoderLogin,
+    setProvidersStartCoderLogin,
+    configLoading,
+    isRemoteServer,
+    startCoderLogin,
+  ]);
 
   useEffect(() => {
     if (expandedProvider !== "mux-gateway" || !muxGatewayIsLoggedIn) {

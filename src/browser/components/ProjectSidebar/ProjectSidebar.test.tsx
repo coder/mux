@@ -502,6 +502,8 @@ function installProjectSidebarTestDoubles() {
     registerOnClose: () => () => undefined,
     providersExpandedProvider: null,
     setProvidersExpandedProvider: () => undefined,
+    providersStartCoderLogin: false,
+    setProvidersStartCoderLogin: () => undefined,
     runtimesProjectPath: null,
     setRuntimesProjectPath: () => undefined,
     secretsProjectPath: null,

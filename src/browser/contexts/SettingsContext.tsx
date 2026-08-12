@@ -10,9 +10,11 @@ import {
 } from "react";
 import { useRouter } from "@/browser/contexts/RouterContext";
 
-interface OpenSettingsOptions {
+export interface OpenSettingsOptions {
   /** When opening the Providers settings, expand the given provider. */
   expandProvider?: string;
+  /** When opening the Providers settings, start the Coder OAuth login. */
+  startCoderLogin?: boolean;
   /** When opening the Runtimes settings, pre-select this project scope. */
   runtimesProjectPath?: string;
   /** When opening the Secrets settings, pre-select this project scope. */
@@ -32,6 +34,10 @@ interface SettingsContextValue {
   /** One-shot hint for ProvidersSection to expand a provider. */
   providersExpandedProvider: string | null;
   setProvidersExpandedProvider: (provider: string | null) => void;
+
+  /** One-shot hint for ProvidersSection to start the Coder OAuth login. */
+  providersStartCoderLogin: boolean;
+  setProvidersStartCoderLogin: (start: boolean) => void;
 
   /** One-shot hint for RuntimesSection to pre-select a project scope. */
   runtimesProjectPath: string | null;
@@ -55,6 +61,7 @@ const DEFAULT_SECTION = "general";
 export function SettingsProvider(props: { children: ReactNode }) {
   const router = useRouter();
   const [providersExpandedProvider, setProvidersExpandedProvider] = useState<string | null>(null);
+  const [providersStartCoderLogin, setProvidersStartCoderLogin] = useState(false);
   const [runtimesProjectPath, setRuntimesProjectPath] = useState<string | null>(null);
   const [secretsProjectPath, setSecretsProjectPath] = useState<string | null>(null);
 
@@ -68,8 +75,10 @@ export function SettingsProvider(props: { children: ReactNode }) {
       const nextSection = section ?? DEFAULT_SECTION;
       if (nextSection === "providers") {
         setProvidersExpandedProvider(options?.expandProvider ?? null);
+        setProvidersStartCoderLogin(options?.startCoderLogin ?? false);
       } else {
         setProvidersExpandedProvider(null);
+        setProvidersStartCoderLogin(false);
       }
       if (nextSection === "runtimes") {
         setRuntimesProjectPath(options?.runtimesProjectPath ?? null);
@@ -99,6 +108,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
   useEffect(() => {
     if (wasOpenRef.current && !isOpen) {
       setProvidersExpandedProvider(null);
+      setProvidersStartCoderLogin(false);
       setRuntimesProjectPath(null);
       setSecretsProjectPath(null);
       for (const callback of closeCallbacksRef.current) {
@@ -110,6 +120,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
 
   const close = useCallback(() => {
     setProvidersExpandedProvider(null);
+    setProvidersStartCoderLogin(false);
     setRuntimesProjectPath(null);
     setSecretsProjectPath(null);
     router.navigateFromSettings();
@@ -119,6 +130,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
     (section: string, options?: { replace?: boolean }) => {
       if (section !== "providers") {
         setProvidersExpandedProvider(null);
+        setProvidersStartCoderLogin(false);
       }
       if (section !== "runtimes") {
         // Runtime scope hints are one-shot and should not persist across section changes.
@@ -142,6 +154,8 @@ export function SettingsProvider(props: { children: ReactNode }) {
       registerOnClose,
       providersExpandedProvider,
       setProvidersExpandedProvider,
+      providersStartCoderLogin,
+      setProvidersStartCoderLogin,
       runtimesProjectPath,
       setRuntimesProjectPath,
       secretsProjectPath,
@@ -155,6 +169,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
       setActiveSection,
       registerOnClose,
       providersExpandedProvider,
+      providersStartCoderLogin,
       runtimesProjectPath,
       secretsProjectPath,
     ]

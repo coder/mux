@@ -1,4 +1,5 @@
 import { THEME_OPTIONS, type ThemePreference } from "@/browser/contexts/ThemeContext";
+import type { OpenSettingsOptions } from "@/browser/contexts/SettingsContext";
 import type { CommandAction } from "@/browser/contexts/CommandRegistryContext";
 import type { APIClient } from "@/browser/contexts/API";
 import type { ConfirmDialogOptions } from "@/browser/contexts/ConfirmDialogContext";
@@ -133,7 +134,7 @@ export interface BuildSourcesParams {
   onOpenWorkspaceInTerminal: (workspaceId: string, runtimeConfig?: RuntimeConfig) => void;
   onToggleTheme: () => void;
   onSetTheme: (theme: ThemePreference) => void;
-  onOpenSettings?: (section?: string) => void;
+  onOpenSettings?: (section?: string, options?: OpenSettingsOptions) => void;
 
   // Layout slots
   layoutPresets?: LayoutPresetsConfig | null;
@@ -1574,7 +1575,10 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         subtitle: "Connect to a Coder deployment (AI Bridge)",
         section: section.settings,
         keywords: ["coder", "login", "oauth", "aibridge", "deployment", "connect"],
-        run: () => openSettings("providers"),
+        // Expands the Coder provider and starts the OAuth login (one-shot
+        // hints consumed by ProvidersSection) instead of only opening the
+        // generic Providers list.
+        run: () => openSettings("providers", { expandProvider: "coder", startCoderLogin: true }),
       },
     ]);
   }
