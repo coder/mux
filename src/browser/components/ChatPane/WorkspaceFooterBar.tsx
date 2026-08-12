@@ -250,6 +250,13 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   }, [lastPromptMessageId]);
 
   useEffect(() => {
+    if (open) {
+      return;
+    }
+    revealOperationRef.current += 1;
+  }, [open]);
+
+  useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (
         !open ||
