@@ -1496,7 +1496,12 @@ export const workspace = {
     /** Searches full history, including prompts before the replay boundary. */
     lastUserPrompt: {
       input: z.object({ workspaceId: z.string() }),
-      output: z.string().nullable(),
+      output: z
+        .object({
+          text: z.string(),
+          messageId: z.string(),
+        })
+        .nullable(),
     },
   },
   /**

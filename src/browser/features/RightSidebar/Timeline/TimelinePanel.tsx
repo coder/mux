@@ -15,9 +15,9 @@ import {
   type WorkspaceState,
   type WorkspaceTimelineSnapshot,
 } from "@/browser/stores/WorkspaceStore";
+import { revealTimelineTarget } from "@/browser/utils/timelineReveal";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { KEYBINDS, isEditableElement, matchesKeybind } from "@/browser/utils/ui/keybinds";
-import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { cn } from "@/common/lib/utils";
 import { capitalize } from "@/common/utils/capitalize";
 import { formatDuration } from "@/common/utils/formatDuration";
@@ -357,8 +357,6 @@ function CollapsedEventRun(props: {
   );
 }
 
-const MAX_REVEAL_HISTORY_PAGES = 10;
-
 type PreviewState =
   | { status: "loading" }
   | { status: "ready"; preview: TimelinePreview }
@@ -438,27 +436,6 @@ function TimelinePreviewCard(props: {
     return { messageId, toolCallId: currentAnchor.toolCallId };
   };
 
-  const isRevealTargetLoaded = (target: { messageId?: string; toolCallId?: string }) => {
-    const messages = workspaceStore.getWorkspaceState(props.workspaceId).messages;
-    if (target.toolCallId) {
-      return messages.some(
-        (message) => message.type === "tool" && message.toolCallId === target.toolCallId
-      );
-    }
-    return target.messageId
-      ? messages.some((message) => "historyId" in message && message.historyId === target.messageId)
-      : false;
-  };
-
-  const dispatchReveal = (target: { messageId?: string; toolCallId?: string }) => {
-    window.dispatchEvent(
-      createCustomEvent(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, {
-        workspaceId: props.workspaceId,
-        ...target,
-      })
-    );
-  };
-
   const handleReveal = async () => {
     if (!anchor || !hasTranscriptTarget || revealState === "revealing") {
       return;
@@ -468,55 +445,16 @@ function TimelinePreviewCard(props: {
     setRevealState("revealing");
 
     try {
-      let target = resolveRevealTarget(anchor);
-      if (isRevealTargetLoaded(target)) {
-        dispatchReveal(target);
-        setRevealState("idle");
+      const result = await revealTimelineTarget({
+        workspaceId: props.workspaceId,
+        getTarget: () => resolveRevealTarget(anchor),
+        workspaceStore,
+        pinTarget: pinTimelineRevealTarget,
+      });
+      if (operation !== revealOperationRef.current) {
         return;
       }
-
-      // Keep only a resolved reveal target outside the normal transcript window. A sequence-only
-      // anchor may need history paging before it has an ID, so do not reject it before that loop.
-      if (target.messageId != null || target.toolCallId != null) {
-        pinTimelineRevealTarget(props.workspaceId, target);
-      }
-      target = resolveRevealTarget(anchor);
-      if (isRevealTargetLoaded(target)) {
-        dispatchReveal(target);
-        setRevealState("idle");
-        return;
-      }
-
-      for (let page = 0; page < MAX_REVEAL_HISTORY_PAGES; page++) {
-        const workspaceState = workspaceStore.getWorkspaceState(props.workspaceId);
-        if (!workspaceState.hasOlderHistory) {
-          break;
-        }
-
-        const loadResult = await workspaceStore.loadOlderHistory(props.workspaceId);
-        if (operation !== revealOperationRef.current) {
-          return;
-        }
-        if (loadResult === "failed" || loadResult === "busy" || loadResult === "unavailable") {
-          setRevealState("error");
-          return;
-        }
-
-        target = resolveRevealTarget(anchor);
-        if (target.messageId != null || target.toolCallId != null) {
-          pinTimelineRevealTarget(props.workspaceId, target);
-        }
-        if (isRevealTargetLoaded(target)) {
-          dispatchReveal(target);
-          setRevealState("idle");
-          return;
-        }
-        if (loadResult === "exhausted") {
-          break;
-        }
-      }
-
-      setRevealState("not-found");
+      setRevealState(result === "revealed" ? "idle" : result);
     } catch {
       if (operation === revealOperationRef.current) {
         setRevealState("error");

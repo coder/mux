@@ -12,9 +12,11 @@ import { hasWorkspaceRepository } from "@/browser/utils/workspaceCapabilities";
 import { isMultiProject } from "@/common/utils/multiProject";
 import { useWorkspaceContext } from "@/browser/contexts/WorkspaceContext";
 import {
-  useWorkspaceLastUserPrompt,
+  pinTimelineRevealTarget,
+  useWorkspaceLastUserPromptInfo,
   useWorkspaceRoundedStreamingTps,
   useWorkspaceSidebarState,
+  useWorkspaceStoreRaw,
   useWorkspaceUsage,
 } from "@/browser/stores/WorkspaceStore";
 import { useGitStatus } from "@/browser/stores/GitStatusStore";
@@ -30,6 +32,7 @@ import { MultiProjectGitStatusIndicator } from "../GitStatusIndicator/MultiProje
 import { WorkspaceLinks } from "../WorkspaceLinks/WorkspaceLinks";
 import { Popover, PopoverTrigger, PopoverContent } from "../Popover/Popover";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../Tooltip/Tooltip";
+import { revealTimelineTarget, type TimelineRevealResult } from "@/browser/utils/timelineReveal";
 import { formatKeybind, KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
 
 interface WorkspaceFooterBarProps {
@@ -204,15 +207,22 @@ function FooterUsageStats(props: { workspaceId: string }) {
 }
 
 function FooterLastPrompt(props: { workspaceId: string }) {
-  const lastPrompt = useWorkspaceLastUserPrompt(props.workspaceId);
+  const lastPrompt = useWorkspaceLastUserPromptInfo(props.workspaceId);
+  const workspaceStore = useWorkspaceStoreRaw();
   const [open, setOpen] = React.useState(false);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
+  const [revealState, setRevealState] = React.useState<
+    "idle" | "revealing" | "not-found" | "error"
+  >("idle");
+
+  const lastPromptMessageId = lastPrompt?.messageId;
 
   // Reset open state when the prompt disappears so a later prompt cannot inherit it.
   useEffect(() => {
-    if (lastPrompt === null) {
+    if (lastPromptMessageId == null) {
       setOpen(false);
       setTooltipOpen(false);
+      setRevealState("idle");
       return;
     }
     const handler = (e: KeyboardEvent) => {
@@ -223,11 +233,36 @@ function FooterLastPrompt(props: { workspaceId: string }) {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [lastPrompt]);
+  }, [lastPromptMessageId]);
 
   if (lastPrompt === null) {
     return null;
   }
+
+  const handleReveal = () => {
+    if (revealState === "revealing") {
+      return;
+    }
+
+    setRevealState("revealing");
+    revealTimelineTarget({
+      workspaceId: props.workspaceId,
+      getTarget: () => ({ messageId: lastPrompt.messageId }),
+      workspaceStore,
+      pinTarget: pinTimelineRevealTarget,
+    })
+      .then((result: TimelineRevealResult) => {
+        if (result === "revealed") {
+          setOpen(false);
+          setRevealState("idle");
+        } else {
+          setRevealState(result);
+        }
+      })
+      .catch(() => {
+        setRevealState("error");
+      });
+  };
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -256,9 +291,23 @@ function FooterLastPrompt(props: { workspaceId: string }) {
         align="end"
         sideOffset={8}
         collisionPadding={12}
-        className="max-h-60 w-auto max-w-[min(25rem,var(--radix-popover-content-available-width,25rem))] overflow-y-auto p-3 text-xs leading-relaxed break-words whitespace-pre-wrap"
+        className="max-h-60 w-auto max-w-[min(25rem,var(--radix-popover-content-available-width,25rem))] overflow-y-auto p-3 text-xs leading-relaxed break-words"
       >
-        {lastPrompt}
+        <div className="whitespace-pre-wrap">{lastPrompt.text}</div>
+        <button
+          type="button"
+          data-testid="workspace-footer-last-prompt-reveal"
+          disabled={revealState === "revealing"}
+          onClick={handleReveal}
+          className="border-border bg-surface-primary text-content-primary hover:bg-hover focus-visible:ring-accent mt-3 rounded-md border px-2.5 py-1.5 text-xs font-medium focus-visible:ring-1 focus-visible:outline-none disabled:cursor-wait disabled:opacity-60"
+        >
+          {revealState === "revealing" ? "Revealing…" : "Reveal in transcript"}
+        </button>
+        {revealState === "not-found" ? (
+          <div className="text-muted mt-1.5 text-[10px]">Prompt not found in the transcript</div>
+        ) : revealState === "error" ? (
+          <div className="text-muted mt-1.5 text-[10px]">Reveal unavailable</div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

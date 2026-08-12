@@ -132,8 +132,13 @@ export function mergeTimelineEvents(
   );
 }
 
+export interface WorkspaceLastUserPromptInfo {
+  text: string;
+  messageId: string;
+}
+
 interface WorkspaceLastUserPromptSnapshot {
-  displayed: string | null;
+  displayed: WorkspaceLastUserPromptInfo | null;
   historyEpoch: number;
   isCaughtUp: boolean;
 }
@@ -2586,7 +2591,7 @@ export class WorkspaceStore {
     return this.aggregators.get(workspaceId)?.getHistoryEpoch() ?? 0;
   }
 
-  getWorkspaceLastUserPrompt(workspaceId: string): string | null {
+  getWorkspaceLastUserPromptInfo(workspaceId: string): WorkspaceLastUserPromptInfo | null {
     const aggregator = this.aggregators.get(workspaceId);
     if (!aggregator) {
       return null;
@@ -2601,16 +2606,20 @@ export class WorkspaceStore {
       // Generated attachment markup is provider context, not part of the user's prompt.
       const trimmed = stripStagedAttachmentNotice(message.content).trim();
       if (trimmed.length > 0) {
-        return trimmed;
+        return { text: trimmed, messageId: message.historyId };
       }
     }
 
     return null;
   }
 
+  getWorkspaceLastUserPrompt(workspaceId: string): string | null {
+    return this.getWorkspaceLastUserPromptInfo(workspaceId)?.text ?? null;
+  }
+
   getWorkspaceLastUserPromptSnapshot(workspaceId: string): WorkspaceLastUserPromptSnapshot {
     return this.lastUserPromptStore.get(workspaceId, () => ({
-      displayed: this.getWorkspaceLastUserPrompt(workspaceId),
+      displayed: this.getWorkspaceLastUserPromptInfo(workspaceId),
       historyEpoch: this.getWorkspaceHistoryEpoch(workspaceId),
       isCaughtUp: this.isWorkspaceTranscriptCaughtUp(workspaceId),
     }));
@@ -2620,7 +2629,9 @@ export class WorkspaceStore {
     return this.lastUserPromptStore.subscribeKey(workspaceId, listener);
   }
 
-  async fetchLastUserPromptFromHistory(workspaceId: string): Promise<string | null> {
+  async fetchLastUserPromptFromHistory(
+    workspaceId: string
+  ): Promise<WorkspaceLastUserPromptInfo | null> {
     const client = this.client;
     if (!client) {
       return null;
@@ -4913,7 +4924,9 @@ export function useActiveGoalCount(): number {
   );
 }
 
-export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
+export function useWorkspaceLastUserPromptInfo(
+  workspaceId: string
+): WorkspaceLastUserPromptInfo | null {
   const store = getStoreInstance();
   const { displayed, historyEpoch, isCaughtUp } = useSyncExternalStore(
     (listener) => store.subscribeLastUserPrompt(workspaceId, listener),
@@ -4924,7 +4937,7 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   const [fallback, setFallback] = useState<{
     workspaceId: string;
     historyEpoch: number;
-    prompt: string | null;
+    prompt: WorkspaceLastUserPromptInfo | null;
   } | null>(null);
 
   useEffect(() => {
@@ -4943,12 +4956,13 @@ export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
   }, [store, workspaceId, displayed, historyEpoch, isCaughtUp]);
 
   // Ignore fallback results from a superseded replay or deletion.
-  const fallbackPrompt =
-    fallback?.workspaceId === workspaceId && fallback.historyEpoch === historyEpoch
-      ? fallback.prompt
-      : null;
+  return fallback?.workspaceId === workspaceId && fallback.historyEpoch === historyEpoch
+    ? (displayed ?? fallback.prompt)
+    : displayed;
+}
 
-  return displayed ?? fallbackPrompt;
+export function useWorkspaceLastUserPrompt(workspaceId: string): string | null {
+  return useWorkspaceLastUserPromptInfo(workspaceId)?.text ?? null;
 }
 
 /**

@@ -2,7 +2,7 @@ import "../../../../tests/ui/dom";
 
 import type { ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { installDom } from "../../../../tests/ui/dom";
 import * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import * as ProjectContextModule from "@/browser/contexts/ProjectContext";
@@ -17,11 +17,18 @@ import * as MultiProjectGitStatusIndicatorModule from "../GitStatusIndicator/Mul
 import * as WorkspaceLinksModule from "../WorkspaceLinks/WorkspaceLinks";
 import { TooltipProvider } from "../Tooltip/Tooltip";
 import type { WorkspaceFooterBar as WorkspaceFooterBarComponent } from "./WorkspaceFooterBar";
+import type { DisplayedMessage } from "@/common/types/message";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
+import { CUSTOM_EVENTS } from "@/common/constants/events";
 
 let WorkspaceFooterBar!: typeof WorkspaceFooterBarComponent;
 
 let workspaceMetadata = new Map<string, FrontendWorkspaceMetadata>();
+let workspaceState = {
+  messages: [] as DisplayedMessage[],
+  muxMessages: [],
+  hasOlderHistory: false,
+};
 let cleanupDom: (() => void) | null = null;
 const workspaceId = "workspace-1";
 
@@ -51,7 +58,14 @@ function installFooterBarTestDoubles() {
       ({ totalTokens: 0 }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceUsage>
   );
   spyOn(WorkspaceStoreModule, "useWorkspaceStreamingStats").mockImplementation(() => null);
-  spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(() => null);
+  spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(() => null);
+  spyOn(WorkspaceStoreModule, "useWorkspaceStoreRaw").mockImplementation(
+    () =>
+      ({
+        getWorkspaceState: () => workspaceState,
+        loadOlderHistory: () => Promise.resolve("exhausted" as const),
+      }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
+  );
   spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => null);
   spyOn(PRStatusStoreModule, "useWorkspacePR").mockImplementation(() => null);
   spyOn(RuntimeStatusStoreModule, "useRuntimeStatus").mockImplementation(() => "unsupported");
@@ -115,9 +129,20 @@ function renderFooter(overrides?: Partial<ComponentProps<typeof WorkspaceFooterB
   );
 }
 
+function makeUserMessage(historyId: string): DisplayedMessage {
+  return {
+    type: "user",
+    id: historyId,
+    historyId,
+    content: "ship the footer",
+    historySequence: 1,
+  };
+}
+
 describe("WorkspaceFooterBar repository controls", () => {
   beforeEach(() => {
     workspaceMetadata = new Map();
+    workspaceState = { messages: [], muxMessages: [], hasOlderHistory: false };
     cleanupDom = installDom();
     installFooterBarTestDoubles();
     /* eslint-disable @typescript-eslint/no-require-imports */
@@ -246,6 +271,7 @@ describe("WorkspaceFooterBar repository controls", () => {
 describe("WorkspaceFooterBar last prompt", () => {
   beforeEach(() => {
     workspaceMetadata = new Map();
+    workspaceState = { messages: [], muxMessages: [], hasOlderHistory: false };
     cleanupDom = installDom();
     installFooterBarTestDoubles();
     workspaceMetadata.set(workspaceId, repoMetadata);
@@ -270,9 +296,10 @@ describe("WorkspaceFooterBar last prompt", () => {
   });
 
   it("renders the item once a user prompt exists", () => {
-    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
-      () => "ship the footer"
-    );
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(() => ({
+      text: "ship the footer",
+      messageId: "prompt-1",
+    }));
 
     const { queryByTestId } = renderFooter();
 
@@ -280,9 +307,10 @@ describe("WorkspaceFooterBar last prompt", () => {
   });
 
   it("toggles the prompt popover from the keyboard shortcut", () => {
-    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
-      () => "ship the footer"
-    );
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(() => ({
+      text: "ship the footer",
+      messageId: "prompt-1",
+    }));
 
     const { getByTestId } = renderFooter();
     const trigger = getByTestId("workspace-footer-last-prompt");
@@ -295,9 +323,42 @@ describe("WorkspaceFooterBar last prompt", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("reveals the last prompt from the popup", async () => {
+    workspaceState = {
+      messages: [makeUserMessage("prompt-1")],
+      muxMessages: [],
+      hasOlderHistory: false,
+    };
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(() => ({
+      text: "ship the footer",
+      messageId: "prompt-1",
+    }));
+    const revealed: Event[] = [];
+    const listener = (event: Event) => revealed.push(event);
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      const view = renderFooter();
+      fireEvent.click(view.getByTestId("workspace-footer-last-prompt"));
+      fireEvent.click(view.getByTestId("workspace-footer-last-prompt-reveal"));
+
+      await waitFor(() => expect(revealed).toHaveLength(1));
+      expect((revealed[0] as CustomEvent).detail).toEqual({
+        workspaceId,
+        messageId: "prompt-1",
+      });
+      expect(view.queryByTestId("workspace-footer-last-prompt-reveal")).toBeNull();
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
+  });
+
   it("does not reopen the popover when a prompt returns after being absent", () => {
-    let currentPrompt: string | null = "ship the footer";
-    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPrompt").mockImplementation(
+    let currentPrompt: { text: string; messageId: string } | null = {
+      text: "ship the footer",
+      messageId: "prompt-1",
+    };
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(
       () => currentPrompt
     );
 
@@ -322,7 +383,7 @@ describe("WorkspaceFooterBar last prompt", () => {
     );
     expect(view.queryByTestId("workspace-footer-last-prompt")).toBeNull();
 
-    currentPrompt = "a brand new prompt";
+    currentPrompt = { text: "a brand new prompt", messageId: "prompt-2" };
     view.rerender(
       <TooltipProvider delayDuration={0}>
         <WorkspaceFooterBar

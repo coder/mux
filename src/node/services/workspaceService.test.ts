@@ -13670,7 +13670,8 @@ describe("WorkspaceService.getLastUserPrompt", () => {
     try {
       await seed(historyService, workspaceId);
       const workspaceService = createWorkspaceServiceForTest({ config, historyService });
-      return await workspaceService.getLastUserPrompt(workspaceId);
+      const result = await workspaceService.getLastUserPrompt(workspaceId);
+      return result?.text ?? null;
     } finally {
       await cleanup();
     }

@@ -10017,13 +10017,15 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /** Full history is required because compaction removes older prompts from replay. */
-  async getLastUserPrompt(workspaceId: string): Promise<string | null> {
+  async getLastUserPrompt(
+    workspaceId: string
+  ): Promise<{ text: string; messageId: string } | null> {
     assert(
       typeof workspaceId === "string" && workspaceId.trim().length > 0,
       "workspaceId is required"
     );
 
-    let found: string | null = null;
+    let found: { text: string; messageId: string } | null = null;
     const result = await this.historyService.iterateFullHistory(
       workspaceId,
       "backward",
@@ -10035,7 +10037,7 @@ export class WorkspaceService extends EventEmitter {
           }
           const text = extractUserPromptText(message);
           if (text.length > 0) {
-            found = text;
+            found = { text, messageId: message.id };
             return false;
           }
         }
