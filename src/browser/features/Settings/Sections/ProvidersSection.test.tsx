@@ -1,10 +1,10 @@
 import type React from "react";
 import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { APIClient } from "@/browser/contexts/API";
-import { useSettings } from "@/browser/contexts/SettingsContext";
+import * as SettingsContextModule from "@/browser/contexts/SettingsContext";
 import type * as WorkspaceStoreModule from "@/browser/stores/WorkspaceStore";
 import type * as WorkspaceContextModule from "@/browser/contexts/WorkspaceContext";
 import type {
@@ -510,7 +510,9 @@ describe("ProvidersSection", () => {
     // Regression: the "Settings: Login with Coder" palette command passes a
     // one-shot startCoderLogin hint through SettingsContext; ProvidersSection
     // must consume it by actually starting the OAuth flow, not just opening
-    // the Providers list.
+    // the Providers list. The hint is injected by spying on useSettings
+    // (a full-plumbing variant that clicked through a live SettingsProvider
+    // proved order-fragile in the monolithic CI process).
     const providersConfig = createProvidersConfig();
     providersConfig.coder = {
       apiKeySet: false,
@@ -535,27 +537,41 @@ describe("ProvidersSection", () => {
       cancelDesktopFlow: () => Promise.resolve(undefined),
     };
 
-    function StartCoderLoginHint() {
-      const { open } = useSettings();
-      return (
-        <button onClick={() => open("providers", { startCoderLogin: true })}>
-          trigger-coder-login
-        </button>
-      );
-    }
+    // Stateful hint: true until the section consumes it, so re-renders after
+    // consumption do not re-trigger the login.
+    let startCoderLoginHint = true;
+    const setProvidersStartCoderLogin = mock((start: boolean) => {
+      startCoderLoginHint = start;
+    });
+    spyOn(SettingsContextModule, "useSettings").mockImplementation(() => ({
+      isOpen: true,
+      activeSection: "providers",
+      open: () => undefined,
+      close: () => undefined,
+      setActiveSection: () => undefined,
+      registerOnClose: () => () => undefined,
+      providersExpandedProvider: null,
+      setProvidersExpandedProvider: () => undefined,
+      providersStartCoderLogin: startCoderLoginHint,
+      setProvidersStartCoderLogin,
+      runtimesProjectPath: null,
+      setRuntimesProjectPath: () => undefined,
+      secretsProjectPath: null,
+      setSecretsProjectPath: () => undefined,
+    }));
 
-    const view = render(
+    render(
       <SettingsSectionStory setup={() => client}>
-        <StartCoderLoginHint />
         <ProvidersSection />
       </SettingsSectionStory>
     );
 
-    fireEvent.click(view.getByText("trigger-coder-login"));
-
     await waitFor(() => {
       expect(startDesktopFlow).toHaveBeenCalled();
     });
+    // The hint is one-shot: consumed (cleared) exactly once, one flow started.
+    expect(setProvidersStartCoderLogin).toHaveBeenCalledWith(false);
+    expect(startDesktopFlow).toHaveBeenCalledTimes(1);
     expect(startDesktopFlow.mock.calls[0][0]).toMatchObject({
       deploymentUrl: "https://coder.example.com",
     });

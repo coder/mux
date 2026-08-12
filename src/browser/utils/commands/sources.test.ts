@@ -486,6 +486,23 @@ test("multi-project workspace command hides itself when the experiment is disabl
   expect(onStartMultiProjectWorkspaceCreation).not.toHaveBeenCalled();
 });
 
+test("Login with Coder command opens providers expanded on Coder and starts the login", async () => {
+  // Regression: the command must reach the login operation (expand the Coder
+  // provider and start the OAuth flow via the one-shot hints consumed by
+  // ProvidersSection), not merely open the generic Providers section.
+  const onOpenSettings = mock();
+  const actions = getActions({ onOpenSettings });
+  const loginAction = actions.find((a) => a.title === "Settings: Login with Coder");
+
+  expect(loginAction).toBeDefined();
+  await loginAction!.run();
+
+  expect(onOpenSettings).toHaveBeenCalledWith("providers", {
+    expandProvider: "coder",
+    startCoderLogin: true,
+  });
+});
+
 test("project commands exclude system projects from options", async () => {
   const allProjects = new Map<string, ProjectConfig>([
     [
