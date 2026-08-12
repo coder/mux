@@ -18541,76 +18541,82 @@ describe("TaskService", () => {
     expect(await readSubagentReportArtifact(config.getSessionDir(parentId), childId)).toBeNull();
   });
 
+  // The scan case uses "plan" so it cannot pass via the exec recovery fallback.
   test.each([
     [
       "agent_report resumes the parent with pre-compaction agent settings",
       "after-compaction",
+      "plan",
       "openai:gpt-5.6-sol",
       "xhigh",
-      ["exec", "compact"],
+      ["plan", "compact"],
     ],
     [
       "agent_report falls back to exec settings when history only has compaction output",
       "after-truncation",
+      "exec",
       "anthropic:claude-sonnet-4-6",
       "medium",
       ["compact"],
     ],
-  ] as const)("%s", async (_name, idSuffix, execModel, thinkingLevel, historyAgentIds) => {
-    const config = await createTestConfig(rootDir);
-    const projectPath = path.join(rootDir, "repo");
-    const parentId = `parent-progress-${idSuffix}`;
-    const childId = `child-progress-${idSuffix}`;
+  ] as const)(
+    "%s",
+    async (_name, idSuffix, expectedAgentId, model, thinkingLevel, historyAgentIds) => {
+      const config = await createTestConfig(rootDir);
+      const projectPath = path.join(rootDir, "repo");
+      const parentId = `parent-progress-${idSuffix}`;
+      const childId = `child-progress-${idSuffix}`;
 
-    await saveWorkspaces(
-      config,
-      projectPath,
-      [
-        projectWorkspace(projectPath, "parent", parentId, {
-          aiSettingsByAgent: {
-            exec: { model: execModel, thinkingLevel },
-          },
-        }),
-        projectWorkspace(projectPath, "child", childId, {
-          parentWorkspaceId: parentId,
-          agentId: "explore",
-          agentType: "explore",
-          taskStatus: "running",
-        }),
-      ],
-      testTaskSettings()
-    );
+      await saveWorkspaces(
+        config,
+        projectPath,
+        [
+          projectWorkspace(projectPath, "parent", parentId, {
+            aiSettingsByAgent: {
+              [expectedAgentId]: { model, thinkingLevel },
+            },
+          }),
+          projectWorkspace(projectPath, "child", childId, {
+            parentWorkspaceId: parentId,
+            agentId: "explore",
+            agentType: "explore",
+            taskStatus: "running",
+          }),
+        ],
+        testTaskSettings()
+      );
 
-    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
-    const { historyService, taskService } = createTaskServiceHarness(config, { workspaceService });
-    for (const [index, agentId] of historyAgentIds.entries()) {
-      await historyService.appendToHistory(
+      const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+      const { historyService, taskService } = createTaskServiceHarness(config, {
+        workspaceService,
+      });
+      for (const [index, agentId] of historyAgentIds.entries()) {
+        await historyService.appendToHistory(
+          parentId,
+          createMuxMessage(`${idSuffix}-assistant-${index}`, "assistant", "Parent turn output", {
+            timestamp: Date.now(),
+            agentId,
+          })
+        );
+      }
+
+      await taskService.reportAgentProgress(childId, `progress-${idSuffix}`, {
+        reportMarkdown: "Found the root cause.",
+      });
+
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(sendMessage).toHaveBeenCalledWith(
         parentId,
-        createMuxMessage(
-          `${idSuffix}-assistant-${index}`,
-          "assistant",
-          agentId === "compact" ? "Compaction summary" : "Delegating now",
-          { timestamp: Date.now(), agentId }
-        )
+        expect.any(String),
+        expect.objectContaining({
+          agentId: expectedAgentId,
+          model,
+          thinkingLevel,
+        }),
+        expect.any(Object)
       );
     }
-
-    await taskService.reportAgentProgress(childId, `progress-${idSuffix}`, {
-      reportMarkdown: "Found the root cause.",
-    });
-
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledWith(
-      parentId,
-      expect.any(String),
-      expect.objectContaining({
-        agentId: "exec",
-        model: execModel,
-        thinkingLevel,
-      }),
-      expect.any(Object)
-    );
-  });
+  );
 
   test("terminal reports supersede queued incremental updates for the same child", async () => {
     const config = await createTestConfig(rootDir);
