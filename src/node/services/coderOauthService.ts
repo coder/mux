@@ -227,10 +227,14 @@ export class CoderOauthService {
   // replacement login the user never asked for.
   private disconnectGeneration = 0;
 
-  // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
-  // Invalidated on every write (exchange, refresh, disconnect) AND on every
-  // provider-config change notification (below).
+  // In-memory cache so getValidAuth() skips JSONC parse work when tokens are
+  // valid. Invalidated on every write (exchange, refresh, disconnect), on
+  // every provider-config change notification (below), AND verified against
+  // the providers file's content fingerprint on every read — watcher
+  // delivery alone is not trusted (see readStoredAuth).
   private cachedAuth: CoderOauthAuth | null = null;
+  // Fingerprint of providers.jsonc at the time cachedAuth was populated.
+  private cachedAuthFingerprint: string | null = null;
 
   private readonly unsubscribeConfigChanged: () => void;
 
@@ -1765,13 +1769,26 @@ export class CoderOauthService {
   // -------------------------------------------------------------------------
 
   private readStoredAuth(): CoderOauthAuth | null {
-    if (this.cachedAuth) {
+    // The cache is verified against the providers file's CONTENT fingerprint
+    // on every read, not just invalidated by the config-change notification:
+    // that notification rides on fs.watch, which Config.watchProvidersFile
+    // explicitly degrades to a no-op on unsupported mounts (NFS/SMB, watch
+    // limit exhaustion) and can silently die after an error. A long-lived
+    // headless process trusting watcher delivery alone would keep serving a
+    // token another Mux process disconnected or replaced until it expired —
+    // failing every request against a revoked token, or keeping an
+    // un-revoked credential in use after the user disconnected it. The
+    // fingerprint is captured BEFORE the read, so a write racing this load
+    // at worst forces an extra re-read on the next call, never a stale hit.
+    const fingerprint = this.config.getProvidersFileFingerprint();
+    if (this.cachedAuth && fingerprint != null && fingerprint === this.cachedAuthFingerprint) {
       return this.cachedAuth;
     }
     const providersConfig = this.config.loadProvidersConfig() ?? {};
     const coderConfig = providersConfig.coder as Record<string, unknown> | undefined;
     const auth = parseCoderOauthAuth(coderConfig?.coderOauth);
     this.cachedAuth = auth;
+    this.cachedAuthFingerprint = fingerprint;
     return auth;
   }
 

@@ -2233,6 +2233,89 @@ describe("ProviderModelFactory Coder", () => {
     );
   });
 
+  it("rechecks policy after the awaited token refresh, before attaching credentials", async () => {
+    // Regression: getValidAuth() can spend tens of seconds refreshing an
+    // expired token and waiting for cross-process file locks AFTER the
+    // wrapper's pre-await policy check passed. A policy refresh landing in
+    // that window (denying Coder or this model) must not be bypassed — the
+    // wrapper must recheck immediately before adding the Authorization
+    // header. Deterministically simulated by flipping the policy inside the
+    // stubbed getValidAuth.
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder" }],
+      },
+      async (config, factory, policyService) => {
+        const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;
+        const originalFetch = globalThis.fetch;
+        let capturedFetch: typeof fetch | undefined;
+        let upstreamCalls = 0;
+
+        saveCoderConfig(config);
+        const stub = stubCoderOauthService();
+        const stubbedGetValidAuth = stub.getValidAuth.bind(stub);
+        stub.getValidAuth = async () => {
+          // The policy refreshes to deny coder WHILE the token refresh is in
+          // flight — after the wrapper's pre-await check already passed.
+          await writeFile(
+            process.env.MUX_POLICY_FILE!,
+            JSON.stringify({
+              policy_format_version: "0.1",
+              provider_access: [{ id: "openai" }],
+            }),
+            "utf-8"
+          );
+          const refresh = await policyService.refreshNow();
+          expect(refresh.success).toBe(true);
+          return stubbedGetValidAuth();
+        };
+        factory.coderOauthService = stub;
+
+        PROVIDER_REGISTRY.anthropic = async () => {
+          const module = await originalAnthropicRegistry();
+          return {
+            ...module,
+            createAnthropic: (options) => {
+              capturedFetch = options?.fetch;
+              return module.createAnthropic(options);
+            },
+          };
+        };
+
+        globalThis.fetch = Object.assign(
+          (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => {
+            upstreamCalls++;
+            return Promise.resolve(new Response("{}", { status: 200 }));
+          },
+          { preconnect: () => undefined }
+        ) as typeof fetch;
+
+        try {
+          const result = await factory.createModel("coder:anthropic/claude-sonnet-4-5");
+          expect(result.success).toBe(true);
+          expect(capturedFetch).toBeDefined();
+
+          // The pre-await check passes (policy still allows coder), the
+          // awaited getValidAuth flips the policy, and the post-await
+          // recheck must fail closed without attaching the token.
+          // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+          await expect(
+            capturedFetch!(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/messages`, {
+              method: "POST",
+              headers: { "x-api-key": "coder" },
+              body: "{}",
+            })
+          ).rejects.toThrow("not allowed by policy");
+          expect(upstreamCalls).toBe(0);
+        } finally {
+          globalThis.fetch = originalFetch;
+          PROVIDER_REGISTRY.anthropic = originalAnthropicRegistry;
+        }
+      }
+    );
+  });
+
   it("routes through the policy-forced base URL when the login matches it", async () => {
     const LOCKED_URL = "https://locked.coder.example.com";
     await withTempPolicyProviderFactory(

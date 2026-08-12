@@ -1998,17 +1998,14 @@ export class ProviderModelFactory {
         // persists rotated tokens, so long sessions never send stale tokens.
         const baseFetch = getProviderFetch(providerConfig);
         const policyService = this.policyService;
-        const coderFetchFn = async (
-          input: Parameters<typeof fetch>[0],
-          init?: Parameters<typeof fetch>[1]
-        ) => {
-          // Policy recheck per REQUEST, not just at model creation: an
-          // enforced policy can refresh mid-stream (or during the awaited
-          // setup between resolveAndCreateModel and the first fetch) to deny
-          // Coder or this model. getValidAuth() only validates the
-          // credential/issuer, so without this gate the wrapper would keep
-          // attaching the OAuth token and bypass the newly effective
-          // restriction for the remainder of a long multi-step stream.
+        // Policy recheck per REQUEST, not just at model creation: an
+        // enforced policy can refresh mid-stream (or during the awaited
+        // setup between resolveAndCreateModel and the first fetch) to deny
+        // Coder or this model. getValidAuth() only validates the
+        // credential/issuer, so without this gate the wrapper would keep
+        // attaching the OAuth token and bypass the newly effective
+        // restriction for the remainder of a long multi-step stream.
+        const assertCoderModelAllowedByPolicy = () => {
           if (
             policyService?.isEnforced() &&
             (!policyService.isProviderAllowed("coder") ||
@@ -2016,6 +2013,13 @@ export class ProviderModelFactory {
           ) {
             throw new Error(`Model coder:${modelId} is not allowed by policy`);
           }
+        };
+        const coderFetchFn = async (
+          input: Parameters<typeof fetch>[0],
+          init?: Parameters<typeof fetch>[1]
+        ) => {
+          // Fail fast before the (possibly slow) token round-trip below.
+          assertCoderModelAllowedByPolicy();
           const authResult = await coderOauthService.getValidAuth();
           if (!authResult.success) {
             throw new Error(authResult.error);
@@ -2031,6 +2035,11 @@ export class ProviderModelFactory {
               "Coder deployment changed since this model was created. Retry the request."
             );
           }
+          // Recheck AFTER the await: getValidAuth() can spend tens of seconds
+          // refreshing an expired token and waiting for cross-process file
+          // locks. A policy refresh landing during that window must not be
+          // bypassed by a check that passed before the await.
+          assertCoderModelAllowedByPolicy();
 
           const headers = new Headers(input instanceof Request ? input.headers : undefined);
           if (init?.headers) {

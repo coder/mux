@@ -118,12 +118,17 @@ function createMockConfig(
 ): Pick<
   Config,
   | "loadProvidersConfig"
+  | "getProvidersFileFingerprint"
   | "tryAcquireCoderOauthClientLease"
   | "withCoderOauthRefreshLock"
   | "withCoderOauthLoginCommitLock"
 > {
   return {
     loadProvidersConfig: () => deps.providersConfig,
+    // Mirrors Config.getProvidersFileFingerprint (content hash): changes
+    // whenever the in-memory providers config changes, exactly like the real
+    // file fingerprint changes on every persisted write.
+    getProvidersFileFingerprint: () => JSON.stringify(deps.providersConfig),
     // Mirrors Config.tryAcquireCoderOauthClientLease: non-blocking, exclusive,
     // released via the returned function.
     tryAcquireCoderOauthClientLease: () => {
@@ -323,6 +328,46 @@ describe("CoderOauthService", () => {
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.access).toBe(auth.access);
+      }
+    });
+
+    it("observes a cross-process credential change without a config-change notification", async () => {
+      // Regression: the cached credential was only invalidated via the
+      // config-change notification, which rides on fs.watch —
+      // Config.watchProvidersFile degrades to a no-op on unsupported mounts
+      // and can silently die after a watcher error. A long-lived headless
+      // process would then keep serving a token another Mux process
+      // disconnected or replaced until it expired. The cache must verify the
+      // providers file fingerprint on every read, independent of watcher
+      // delivery.
+      const auth = validAuth();
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: auth } };
+
+      // First read populates the cache.
+      const first = await service.getValidAuth();
+      expect(first.success).toBe(true);
+      if (first.success) {
+        expect(first.data.access).toBe(auth.access);
+      }
+
+      // Another process replaces the credential (re-login, same deployment).
+      // NO notification is fired — simulating lost/unavailable fs.watch.
+      const replaced = validAuth({ sessionId: "session_other", access: "at_other" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: replaced } };
+
+      const second = await service.getValidAuth();
+      expect(second.success).toBe(true);
+      if (second.success) {
+        expect(second.data.access).toBe("at_other");
+      }
+
+      // Another process disconnects entirely — again without notification.
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL } };
+
+      const third = await service.getValidAuth();
+      expect(third.success).toBe(false);
+      if (!third.success) {
+        expect(third.error).toContain("not configured");
       }
     });
 
