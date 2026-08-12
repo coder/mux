@@ -50,6 +50,12 @@ const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 // stalled origin cannot block discovery (requests also run concurrently).
 const CATALOG_FETCH_TIMEOUT_MS = 10_000;
 
+// Transient per-origin catalog failures (network errors, timeouts, 5xx) are
+// retried before discovery gives up: the persisted catalog is authoritative
+// for routing, so it must not be built from a request that merely flaked.
+const CATALOG_FETCH_RETRIES = 2;
+const CATALOG_RETRY_DELAY_MS = 250;
+
 /** RFC 8414 endpoints resolved from the deployment's discovery document. */
 interface CoderOauthEndpoints {
   authorizationEndpoint: string;
@@ -891,15 +897,17 @@ export class CoderOauthService {
       }
 
       // Persist the new credentials, the deployment URL they belong to, and a
-      // cleared model catalog in ONE locked mutation:
+      // reset model catalog in ONE locked mutation:
       // - URL + auth together: a slower flow finishing after a login to another
       //   deployment must re-assert its own URL alongside its auth or it would
       //   store auth A next to URL B and fail issuer validation. Last completed
       //   login wins with a fully coherent section.
-      // - models cleared: the flow resolves (and Settings refreshes) before
-      //   discovery runs, so leaving the old deployment's models in place would
-      //   offer them against the new deployment until — or indefinitely, if a
-      //   catalog request stalls — discovery overwrites them.
+      // - models DELETED (not set to []): the flow resolves before discovery
+      //   runs, so the old deployment's catalog must not linger — but the new
+      //   deployment's catalog is not known yet either. A missing key means
+      //   "catalog unknown" (routing fails open) until discovery persists a
+      //   conclusive list; [] would read as an authoritative empty catalog
+      //   and block Coder routing entirely (see gatewayModelCatalog.ts).
       // The previous section is captured under the same lock so a post-persist
       // cancellation can restore it verbatim (not just delete the new blob,
       // which would log out a previously connected account).
@@ -915,7 +923,7 @@ export class CoderOauthService {
         const next = { ...(section ?? {}) };
         next.deploymentUrl = deploymentUrl;
         next.coderOauth = auth;
-        next.models = [];
+        delete next.models;
         return { value: next };
       });
       this.cachedAuth = null;
@@ -1205,47 +1213,84 @@ export class CoderOauthService {
   // Model list refresh (AI Bridge passthrough catalogs)
   // -------------------------------------------------------------------------
 
+  /**
+   * One origin catalog request, classified:
+   * - "ok": 2xx with a valid payload — the origin's model list.
+   * - "unavailable": conclusive non-2xx (e.g. 404 when AI Bridge is not
+   *   entitled) — the origin serves nothing.
+   * - "error": network error, timeout, 5xx/408/429, or invalid payload —
+   *   the origin's state is UNKNOWN and must not become authoritative.
+   */
+  private async fetchOriginCatalog(
+    auth: CoderOauthAuth,
+    origin: (typeof CODER_AIBRIDGE_ORIGINS)[number]
+  ): Promise<{ kind: "ok"; ids: string[] } | { kind: "unavailable" } | { kind: "error" }> {
+    try {
+      const response = await fetch(`${coderAibridgeBaseUrl(auth.deploymentUrl, origin)}/models`, {
+        headers: {
+          Authorization: `Bearer ${auth.access}`,
+          Accept: "application/json",
+        },
+        signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
+      });
+
+      if (!response.ok) {
+        if (response.status >= 500 || response.status === 408 || response.status === 429) {
+          log.debug(`[Coder OAuth] ${origin} model list failed transiently (${response.status})`);
+          return { kind: "error" };
+        }
+        log.debug(`[Coder OAuth] ${origin} model list unavailable (${response.status})`);
+        return { kind: "unavailable" };
+      }
+
+      const json = (await response.json()) as unknown;
+      if (!isPlainObject(json) || !Array.isArray(json.data)) {
+        log.debug(`[Coder OAuth] ${origin} model list returned an invalid payload`);
+        return { kind: "error" };
+      }
+      const ids: string[] = [];
+      for (const entry of json.data) {
+        if (isPlainObject(entry) && typeof entry.id === "string" && entry.id) {
+          ids.push(`${origin}/${entry.id}`);
+        }
+      }
+      return { kind: "ok", ids };
+    } catch (error) {
+      log.debug(`[Coder OAuth] Failed to fetch ${origin} models: ${getErrorMessage(error)}`);
+      return { kind: "error" };
+    }
+  }
+
   private async refreshBridgeModels(auth: CoderOauthAuth): Promise<void> {
     // Origin catalogs are independent: fetch them concurrently and bound each
     // request, so one stalled origin can neither delay nor starve a healthy
     // one — otherwise users would see an empty catalog indefinitely despite
     // an available upstream. Per-origin results keep the deterministic
-    // CODER_AIBRIDGE_ORIGINS ordering.
+    // CODER_AIBRIDGE_ORIGINS ordering. Transient failures are retried.
     const perOrigin = await Promise.all(
-      CODER_AIBRIDGE_ORIGINS.map(async (origin): Promise<string[]> => {
-        try {
-          const response = await fetch(
-            `${coderAibridgeBaseUrl(auth.deploymentUrl, origin)}/models`,
-            {
-              headers: {
-                Authorization: `Bearer ${auth.access}`,
-                Accept: "application/json",
-              },
-              signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
-            }
-          );
-
-          if (!response.ok) {
-            log.debug(`[Coder OAuth] ${origin} model list unavailable (${response.status})`);
-            return [];
+      CODER_AIBRIDGE_ORIGINS.map(async (origin) => {
+        for (let attempt = 0; ; attempt++) {
+          const result = await this.fetchOriginCatalog(auth, origin);
+          if (result.kind !== "error" || attempt >= CATALOG_FETCH_RETRIES) {
+            return result;
           }
-
-          const json = (await response.json()) as unknown;
-          const entries = isPlainObject(json) && Array.isArray(json.data) ? json.data : [];
-          const ids: string[] = [];
-          for (const entry of entries) {
-            if (isPlainObject(entry) && typeof entry.id === "string" && entry.id) {
-              ids.push(`${origin}/${entry.id}`);
-            }
-          }
-          return ids;
-        } catch (error) {
-          log.debug(`[Coder OAuth] Failed to fetch ${origin} models: ${getErrorMessage(error)}`);
-          return [];
+          await new Promise((resolve) => setTimeout(resolve, CATALOG_RETRY_DELAY_MS));
         }
       })
     );
-    const modelIds = perOrigin.flat();
+
+    // The persisted catalog is authoritative for routing (see
+    // gatewayModelCatalog.ts), so it may only be written when every origin's
+    // state is conclusive. If any origin still errors after retries, keep the
+    // catalog in its post-login "unknown" state (models key absent, routing
+    // fails open) rather than persisting a partial list that would block the
+    // failed origin's models until the next login even after the bridge
+    // recovers.
+    if (perOrigin.some((result) => result.kind === "error")) {
+      log.debug("[Coder OAuth] Skipping catalog write: discovery failed for at least one origin");
+      return;
+    }
+    const modelIds = perOrigin.flatMap((result) => (result.kind === "ok" ? result.ids : []));
 
     // Belt & suspenders: the factory enforces policy per model at creation
     // time, but don't persist catalog entries a policy already disallows.

@@ -86,14 +86,18 @@ describe("gatewayModelCatalog", () => {
     ).toBe(false);
   });
 
-  test("fails closed when the Coder catalog is missing entirely", () => {
+  test("treats a missing Coder catalog as unknown (fail open)", () => {
+    // Login deletes the catalog key and discovery only persists conclusive
+    // results: a missing list means "unknown" (discovery pending or failed
+    // transiently), and blocking would strand routing until the next login
+    // even after the bridge recovers.
     expect(
       isProviderModelAccessibleFromAuthoritativeCatalog(
         "coder",
         "anthropic/claude-sonnet-4-5",
         undefined
       )
-    ).toBe(false);
+    ).toBe(true);
   });
 
   test("accepts Codex models when the Copilot catalog includes them", () => {

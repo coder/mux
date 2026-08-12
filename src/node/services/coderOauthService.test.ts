@@ -813,11 +813,12 @@ describe("CoderOauthService", () => {
       expect(persistedAuth.clientSecret).toBe("secret_new");
       expect(persistedAuth.registrationAccessToken).toBe("reg_token_new");
 
-      // Model list fetched from the reachable upstream only (openai 404 tolerated).
-      // The exchange clears the previous catalog atomically with the new auth,
-      // then discovery (after the flow resolves) populates the fresh one.
-      await waitUntil(() => deps.setModelsCalls.length >= 2);
-      expect(deps.setModelsCalls[0].models).toEqual([]);
+      // Model list fetched from the reachable upstream only (openai 404 is a
+      // conclusive "unavailable", not a transient error). The exchange resets
+      // the catalog to unknown atomically with the new auth (no models write
+      // recorded — there was no previous catalog), then discovery (after the
+      // flow resolves) persists the fresh one.
+      await waitUntil(() => deps.setModelsCalls.length >= 1);
       const discoveryCall = deps.setModelsCalls[deps.setModelsCalls.length - 1];
       expect(discoveryCall.provider).toBe("coder");
       expect(discoveryCall.models).toEqual([
@@ -2341,6 +2342,76 @@ describe("CoderOauthService", () => {
       for (const signal of catalogSignals) {
         expect(signal).toBeInstanceOf(AbortSignal);
       }
+    });
+
+    it("leaves the catalog unknown when discovery keeps failing transiently", async () => {
+      // A re-login where every /models request 500s: the commit resets the
+      // catalog to unknown (deleting the previous deployment's list), and
+      // discovery must retry, then SKIP the write — persisting [] would be
+      // read as an authoritative empty catalog and block Coder routing until
+      // the next login even after the bridge recovers.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ sessionId: "session_prior" }),
+          models: ["anthropic/prior-model"],
+        },
+      };
+
+      let catalogRequests = 0;
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_relogin",
+            refresh_token: "rt_relogin",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          catalogRequests++;
+          return new Response("bridge overloaded", { status: 500 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_transient");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // Each origin was retried (2 origins x 3 attempts).
+      await waitUntil(() => catalogRequests >= 6, 5000);
+      // The catalog stays UNKNOWN: the previous deployment's list is gone
+      // (reset by the commit) and no authoritative list was written.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.models).toBeUndefined();
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_relogin");
     });
 
     it("skips the model catalog write when the login was superseded during discovery", async () => {

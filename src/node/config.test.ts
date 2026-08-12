@@ -2537,6 +2537,32 @@ describe("Config", () => {
       release!();
       expect(fs.existsSync(leasePath)).toBe(false);
     });
+
+    it("does not release a lease that was stale-broken and reacquired by another process", () => {
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+
+      const originalRelease = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(originalRelease).not.toBeNull();
+
+      // The lease crosses the staleness boundary; another process breaks it
+      // and acquires its own generation of the same path.
+      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
+      fs.utimesSync(leasePath, staleTime, staleTime);
+      const otherProcess = new Config(tempDir);
+      const otherRelease = otherProcess.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(otherRelease).not.toBeNull();
+
+      // The original holder's late release must NOT remove the new owner's
+      // lease — otherwise a third flow could acquire it concurrently and two
+      // flows would clobber the stored client's single redirect slot.
+      originalRelease!();
+      expect(fs.existsSync(leasePath)).toBe(true);
+      expect(config.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
+
+      // The rightful owner can still release it.
+      otherRelease!();
+      expect(fs.existsSync(leasePath)).toBe(false);
+    });
   });
 
   describe("withCoderOauthRefreshLock", () => {

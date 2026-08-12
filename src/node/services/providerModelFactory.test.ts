@@ -2146,6 +2146,31 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("keeps routing through Coder while the catalog is unknown", async () => {
+    await withTempConfig(async (config, factory) => {
+      // No models key: the catalog is unknown (discovery pending or failed
+      // transiently after login). Routing stays permissive — blocking would
+      // strand Coder routing until the next login even after the bridge
+      // recovers.
+      saveCoderConfig(config);
+      const providersConfig = config.loadProvidersConfig() ?? {};
+      config.saveProvidersConfig({
+        ...providersConfig,
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      await saveRoutePriority(config, ["coder", "direct"]);
+
+      expect(
+        factory.resolveGatewayModelString(
+          "anthropic:claude-sonnet-4-5",
+          "anthropic:claude-sonnet-4-5"
+        )
+      ).toBe("coder:anthropic/claude-sonnet-4-5");
+    });
+  });
+
   it("routes nothing through Coder when the discovered catalog is empty", async () => {
     await withTempConfig(async (config, factory) => {
       // Login always overwrites the catalog — empty means the bridge exposed

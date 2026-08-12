@@ -8,15 +8,17 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   modelId: string,
   models: ProviderModelEntry[] | undefined
 ): boolean {
-  // Coder's models list is the AI Bridge catalog discovered at login (always
-  // overwritten, including with an empty list; users may append manual
-  // entries). The bridge only serves models its upstreams expose, so routing
-  // any other model through Coder would fail at the bridge instead of falling
-  // back to a configured direct provider — treat the stored list as
-  // exhaustive and fail closed when it is missing.
+  // Coder's models list is the AI Bridge catalog discovered at login (users
+  // may append manual entries). The bridge only serves models its upstreams
+  // expose, so routing any other model through Coder would fail at the bridge
+  // instead of falling back to a configured direct provider — a present list
+  // (including an empty one) is treated as exhaustive. A MISSING list means
+  // the catalog is unknown (login clears it and discovery is pending, or
+  // discovery failed transiently and was not persisted): stay permissive so
+  // a temporary /models outage cannot strand routing until the next login.
   if (provider === "coder") {
     if (!Array.isArray(models)) {
-      return false;
+      return true;
     }
     for (const entry of models) {
       const configuredModelId = maybeGetProviderModelEntryId(entry);

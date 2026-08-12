@@ -2655,6 +2655,7 @@ export class Config {
    */
   tryAcquireCoderOauthClientLease(ttlMs: number): (() => void) | null {
     const leasePath = `${this.providersFile}.coder-client.lock`;
+    const ownerFile = path.join(leasePath, "owner");
 
     if (!fs.existsSync(this.rootDir)) {
       ensurePrivateDirSync(this.rootDir);
@@ -2663,9 +2664,23 @@ export class Config {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         fs.mkdirSync(leasePath);
+        // Ownership token: a lease that crosses the staleness boundary can be
+        // broken and reacquired by another process before this holder's
+        // release runs. A blind rmdir would then delete the NEW owner's lease
+        // and let a third flow acquire it concurrently — release only when
+        // the lease is still this generation's.
+        const token = crypto.randomBytes(16).toString("hex");
+        try {
+          fs.writeFileSync(ownerFile, token);
+        } catch (error) {
+          log.debug("Failed to write Coder OAuth client lease owner token:", error);
+        }
         return () => {
           try {
-            fs.rmdirSync(leasePath);
+            if (fs.readFileSync(ownerFile, "utf8") !== token) {
+              return; // Stale-broken and reacquired by another flow; keep it.
+            }
+            fs.rmSync(leasePath, { recursive: true, force: true });
           } catch (error) {
             log.debug("Failed to release Coder OAuth client lease:", error);
           }
@@ -2684,7 +2699,7 @@ export class Config {
           return null;
         }
         try {
-          fs.rmdirSync(leasePath);
+          fs.rmSync(leasePath, { recursive: true, force: true });
         } catch {
           // Another process broke it first; retry once.
         }
