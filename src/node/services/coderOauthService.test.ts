@@ -1149,6 +1149,243 @@ describe("CoderOauthService", () => {
       await waitUntil(() => revokedTokens.includes("rt_denied"));
     });
 
+    it("refuses to persist when policy denies coder while the write waits for the file lock", async () => {
+      // Regression: the policy checks must run INSIDE the synchronous write
+      // predicate, not merely before the mutation. Another process can hold
+      // the providers-file lock for seconds, and the policy can refresh to
+      // deny coder during that wait — checks done only before the mutation
+      // would persist a credential under the obsolete policy.
+      let coderAllowed = true;
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistStarted!: () => void;
+      const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
+      let sectionCalls = 0;
+
+      // Gate BEFORE the mutation runs: models the file lock being held by
+      // another process while this flow's persist waits.
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          if (++sectionCalls === 1) {
+            persistStarted();
+            await persistGate;
+          }
+          return mockUpdateProviderSection(deps, provider, update);
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService,
+        {
+          isEnforced: () => true,
+          isProviderAllowed: () => coderAllowed,
+          getForcedBaseUrl: () => undefined,
+        } as unknown as PolicyService
+      );
+
+      const revokedTokens: string[] = [];
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_lockwait",
+            refresh_token: "rt_lockwait",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_lockwait");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      // The persist is waiting on the "file lock"; policy refreshes to deny.
+      await persistStartedPromise;
+      coderAllowed = false;
+      releasePersist();
+
+      const callbackResponse = await callbackPromise;
+      expect(callbackResponse?.status).toBe(400);
+      const waitResult = await service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      expect(waitResult.success).toBe(false);
+
+      // Nothing persisted; the exchanged tokens were revoked.
+      expect(
+        (deps.providersConfig.coder as Record<string, unknown> | undefined)?.coderOauth
+      ).toBeUndefined();
+      await waitUntil(() => revokedTokens.includes("rt_lockwait"));
+    });
+
+    it("disconnect waits for a foreign commit's critical section before clearing", async () => {
+      // Regression: a commit persists its login and announces success as ONE
+      // critical section under the cross-process commit lock, but disconnect
+      // used to write outside that lock — it could land between the foreign
+      // write and the announcement, clearing and revoking the just-persisted
+      // credential while the other process still reported the login as
+      // connected. disconnect() must serialize on the same lock: it either
+      // precedes the commit (tombstone refuses it) or follows it entirely.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: priorAuth },
+      };
+
+      // One shared cross-process commit lock for both "processes".
+      const sharedCommitLock = createSharedCrossProcessLock();
+
+      // Gate service A's persist AFTER its write lands: A then sits in the
+      // post-write pre-announcement window while HOLDING the commit lock.
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistApplied!: () => void;
+      const persistAppliedPromise = new Promise<void>((resolve) => (persistApplied = resolve));
+      let sectionCalls = 0;
+
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          const call = ++sectionCalls;
+          const result = await mockUpdateProviderSection(deps, provider, update);
+          if (call === 1) {
+            persistApplied();
+            await persistGate;
+          }
+          return result;
+        },
+      };
+      const serviceA = new CoderOauthService(
+        {
+          ...createMockConfig(deps),
+          withCoderOauthLoginCommitLock: sharedCommitLock,
+        } as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+      const serviceB = new CoderOauthService(
+        {
+          ...createMockConfig(deps),
+          withCoderOauthLoginCommitLock: sharedCommitLock,
+        } as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      const revokedTokens: string[] = [];
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_foreign",
+            refresh_token: "rt_foreign",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      try {
+        const startResult = await serviceA.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+        expect(startResult.success).toBe(true);
+        if (!startResult.success) return;
+        const { flowId, authorizeUrl } = startResult.data;
+
+        const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+        callbackUrl.searchParams.set("code", "auth_code_foreign");
+        callbackUrl.searchParams.set("state", flowId);
+        const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+        // A has landed its write and is gated pre-announcement, holding the
+        // commit lock. B's disconnect must BLOCK on that lock.
+        await persistAppliedPromise;
+        let disconnectResolved = false;
+        const disconnectPromise = serviceB.disconnect().then((result) => {
+          disconnectResolved = true;
+          return result;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        expect(disconnectResolved).toBe(false);
+
+        // A finishes its critical section: the login is announced as a
+        // SUCCESS (it completed before the disconnect in the serialized
+        // history)...
+        releasePersist();
+        const callbackResponse = await callbackPromise;
+        expect(callbackResponse?.status).toBe(200);
+        const waitResult = await serviceA.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+        expect(waitResult.success).toBe(true);
+
+        // ...and only then does B's disconnect clear the fresh credential.
+        const disconnectResult = await disconnectPromise;
+        expect(disconnectResult.success).toBe(true);
+        expect(
+          (deps.providersConfig.coder as Record<string, unknown> | undefined)?.coderOauth
+        ).toBeUndefined();
+        await waitUntil(() => revokedTokens.includes("rt_foreign"));
+      } finally {
+        await serviceA.dispose();
+        await serviceB.dispose();
+      }
+    });
+
     it("refuses to commit when the policy-forced deployment URL changes mid-flow", async () => {
       // Policy can refresh its forcedBaseUrl while the browser authorization
       // is pending: a credential minted by deployment A must not be persisted
