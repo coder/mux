@@ -653,6 +653,39 @@ describe("ProviderService.getConfig", () => {
     );
   });
 
+  it("keeps a stored Coder credential disconnectable after the deployment URL is edited", () => {
+    withTempConfig((config, service) => {
+      // The stored blob no longer matches the configured URL: not routable
+      // (coderOauthSet false), but the credential is still live on its own
+      // issuer and must stay exposed so Disconnect can revoke it.
+      config.saveProvidersConfig({
+        coder: {
+          deploymentUrl: "https://new-deployment.example.com",
+          coderOauth: {
+            type: "oauth",
+            sessionId: "sess",
+            deploymentUrl: "https://old-deployment.example.com",
+            access: "at",
+            refresh: "rt",
+            expires: Date.now() + 3_600_000,
+            clientId: "c",
+            clientSecret: "s",
+          },
+        },
+      });
+
+      const cfg = service.getConfig();
+      expect(cfg.coder.coderOauthSet).toBe(false);
+      expect(cfg.coder.coderOauthCredentialStored).toBe(true);
+
+      // No blob at all: nothing to disconnect.
+      config.saveProvidersConfig({
+        coder: { deploymentUrl: "https://new-deployment.example.com" },
+      });
+      expect(service.getConfig().coder.coderOauthCredentialStored).toBe(false);
+    });
+  });
+
   it("filters Coder discoveredModels by the current policy at exposure time", async () => {
     await withTempPolicyProviderService(
       {

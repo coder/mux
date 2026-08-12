@@ -1583,5 +1583,52 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
     ]);
   }
 
+  // Coder disconnect: calls the RPC directly (no settings UI needed), so it is
+  // not gated on onOpenSettings like the section-opening commands above.
+  actions.push(() => [
+    {
+      id: CommandIds.coderDisconnect(),
+      title: "Settings: Disconnect Coder",
+      subtitle: "Revoke the stored Coder OAuth credential",
+      section: section.settings,
+      keywords: ["coder", "logout", "disconnect", "oauth", "revoke", "sign out"],
+      // Gated on credential PRESENCE (not routability): a blob minted for a
+      // previously configured deployment URL must stay revocable — the
+      // backend revokes against the blob's own issuer.
+      visible: () => p.providersConfig?.coder?.coderOauthCredentialStored === true,
+      run: async () => {
+        if (!p.api) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Coder Disconnect Failed",
+            message: "Mux API not connected.",
+          });
+          return;
+        }
+        try {
+          const result = await p.api.coderOauth.disconnect();
+          if (!result.success) {
+            showCommandFeedbackToast({
+              type: "error",
+              title: "Coder Disconnect Failed",
+              message: result.error,
+            });
+            return;
+          }
+          showCommandFeedbackToast({
+            type: "success",
+            message: "Coder account disconnected.",
+          });
+        } catch (error) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Coder Disconnect Failed",
+            message: getErrorMessage(error),
+          });
+        }
+      },
+    },
+  ]);
+
   return actions;
 }

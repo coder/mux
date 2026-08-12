@@ -503,6 +503,34 @@ test("Login with Coder command opens providers expanded on Coder and starts the 
   });
 });
 
+test("Disconnect Coder command revokes via RPC and is gated on a stored credential", async () => {
+  // Regression: Disconnect must be keyboard-reachable and must key its
+  // visibility off credential PRESENCE (coderOauthCredentialStored), not
+  // routability — a blob minted for a previously configured deployment URL
+  // must stay revocable.
+  const disconnect = mock(() => Promise.resolve({ success: true as const, data: undefined }));
+  const actions = getActions({
+    api: { coderOauth: { disconnect } } as unknown as APIClient,
+    providersConfig: {
+      coder: { coderOauthSet: false, coderOauthCredentialStored: true },
+    } as unknown as Parameters<typeof buildCoreSources>[0]["providersConfig"],
+  });
+  const disconnectAction = actions.find((a) => a.title === "Settings: Disconnect Coder");
+
+  expect(disconnectAction).toBeDefined();
+  expect(disconnectAction?.visible?.()).toBe(true);
+  await disconnectAction!.run();
+  expect(disconnect).toHaveBeenCalledTimes(1);
+
+  // Without a stored credential there is nothing to revoke: hidden.
+  const hidden = getActions({
+    providersConfig: {
+      coder: { coderOauthSet: false, coderOauthCredentialStored: false },
+    } as unknown as Parameters<typeof buildCoreSources>[0]["providersConfig"],
+  }).find((a) => a.title === "Settings: Disconnect Coder");
+  expect(hidden?.visible?.()).toBe(false);
+});
+
 test("project commands exclude system projects from options", async () => {
   const allProjects = new Map<string, ProjectConfig>([
     [

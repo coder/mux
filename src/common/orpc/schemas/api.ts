@@ -269,6 +269,10 @@ export const ProviderConfigInfoSchema = z.object({
   deploymentUrl: z.string().optional(),
   /** Coder-only: whether Coder OAuth tokens are present in providers.jsonc */
   coderOauthSet: z.boolean().optional(),
+  // A Coder OAuth blob exists in providers.jsonc, whether or not it matches
+  // the configured deployment URL (coderOauthSet). Gates Disconnect: the
+  // stored credential stays revocable after the URL is edited or cleared.
+  coderOauthCredentialStored: z.boolean().optional(),
   /**
    * Coder-only: model IDs discovered from the deployment's AI Bridge
    * catalogs. Authoritative for gateway routing when present; `models` is the

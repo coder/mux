@@ -462,6 +462,11 @@ export class ProviderService {
           coderOauth !== null &&
           configuredDeploymentUrl !== null &&
           coderOauth.deploymentUrl === configuredDeploymentUrl;
+        // Credential presence, independent of routability: editing the
+        // deployment URL flips coderOauthSet to false, but the stored blob
+        // (a full-privilege credential on its own issuer) must remain
+        // disconnectable/revocable from the UI without restoring the URL.
+        providerInfo.coderOauthCredentialStored = coderOauth !== null;
         if (typeof effectiveDeploymentUrl === "string" && effectiveDeploymentUrl) {
           providerInfo.deploymentUrl = effectiveDeploymentUrl;
         }

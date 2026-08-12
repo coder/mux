@@ -1113,6 +1113,11 @@ export function ProvidersSection() {
   const coderLoginAttemptRef = useRef(0);
 
   const coderOauthIsConnected = config?.coder?.coderOauthSet === true;
+  // Presence of ANY stored credential (even one minted for a different
+  // deployment URL): it stays disconnectable — disconnect revokes against the
+  // blob's own issuer — otherwise editing the URL would strand a live
+  // full-privilege credential with no way to revoke it from the UI.
+  const coderOauthCredentialStored = config?.coder?.coderOauthCredentialStored === true;
   const coderDeploymentUrl = config?.coder?.deploymentUrl ?? "";
   const coderLoginInProgress = coderLoginStatus === "starting" || coderLoginStatus === "waiting";
 
@@ -1251,7 +1256,7 @@ export function ProvidersSection() {
         return;
       }
 
-      updateOptimistically("coder", { coderOauthSet: false });
+      updateOptimistically("coder", { coderOauthSet: false, coderOauthCredentialStored: false });
       await refresh();
     } catch (err) {
       if (attempt !== coderLoginAttemptRef.current) return;
@@ -2306,7 +2311,7 @@ export function ProvidersSection() {
                                   </Button>
                                 )}
 
-                                {coderOauthIsConnected && (
+                                {coderOauthCredentialStored && (
                                   <Button
                                     variant="ghost"
                                     size="sm"
