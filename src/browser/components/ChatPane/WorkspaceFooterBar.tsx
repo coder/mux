@@ -211,11 +211,18 @@ function FooterLastPrompt(props: { workspaceId: string }) {
   const workspaceStore = useWorkspaceStoreRaw();
   const [open, setOpen] = React.useState(false);
   const [tooltipOpen, setTooltipOpen] = React.useState(false);
+  const revealOperationRef = React.useRef(0);
+  const lastPromptMessageId = lastPrompt?.messageId;
   const [revealState, setRevealState] = React.useState<
     "idle" | "revealing" | "not-found" | "error"
   >("idle");
 
-  const lastPromptMessageId = lastPrompt?.messageId;
+  useEffect(() => {
+    revealOperationRef.current += 1;
+    return () => {
+      revealOperationRef.current += 1;
+    };
+  }, [lastPromptMessageId]);
 
   // Reset open state when the prompt disappears so a later prompt cannot inherit it.
   useEffect(() => {
@@ -245,14 +252,16 @@ function FooterLastPrompt(props: { workspaceId: string }) {
     }
 
     setRevealState("revealing");
+    const operation = ++revealOperationRef.current;
     revealTimelineTarget({
       workspaceId: props.workspaceId,
       getTarget: () => ({ messageId: lastPrompt.messageId }),
       workspaceStore,
       pinTarget: pinTimelineRevealTarget,
+      isCancelled: () => operation !== revealOperationRef.current,
     })
       .then((result: TimelineRevealResult) => {
-        if (result === "cancelled") {
+        if (result === "cancelled" || operation !== revealOperationRef.current) {
           return;
         }
         if (result === "revealed") {
@@ -263,7 +272,9 @@ function FooterLastPrompt(props: { workspaceId: string }) {
         }
       })
       .catch(() => {
-        setRevealState("error");
+        if (operation === revealOperationRef.current) {
+          setRevealState("error");
+        }
       });
   };
 

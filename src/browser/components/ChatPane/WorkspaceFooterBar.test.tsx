@@ -29,6 +29,8 @@ let workspaceState = {
   muxMessages: [],
   hasOlderHistory: false,
 };
+let loadOlderHistory = (): Promise<"loaded" | "exhausted" | "busy" | "unavailable" | "failed"> =>
+  Promise.resolve("exhausted");
 let cleanupDom: (() => void) | null = null;
 const workspaceId = "workspace-1";
 
@@ -63,7 +65,7 @@ function installFooterBarTestDoubles() {
     () =>
       ({
         getWorkspaceState: () => workspaceState,
-        loadOlderHistory: () => Promise.resolve("exhausted" as const),
+        loadOlderHistory: () => loadOlderHistory(),
       }) as unknown as ReturnType<typeof WorkspaceStoreModule.useWorkspaceStoreRaw>
   );
   spyOn(GitStatusStoreModule, "useGitStatus").mockImplementation(() => null);
@@ -143,6 +145,7 @@ describe("WorkspaceFooterBar repository controls", () => {
   beforeEach(() => {
     workspaceMetadata = new Map();
     workspaceState = { messages: [], muxMessages: [], hasOlderHistory: false };
+    loadOlderHistory = () => Promise.resolve("exhausted" as const);
     cleanupDom = installDom();
     installFooterBarTestDoubles();
     /* eslint-disable @typescript-eslint/no-require-imports */
@@ -272,6 +275,7 @@ describe("WorkspaceFooterBar last prompt", () => {
   beforeEach(() => {
     workspaceMetadata = new Map();
     workspaceState = { messages: [], muxMessages: [], hasOlderHistory: false };
+    loadOlderHistory = () => Promise.resolve("exhausted" as const);
     cleanupDom = installDom();
     installFooterBarTestDoubles();
     workspaceMetadata.set(workspaceId, repoMetadata);
@@ -348,6 +352,61 @@ describe("WorkspaceFooterBar last prompt", () => {
         messageId: "prompt-1",
       });
       expect(view.queryByTestId("workspace-footer-last-prompt-reveal")).toBeNull();
+    } finally {
+      window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+    }
+  });
+
+  it("does not reveal an obsolete prompt after a newer prompt arrives", async () => {
+    let resolveLoad: ((result: "loaded") => void) | undefined;
+    loadOlderHistory = () =>
+      new Promise<"loaded">((resolve) => {
+        resolveLoad = resolve;
+      });
+    workspaceState = {
+      messages: [],
+      muxMessages: [],
+      hasOlderHistory: true,
+    };
+    let currentPrompt: { text: string; messageId: string } | null = {
+      text: "old prompt",
+      messageId: "prompt-old",
+    };
+    spyOn(WorkspaceStoreModule, "useWorkspaceLastUserPromptInfo").mockImplementation(
+      () => currentPrompt
+    );
+    const revealed: Event[] = [];
+    const listener = (event: Event) => revealed.push(event);
+    window.addEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
+
+    try {
+      const view = renderFooter();
+      fireEvent.click(view.getByTestId("workspace-footer-last-prompt"));
+      fireEvent.click(view.getByTestId("workspace-footer-last-prompt-reveal"));
+      await Promise.resolve();
+
+      currentPrompt = { text: "new prompt", messageId: "prompt-new" };
+      view.rerender(
+        <TooltipProvider delayDuration={0}>
+          <WorkspaceFooterBar
+            workspaceId={workspaceId}
+            projectName="demo"
+            projectPath="/projects/demo"
+            workspaceName="feature-branch"
+            namedWorkspacePath="/projects/demo/workspaces/feature-branch"
+            runtimeConfig={{ type: "worktree", srcBaseDir: "/tmp/src" }}
+          />
+        </TooltipProvider>
+      );
+      workspaceState.messages = [makeUserMessage("prompt-old")];
+      workspaceState.hasOlderHistory = false;
+      resolveLoad?.("loaded");
+
+      const result = await Promise.resolve().then(
+        () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+      );
+      void result;
+      expect(revealed).toHaveLength(0);
     } finally {
       window.removeEventListener(CUSTOM_EVENTS.REVEAL_TIMELINE_ANCHOR, listener);
     }
