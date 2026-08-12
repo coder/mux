@@ -204,6 +204,20 @@ export class CoderOauthService {
   // with an insertion timestamp for pruning.
   private readonly preCancelledFlowIds = new Map<string, number>();
 
+  // Bumped by disconnect() so login attempts still in their pre-registration
+  // probes (no flow entry yet — cancelAll cannot see them, and disconnect
+  // does not know their caller-generated IDs) abort at their next checkpoint
+  // instead of resuming after the credentials were cleared and committing a
+  // replacement login the user never asked for.
+  private disconnectGeneration = 0;
+
+  // How long an uncertain stored-client update keeps the client lease
+  // reserved before this process releases it (see the lease-release handler
+  // in startDesktopFlow). Matches the lease's stale TTL so in-process reclaim
+  // and cross-process stale-break agree on the quarantine length.
+  // Overridable by tests (a five-minute timer is untestable directly).
+  clientLeaseQuarantineMs = DEFAULT_DESKTOP_TIMEOUT_MS;
+
   // In-memory cache so getValidAuth() skips disk reads when tokens are valid.
   // Invalidated on every write (exchange, refresh, disconnect) AND on every
   // provider-config change notification (below).
@@ -249,6 +263,13 @@ export class CoderOauthService {
     // the account the user just disconnected. Cancellation removes each flow
     // from the manager before resolving, so the commit path's liveness
     // checks (`desktopFlows.has`) reject those flows' persists/commits.
+    // The generation bump covers attempts cancelAll cannot see: ones still in
+    // their pre-registration probes. startDesktopFlow snapshots the
+    // generation at entry and re-checks it at every pre-registration
+    // checkpoint — the last check and register() run with no intervening
+    // await, so an attempt either observes this bump and aborts, or has
+    // already registered and is cancelled by cancelAll here.
+    this.disconnectGeneration++;
     await this.desktopFlows.cancelAll();
     this.cachedAuth = null;
     const auth = this.readStoredAuth();
@@ -343,6 +364,9 @@ export class CoderOauthService {
       return Err("Invalid flow ID");
     }
     const flowId = input.flowId ?? randomBase64Url();
+    // Snapshot before the first await: a disconnect() during any of the
+    // probes below must abort this attempt (see disconnectGeneration).
+    const initialDisconnectGeneration = this.disconnectGeneration;
 
     const requestedUrl = normalizeCoderDeploymentUrl(input.deploymentUrl);
     if (!requestedUrl) {
@@ -379,10 +403,13 @@ export class CoderOauthService {
     const codeVerifier = randomBase64Url();
     const codeChallenge = sha256Base64Url(codeVerifier);
 
-    // Cancel may have landed while the probes above were in flight — before
-    // the flow was registered. Honor it here instead of opening a listener
-    // for an attempt the caller already abandoned.
-    if (this.consumePreCancelled(flowId)) {
+    // Cancel or disconnect may have landed while the probes above were in
+    // flight — before the flow was registered. Honor it here instead of
+    // opening a listener for an attempt the caller already abandoned.
+    if (
+      this.consumePreCancelled(flowId) ||
+      this.disconnectGeneration !== initialDisconnectGeneration
+    ) {
       return Err("Login was cancelled");
     }
 
@@ -403,9 +430,12 @@ export class CoderOauthService {
     }
 
     // Last pre-registration checkpoint: this check and register() below run
-    // with no intervening await, so a cancel is either consumed here or finds
-    // the registered flow — no gap either way.
-    if (this.consumePreCancelled(flowId)) {
+    // with no intervening await, so a cancel (or disconnect) is either
+    // observed here or finds the registered flow — no gap either way.
+    if (
+      this.consumePreCancelled(flowId) ||
+      this.disconnectGeneration !== initialDisconnectGeneration
+    ) {
       await loopback.close();
       return Err("Login was cancelled");
     }
@@ -454,10 +484,9 @@ export class CoderOauthService {
 
     // Set when the stored-client redirect PUT ended without a definitive
     // server answer (timeout/network error before a response): the mutation
-    // may STILL land later, so the lease must not be released — it is left to
-    // the stale-break path (TTL + owner-gone check), and until then other
-    // flows register fresh clients instead of racing the orphaned update for
-    // the redirect slot.
+    // may STILL land later, so the lease is quarantined — other flows
+    // register fresh clients instead of racing the orphaned update for the
+    // redirect slot — and released after a bounded window (below).
     let storedClientUpdateUncertain = false;
     const ensureClientPromise = this.ensureClient(
       deploymentUrl,
@@ -479,7 +508,20 @@ export class CoderOauthService {
       // redirect A, invalidating the replacement's authorization URL.
       void Promise.allSettled([resultDeferred.promise, ensureClientPromise]).then(() => {
         if (storedClientUpdateUncertain) {
-          return; // Deliberately leaked; reclaimed by the stale-break path.
+          // The PUT ended without a server answer and may still land. Hold
+          // the lease for a bounded quarantine, then release it OURSELVES:
+          // the cross-process stale-break path cannot reclaim it while this
+          // process lives (it refuses live-owner markers by design), so an
+          // unreleased lease would force every re-login to register a fresh
+          // OAuth client until Mux exits. After the quarantine the orphaned
+          // request can no longer land (its socket was torn down at
+          // CLIENT_UPDATE_TIMEOUT_MS; the window is generous), so it cannot
+          // clobber a successor's redirect registration.
+          const quarantine = setTimeout(release, this.clientLeaseQuarantineMs);
+          if (typeof quarantine !== "number") {
+            quarantine.unref?.();
+          }
+          return;
         }
         release();
       });

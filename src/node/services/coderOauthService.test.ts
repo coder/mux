@@ -1875,6 +1875,75 @@ describe("CoderOauthService", () => {
       expect(waitResult.success).toBe(false);
     });
 
+    it("disconnect aborts a login attempt still in its pre-registration probes", async () => {
+      // Regression: cancelAll() only sees REGISTERED flows. An attempt still
+      // awaiting validateDeployment/discoverEndpoints has no flow entry (and
+      // disconnect does not know its caller-generated ID), so without the
+      // disconnect-generation check it would resume after the credentials
+      // were cleared, register normally, and could later commit a
+      // replacement login — silently reconnecting the account.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: priorAuth },
+      };
+
+      // Gate the buildinfo probe so disconnect deterministically lands in
+      // the pre-registration window.
+      let releaseProbe!: () => void;
+      const probeGate = new Promise<void>((resolve) => (releaseProbe = resolve));
+      let probeStarted!: () => void;
+      const probeStartedPromise = new Promise<void>((resolve) => (probeStarted = resolve));
+      const revokedTokens: string[] = [];
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          probeStarted();
+          await probeGate;
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startPromise = service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      await probeStartedPromise;
+
+      const disconnectResult = await service.disconnect();
+      expect(disconnectResult.success).toBe(true);
+      expect(revokedTokens).toContain("rt_prior");
+
+      releaseProbe();
+      const startResult = await startPromise;
+
+      // The resumed attempt observes the disconnect and aborts — it never
+      // opens a listener or hands out an authorize URL.
+      expect(startResult.success).toBe(false);
+      if (!startResult.success) {
+        expect(startResult.error).toContain("cancelled");
+      }
+      // And the account stays disconnected.
+      expect(
+        (deps.providersConfig.coder as Record<string, unknown> | undefined)?.coderOauth
+      ).toBeUndefined();
+    });
+
     it("keeps the original login when two overlapping logins are both cancelled", async () => {
       // Regression: rollback snapshots must not compose across overlapping
       // flows. Without commit serialization, flow B snapshots flow A's
@@ -2492,6 +2561,46 @@ describe("CoderOauthService", () => {
       await service.cancelDesktopFlow(start.data.flowId);
       // Flow teardown must NOT release the lease after an uncertain outcome.
       expect(deps.coderClientLeaseHeld).toBe(true);
+    });
+
+    it("releases the quarantined lease after the uncertain-update window expires", async () => {
+      // Regression: the stale-break path refuses to reclaim a lease whose
+      // owner PID is alive, so a long-lived Mux process must release its own
+      // uncertain-update quarantine after a bounded window — otherwise every
+      // re-login until process exit registers a fresh OAuth client.
+      service.clientLeaseQuarantineMs = 50;
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return Promise.reject(new TypeError("fetch failed"));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+
+      await service.cancelDesktopFlow(start.data.flowId);
+      // Still quarantined immediately after teardown...
+      expect(deps.coderClientLeaseHeld).toBe(true);
+      // ...but reclaimed once the bounded window passes.
+      await waitUntil(() => !deps.coderClientLeaseHeld);
     });
 
     it("persists the complete discovered catalog even when a policy restricts models", async () => {
