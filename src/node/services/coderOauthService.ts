@@ -631,6 +631,19 @@ export class CoderOauthService {
         return Err("Coder OAuth is not configured. Use 'Login with Coder' in Settings.");
       }
 
+      // The configured deployment can change while this call waits for the
+      // locks (a Settings edit in this or another process). The pre-lock
+      // issuer check used the old URL — and long-lived model wrappers pinned
+      // that URL at creation — so re-validate against the CURRENT effective
+      // deployment before serving or refreshing, or the old deployment's
+      // bearer token would still be handed out after the user's change.
+      const currentDeploymentUrl = this.getDeploymentUrl();
+      if (!currentDeploymentUrl || latest.deploymentUrl !== currentDeploymentUrl) {
+        return Err(
+          "Coder deployment URL changed since login. Use 'Login with Coder' in Settings to reconnect."
+        );
+      }
+
       if (!isCoderOauthAuthExpired(latest)) {
         return Ok(latest);
       }
@@ -1171,6 +1184,16 @@ export class CoderOauthService {
       // them) and defer to whatever credential replaced ours.
       await this.revokeTokens(result.auth.deploymentUrl, result.auth);
       const stored = this.readStoredAuth();
+      if (stored && stored.refresh === current.refresh) {
+        // The stored blob is unchanged — the persist was refused because the
+        // configured deployment URL changed mid-round-trip. The consumed
+        // credential cannot be served (issuer mismatch) or refreshed again
+        // (its refresh token was just rotated away), so surface reconnect
+        // guidance instead of recursing into a doomed request.
+        return Err(
+          "Coder deployment URL changed since login. Use 'Login with Coder' in Settings to reconnect."
+        );
+      }
       if (stored) {
         log.debug("[Coder OAuth] Refresh superseded by a newer login; adopting it");
         if (!isCoderOauthAuthExpired(stored)) {
@@ -1319,8 +1342,12 @@ export class CoderOauthService {
    * - "ok": 2xx with a valid payload — the origin's model list.
    * - "unavailable": conclusive non-2xx (e.g. 404 when AI Bridge is not
    *   entitled) — the origin serves nothing.
-   * - "error": network error, timeout, 5xx/408/429, or invalid payload —
-   *   the origin's state is UNKNOWN and must not become authoritative.
+   * - "error": network error, timeout, 5xx/408/429, auth failures (401/403),
+   *   or invalid payload — the origin's state is UNKNOWN and must not become
+   *   authoritative. Auth failures are transient by nature here: the access
+   *   token can expire or rotate between exchange and discovery, and a
+   *   catalog persisted from a rejected request would hide valid models
+   *   until the next login even after authentication recovers.
    */
   private async fetchOriginCatalog(
     auth: CoderOauthAuth,
@@ -1336,7 +1363,13 @@ export class CoderOauthService {
       });
 
       if (!response.ok) {
-        if (response.status >= 500 || response.status === 408 || response.status === 429) {
+        if (
+          response.status >= 500 ||
+          response.status === 408 ||
+          response.status === 429 ||
+          response.status === 401 ||
+          response.status === 403
+        ) {
           log.debug(`[Coder OAuth] ${origin} model list failed transiently (${response.status})`);
           return { kind: "error" };
         }
@@ -1460,23 +1493,28 @@ export class CoderOauthService {
   /**
    * Compare-and-swap credential write (refreshes): persists `auth` only while
    * the stored blob still holds `expectedRefresh` — the token this refresh
-   * consumed. Skipped means a newer login/disconnect superseded the refresh.
+   * consumed — AND the section's effective deployment URL still matches the
+   * credential's issuer. Skipped means a newer login/disconnect superseded
+   * the refresh, or a deployment URL edit landed while the token round-trip
+   * was in flight (persisting then would store a rotation the new
+   * configuration can never serve, keeping it alive unrevoked forever).
    */
   private async persistRotatedAuth(
     auth: CoderOauthAuth,
     expectedRefresh: string
   ): Promise<Result<{ applied: boolean }, string>> {
-    const result = await this.providerService.updateConfigValue(
-      "coder",
-      ["coderOauth"],
-      (current) => {
-        const stored = parseCoderOauthAuth(current);
-        if (stored?.refresh !== expectedRefresh) {
-          return null;
-        }
-        return { value: auth };
+    const result = await this.providerService.updateProviderSection("coder", (section) => {
+      const stored = parseCoderOauthAuth(section?.coderOauth);
+      if (stored?.refresh !== expectedRefresh) {
+        return null;
       }
-    );
+      const raw = section?.deploymentUrl;
+      const configured = typeof raw === "string" ? normalizeCoderDeploymentUrl(raw) : null;
+      if (this.effectiveDeploymentUrl(configured) !== auth.deploymentUrl) {
+        return null;
+      }
+      return { value: { ...(section ?? {}), coderOauth: auth } };
+    });
     this.cachedAuth = null;
     return result;
   }

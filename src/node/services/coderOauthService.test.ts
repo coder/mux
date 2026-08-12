@@ -364,11 +364,8 @@ describe("CoderOauthService", () => {
 
       // Coder rotates refresh tokens: the rotated token must be persisted by
       // the time getValidAuth resolves (persist-before-use).
-      const persisted = deps.setConfigValueCalls.find(
-        (c) => c.provider === "coder" && c.keyPath[0] === "coderOauth" && c.value !== undefined
-      );
-      expect(persisted).toBeDefined();
-      expect((persisted!.value as CoderOauthAuth).refresh).toBe("rt_rotated");
+      const storedSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((storedSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_rotated");
     });
 
     it("only triggers one refresh for concurrent getValidAuth calls with expired tokens", async () => {
@@ -629,6 +626,94 @@ describe("CoderOauthService", () => {
         expect(result.error).toContain("deployment URL changed");
       }
       expect(fetchCalls).toBe(0);
+    });
+
+    it("rejects tokens when the deployment URL changes while waiting for the refresh lock", async () => {
+      // The pre-lock issuer check reads the URL before the cross-process
+      // refresh lock is acquired. A Settings edit landing in that window
+      // must be seen by the post-lock re-read — otherwise the old
+      // deployment's bearer token would still be served (long-lived model
+      // wrappers pinned the old URL at creation, so their issuer check
+      // would pass).
+      const expired = expiredAuth();
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expired } };
+
+      const NEW_URL = "http://other.coder.test";
+      const lockSimulatingEdit = async <T>(fn: () => Promise<T> | T): Promise<T> => {
+        // The edit lands while this caller waits for the lock.
+        (deps.providersConfig.coder as Record<string, unknown>).deploymentUrl = NEW_URL;
+        return await fn();
+      };
+      service = new CoderOauthService(
+        {
+          ...createMockConfig(deps),
+          withCoderOauthRefreshLock: lockSimulatingEdit,
+        } as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      let refreshAttempted = false;
+      mockFetch(() => {
+        refreshAttempted = true;
+        return Promise.resolve(new Response("should not be called", { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("deployment URL changed");
+      }
+      // No refresh round-trip was sent for the mismatched issuer.
+      expect(refreshAttempted).toBe(false);
+      // The stored credential is untouched (a re-login will replace it).
+      const stored = deps.providersConfig.coder as Record<string, unknown>;
+      expect((stored.coderOauth as CoderOauthAuth).refresh).toBe(expired.refresh);
+    });
+
+    it("does not persist a rotation when the deployment URL changes mid-refresh", async () => {
+      // The URL edit lands DURING the token round-trip (after the post-lock
+      // recheck). Persisting the rotation would store a credential the new
+      // configuration can never serve, keeping it alive unrevoked forever —
+      // the persist predicate must refuse, and the orphaned rotation must be
+      // revoked against the deployment that minted it.
+      const expired = expiredAuth({ refresh: "rt_consumed" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expired } };
+
+      const NEW_URL = "http://other.coder.test";
+      let revokedToken: string | null = null;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          // The edit lands while the refresh round-trip is in flight.
+          (deps.providersConfig.coder as Record<string, unknown>).deploymentUrl = NEW_URL;
+          return Promise.resolve(
+            jsonResponse({
+              access_token: "at_orphaned",
+              refresh_token: "rt_orphaned",
+              expires_in: 3600,
+              token_type: "Bearer",
+            })
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedToken = new URLSearchParams(fetchBodyText(init)).get("token");
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("deployment URL changed");
+      }
+
+      // The rotation was NOT persisted; the stored blob still holds the old
+      // (consumed) credential, and the orphaned rotation was revoked.
+      const stored = deps.providersConfig.coder as Record<string, unknown>;
+      expect((stored.coderOauth as CoderOauthAuth).refresh).toBe("rt_consumed");
+      expect(revokedToken as string | null).toBe("rt_orphaned");
     });
 
     it("serves credentials written by another process after a config-change notification", async () => {
@@ -2812,6 +2897,77 @@ describe("CoderOauthService", () => {
       expect(coderSection.models).toBeUndefined();
       expect(coderSection.discoveredModels).toBeUndefined();
       expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_relogin");
+    });
+
+    it("leaves the catalog unknown when discovery is rejected as unauthenticated", async () => {
+      // /models returning 401 (token expired/revoked between exchange and
+      // discovery) is NOT a conclusive catalog answer: persisting it as
+      // authoritative (empty) would hide every valid Coder model until the
+      // next login even after authentication recovers. Auth failures must be
+      // classified like transient errors — retried, then skipped.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ sessionId: "session_prior" }),
+          models: ["anthropic/prior-model"],
+          discoveredModels: ["anthropic/prior-model"],
+        },
+      };
+
+      let catalogRequests = 0;
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_unauth",
+            refresh_token: "rt_unauth",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          catalogRequests++;
+          return new Response("Unauthorized", { status: 401 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_unauth");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // Each origin was retried like other transient failures (2 x 3).
+      await waitUntil(() => catalogRequests >= 6, 5000);
+      // The catalog stays UNKNOWN (routing fails open): no authoritative
+      // list was persisted from the rejected requests.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toBeUndefined();
+      expect(coderSection.models).toBeUndefined();
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_unauth");
     });
 
     it("skips the model catalog write when the login was superseded during discovery", async () => {
