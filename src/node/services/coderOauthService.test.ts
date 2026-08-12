@@ -1519,7 +1519,11 @@ describe("CoderOauthService", () => {
       await persistStartedPromise;
       await service.cancelDesktopFlow(flowId);
       releasePersist();
-      await callbackPromise;
+      // The deferred browser response must be ENDED by the cancelled commit
+      // (HTTP 400), not left open: an open response pins server.close() and
+      // with it the awaited cancel RPC. A hung fetch here fails the test.
+      const callbackResponse = await callbackPromise;
+      expect(callbackResponse?.status).toBe(400);
 
       // The cancelled re-login's tokens were revoked...
       await waitUntil(() => revokeBody !== null);

@@ -2265,7 +2265,18 @@ export class ProviderModelFactory {
       const explicitGatewayDefinition = PROVIDER_DEFINITIONS[explicitGateway];
       if (explicitGatewayDefinition.kind === "gateway") {
         const explicitGatewayRoutes = explicitGatewayDefinition.routes as readonly ProviderName[];
-        if (explicitGatewayRoutes.includes(originProvider)) {
+        // Authoritative-catalog gate: restoring the explicit gateway must
+        // apply the same accessibility check as resolveRoute, or an explicit
+        // coder:<origin>/<model> absent from the discovered catalog would be
+        // sent to AI Bridge (and fail there) instead of using the fallback
+        // route already resolved above.
+        const explicitGatewayModelId =
+          explicitGatewayDefinition.toGatewayModelId?.(originProvider, originModelId) ??
+          originModelId;
+        if (
+          explicitGatewayRoutes.includes(originProvider) &&
+          isGatewayModelAccessible(explicitGateway, explicitGatewayModelId)
+        ) {
           resolvedRouteProvider = explicitGateway;
         }
       }

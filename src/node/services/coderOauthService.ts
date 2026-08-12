@@ -827,6 +827,12 @@ export class CoderOauthService {
     // flow's cleanup can never block later logins from committing (the fetch
     // is additionally time-bounded, see REVOKE_TIMEOUT_MS).
     if (result.outcome !== "committed") {
+      // NOTE: no pending browser response can leak here. When cancellation or
+      // the flow timeout wins mid-commit, the flow manager closes the raw
+      // loopback server, whose patched close() ends the deferred callback
+      // response first (see startLoopbackServer) — so the awaited cancel RPC
+      // never hangs on server.close().
+
       // Every non-committed outcome revokes the exchanged tokens: a failed
       // persist (unwritable providers.jsonc, lock timeout) would otherwise
       // leave them active and untracked on the deployment while the UI

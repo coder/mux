@@ -2171,6 +2171,43 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("does not restore an explicit coder: prefix for models absent from the catalog", async () => {
+    await withTempConfig(async (config, factory) => {
+      // The user explicitly selected coder:anthropic/claude-opus-4-1, but the
+      // discovered catalog does not contain it. The explicit-gateway restore
+      // must apply the same catalog gate as resolveRoute — otherwise the
+      // unsupported model is sent to AI Bridge (and fails there) instead of
+      // using the configured direct fallback.
+      saveCoderConfig(config, { models: ["anthropic/claude-sonnet-4-5"] });
+      const providersConfig = config.loadProvidersConfig() ?? {};
+      config.saveProvidersConfig({
+        ...providersConfig,
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      await saveRoutePriority(config, ["direct"]);
+
+      // In the catalog: the explicit prefix is honored.
+      expect(
+        factory.resolveGatewayModelString(
+          "coder:anthropic/claude-sonnet-4-5",
+          "anthropic:claude-sonnet-4-5",
+          "coder"
+        )
+      ).toBe("coder:anthropic/claude-sonnet-4-5");
+
+      // Absent from the catalog: falls back to the configured direct route.
+      expect(
+        factory.resolveGatewayModelString(
+          "coder:anthropic/claude-opus-4-1",
+          "anthropic:claude-opus-4-1",
+          "coder"
+        )
+      ).toBe("anthropic:claude-opus-4-1");
+    });
+  });
+
   it("routes nothing through Coder when the discovered catalog is empty", async () => {
     await withTempConfig(async (config, factory) => {
       // Login always overwrites the catalog — empty means the bridge exposed
