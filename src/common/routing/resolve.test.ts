@@ -517,6 +517,11 @@ describe("availableRoutes", () => {
         isConfigured: true,
       },
       {
+        route: "coder",
+        displayName: "Coder",
+        isConfigured: false,
+      },
+      {
         route: "direct",
         displayName: "Direct (OpenAI)",
         isConfigured: false,
@@ -578,6 +583,11 @@ describe("availableRoutes", () => {
         isConfigured: false,
       },
       {
+        route: "coder",
+        displayName: "Coder",
+        isConfigured: false,
+      },
+      {
         route: "bedrock",
         displayName: "Bedrock",
         isConfigured: true,
@@ -604,7 +614,12 @@ describe("availableRoutes", () => {
     const routes = availableRoutes(
       OPENAI_MODEL,
       createIsConfigured(["github-copilot"]),
-      createIsGatewayModelAccessible([["github-copilot", "gpt-5.5"]])
+      // Coder is excluded via its own catalog entry to prove the gate applies
+      // to every gateway, not just Copilot.
+      createIsGatewayModelAccessible([
+        ["github-copilot", "gpt-5.5"],
+        ["coder", "openai/gpt-5.5"],
+      ])
     );
 
     expect(routes).toEqual([
