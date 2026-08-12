@@ -159,6 +159,53 @@ describe("gatewayModelCatalog", () => {
     ).toBe(true);
   });
 
+  test("honors Coder removals even while the catalog is unknown", () => {
+    // Regression: a re-login deletes discoveredModels; if discovery then
+    // fails transiently, the fail-open branch must still honor the durable
+    // removedModels exclusions — otherwise routePriority could route a model
+    // the user explicitly removed through Coder instead of the configured
+    // direct fallback.
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog(
+        "coder",
+        "anthropic/claude-sonnet-4-5",
+        undefined,
+        undefined,
+        ["anthropic/claude-sonnet-4-5"]
+      )
+    ).toBe(false);
+    // Manual-only models list (catalog unknown): same exclusion applies.
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog(
+        "coder",
+        "anthropic/claude-sonnet-4-5",
+        ["anthropic/my-manual-model"],
+        undefined,
+        ["anthropic/claude-sonnet-4-5"]
+      )
+    ).toBe(false);
+    // Non-removed models keep the fail-open behavior.
+    expect(
+      isProviderModelAccessibleFromAuthoritativeCatalog(
+        "coder",
+        "anthropic/claude-sonnet-4-5",
+        undefined,
+        undefined,
+        ["openai/other-model"]
+      )
+    ).toBe(true);
+    // The gateway-form wrapper passes the exclusions through.
+    expect(
+      isGatewayModelAccessibleFromAuthoritativeCatalog(
+        "coder",
+        "anthropic/claude-sonnet-4-5",
+        undefined,
+        undefined,
+        ["anthropic/claude-sonnet-4-5"]
+      )
+    ).toBe(false);
+  });
+
   test("falls back to the Coder catalog when models is missing but the marker exists", () => {
     // Hand-edited configs may drop `models` while keeping discoveredModels;
     // gate on the catalog itself rather than blanket-blocking every model.

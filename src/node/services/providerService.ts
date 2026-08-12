@@ -330,6 +330,8 @@ export class ProviderService {
         coderOauth?: unknown;
         /** Coder-only: model IDs discovered from the deployment's AI Bridge. */
         discoveredModels?: unknown;
+        /** Coder-only: model IDs the user explicitly removed. */
+        removedModels?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -484,6 +486,16 @@ export class ProviderService {
           providerInfo.discoveredModels = Array.isArray(allowedModels)
             ? discovered.filter((id) => allowedModels.includes(id))
             : discovered;
+        }
+        // Durable user removals gate accessibility even while the discovered
+        // catalog is unknown (see gatewayModelCatalog.ts); the frontend needs
+        // them to mirror the backend's routing decisions. No policy filter:
+        // removals are user intent, not catalog content.
+        if (Array.isArray(config.removedModels)) {
+          const removed = config.removedModels.filter((id): id is string => typeof id === "string");
+          if (removed.length > 0) {
+            providerInfo.removedModels = removed;
+          }
         }
       }
 
@@ -924,6 +936,42 @@ export class ProviderService {
   }
 
   /**
+   * Policy validation for a models edit. Returns a denial message or null.
+   * MUST run inside the locked mutation, not merely before it: another
+   * process can hold the cross-process providers lock for seconds, and
+   * policy can refresh while the mutation waits — a check done before the
+   * wait could persist models a newer policy denies (same pattern as the
+   * Coder OAuth commit predicate).
+   */
+  private validateModelsEditPolicy(
+    provider: string,
+    normalizedModels: ProviderModelEntry[]
+  ): string | null {
+    if (!this.policyService?.isEnforced()) {
+      return null;
+    }
+
+    if (!this.policyService.isProviderAllowed(provider)) {
+      return `Provider ${provider} is not allowed by policy`;
+    }
+
+    const allowedModels =
+      this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === provider)
+        ?.allowedModels ?? null;
+
+    if (Array.isArray(allowedModels)) {
+      const disallowed = normalizedModels
+        .map((entry) => getProviderModelEntryId(entry))
+        .filter((modelId) => !allowedModels.includes(modelId));
+      if (disallowed.length > 0) {
+        return `One or more models are not allowed by policy: ${disallowed.join(", ")}`;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Set custom models for a provider
    */
   public async setModels(
@@ -933,30 +981,14 @@ export class ProviderService {
     try {
       const normalizedModels = normalizeProviderModelEntries(models);
 
-      if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider)) {
-          return { success: false, error: `Provider ${provider} is not allowed by policy` };
-        }
-
-        const allowedModels =
-          this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === provider)
-            ?.allowedModels ?? null;
-
-        if (Array.isArray(allowedModels)) {
-          const disallowed = normalizedModels
-            .map((entry) => getProviderModelEntryId(entry))
-            .filter((modelId) => !allowedModels.includes(modelId));
-          if (disallowed.length > 0) {
-            return {
-              success: false,
-              error: `One or more models are not allowed by policy: ${disallowed.join(", ")}`,
-            };
-          }
-        }
-      }
-
       // Read-modify-write under the cross-process lock (see setConfigValue).
-      await this.config.withProvidersFileLock(() => {
+      // The callback returns a policy denial to bail, or null once saved.
+      const policyDenial = await this.config.withProvidersFileLock((): string | null => {
+        const denial = this.validateModelsEditPolicy(provider, normalizedModels);
+        if (denial != null) {
+          return denial;
+        }
+
         const providersConfig = this.config.loadProvidersConfig() ?? {};
 
         if (!providersConfig[provider]) {
@@ -972,7 +1004,11 @@ export class ProviderService {
           providersConfig[provider].models = normalizedModels;
         }
         this.config.saveProvidersConfig(providersConfig);
+        return null;
       });
+      if (policyDenial != null) {
+        return { success: false, error: policyDenial };
+      }
       this.notifyFromMutation();
 
       return { success: true, data: undefined };
@@ -1107,6 +1143,30 @@ export class ProviderService {
   }
 
   /**
+   * Policy validation for a provider key-path edit. Returns a denial message
+   * or null. MUST run inside the locked mutation for the same reason as
+   * validateModelsEditPolicy.
+   */
+  private validateProviderEditPolicy(provider: string, keyPath: string[]): string | null {
+    if (!this.policyService?.isEnforced()) {
+      return null;
+    }
+
+    if (!this.policyService.isProviderAllowed(provider)) {
+      return `Provider ${provider} is not allowed by policy`;
+    }
+
+    const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
+    const isBaseUrlEdit =
+      keyPath.length === 1 && (keyPath[0] === "baseUrl" || keyPath[0] === "baseURL");
+    if (isBaseUrlEdit && forcedBaseUrl) {
+      return `Provider ${provider} base URL is locked by policy`;
+    }
+
+    return null;
+  }
+
+  /**
    * Set provider config values that aren't representable as strings.
    *
    * Intended for persisted auth blobs (e.g. Codex OAuth tokens) that should never
@@ -1124,23 +1184,16 @@ export class ProviderService {
     }
 
     try {
-      if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider)) {
-          return { success: false, error: `Provider ${provider} is not allowed by policy` };
-        }
-
-        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
-        const isBaseUrlEdit =
-          keyPath.length === 1 && (keyPath[0] === "baseUrl" || keyPath[0] === "baseURL");
-        if (isBaseUrlEdit && forcedBaseUrl) {
-          return { success: false, error: `Provider ${provider} base URL is locked by policy` };
-        }
-      }
-
       // Read-modify-write under the cross-process lock: every providers.jsonc
       // writer must cooperate or a whole-file save from one process could
       // resurrect credentials another process just rotated/cleared.
-      await this.config.withProvidersFileLock(() => {
+      // The callback returns a policy denial to bail, or null once saved.
+      const policyDenial = await this.config.withProvidersFileLock((): string | null => {
+        const denial = this.validateProviderEditPolicy(provider, keyPath);
+        if (denial != null) {
+          return denial;
+        }
+
         const providersConfig = this.config.loadProvidersConfig() ?? {};
 
         // Ensure provider exists
@@ -1178,7 +1231,11 @@ export class ProviderService {
 
         // Save updated config
         this.config.saveProvidersConfig(providersConfig);
+        return null;
       });
+      if (policyDenial != null) {
+        return { success: false, error: policyDenial };
+      }
       this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 
@@ -1348,19 +1405,6 @@ export class ProviderService {
     }
 
     try {
-      if (this.policyService?.isEnforced()) {
-        if (!this.policyService.isProviderAllowed(provider)) {
-          return { success: false, error: `Provider ${provider} is not allowed by policy` };
-        }
-
-        const forcedBaseUrl = this.policyService.getForcedBaseUrl(provider);
-        const isBaseUrlEdit =
-          keyPath.length === 1 && (keyPath[0] === "baseUrl" || keyPath[0] === "baseURL");
-        if (isBaseUrlEdit && forcedBaseUrl) {
-          return { success: false, error: `Provider ${provider} base URL is locked by policy` };
-        }
-      }
-
       const isOpenAICompatibleProviderTypeEdit =
         keyPath.length === 1 && keyPath[0] === "providerType" && value === "openai-compatible";
       if (isOpenAICompatibleProviderTypeEdit) {
@@ -1371,7 +1415,13 @@ export class ProviderService {
       }
 
       // Read-modify-write under the cross-process lock (see setConfigValue).
-      await this.config.withProvidersFileLock(() => {
+      // The callback returns a policy denial to bail, or null once saved.
+      const policyDenial = await this.config.withProvidersFileLock((): string | null => {
+        const denial = this.validateProviderEditPolicy(provider, keyPath);
+        if (denial != null) {
+          return denial;
+        }
+
         const providersConfig = this.config.loadProvidersConfig() ?? {};
 
         // Track if this is first time setting couponCode for mux-gateway
@@ -1437,7 +1487,11 @@ export class ProviderService {
 
         // Save updated config
         this.config.saveProvidersConfig(providersConfig);
+        return null;
       });
+      if (policyDenial != null) {
+        return { success: false, error: policyDenial };
+      }
       this.notifyFromMutation();
       await this.syncGatewayLifecycle(provider);
 

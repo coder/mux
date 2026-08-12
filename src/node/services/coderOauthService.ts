@@ -987,7 +987,8 @@ export class CoderOauthService {
   private async updateClientRedirectUri(
     stored: CoderOauthAuth,
     redirectUri: string,
-    // Reports an outcome the server may still commit (no response received).
+    // Reports an outcome the server may still commit (no response received,
+    // or an ambiguous 5xx response).
     onUncertainOutcome: (clientId: string) => void
   ): Promise<Result<CoderOauthClient, string>> {
     if (!stored.registrationAccessToken || !stored.registrationClientUri) {
@@ -1016,6 +1017,14 @@ export class CoderOauthService {
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
         const prefix = `Coder OAuth client update failed (${response.status})`;
+        // 5xx is ambiguous, not authoritative: a reverse proxy can answer
+        // 502/504 AFTER forwarding the PUT (and a server can fail after
+        // committing), so the upstream mutation may still land at any later
+        // time — exactly like the no-response path below. Only a 4xx is a
+        // definitive refusal that provably left the registration unchanged.
+        if (response.status >= 500) {
+          onUncertainOutcome(stored.clientId);
+        }
         return Err(errorText ? `${prefix}: ${errorText}` : prefix);
       }
 

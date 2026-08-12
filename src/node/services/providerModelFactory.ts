@@ -860,12 +860,17 @@ function createGatewayModelAccessibilityChecker(
   providersConfig: ProvidersConfig,
   policyService?: PolicyService | null
 ) {
-  // discoveredModels is a Coder-specific key (other gateways have no
-  // server-discovered catalog marker), and ProvidersConfig's loosely-typed
-  // Record variant widens it to unknown — validate the shape once here.
+  // discoveredModels/removedModels are Coder-specific keys (other gateways
+  // have no server-discovered catalog marker), and ProvidersConfig's
+  // loosely-typed Record variant widens them to unknown — validate the shape
+  // once here.
   const rawDiscovered = providersConfig.coder?.discoveredModels;
   const coderDiscoveredModels = Array.isArray(rawDiscovered)
     ? rawDiscovered.filter((id): id is string => typeof id === "string")
+    : undefined;
+  const rawRemoved = providersConfig.coder?.removedModels;
+  const coderRemovedModels = Array.isArray(rawRemoved)
+    ? rawRemoved.filter((id): id is string => typeof id === "string")
     : undefined;
   return (gateway: string, gatewayModelId: string): boolean => {
     // The persisted catalog is deliberately policy-unfiltered (a temporarily
@@ -879,7 +884,8 @@ function createGatewayModelAccessibilityChecker(
       gateway,
       gatewayModelId,
       providersConfig[gateway]?.models,
-      gateway === "coder" ? coderDiscoveredModels : undefined
+      gateway === "coder" ? coderDiscoveredModels : undefined,
+      gateway === "coder" ? coderRemovedModels : undefined
     );
   };
 }

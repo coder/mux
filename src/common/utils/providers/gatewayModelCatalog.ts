@@ -11,7 +11,13 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   // cannot gate routing because it also carries manually added entries — a
   // manual-only list left behind by a fresh login must not read as an
   // exhaustive catalog.
-  discoveredModels: string[] | undefined
+  discoveredModels: string[] | undefined,
+  // Coder-only: durable user removals (see applyCoderModelEdit). Checked
+  // before every other branch — including the unknown-catalog fail-open —
+  // because an explicit removal must hold even while discovery is pending
+  // or failed, or routePriority could route the removed model through Coder
+  // instead of the user's configured fallback.
+  removedModels?: string[]
 ): boolean {
   // Coder routing is gated on the discovered AI Bridge catalog: the bridge
   // only serves models its upstreams expose, so routing any other model
@@ -25,6 +31,9 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
   // persisted): stay permissive so a temporary /models outage cannot strand
   // routing until the next login.
   if (provider === "coder") {
+    if (removedModels?.includes(modelId)) {
+      return false;
+    }
     if (!Array.isArray(discoveredModels)) {
       return true;
     }
@@ -74,12 +83,14 @@ export function isGatewayModelAccessibleFromAuthoritativeCatalog(
   gateway: string,
   modelId: string,
   models: ProviderModelEntry[] | undefined,
-  discoveredModels: string[] | undefined
+  discoveredModels: string[] | undefined,
+  removedModels?: string[]
 ): boolean {
   return isProviderModelAccessibleFromAuthoritativeCatalog(
     gateway,
     modelId,
     models,
-    discoveredModels
+    discoveredModels,
+    removedModels
   );
 }

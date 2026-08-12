@@ -3116,6 +3116,94 @@ describe("CoderOauthService", () => {
       await service.cancelDesktopFlow(secondStart.data.flowId);
     });
 
+    it("quarantines the stored client when the redirect update returns an ambiguous 5xx", async () => {
+      // Regression: a reverse proxy can answer 502/504 AFTER forwarding the
+      // PUT (and a server can fail after committing), so a 5xx response is
+      // just as ambiguous as no response at all — the upstream mutation may
+      // still land later. Treating it as definitive released the lease
+      // without quarantining, letting the delayed update overwrite a
+      // subsequent login's redirect URI on the same client.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return Promise.resolve(new Response("bad gateway", { status: 502 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      // The flow degrades to a fresh client and proceeds.
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+      expect(new URL(start.data.authorizeUrl).searchParams.get("client_id")).toBe("client_fresh");
+
+      await service.cancelDesktopFlow(start.data.flowId);
+      // Same treatment as the no-response path: the stored client's RFC 7592
+      // fields must be quarantined before the lease is released.
+      await waitUntil(() => !deps.coderClientLeaseHeld);
+      const storedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as Record<string, unknown>;
+      expect(storedAuth.registrationAccessToken).toBeUndefined();
+      expect(storedAuth.registrationClientUri).toBeUndefined();
+      // The credential itself survives — only client reuse is disabled.
+      expect(storedAuth.clientId).toBe("client_test");
+    });
+
+    it("does not quarantine the stored client on an authoritative 4xx refusal", async () => {
+      // A 4xx is a definitive server decision that provably left the
+      // registration unchanged; quarantining would needlessly discard the
+      // stored client's RFC 7592 fields on every transient auth hiccup.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return Promise.resolve(new Response("unauthorized", { status: 401 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+
+      await service.cancelDesktopFlow(start.data.flowId);
+      await waitUntil(() => !deps.coderClientLeaseHeld);
+      // RFC 7592 fields survive: the refusal was authoritative.
+      const storedAuth = (deps.providersConfig.coder as Record<string, unknown>)
+        .coderOauth as Record<string, unknown>;
+      expect(storedAuth.registrationAccessToken).toBeDefined();
+      expect(storedAuth.registrationClientUri).toBeDefined();
+    });
+
     it("keeps the lease reserved when the client quarantine cannot be persisted", async () => {
       // If the quarantine write fails (providers file unwritable), the lease
       // must stay held as the fallback guard: releasing would let another

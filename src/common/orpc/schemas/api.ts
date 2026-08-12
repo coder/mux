@@ -279,6 +279,13 @@ export const ProviderConfigInfoSchema = z.object({
    * user-visible union of these and manually added entries.
    */
   discoveredModels: z.array(z.string()).optional(),
+  /**
+   * Coder-only: model IDs the user explicitly removed. Excluded from
+   * accessibility even while the discovered catalog is unknown, so the
+   * frontend mirrors the backend's routing decisions (see
+   * gatewayModelCatalog.ts).
+   */
+  removedModels: z.array(z.string()).optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);

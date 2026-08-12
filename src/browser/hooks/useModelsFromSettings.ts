@@ -181,7 +181,8 @@ export function useModelsFromSettings() {
         gateway,
         modelId,
         config?.[gateway]?.models,
-        config?.[gateway]?.discoveredModels
+        config?.[gateway]?.discoveredModels,
+        config?.[gateway]?.removedModels
       ),
     [config]
   );
@@ -199,7 +200,8 @@ export function useModelsFromSettings() {
         provider,
         providerModelId,
         config?.[provider]?.models,
-        config?.[provider]?.discoveredModels
+        config?.[provider]?.discoveredModels,
+        config?.[provider]?.removedModels
       );
     },
     [config]

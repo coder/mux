@@ -141,7 +141,8 @@ export function useRouting(): RoutingState {
         gateway,
         modelId,
         providersConfig?.[gateway]?.models,
-        providersConfig?.[gateway]?.discoveredModels
+        providersConfig?.[gateway]?.discoveredModels,
+        providersConfig?.[gateway]?.removedModels
       ),
     [providersConfig]
   );

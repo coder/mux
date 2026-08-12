@@ -616,6 +616,59 @@ describe("ProviderService.getConfig", () => {
     );
   });
 
+  it("revalidates policy inside the providers file lock in setModels", async () => {
+    // Regression: policy can refresh while another process holds the
+    // cross-process providers lock. A check done only before the lock wait
+    // would persist models the refreshed policy denies and report success —
+    // the validation must run inside the locked mutation.
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "openai" }],
+      },
+      async (config, service, policyService) => {
+        // A second Config on the same root stands in for another Mux process
+        // holding the providers file lock while setModels waits for it.
+        const otherProcess = new Config(config.rootDir);
+        let releaseLock!: () => void;
+        const lockGate = new Promise<void>((resolve) => (releaseLock = resolve));
+        let lockHeld!: () => void;
+        const lockHeldPromise = new Promise<void>((resolve) => (lockHeld = resolve));
+        const lockHolder = otherProcess.withProvidersFileLock(async () => {
+          lockHeld();
+          await lockGate;
+        });
+        await lockHeldPromise;
+
+        // setModels passes the pre-lock policy state (openai allowed) and
+        // blocks on the lock...
+        const setModelsPromise = service.setModels("openai", ["gpt-5"]);
+
+        // ...while the policy refreshes to DENY openai.
+        await writeFile(
+          process.env.MUX_POLICY_FILE!,
+          JSON.stringify({
+            policy_format_version: "0.1",
+            provider_access: [{ id: "anthropic" }],
+          }),
+          "utf-8"
+        );
+        const refresh = await policyService.refreshNow();
+        expect(refresh.success).toBe(true);
+        releaseLock();
+        await lockHolder;
+
+        const result = await setModelsPromise;
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain("not allowed by policy");
+        }
+        // Nothing was persisted for the denied provider.
+        expect(config.loadProvidersConfig()?.openai?.models).toBeUndefined();
+      }
+    );
+  });
+
   it("reports Coder connection state against the policy-forced deployment URL", async () => {
     const LOCKED_URL = "https://locked.coder.example.com";
     await withTempPolicyProviderService(
