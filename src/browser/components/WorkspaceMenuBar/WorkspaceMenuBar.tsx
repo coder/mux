@@ -549,7 +549,7 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
               Workspace details ({formatKeybind(KEYBINDS.SHOW_WORKSPACE_DETAILS)})
             </TooltipContent>
           </Tooltip>
-          <PopoverContent align="start" className="flex flex-col gap-0.5 text-xs">
+          <PopoverContent align="start" className="flex flex-col gap-0.5 p-2 text-xs">
             <span className="font-mono">{projectLabel}</span>
             <span>{workspaceName}</span>
             <span className="text-muted">{namedWorkspacePath}</span>
