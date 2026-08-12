@@ -19,7 +19,7 @@ import { NOW, createWorkspace, groupWorkspacesByProject } from "@/browser/storie
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import assert from "@/common/utils/assert";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { waitFor, within } from "@storybook/test";
+import { userEvent, waitFor, within } from "@storybook/test";
 import React from "react";
 import { AnalyticsDashboard } from "./AnalyticsDashboard.js";
 
@@ -55,6 +55,7 @@ interface StoryAnalyticsNamespace {
     granularity: "hour" | "day" | "week";
     from?: Date | null;
     to?: Date | null;
+    timeZone?: string | null;
   }) => Promise<SpendOverTimeItem[]>;
   getSpendByProject: (_input: Record<string, never>) => Promise<SpendByProjectItem[]>;
   getSpendByModel: (input: { projectPath?: string | null }) => Promise<SpendByModelItem[]>;
@@ -955,6 +956,24 @@ export const StatsDashboard: Story = {
 
     await canvas.findByText("Total Spend");
     await canvas.findByText("$184.73");
+
+    const localTimeButton = await canvas.findByRole("button", { name: "Local" });
+    const utcButton = await canvas.findByRole("button", { name: "UTC" });
+    if (localTimeButton.getAttribute("aria-pressed") !== "true") {
+      await userEvent.click(localTimeButton);
+      await waitFor(() => {
+        if (localTimeButton.getAttribute("aria-pressed") !== "true") {
+          throw new Error("Expected local timezone mode to become selected");
+        }
+      });
+    }
+
+    await userEvent.click(utcButton);
+    await waitFor(() => {
+      if (utcButton.getAttribute("aria-pressed") !== "true") {
+        throw new Error("Expected UTC timezone mode to become selected");
+      }
+    });
 
     await canvas.findByRole("heading", { name: /spend over time/i });
     await canvas.findByRole("heading", { name: /spend by project/i });

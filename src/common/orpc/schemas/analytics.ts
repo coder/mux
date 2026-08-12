@@ -189,6 +189,7 @@ export const analytics = {
       granularity: z.enum(["hour", "day", "week"]),
       from: z.coerce.date().nullish(),
       to: z.coerce.date().nullish(),
+      timeZone: z.string().nullish(),
     }),
     output: z.array(
       z.object({

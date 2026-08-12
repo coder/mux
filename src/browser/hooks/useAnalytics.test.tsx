@@ -23,6 +23,7 @@ let APIProvider!: typeof APIModule.APIProvider;
 let useAnalyticsProviderCacheHitRatio!: typeof UseAnalyticsModule.useAnalyticsProviderCacheHitRatio;
 let useAnalyticsRawQuery!: typeof UseAnalyticsModule.useAnalyticsRawQuery;
 let useAnalyticsSpendByModel!: typeof UseAnalyticsModule.useAnalyticsSpendByModel;
+let useAnalyticsSpendOverTime!: typeof UseAnalyticsModule.useAnalyticsSpendOverTime;
 let useAnalyticsSummary!: typeof UseAnalyticsModule.useAnalyticsSummary;
 let useSavedQueries!: typeof UseAnalyticsModule.useSavedQueries;
 let isolatedModulePaths: string[] = [];
@@ -56,12 +57,14 @@ async function importIsolatedAnalyticsModules() {
     useAnalyticsProviderCacheHitRatio,
     useAnalyticsRawQuery,
     useAnalyticsSpendByModel,
+    useAnalyticsSpendOverTime,
     useAnalyticsSummary,
     useSavedQueries,
   } = requireTestModule<{
     useAnalyticsProviderCacheHitRatio: typeof UseAnalyticsModule.useAnalyticsProviderCacheHitRatio;
     useAnalyticsRawQuery: typeof UseAnalyticsModule.useAnalyticsRawQuery;
     useAnalyticsSpendByModel: typeof UseAnalyticsModule.useAnalyticsSpendByModel;
+    useAnalyticsSpendOverTime: typeof UseAnalyticsModule.useAnalyticsSpendOverTime;
     useAnalyticsSummary: typeof UseAnalyticsModule.useAnalyticsSummary;
     useSavedQueries: typeof UseAnalyticsModule.useSavedQueries;
   }>(isolatedHookPath));
@@ -125,6 +128,13 @@ interface AnalyticsServiceCalls {
     projectPath: string | null;
     from: Date | null | undefined;
     to: Date | null | undefined;
+  }>;
+  spendOverTime: Array<{
+    projectPath: string | null;
+    granularity: "hour" | "day" | "week";
+    from: Date | null | undefined;
+    to: Date | null | undefined;
+    timeZone: string | null | undefined;
   }>;
 }
 
@@ -229,6 +239,7 @@ function createAnalyticsServiceStub(summary: Summary): {
     summary: [],
     spendByModel: [],
     cacheHitRatioByProvider: [],
+    spendOverTime: [],
   };
 
   return {
@@ -238,7 +249,16 @@ function createAnalyticsServiceStub(summary: Summary): {
         calls.summary.push({ projectPath, from, to });
         return Promise.resolve(summary);
       },
-      getSpendOverTime: () => Promise.resolve([]),
+      getSpendOverTime: (input) => {
+        calls.spendOverTime.push({
+          projectPath: input.projectPath ?? null,
+          granularity: input.granularity,
+          from: input.from,
+          to: input.to,
+          timeZone: input.timeZone,
+        });
+        return Promise.resolve([]);
+      },
       getSpendByProject: () => Promise.resolve([]),
       getSpendByModel: (projectPath, from, to) => {
         calls.spendByModel.push({ projectPath, from, to });
@@ -355,6 +375,35 @@ describe("useAnalytics hooks", () => {
     expect(latest.projectPath).toBe("/tmp/project");
     expect(latest.from.toISOString()).toBe(from.toISOString());
     expect(latest.to.toISOString()).toBe(to.toISOString());
+  });
+
+  test("forwards the selected timezone to spend-over-time endpoint", async () => {
+    const from = new Date("2026-01-07T00:00:00.000Z");
+    const to = new Date("2026-01-27T00:00:00.000Z");
+
+    const { result } = renderAnalyticsHook(() =>
+      useAnalyticsSpendOverTime({
+        projectPath: "/tmp/project",
+        granularity: "day",
+        from,
+        to,
+        timeZone: "America/New_York",
+      })
+    );
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    const calls = requireAnalyticsServiceCalls().spendOverTime;
+    expect(calls.length).toBeGreaterThan(0);
+
+    const latest = calls.at(-1);
+    expect(latest).toEqual({
+      projectPath: "/tmp/project",
+      granularity: "day",
+      from,
+      to,
+      timeZone: "America/New_York",
+    });
   });
 
   test("forwards from/to filters to spend-by-model endpoint", async () => {

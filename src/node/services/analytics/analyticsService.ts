@@ -634,12 +634,14 @@ export class AnalyticsService {
     projectPath?: string | null;
     from?: Date | null;
     to?: Date | null;
+    timeZone?: string | null;
   }): Promise<Array<{ bucket: string; model: string; costUsd: number }>> {
     const rows = await this.executeQuery<SpendOverTimeRow[]>("getSpendOverTime", {
       granularity: params.granularity,
       projectPath: params.projectPath ?? null,
       from: toDateFilterString(params.from),
       to: toDateFilterString(params.to),
+      timeZone: params.timeZone ?? "UTC",
     });
 
     return rows.map((row) => ({
