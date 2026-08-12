@@ -177,7 +177,12 @@ export function useModelsFromSettings() {
 
   const isGatewayModelAccessible = useCallback(
     (gateway: string, modelId: string) =>
-      isGatewayModelAccessibleFromAuthoritativeCatalog(gateway, modelId, config?.[gateway]?.models),
+      isGatewayModelAccessibleFromAuthoritativeCatalog(
+        gateway,
+        modelId,
+        config?.[gateway]?.models,
+        config?.[gateway]?.discoveredModels
+      ),
     [config]
   );
 
@@ -193,7 +198,8 @@ export function useModelsFromSettings() {
       return isProviderModelAccessibleFromAuthoritativeCatalog(
         provider,
         providerModelId,
-        config?.[provider]?.models
+        config?.[provider]?.models,
+        config?.[provider]?.discoveredModels
       );
     },
     [config]

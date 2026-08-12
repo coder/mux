@@ -6,19 +6,32 @@ import { maybeGetProviderModelEntryId } from "@/common/utils/providers/modelEntr
 export function isProviderModelAccessibleFromAuthoritativeCatalog(
   provider: string,
   modelId: string,
-  models: ProviderModelEntry[] | undefined
+  models: ProviderModelEntry[] | undefined,
+  // Coder-only: the AI Bridge catalog discovered at login. `models` alone
+  // cannot gate routing because it also carries manually added entries — a
+  // manual-only list left behind by a fresh login must not read as an
+  // exhaustive catalog.
+  discoveredModels: string[] | undefined
 ): boolean {
-  // Coder's models list is the AI Bridge catalog discovered at login (users
-  // may append manual entries). The bridge only serves models its upstreams
-  // expose, so routing any other model through Coder would fail at the bridge
-  // instead of falling back to a configured direct provider — a present list
-  // (including an empty one) is treated as exhaustive. A MISSING list means
-  // the catalog is unknown (login clears it and discovery is pending, or
-  // discovery failed transiently and was not persisted): stay permissive so
-  // a temporary /models outage cannot strand routing until the next login.
+  // Coder routing is gated on the discovered AI Bridge catalog: the bridge
+  // only serves models its upstreams expose, so routing any other model
+  // through Coder would fail at the bridge instead of falling back to a
+  // configured direct provider. A present `discoveredModels` (including an
+  // empty one) marks the catalog as known — `models` (the user-visible union
+  // of discovered + manual entries) is then the accessible set, so manual
+  // additions stay routable and user removals are respected. A MISSING
+  // `discoveredModels` means the catalog is unknown (login clears it and
+  // discovery is pending, or discovery failed transiently and was not
+  // persisted): stay permissive so a temporary /models outage cannot strand
+  // routing until the next login.
   if (provider === "coder") {
-    if (!Array.isArray(models)) {
+    if (!Array.isArray(discoveredModels)) {
       return true;
+    }
+    // Hand-edited configs may drop `models` while keeping the marker; fall
+    // back to the catalog itself rather than blanket-blocking every model.
+    if (!Array.isArray(models)) {
+      return discoveredModels.includes(modelId);
     }
     for (const entry of models) {
       const configuredModelId = maybeGetProviderModelEntryId(entry);
@@ -60,7 +73,13 @@ export function isProviderModelAccessibleFromAuthoritativeCatalog(
 export function isGatewayModelAccessibleFromAuthoritativeCatalog(
   gateway: string,
   modelId: string,
-  models: ProviderModelEntry[] | undefined
+  models: ProviderModelEntry[] | undefined,
+  discoveredModels: string[] | undefined
 ): boolean {
-  return isProviderModelAccessibleFromAuthoritativeCatalog(gateway, modelId, models);
+  return isProviderModelAccessibleFromAuthoritativeCatalog(
+    gateway,
+    modelId,
+    models,
+    discoveredModels
+  );
 }

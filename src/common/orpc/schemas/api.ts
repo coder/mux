@@ -269,6 +269,12 @@ export const ProviderConfigInfoSchema = z.object({
   deploymentUrl: z.string().optional(),
   /** Coder-only: whether Coder OAuth tokens are present in providers.jsonc */
   coderOauthSet: z.boolean().optional(),
+  /**
+   * Coder-only: model IDs discovered from the deployment's AI Bridge
+   * catalogs. Authoritative for gateway routing when present; `models` is the
+   * user-visible union of these and manually added entries.
+   */
+  discoveredModels: z.array(z.string()).optional(),
 });
 
 export const ProvidersConfigMapSchema = z.record(z.string(), ProviderConfigInfoSchema);

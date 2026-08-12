@@ -2617,5 +2617,53 @@ describe("Config", () => {
       await Promise.all([first, second]);
       expect(events).toEqual(["first:enter", "first:exit", "second:enter"]);
     });
+
+    it("does not release a successor's lock after being stale-broken mid-section", async () => {
+      // A holder that outlives staleLockMs (suspended process, stalled event
+      // loop) can be stale-broken and the lock reacquired before its release
+      // runs. That release must only remove its OWN generation — deleting the
+      // successor's lock would let a third process into the critical section
+      // (for the refresh lock, the concurrent rotating-refresh-token race).
+      const lockPath = path.join(tempDir, "providers.jsonc.coder-refresh.lock");
+      const otherProcess = new Config(tempDir);
+
+      let releaseFirst!: () => void;
+      const firstGate = new Promise<void>((resolve) => (releaseFirst = resolve));
+      let firstEntered!: () => void;
+      const firstEnteredPromise = new Promise<void>((resolve) => (firstEntered = resolve));
+      const first = config.withCoderOauthRefreshLock(async () => {
+        firstEntered();
+        await firstGate;
+      });
+      await firstEnteredPromise;
+
+      // The first holder stalls past the staleness boundary (backdate its
+      // generation marker), and a second process stale-breaks + reacquires.
+      const staleTime = new Date(Date.now() - 120_000);
+      for (const entry of fs.readdirSync(lockPath)) {
+        fs.utimesSync(path.join(lockPath, entry), staleTime, staleTime);
+      }
+      let releaseSecond!: () => void;
+      const secondGate = new Promise<void>((resolve) => (releaseSecond = resolve));
+      let secondEntered!: () => void;
+      const secondEnteredPromise = new Promise<void>((resolve) => (secondEntered = resolve));
+      const second = otherProcess.withCoderOauthRefreshLock(async () => {
+        secondEntered();
+        await secondGate;
+      });
+      await secondEnteredPromise;
+
+      // The original holder finishes while the successor still holds the
+      // lock: its release must keep the successor's generation in place.
+      releaseFirst();
+      await first;
+      expect(fs.existsSync(lockPath)).toBe(true);
+      expect(fs.readdirSync(lockPath).length).toBe(1);
+
+      releaseSecond();
+      await second;
+      // The successor's own release still cleans up normally.
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
   });
 });

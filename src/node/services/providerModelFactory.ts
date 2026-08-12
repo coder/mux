@@ -857,11 +857,19 @@ function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefine
 }
 
 function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig) {
+  // discoveredModels is a Coder-specific key (other gateways have no
+  // server-discovered catalog marker), and ProvidersConfig's loosely-typed
+  // Record variant widens it to unknown — validate the shape once here.
+  const rawDiscovered = providersConfig.coder?.discoveredModels;
+  const coderDiscoveredModels = Array.isArray(rawDiscovered)
+    ? rawDiscovered.filter((id): id is string => typeof id === "string")
+    : undefined;
   return (gateway: string, gatewayModelId: string): boolean =>
     isGatewayModelAccessibleFromAuthoritativeCatalog(
       gateway,
       gatewayModelId,
-      providersConfig[gateway]?.models
+      providersConfig[gateway]?.models,
+      gateway === "coder" ? coderDiscoveredModels : undefined
     );
 }
 

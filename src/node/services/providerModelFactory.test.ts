@@ -2121,7 +2121,10 @@ describe("ProviderModelFactory Coder", () => {
       // catalog only contains one anthropic model. The AI Bridge cannot serve
       // models outside its catalog, so any other model must fall back to the
       // configured direct provider instead of being rewritten to coder:.
-      saveCoderConfig(config, { models: ["anthropic/claude-sonnet-4-5"] });
+      saveCoderConfig(config, {
+        models: ["anthropic/claude-sonnet-4-5"],
+        discoveredModels: ["anthropic/claude-sonnet-4-5"],
+      });
       const providersConfig = config.loadProvidersConfig() ?? {};
       config.saveProvidersConfig({
         ...providersConfig,
@@ -2178,7 +2181,12 @@ describe("ProviderModelFactory Coder", () => {
       // must apply the same catalog gate as resolveRoute — otherwise the
       // unsupported model is sent to AI Bridge (and fails there) instead of
       // using the configured direct fallback.
-      saveCoderConfig(config, { models: ["anthropic/claude-sonnet-4-5"] });
+      saveCoderConfig(config, {
+        // claude-3-7 is a manually added entry (present in models but not in
+        // the discovered catalog): explicit coder: selections must honor it.
+        models: ["anthropic/claude-sonnet-4-5", "anthropic/claude-3-7"],
+        discoveredModels: ["anthropic/claude-sonnet-4-5"],
+      });
       const providersConfig = config.loadProvidersConfig() ?? {};
       config.saveProvidersConfig({
         ...providersConfig,
@@ -2197,6 +2205,15 @@ describe("ProviderModelFactory Coder", () => {
         )
       ).toBe("coder:anthropic/claude-sonnet-4-5");
 
+      // Manually added entry: also honored.
+      expect(
+        factory.resolveGatewayModelString(
+          "coder:anthropic/claude-3-7",
+          "anthropic:claude-3-7",
+          "coder"
+        )
+      ).toBe("coder:anthropic/claude-3-7");
+
       // Absent from the catalog: falls back to the configured direct route.
       expect(
         factory.resolveGatewayModelString(
@@ -2210,10 +2227,11 @@ describe("ProviderModelFactory Coder", () => {
 
   it("routes nothing through Coder when the discovered catalog is empty", async () => {
     await withTempConfig(async (config, factory) => {
-      // Login always overwrites the catalog — empty means the bridge exposed
-      // no models (e.g. AI Bridge not entitled). Auto-routing must skip Coder
-      // entirely rather than send every model to a bridge that rejects them.
-      saveCoderConfig(config, { models: [] });
+      // Discovery always overwrites the catalog — empty means the bridge
+      // exposed no models (e.g. AI Bridge not entitled). Auto-routing must
+      // skip Coder entirely rather than send every model to a bridge that
+      // rejects them.
+      saveCoderConfig(config, { models: [], discoveredModels: [] });
       const providersConfig = config.loadProvidersConfig() ?? {};
       config.saveProvidersConfig({
         ...providersConfig,

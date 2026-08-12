@@ -204,7 +204,8 @@ registration), completes an authorization-code + PKCE flow, and stores the resul
 in `~/.mux/providers.jsonc`. Tokens refresh automatically; **Disconnect** revokes and clears
 them. After login, Mux lists models from the bridge's upstream catalogs as
 `coder:anthropic/<model>` and `coder:openai/<model>`; you can also add model IDs manually
-under the provider's model list.
+under the provider's model list. Manually added entries are preserved across re-logins and
+catalog refreshes.
 
 Login is available from the desktop app or a locally hosted Mux server. On a remote Mux
 server the OAuth callback cannot reach your browser's machine (Coder does not support the

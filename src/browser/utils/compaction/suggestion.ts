@@ -46,7 +46,8 @@ function buildIsGatewayModelAccessible(
     isGatewayModelAccessibleFromAuthoritativeCatalog(
       gateway,
       modelId,
-      providersConfig?.[gateway]?.models
+      providersConfig?.[gateway]?.models,
+      providersConfig?.[gateway]?.discoveredModels
     );
 }
 
@@ -65,7 +66,8 @@ function buildIsAuthoritativeProviderModelAccessible(
     return isProviderModelAccessibleFromAuthoritativeCatalog(
       provider,
       providerModelId,
-      providersConfig?.[provider]?.models
+      providersConfig?.[provider]?.models,
+      providersConfig?.[provider]?.discoveredModels
     );
   };
 }

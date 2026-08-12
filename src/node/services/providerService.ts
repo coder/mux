@@ -328,6 +328,8 @@ export class ProviderService {
         deploymentUrl?: string;
         /** Coder-only: stored Coder OAuth tokens (never sent to frontend). */
         coderOauth?: unknown;
+        /** Coder-only: model IDs discovered from the deployment's AI Bridge. */
+        discoveredModels?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -462,6 +464,15 @@ export class ProviderService {
           coderOauth.deploymentUrl === configuredDeploymentUrl;
         if (typeof effectiveDeploymentUrl === "string" && effectiveDeploymentUrl) {
           providerInfo.deploymentUrl = effectiveDeploymentUrl;
+        }
+        // The discovered AI Bridge catalog gates gateway routing (see
+        // gatewayModelCatalog.ts); the frontend needs it to mirror the
+        // backend's accessibility decisions. Presence matters (present []
+        // means "authoritatively empty"), so only a missing key is dropped.
+        if (Array.isArray(config.discoveredModels)) {
+          providerInfo.discoveredModels = config.discoveredModels.filter(
+            (id): id is string => typeof id === "string"
+          );
         }
       }
 

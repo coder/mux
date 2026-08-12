@@ -2574,6 +2574,14 @@ export class Config {
    * Shared mkdir-based advisory lock: exclusive directory creation is atomic
    * on all platforms; locks orphaned by crashed processes are broken after
    * `staleLockMs`.
+   *
+   * Ownership generations: a holder that runs past `staleLockMs` (suspended
+   * process, stalled event loop) can be stale-broken and the lock reacquired
+   * before its release runs — an unconditional removal would then delete the
+   * successor's lock and let a third process into the critical section. Each
+   * acquisition therefore writes a generation-unique marker file and release
+   * only removes that generation (see tryBreakStaleDirLock for the breaker's
+   * matching conditional cleanup).
    */
   private async withDirLock<T>(
     lockPath: string,
@@ -2581,7 +2589,6 @@ export class Config {
     staleLockMs: number,
     fn: () => Promise<T> | T
   ): Promise<T> {
-    const STALE_LOCK_MS = staleLockMs;
     const RETRY_DELAY_MS = 25;
     const deadline = Date.now() + acquireTimeoutMs;
 
@@ -2589,10 +2596,10 @@ export class Config {
       ensurePrivateDirSync(this.rootDir);
     }
 
+    let ownerFile: string;
     for (;;) {
       try {
         fs.mkdirSync(lockPath);
-        break;
       } catch (error) {
         // Only contention (EEXIST) is retryable. Permanent filesystem errors
         // (EACCES, EROFS, ...) would fail on every retry — rethrow so callers
@@ -2601,29 +2608,33 @@ export class Config {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
           throw error;
         }
-        // Held by another process (or a crashed one): break stale locks.
-        let stale = false;
-        try {
-          stale = Date.now() - fs.statSync(lockPath).mtimeMs > STALE_LOCK_MS;
-        } catch {
-          // Lock released between mkdir and stat; retry (deadline-bounded).
-          if (Date.now() > deadline) {
-            throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
-          }
-          continue;
-        }
-        if (stale) {
-          try {
-            fs.rmdirSync(lockPath);
-          } catch {
-            // Another process broke it first; retry.
-          }
-          continue;
-        }
         if (Date.now() > deadline) {
           throw new Error(`Timed out acquiring providers config lock at ${lockPath}`);
         }
+        // Held by another process (or a crashed one): break stale locks, then
+        // retry — immediately after a break/vanish, with a delay for a live
+        // holder.
+        if (this.tryBreakStaleDirLock(lockPath, staleLockMs)) {
+          continue;
+        }
         await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS));
+        continue;
+      }
+
+      ownerFile = path.join(lockPath, `owner-${crypto.randomBytes(16).toString("hex")}`);
+      try {
+        fs.writeFileSync(ownerFile, "");
+        break;
+      } catch (error) {
+        // Without a generation marker this lock could never be released
+        // safely; give the (empty, thus safely non-recursive) directory back
+        // and surface the filesystem error instead of deadlocking peers.
+        try {
+          fs.rmdirSync(lockPath);
+        } catch {
+          // Best effort; a leftover empty directory is stale-broken later.
+        }
+        throw error;
       }
     }
 
@@ -2631,9 +2642,17 @@ export class Config {
       return await fn();
     } finally {
       try {
-        fs.rmdirSync(lockPath);
-      } catch (error) {
-        log.debug("Failed to release providers config lock:", error);
+        fs.unlinkSync(ownerFile);
+        try {
+          fs.rmdirSync(lockPath);
+        } catch (error) {
+          // ENOENT/ENOTEMPTY: a breaker finished the removal or a successor
+          // generation already acquired the path — leave it to them.
+          log.debug("Failed to release providers config lock:", error);
+        }
+      } catch {
+        // Marker already gone: this holder outlived staleLockMs and was
+        // stale-broken; a successor may hold the lock now — keep it.
       }
     }
   }
@@ -2677,7 +2696,7 @@ export class Config {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
           throw error;
         }
-        if (!this.tryBreakStaleCoderClientLease(leasePath, ttlMs)) {
+        if (!this.tryBreakStaleDirLock(leasePath, ttlMs)) {
           return null; // Held by a live flow.
         }
         continue; // Stale lease broken (or it vanished); retry the mkdir once.
@@ -2720,11 +2739,13 @@ export class Config {
   }
 
   /**
-   * Break a Coder OAuth client lease left behind by a crashed holder.
-   * Returns true when the caller should retry acquisition (the lease was
-   * stale or vanished mid-check), false when it is held by a live flow.
+   * Break a marker-based directory lock/lease left behind by a crashed (or
+   * stalled-past-staleness) holder. Shared by withDirLock and
+   * tryAcquireCoderOauthClientLease, whose generation-marker layout matches.
+   * Returns true when the caller should retry acquisition (the lock was
+   * stale or vanished mid-check), false when it is held by a live owner.
    */
-  private tryBreakStaleCoderClientLease(leasePath: string, ttlMs: number): boolean {
+  private tryBreakStaleDirLock(leasePath: string, ttlMs: number): boolean {
     let entries: string[];
     try {
       entries = fs.readdirSync(leasePath);

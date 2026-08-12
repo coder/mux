@@ -28,6 +28,11 @@ import { createDeferred } from "@/node/utils/oauthUtils";
 import { startLoopbackServer } from "@/node/utils/oauthLoopbackServer";
 import { OAuthFlowManager } from "@/node/utils/oauthFlowManager";
 import { getErrorMessage } from "@/common/utils/errors";
+import type { ProviderModelEntry } from "@/common/orpc/types";
+import {
+  maybeGetProviderModelEntryId,
+  normalizeProviderModelEntries,
+} from "@/common/utils/providers/modelEntries";
 
 const DEFAULT_DESKTOP_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -144,6 +149,28 @@ function parseEndpointUrl(value: unknown): string | null {
   }
 }
 
+/**
+ * Entries of the coder section's `models` list the user added manually —
+ * everything NOT recorded in `discoveredModels` (the bookkeeping of what
+ * catalog discovery wrote). Manual entries are user-managed data: logins,
+ * catalog refreshes, and disconnects must carry them forward instead of
+ * clobbering them with the server catalog.
+ */
+function manualModelEntries(section: Record<string, unknown> | undefined): ProviderModelEntry[] {
+  if (!Array.isArray(section?.models)) {
+    return [];
+  }
+  const discovered = new Set(
+    Array.isArray(section.discoveredModels)
+      ? section.discoveredModels.filter((id): id is string => typeof id === "string")
+      : []
+  );
+  return normalizeProviderModelEntries(section.models).filter((entry) => {
+    const id = maybeGetProviderModelEntryId(entry);
+    return id == null || !discovered.has(id);
+  });
+}
+
 export class CoderOauthService {
   private readonly desktopFlows = new OAuthFlowManager();
   private readonly refreshMutex = new AsyncMutex();
@@ -219,9 +246,13 @@ export class CoderOauthService {
       removed = stored;
       const next = { ...(section ?? {}) };
       delete next.coderOauth;
-      // Models were fetched from the deployment's AI Bridge at login time; they
-      // are meaningless without credentials and are refetched on the next login.
-      next.models = [];
+      // Discovered models were fetched from the deployment's AI Bridge at
+      // login time; they are meaningless without credentials and are refetched
+      // on the next login. discoveredModels stays PRESENT (as []) so the
+      // catalog reads as authoritatively empty, while manually added entries
+      // are user-managed data and survive the disconnect.
+      next.models = manualModelEntries(section);
+      next.discoveredModels = [];
       return { value: next };
     });
     this.cachedAuth = null;
@@ -958,12 +989,15 @@ export class CoderOauthService {
       //   deployment must re-assert its own URL alongside its auth or it would
       //   store auth A next to URL B and fail issuer validation. Last completed
       //   login wins with a fully coherent section.
-      // - models DELETED (not set to []): the flow resolves before discovery
-      //   runs, so the old deployment's catalog must not linger — but the new
-      //   deployment's catalog is not known yet either. A missing key means
-      //   "catalog unknown" (routing fails open) until discovery persists a
-      //   conclusive list; [] would read as an authoritative empty catalog
-      //   and block Coder routing entirely (see gatewayModelCatalog.ts).
+      // - discoveredModels DELETED (not set to []): the flow resolves before
+      //   discovery runs, so the old deployment's catalog must not linger —
+      //   but the new deployment's catalog is not known yet either. A missing
+      //   key means "catalog unknown" (routing fails open) until discovery
+      //   persists a conclusive list; [] would read as an authoritative empty
+      //   catalog and block Coder routing entirely (see gatewayModelCatalog.ts).
+      // - models reduced to the MANUAL entries: discovered entries belong to
+      //   the old catalog, but manually added ones are user-managed data and
+      //   must survive every re-login.
       // The previous section is captured under the same lock so a post-persist
       // cancellation can restore it verbatim (not just delete the new blob,
       // which would log out a previously connected account).
@@ -979,7 +1013,13 @@ export class CoderOauthService {
         const next = { ...(section ?? {}) };
         next.deploymentUrl = deploymentUrl;
         next.coderOauth = auth;
-        delete next.models;
+        const manual = manualModelEntries(section);
+        if (manual.length > 0) {
+          next.models = manual;
+        } else {
+          delete next.models;
+        }
+        delete next.discoveredModels;
         return { value: next };
       });
       this.cachedAuth = null;
@@ -1363,12 +1403,20 @@ export class CoderOauthService {
     // The catalog is always overwritten — including with an empty list — so a
     // re-login against a different deployment (whose catalogs may be empty or
     // unentitled) never keeps offering the previous deployment's models.
+    // `models` stays the user-visible union: manually added entries (those
+    // not recorded in discoveredModels) are carried forward ahead of the
+    // fresh catalog, so discovery never clobbers user-managed data.
     const setResult = await this.providerService.updateProviderSection("coder", (section) => {
       const stored = parseCoderOauthAuth(section?.coderOauth);
       if (!stored || stored.access !== auth.access || stored.deploymentUrl !== auth.deploymentUrl) {
         return null;
       }
-      return { value: { ...(section ?? {}), models: allowedModelIds } };
+      const manual = manualModelEntries(section);
+      const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
+      const merged = [...manual, ...allowedModelIds.filter((id) => !manualIds.has(id))];
+      return {
+        value: { ...(section ?? {}), models: merged, discoveredModels: allowedModelIds },
+      };
     });
     if (!setResult.success) {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);

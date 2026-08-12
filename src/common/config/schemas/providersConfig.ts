@@ -78,6 +78,14 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
   deploymentUrl: z.string().optional(),
   /** Stored Coder OAuth tokens + dynamic client registration (written by coderOauthService only). */
   coderOauth: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Model IDs discovered from the deployment's AI Bridge catalogs (written by
+   * coderOauthService only). Doubles as the authoritative-catalog marker for
+   * gateway routing (see gatewayModelCatalog.ts) and as the bookkeeping that
+   * separates discovered entries from manually added ones in `models`, so
+   * user-managed entries survive re-logins and catalog refreshes.
+   */
+  discoveredModels: z.array(z.string()).optional(),
 });
 
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;

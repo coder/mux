@@ -2362,6 +2362,82 @@ describe("CoderOauthService", () => {
       expect(deps.setModelsCalls[0].models).toEqual([]);
     });
 
+    it("preserves manually added models across a re-login and catalog refresh", async () => {
+      // Users can append model IDs to the coder section's models list (see
+      // docs/config/providers.mdx). Those entries are user-managed data:
+      // a re-login resets only the DISCOVERED catalog (discoveredModels
+      // bookkeeping), and the post-login discovery merges manual entries
+      // ahead of the fresh catalog instead of overwriting the whole list.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ sessionId: "session_prior" }),
+          models: ["anthropic/my-manual-model", "anthropic/old-model"],
+          discoveredModels: ["anthropic/old-model"],
+        },
+      };
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_manual",
+            refresh_token: "rt_manual",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_manual");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      // The commit kept the manual entry (dropping only the old discovered
+      // one), then discovery merged it ahead of the fresh catalog.
+      await waitUntil(() => {
+        const section = deps.providersConfig.coder as Record<string, unknown> | undefined;
+        return Array.isArray(section?.discoveredModels) && section.discoveredModels.length > 0;
+      });
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.models).toEqual([
+        "anthropic/my-manual-model",
+        "anthropic/claude-sonnet-4-5",
+      ]);
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+    });
+
     it("fetches origin catalogs concurrently so a stalled origin cannot starve a healthy one", async () => {
       // The anthropic catalog stalls until the openai catalog has been
       // REQUESTED: with the old sequential loop this deadlocks (openai was
@@ -2444,6 +2520,7 @@ describe("CoderOauthService", () => {
           deploymentUrl: DEPLOYMENT_URL,
           coderOauth: validAuth({ sessionId: "session_prior" }),
           models: ["anthropic/prior-model"],
+          discoveredModels: ["anthropic/prior-model"],
         },
       };
 
@@ -2496,10 +2573,11 @@ describe("CoderOauthService", () => {
 
       // Each origin was retried (2 origins x 3 attempts).
       await waitUntil(() => catalogRequests >= 6, 5000);
-      // The catalog stays UNKNOWN: the previous deployment's list is gone
-      // (reset by the commit) and no authoritative list was written.
+      // The catalog stays UNKNOWN: the previous deployment's discovered list
+      // is gone (reset by the commit) and no authoritative list was written.
       const coderSection = deps.providersConfig.coder as Record<string, unknown>;
       expect(coderSection.models).toBeUndefined();
+      expect(coderSection.discoveredModels).toBeUndefined();
       expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_relogin");
     });
 
@@ -2633,9 +2711,40 @@ describe("CoderOauthService", () => {
       expect(revokeBody).not.toBeNull();
       expect(revokeBody!.get("token")).toBe("rt_test");
 
-      // Tokens and models are cleared in one atomic section write.
+      // Tokens and models are cleared in one atomic section write; the
+      // now-empty discoveredModels stays present as the authoritative-empty
+      // catalog marker.
       expect((deps.providersConfig.coder as Record<string, unknown>).coderOauth).toBeUndefined();
       expect(deps.setModelsCalls).toEqual([{ provider: "coder", models: [] }]);
+      expect((deps.providersConfig.coder as Record<string, unknown>).discoveredModels).toEqual([]);
+    });
+
+    it("keeps manually added models when disconnecting", async () => {
+      // Discovered catalog entries are meaningless without credentials, but
+      // manually added ones are user-managed data and must survive.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: ["anthropic/my-manual-model", "anthropic/discovered-model"],
+          discoveredModels: ["anthropic/discovered-model"],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.disconnect();
+      expect(result.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.models).toEqual(["anthropic/my-manual-model"]);
+      expect(coderSection.discoveredModels).toEqual([]);
     });
 
     it("does not clear a newer login that completed while revocation was pending", async () => {
