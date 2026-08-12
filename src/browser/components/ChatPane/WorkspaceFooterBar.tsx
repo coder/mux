@@ -225,6 +225,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
 
   useEffect(() => {
     revealOperationRef.current += 1;
+    setRevealState("idle");
     return () => {
       revealOperationRef.current += 1;
     };
