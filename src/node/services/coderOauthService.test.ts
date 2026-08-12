@@ -1046,6 +1046,109 @@ describe("CoderOauthService", () => {
       await service.cancelDesktopFlow(result.data.flowId);
     });
 
+    it("rejects login without any network call when policy denies the coder provider", async () => {
+      // Regression: a deny-all/provider-restricted policy must stop direct
+      // backend RPCs from registering OAuth clients or minting credentials —
+      // not merely hide the login UI.
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService,
+        {
+          isEnforced: () => true,
+          isProviderAllowed: (provider: string) => provider !== "coder",
+          getForcedBaseUrl: () => undefined,
+        } as unknown as PolicyService
+      );
+
+      let fetchCalls = 0;
+      mockFetch(() => {
+        fetchCalls++;
+        return Promise.resolve(new Response("should not be called", { status: 500 }));
+      });
+
+      const result = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("not allowed");
+      }
+      expect(fetchCalls).toBe(0);
+    });
+
+    it("refuses to commit a login when policy denies coder mid-flow", async () => {
+      // Policy can refresh while the browser authorization is pending: a
+      // flow started under a permissive policy must not persist a credential
+      // after coder was denied, and the exchanged tokens must be revoked.
+      let coderAllowed = true;
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService,
+        {
+          isEnforced: () => true,
+          isProviderAllowed: () => coderAllowed,
+          getForcedBaseUrl: () => undefined,
+        } as unknown as PolicyService
+      );
+
+      const revokedTokens: string[] = [];
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_denied",
+            refresh_token: "rt_denied",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      // The policy flips to deny while the user is authorizing in the browser.
+      coderAllowed = false;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_denied");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackResponse = await originalFetch(callbackUrl).catch(() => null);
+      // The browser callback surfaces the failure (HTTP 400), not a success page.
+      expect(callbackResponse?.status).toBe(400);
+
+      const waitResult = await service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      expect(waitResult.success).toBe(false);
+      if (!waitResult.success) {
+        expect(waitResult.error).toContain("not allowed");
+      }
+
+      // Nothing persisted, and the raced tokens were revoked.
+      expect(
+        (deps.providersConfig.coder as Record<string, unknown> | undefined)?.coderOauth
+      ).toBeUndefined();
+      await waitUntil(() => revokedTokens.includes("rt_denied"));
+    });
+
     it("logs in to the policy-forced deployment instead of the requested URL", async () => {
       const FORCED_URL = "http://locked.coder.test";
       service = new CoderOauthService(
@@ -1054,9 +1157,10 @@ describe("CoderOauthService", () => {
         createMockWindowService(deps) as WindowService,
         {
           isEnforced: () => true,
+          isProviderAllowed: () => true,
           getForcedBaseUrl: (provider: string) =>
             provider === "coder" ? `${FORCED_URL}/` : undefined,
-        } as PolicyService
+        } as unknown as PolicyService
       );
 
       let requestedHostCalls = 0;
@@ -2615,6 +2719,7 @@ describe("CoderOauthService", () => {
         createMockWindowService(deps) as WindowService,
         {
           isEnforced: () => true,
+          isProviderAllowed: () => true,
           getForcedBaseUrl: () => undefined,
           isModelAllowed: (_provider: string, modelId: string) =>
             modelId === "anthropic/allowed-model",

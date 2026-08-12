@@ -242,6 +242,19 @@ export class CoderOauthService {
   }
 
   /**
+   * True when an enforced policy denies the coder provider outright —
+   * including the "blocked" state, which must behave as deny-all so direct
+   * backend RPCs (CLI/headless/orpc) cannot bypass the UI block. Checked
+   * before login network I/O AND again before commit: policy can refresh
+   * while the browser authorization is pending.
+   */
+  private isCoderDeniedByPolicy(): boolean {
+    return (
+      this.policyService?.isEnforced() === true && !this.policyService.isProviderAllowed("coder")
+    );
+  }
+
+  /**
    * An enforced policy forcedBaseUrl overrides every user-supplied or stored
    * deployment URL: logins, refreshes, and issuer checks must all target the
    * policy-locked deployment or Coder traffic could bypass it.
@@ -367,6 +380,13 @@ export class CoderOauthService {
     // Snapshot before the first await: a disconnect() during any of the
     // probes below must abort this attempt (see disconnectGeneration).
     const initialDisconnectGeneration = this.disconnectGeneration;
+
+    // Policy gate BEFORE any network I/O: a deny-all/provider-restricted (or
+    // blocked) policy must stop direct backend RPCs from registering OAuth
+    // clients or minting credentials, not just hide the login UI.
+    if (this.isCoderDeniedByPolicy()) {
+      return Err("The Coder provider is not allowed by the enforced policy");
+    }
 
     const requestedUrl = normalizeCoderDeploymentUrl(input.deploymentUrl);
     if (!requestedUrl) {
@@ -1070,6 +1090,17 @@ export class CoderOauthService {
       // Cancel — drop and revoke the tokens.
       if (!this.desktopFlows.has(flowId)) {
         return { outcome: "cancelled" as const };
+      }
+
+      // Policy can refresh while the browser authorization is pending: a
+      // login started under a permissive policy must not persist a credential
+      // after coder was denied. Failing here routes the already-exchanged
+      // tokens through the caller's non-committed revocation path.
+      if (this.isCoderDeniedByPolicy()) {
+        const message = "The Coder provider is not allowed by the enforced policy";
+        loopback.sendFailureResponse(message);
+        await this.desktopFlows.finish(flowId, Err(message));
+        return { outcome: "failed" as const };
       }
 
       // Persist the new credentials, the deployment URL they belong to, and a
