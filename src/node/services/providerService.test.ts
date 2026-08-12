@@ -806,6 +806,33 @@ describe("ProviderService model normalization", () => {
     });
   });
 
+  it("records removals of Coder models the current catalog no longer lists", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      // Provenance is lossy: a discovered model with a user-authored object
+      // override survives a catalog that temporarily omits its ID (only
+      // `models` still knows it). Deleting it in that state must still
+      // record the exclusion, or the next catalog that lists the ID again
+      // would resurrect a model the user explicitly removed.
+      config.saveProvidersConfig({
+        coder: {
+          deploymentUrl: "https://coder.example.com",
+          models: [
+            { id: "anthropic/overridden", contextWindowTokens: 100_000 },
+            "anthropic/model-a",
+          ],
+          // The current catalog omits the overridden model's ID.
+          discoveredModels: ["anthropic/model-a"],
+        },
+      });
+
+      const result = await service.setModels("coder", ["anthropic/model-a"]);
+      expect(result.success).toBe(true);
+      const stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+      expect(stored.models).toEqual(["anthropic/model-a"]);
+      expect(stored.removedModels).toEqual(["anthropic/overridden"]);
+    });
+  });
+
   it("keeps prior Coder removals across edits made while the catalog is unknown", async () => {
     await withTempConfigAsync(async (config, service) => {
       // Post-login state: discoveredModels deleted (catalog unknown), but a

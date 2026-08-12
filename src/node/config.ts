@@ -2802,22 +2802,22 @@ export class Config {
     // is never destroyed (the reason breaking must not use recursive rm).
     for (const entry of entries) {
       const entryPath = path.join(leasePath, entry);
-      try {
-        if (!isStale(fs.statSync(entryPath).mtimeMs)) {
-          return false;
-        }
-      } catch {
-        continue; // Vanished mid-check; the conditional cleanup below is safe.
-      }
-      // A stale mtime alone must not break the lock: the holder may be a LIVE
-      // process that merely outlived the TTL (suspended laptop, stalled event
-      // loop). Breaking it would let a second process enter the same critical
-      // section, and for the refresh lock the resumed original could then
-      // race the successor over the same rotating refresh token — both sides
-      // clearing/revoking the only valid credential. The marker carries the
-      // owner's PID: only break when that process is provably gone; otherwise
-      // acquisition fails bounded (withDirLock times out, the client lease
-      // falls back to a fresh registration).
+      // The marker carries the owner's PID, checked FIRST:
+      // - Owner provably ALIVE: never break, however old the marker. A live
+      //   process that merely outlived the TTL (suspended laptop, stalled
+      //   event loop) may still be mid-critical-section; breaking would let a
+      //   second process in, and for the refresh lock the resumed original
+      //   could then race the successor over the same rotating refresh token
+      //   — both sides clearing/revoking the only valid credential.
+      //   Contenders instead fail bounded (withDirLock times out, the client
+      //   lease falls back to a fresh registration).
+      // - Owner provably DEAD: reclaim immediately, however fresh the marker.
+      //   A dead process cannot be mid-critical-section, and every
+      //   acquisition timeout is shorter than its staleness TTL — waiting for
+      //   the TTL would make the first operation after a crash always time
+      //   out even though the orphan is deterministically recoverable.
+      // - Owner unknown (unreadable/partial marker): fall back to the mtime
+      //   TTL, the only remaining staleness signal.
       // Residual risk: a recycled PID belonging to an unrelated live process
       // keeps an orphaned lock alive until that process exits — rare, and
       // strictly safer than destroying a live holder's lock.
@@ -2828,8 +2828,18 @@ export class Config {
       } catch {
         continue; // Vanished mid-check; the conditional cleanup below is safe.
       }
-      if (ownerPid !== null && isProcessAlive(ownerPid)) {
-        return false;
+      if (ownerPid !== null) {
+        if (isProcessAlive(ownerPid)) {
+          return false;
+        }
+      } else {
+        try {
+          if (!isStale(fs.statSync(entryPath).mtimeMs)) {
+            return false;
+          }
+        } catch {
+          continue; // Vanished mid-check; the conditional cleanup below is safe.
+        }
       }
       try {
         fs.unlinkSync(entryPath);

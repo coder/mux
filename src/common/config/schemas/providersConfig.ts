@@ -87,9 +87,11 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    */
   discoveredModels: z.array(z.string()).optional(),
   /**
-   * Discovered model IDs the user removed from the model list. User-managed
-   * exclusions: catalog refreshes and re-logins must not resurrect them
-   * (maintained by ProviderService.setModels, honored by discovery merges).
+   * Model IDs the user removed from the model list (discovered or not —
+   * catalog provenance is lossy across re-logins, so every deletion is
+   * recorded). User-managed exclusions: catalog refreshes and re-logins must
+   * not resurrect them (maintained by ProviderService.setModels, honored by
+   * discovery merges).
    */
   removedModels: z.array(z.string()).optional(),
   /**

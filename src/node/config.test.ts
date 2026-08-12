@@ -2618,6 +2618,42 @@ describe("Config", () => {
       otherRelease!();
       expect(fs.existsSync(leasePath)).toBe(false);
     });
+
+    it("reclaims a dead-owner lease immediately, before the TTL elapses", () => {
+      // Regression: a crashed holder's PID is deterministically dead, so
+      // contenders must recover the orphan right away. Gating recovery on
+      // the mtime TTL (which exceeds every acquisition timeout) would make
+      // the first operation after a crash always fail despite the owner
+      // being provably gone.
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+      fs.mkdirSync(leasePath, { recursive: true });
+      // Fresh mtime (NOT backdated) + dead owner PID.
+      fs.writeFileSync(path.join(leasePath, "owner-crashed"), "999999999");
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+      release!();
+    });
+  });
+
+  describe("withProvidersFileLock", () => {
+    it("acquires over a dead-owner lock immediately, before the TTL elapses", async () => {
+      // Same regression as the lease variant: withDirLock's acquisition
+      // timeout (5s) is shorter than its staleness TTL (10s), so a fresh
+      // crash orphan must be reclaimed via the dead-PID check or the first
+      // config write after the crash would always time out.
+      const lockPath = path.join(tempDir, "providers.jsonc.lock");
+      fs.mkdirSync(lockPath, { recursive: true });
+      fs.writeFileSync(path.join(lockPath, "owner-crashed"), "999999999");
+
+      const startedAt = Date.now();
+      const result = await config.withProvidersFileLock(() => "ran");
+      expect(result).toBe("ran");
+      // Well under the 5s acquisition timeout: the orphan was reclaimed on
+      // the first contention check, not waited out.
+      expect(Date.now() - startedAt).toBeLessThan(2_000);
+      expect(fs.existsSync(lockPath)).toBe(false);
+    });
   });
 
   describe("withCoderOauthRefreshLock", () => {

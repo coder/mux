@@ -969,8 +969,13 @@ export class ProviderService {
    *   entries the policy hides. Overwriting would carve those out of the
    *   policy-unfiltered persisted list until the next login even after the
    *   policy broadens (policy is applied at exposure/routing, not storage).
-   * - Removals of discovered models are recorded in `removedModels` so
-   *   catalog refreshes and re-logins do not resurrect them. The set is
+   * - Every deleted entry is recorded in `removedModels` so catalog
+   *   refreshes and re-logins do not resurrect it. Tracking keys off the
+   *   PRIOR persisted list, not just the current `discoveredModels`:
+   *   provenance is lossy (a discovered model with a user-authored object
+   *   override survives a catalog that temporarily omits its ID, but only
+   *   `models` still knows it) — a deletion made in that state must still be
+   *   excluded when a later catalog lists the ID again. The set is
    *   recomputed from the final list each edit, so re-adding a model clears
    *   its exclusion; prior exclusions survive edits made while the catalog
    *   is unknown (discoveredModels absent).
@@ -1002,7 +1007,10 @@ export class ProviderService {
     const priorRemoved = Array.isArray(section.removedModels)
       ? section.removedModels.filter((id): id is string => typeof id === "string")
       : [];
-    const removed = [...new Set([...priorRemoved, ...discovered])].filter(
+    const priorModelIds = normalizeProviderModelEntries(section.models).map((entry) =>
+      getProviderModelEntryId(entry)
+    );
+    const removed = [...new Set([...priorRemoved, ...discovered, ...priorModelIds])].filter(
       (id) => !finalIds.has(id)
     );
 
