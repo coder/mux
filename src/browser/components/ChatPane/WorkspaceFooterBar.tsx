@@ -254,6 +254,7 @@ function FooterLastPrompt(props: { workspaceId: string }) {
       return;
     }
     revealOperationRef.current += 1;
+    setRevealState("idle");
   }, [open]);
 
   useEffect(() => {
