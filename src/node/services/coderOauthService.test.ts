@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "bun:test";
 import * as crypto from "crypto";
 
 import type { Result } from "@/common/types/result";
-import { Ok } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
 import type { Config, ProvidersConfig } from "@/node/config";
 import type { ProviderService } from "@/node/services/providerService";
 import type { WindowService } from "@/node/services/windowService";
@@ -713,6 +713,55 @@ describe("CoderOauthService", () => {
       // (consumed) credential, and the orphaned rotation was revoked.
       const stored = deps.providersConfig.coder as Record<string, unknown>;
       expect((stored.coderOauth as CoderOauthAuth).refresh).toBe("rt_consumed");
+      expect(revokedToken as string | null).toBe("rt_orphaned");
+    });
+
+    it("revokes the orphaned rotation when persisting the rotated tokens fails", async () => {
+      // The token endpoint already consumed the stored refresh token when
+      // persistence fails (providers.jsonc unwritable, lock timeout):
+      // persist-before-use forbids handing the rotation out, so — like the
+      // CAS-lost path — the freshly minted full-privilege tokens must be
+      // revoked rather than left alive with nothing tracking them.
+      const expired = expiredAuth({ refresh: "rt_consumed" });
+      deps.providersConfig = { coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: expired } };
+
+      const failingProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: () =>
+          Promise.resolve(Err("Failed to update provider config: disk full")),
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        failingProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      let revokedToken: string | null = null;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return Promise.resolve(
+            jsonResponse({
+              access_token: "at_orphaned",
+              refresh_token: "rt_orphaned",
+              expires_in: 3600,
+              token_type: "Bearer",
+            })
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedToken = new URLSearchParams(fetchBodyText(init)).get("token");
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.getValidAuth();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("disk full");
+      }
+      // The unpersistable rotation was revoked against its issuer.
       expect(revokedToken as string | null).toBe("rt_orphaned");
     });
 

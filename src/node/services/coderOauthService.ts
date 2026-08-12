@@ -1177,6 +1177,12 @@ export class CoderOauthService {
     // clobber the newer state with a blob from the old generation.
     const persistResult = await this.persistRotatedAuth(result.auth, current.refresh);
     if (!persistResult.success) {
+      // Persistence failed outright (providers.jsonc unwritable, lock
+      // timeout): persist-before-use means the rotation cannot be handed out,
+      // yet the exchange already consumed the stored refresh token. Like the
+      // CAS-lost path below, revoke the orphaned rotation (best-effort) so a
+      // full-privilege token no tracking references cannot stay alive.
+      await this.revokeTokens(result.auth.deploymentUrl, result.auth);
       return Err(persistResult.error);
     }
 
