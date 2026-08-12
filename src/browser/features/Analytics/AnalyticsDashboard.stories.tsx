@@ -949,6 +949,51 @@ function AnalyticsDashboardStory() {
   );
 }
 
+export const StatsDashboardPhone: Story = {
+  render: () => <AnalyticsDashboardStory />,
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+  decorators: [
+    (Story) => (
+      <div
+        data-testid="analytics-phone-container"
+        style={{ width: 390, height: 844, overflow: "hidden" }}
+      >
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const container = canvasElement.querySelector('[data-testid="analytics-phone-container"]');
+    if (!(container instanceof HTMLElement)) {
+      throw new Error("Analytics phone story container not found");
+    }
+
+    await canvas.findByText("Total Spend");
+    await canvas.findByRole("button", { name: "Local" });
+    await canvas.findByRole("button", { name: "UTC" });
+    await canvas.findByRole("button", { name: "7D" });
+    await canvas.findByRole("button", { name: "All" });
+
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+    );
+    if (container.scrollWidth > container.clientWidth + 1) {
+      throw new Error(
+        `Analytics header overflowed its ${container.clientWidth}px container by ` +
+          `${container.scrollWidth - container.clientWidth}px`
+      );
+    }
+  },
+};
+
 export const StatsDashboard: Story = {
   render: () => <AnalyticsDashboardStory />,
   play: async ({ canvasElement }: { canvasElement: HTMLElement }) => {
