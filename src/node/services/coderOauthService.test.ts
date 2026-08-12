@@ -1669,6 +1669,105 @@ describe("CoderOauthService", () => {
       expect(coderSection.models).toEqual(["anthropic/prior-model"]);
     });
 
+    it("keeps the persisted login unrevoked when a post-persist cancel's rollback write fails", async () => {
+      // Cancellation wins right after the login section is persisted, and the
+      // ROLLBACK write then fails (providers.jsonc unwritable, lock timeout):
+      // the persisted section still holds the new tokens. Revoking them would
+      // leave Settings reporting a connected account whose every request
+      // fails — the tokens must stay alive instead (the stored blob keeps
+      // them tracked; Disconnect or the next login revokes them).
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistApplied!: () => void;
+      const persistAppliedPromise = new Promise<void>((resolve) => (persistApplied = resolve));
+      let sectionCalls = 0;
+      let rollbackAttempted = false;
+
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          const call = ++sectionCalls;
+          if (call === 1) {
+            // The login persist: land the write, then hold the commit so the
+            // cancellation deterministically hits the persist->commit window.
+            const result = await mockUpdateProviderSection(deps, provider, update);
+            persistApplied();
+            await persistGate;
+            return result;
+          }
+          // The rollback: the providers file has become unwritable.
+          rollbackAttempted = true;
+          return Err("Failed to update provider config: disk full");
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as unknown as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      const revokedTokens: string[] = [];
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_rollback_fail",
+            refresh_token: "rt_rollback_fail",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_rollback_fail");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      await persistAppliedPromise;
+      await service.cancelDesktopFlow(flowId);
+      releasePersist();
+      await callbackPromise;
+
+      // The rollback was attempted and failed...
+      await waitUntil(() => rollbackAttempted);
+      // Give the (forbidden) revocation every chance to fire before asserting.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      // ...so the tokens stay UNREVOKED: they are still the persisted
+      // credential, and the stored account keeps working.
+      expect(revokedTokens).toEqual([]);
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect((coderSection.coderOauth as CoderOauthAuth).access).toBe("at_rollback_fail");
+      expect((coderSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_rollback_fail");
+    });
+
     it("keeps the original login when two overlapping logins are both cancelled", async () => {
       // Regression: rollback snapshots must not compose across overlapping
       // flows. Without commit serialization, flow B snapshots flow A's

@@ -89,6 +89,20 @@ type CoderTokenRequestResult =
   | { success: true; auth: CoderOauthAuth }
   | { success: false; error: string; invalidGrant: boolean };
 
+/**
+ * Result of the login-commit critical section (see commitDesktopLogin).
+ * - replacedAuth: the credential a committed login superseded (revoked by the
+ *   caller after the lock is released).
+ * - persistedAuthRetained: a cancelled login's tokens are STILL the persisted
+ *   credential because the rollback write failed — the caller must not revoke
+ *   them or the stored account would look connected while every request fails.
+ */
+interface CoderLoginCommitResult {
+  outcome: "committed" | "cancelled" | "failed";
+  replacedAuth?: CoderOauthAuth;
+  persistedAuthRetained?: boolean;
+}
+
 function sha256Base64Url(value: string): string {
   return crypto.createHash("sha256").update(value).digest().toString("base64url");
 }
@@ -936,8 +950,15 @@ export class CoderOauthService {
       // Every non-committed outcome revokes the exchanged tokens: a failed
       // persist (unwritable providers.jsonc, lock timeout) would otherwise
       // leave them active and untracked on the deployment while the UI
-      // reports the login as failed.
-      await this.revokeTokens(deploymentUrl, auth);
+      // reports the login as failed. The one exception: a post-persist
+      // cancellation whose ROLLBACK write failed — the persisted section
+      // still holds these tokens, so revoking would leave Settings showing
+      // a connected account whose every request fails. Keep the working
+      // credential instead; the stored blob keeps it tracked (Disconnect or
+      // the next successful login revokes it).
+      if (!result.persistedAuthRetained) {
+        await this.revokeTokens(deploymentUrl, auth);
+      }
     } else if (result.replacedAuth && result.replacedAuth.refresh !== auth.refresh) {
       // A successful re-login replaced a previous credential: revoke it, or
       // the old full-privilege token would stay valid forever with nothing
@@ -965,7 +986,7 @@ export class CoderOauthService {
       Awaited<ReturnType<typeof startLoopbackServer>>,
       "sendSuccessResponse" | "sendFailureResponse"
     >
-  ): Promise<{ outcome: "committed" | "cancelled" | "failed"; replacedAuth?: CoderOauthAuth }> {
+  ): Promise<CoderLoginCommitResult> {
     await using _commitLock = await this.loginCommitMutex.acquire();
 
     // The cross-process lock itself can fail (acquisition timeout, EACCES on
@@ -992,7 +1013,7 @@ export class CoderOauthService {
       Awaited<ReturnType<typeof startLoopbackServer>>,
       "sendSuccessResponse" | "sendFailureResponse"
     >
-  ): Promise<{ outcome: "committed" | "cancelled" | "failed"; replacedAuth?: CoderOauthAuth }> {
+  ): Promise<CoderLoginCommitResult> {
     return await this.config.withCoderOauthLoginCommitLock(async () => {
       // The flow may have been cancelled (or timed out) while the exchange
       // round-trip was in flight (or while waiting for the locks). Persisting
@@ -1059,8 +1080,8 @@ export class CoderOauthService {
       // mid-persist, restore the pre-login section (a previously connected
       // account stays connected).
       if (!this.desktopFlows.has(flowId)) {
-        await this.rollbackPersistedAuth(auth, previousSection);
-        return { outcome: "cancelled" as const };
+        const cleared = await this.rollbackPersistedAuth(auth, previousSection);
+        return { outcome: "cancelled" as const, persistedAuthRetained: !cleared };
       }
 
       loopback.sendSuccessResponse();
@@ -1090,11 +1111,16 @@ export class CoderOauthService {
    * section, never another flow's pending login — in this process or any
    * other sharing the providers file. The caller revokes the cancelled
    * login's tokens after the lock is released.
+   *
+   * Returns true when the cancelled login's tokens are no longer the
+   * persisted credential (previous section restored, or a newer login already
+   * replaced them) — only then may the caller revoke them. False means the
+   * restore write failed and the persisted section still holds the tokens.
    */
   private async rollbackPersistedAuth(
     auth: CoderOauthAuth,
     previousSection: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<boolean> {
     log.debug("[Coder OAuth] Flow cancelled during persist; restoring previous provider state");
     this.cachedAuth = null;
     const restoreResult = await this.providerService.updateProviderSection("coder", (section) => {
@@ -1106,10 +1132,15 @@ export class CoderOauthService {
     });
     this.cachedAuth = null;
     if (!restoreResult.success) {
-      log.warn(`[Coder OAuth] Failed to roll back cancelled login: ${restoreResult.error}`);
-    } else if (!restoreResult.data.applied) {
+      log.warn(
+        `[Coder OAuth] Failed to roll back cancelled login; keeping its credential unrevoked: ${restoreResult.error}`
+      );
+      return false;
+    }
+    if (!restoreResult.data.applied) {
       log.debug("[Coder OAuth] Rollback skipped: a newer login already replaced the credentials");
     }
+    return true;
   }
 
   private async refreshTokens(current: CoderOauthAuth): Promise<Result<CoderOauthAuth, string>> {
