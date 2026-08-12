@@ -469,10 +469,16 @@ export class ProviderService {
         // gatewayModelCatalog.ts); the frontend needs it to mirror the
         // backend's accessibility decisions. Presence matters (present []
         // means "authoritatively empty"), so only a missing key is dropped.
+        // The persisted catalog is policy-unfiltered by design (a temporary
+        // policy must not carve models out of durable state); the CURRENT
+        // policy is applied here at exposure time, like `models` above.
         if (Array.isArray(config.discoveredModels)) {
-          providerInfo.discoveredModels = config.discoveredModels.filter(
+          const discovered = config.discoveredModels.filter(
             (id): id is string => typeof id === "string"
           );
+          providerInfo.discoveredModels = Array.isArray(allowedModels)
+            ? discovered.filter((id) => allowedModels.includes(id))
+            : discovered;
         }
       }
 

@@ -1391,13 +1391,14 @@ export class CoderOauthService {
       log.debug("[Coder OAuth] Skipping catalog write: discovery failed for at least one origin");
       return;
     }
+    // The COMPLETE discovered catalog is persisted, deliberately without
+    // policy filtering: policies refresh remotely, so a temporarily
+    // restrictive policy must not carve models out of the durable catalog
+    // (they would stay unroutable until the next login even after the policy
+    // broadens). Policy is applied at exposure time instead — getConfig()
+    // filters the reported lists, routing checks the current policy, and the
+    // factory enforces it per model at creation.
     const modelIds = perOrigin.flatMap((result) => (result.kind === "ok" ? result.ids : []));
-
-    // Belt & suspenders: the factory enforces policy per model at creation
-    // time, but don't persist catalog entries a policy already disallows.
-    const allowedModelIds = this.policyService?.isEnforced()
-      ? modelIds.filter((id) => this.policyService?.isModelAllowed("coder", id) ?? true)
-      : modelIds;
 
     // Discovery races logins/disconnects: the flow resolves before this runs,
     // so a newer login (or a disconnect) may replace or clear the stored
@@ -1418,9 +1419,9 @@ export class CoderOauthService {
       }
       const manual = manualModelEntries(section);
       const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
-      const merged = [...manual, ...allowedModelIds.filter((id) => !manualIds.has(id))];
+      const merged = [...manual, ...modelIds.filter((id) => !manualIds.has(id))];
       return {
-        value: { ...(section ?? {}), models: merged, discoveredModels: allowedModelIds },
+        value: { ...(section ?? {}), models: merged, discoveredModels: modelIds },
       };
     });
     if (!setResult.success) {

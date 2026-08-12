@@ -856,7 +856,10 @@ function getConfiguredProviderModelIds(providerConfig: ProviderConfig | undefine
   });
 }
 
-function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig) {
+function createGatewayModelAccessibilityChecker(
+  providersConfig: ProvidersConfig,
+  policyService?: PolicyService | null
+) {
   // discoveredModels is a Coder-specific key (other gateways have no
   // server-discovered catalog marker), and ProvidersConfig's loosely-typed
   // Record variant widens it to unknown — validate the shape once here.
@@ -864,13 +867,21 @@ function createGatewayModelAccessibilityChecker(providersConfig: ProvidersConfig
   const coderDiscoveredModels = Array.isArray(rawDiscovered)
     ? rawDiscovered.filter((id): id is string => typeof id === "string")
     : undefined;
-  return (gateway: string, gatewayModelId: string): boolean =>
-    isGatewayModelAccessibleFromAuthoritativeCatalog(
+  return (gateway: string, gatewayModelId: string): boolean => {
+    // The persisted catalog is deliberately policy-unfiltered (a temporarily
+    // restrictive policy must not survive in durable state); the CURRENT
+    // policy is applied here at routing time, so disallowed gateway models
+    // fall back to other routes instead of dying at model creation.
+    if (policyService?.isEnforced() && !policyService.isModelAllowed(gateway, gatewayModelId)) {
+      return false;
+    }
+    return isGatewayModelAccessibleFromAuthoritativeCatalog(
       gateway,
       gatewayModelId,
       providersConfig[gateway]?.models,
       gateway === "coder" ? coderDiscoveredModels : undefined
     );
+  };
 }
 
 function formatCustomProviderRequirementError(
@@ -2179,7 +2190,10 @@ export class ProviderModelFactory {
   private resolveModelRoute(canonicalModel: string): RouteContext {
     const config = this.config.loadConfigOrDefault();
     const providersConfig = this.config.loadProvidersConfig?.() ?? {};
-    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(providersConfig);
+    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(
+      providersConfig,
+      this.policyService
+    );
     return resolveRoute(
       canonicalModel,
       config.routePriority ?? ["direct"],
@@ -2237,7 +2251,10 @@ export class ProviderModelFactory {
 
     const originProvider = originProviderName as ProviderName;
     const config = this.config.loadConfigOrDefault();
-    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(providersConfig);
+    const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(
+      providersConfig,
+      this.policyService
+    );
     const routeContext =
       typeof modelKeyOrRouteContext === "object" && modelKeyOrRouteContext != null
         ? modelKeyOrRouteContext

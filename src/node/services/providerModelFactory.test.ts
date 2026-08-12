@@ -2250,6 +2250,52 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("routes policy-disallowed models away from Coder at routing time", async () => {
+    await withTempPolicyProviderFactory(
+      {
+        policy_format_version: "0.1",
+        provider_access: [
+          { id: "coder", model_access: ["anthropic/claude-sonnet-4-5"] },
+          { id: "anthropic" },
+        ],
+      },
+      async (config, factory) => {
+        // The persisted catalog is deliberately policy-unfiltered (both
+        // models present); the CURRENT policy must gate routing so the
+        // disallowed model falls back to direct instead of being rewritten
+        // to coder: and dying at model creation with policy_denied.
+        saveCoderConfig(config, {
+          models: ["anthropic/claude-sonnet-4-5", "anthropic/claude-opus-4-1"],
+          discoveredModels: ["anthropic/claude-sonnet-4-5", "anthropic/claude-opus-4-1"],
+        });
+        const providersConfig = config.loadProvidersConfig() ?? {};
+        config.saveProvidersConfig({
+          ...providersConfig,
+          anthropic: { apiKey: "sk-ant-test" },
+        } as Parameters<Config["saveProvidersConfig"]>[0]);
+        factory.coderOauthService = stubCoderOauthService();
+
+        await saveRoutePriority(config, ["coder", "direct"]);
+
+        // Allowed by policy: routed through Coder.
+        expect(
+          factory.resolveGatewayModelString(
+            "anthropic:claude-sonnet-4-5",
+            "anthropic:claude-sonnet-4-5"
+          )
+        ).toBe("coder:anthropic/claude-sonnet-4-5");
+
+        // In the catalog but disallowed by the current policy: direct.
+        expect(
+          factory.resolveGatewayModelString(
+            "anthropic:claude-opus-4-1",
+            "anthropic:claude-opus-4-1"
+          )
+        ).toBe("anthropic:claude-opus-4-1");
+      }
+    );
+  });
+
   it("accepts policy-bound credentials even when the editable deploymentUrl was changed", async () => {
     const LOCKED_URL = "https://locked.coder.example.com";
     await withTempPolicyProviderFactory(

@@ -652,6 +652,31 @@ describe("ProviderService.getConfig", () => {
       }
     );
   });
+
+  it("filters Coder discoveredModels by the current policy at exposure time", async () => {
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [{ id: "coder", model_access: ["anthropic/claude-sonnet-4-5"] }],
+      },
+      (config, service) => {
+        // The persisted catalog is policy-unfiltered by design (a temporary
+        // policy must not carve models out of durable state); getConfig()
+        // applies the CURRENT policy when exposing the lists.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://coder.example.com",
+            models: ["anthropic/claude-sonnet-4-5", "anthropic/claude-opus-4-1"],
+            discoveredModels: ["anthropic/claude-sonnet-4-5", "anthropic/claude-opus-4-1"],
+          },
+        });
+
+        const cfg = service.getConfig();
+        expect(cfg.coder.models).toEqual(["anthropic/claude-sonnet-4-5"]);
+        expect(cfg.coder.discoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+      }
+    );
+  });
 });
 
 describe("ProviderService model normalization", () => {

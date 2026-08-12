@@ -2154,6 +2154,81 @@ describe("CoderOauthService", () => {
       expect(deps.coderClientLeaseHeld).toBe(true);
     });
 
+    it("persists the complete discovered catalog even when a policy restricts models", async () => {
+      // Policies refresh remotely: a temporarily restrictive policy must not
+      // carve models out of the DURABLE catalog, or they would stay
+      // unroutable until the next login even after the policy broadens.
+      // Policy is applied at exposure time instead (getConfig filtering,
+      // routing checks, per-model factory enforcement).
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        createMockProviderService(deps) as ProviderService,
+        createMockWindowService(deps) as WindowService,
+        {
+          isEnforced: () => true,
+          getForcedBaseUrl: () => undefined,
+          isModelAllowed: (_provider: string, modelId: string) =>
+            modelId === "anthropic/allowed-model",
+        } as unknown as PolicyService
+      );
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return jsonResponse({ client_id: "client_new", client_secret: "secret_new" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_policy",
+            refresh_token: "rt_policy",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return jsonResponse({ data: [{ id: "allowed-model" }, { id: "blocked-model" }] });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_policy");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      await waitUntil(() => {
+        const section = deps.providersConfig.coder as Record<string, unknown> | undefined;
+        return Array.isArray(section?.discoveredModels) && section.discoveredModels.length > 0;
+      });
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // Both models persisted — including the one the current policy blocks.
+      expect(coderSection.discoveredModels).toEqual([
+        "anthropic/allowed-model",
+        "anthropic/blocked-model",
+      ]);
+      expect(coderSection.models).toEqual(["anthropic/allowed-model", "anthropic/blocked-model"]);
+    });
+
     it("preserves user-edited settings on discovered models across a re-login", async () => {
       // A discovered model the user edited in Models settings (context window
       // override / model mapping) becomes an object entry while its ID stays
