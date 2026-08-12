@@ -50,6 +50,13 @@ const TOKEN_REQUEST_TIMEOUT_MS = 30_000;
 // stalled origin cannot block discovery (requests also run concurrently).
 const CATALOG_FETCH_TIMEOUT_MS = 10_000;
 
+// The RFC 7592 stored-client redirect update is deliberately NOT aborted by
+// flow cancellation: aborting a fetch does not retract a request the
+// deployment may still commit, and the client lease must be held until the
+// mutation settles (see the lease release wiring in startDesktopFlow). A
+// timeout-only bound keeps a stalled endpoint from pinning that settlement.
+const CLIENT_UPDATE_TIMEOUT_MS = 10_000;
+
 // Transient per-origin catalog failures (network errors, timeouts, 5xx) are
 // retried before discovery gives up: the persisted catalog is authoritative
 // for routing, so it must not be built from a request that merely flaked.
@@ -377,10 +384,8 @@ export class CoderOauthService {
     // fresh client so the flows' redirect URIs cannot clobber each other. The
     // lease is a filesystem lock shared by every Mux process using this
     // providers file (desktop + CLI), because a concurrent flow in ANOTHER
-    // process would clobber the redirect just the same. It is released when
-    // this flow finishes (the flow manager resolves resultDeferred on every
-    // completion/cancel/timeout path); a crashed holder's lease goes stale
-    // after the flow timeout.
+    // process would clobber the redirect just the same. A crashed holder's
+    // lease goes stale after the flow timeout.
     let releaseClientLease: (() => void) | null = null;
     try {
       releaseClientLease = this.config.tryAcquireCoderOauthClientLease(DEFAULT_DESKTOP_TIMEOUT_MS);
@@ -389,23 +394,52 @@ export class CoderOauthService {
       log.debug(`[Coder OAuth] Client lease unavailable: ${getErrorMessage(error)}`);
     }
     const ownsStoredClient = releaseClientLease !== null;
-    if (releaseClientLease !== null) {
-      const release = releaseClientLease;
-      void resultDeferred.promise.then(() => release());
-    }
 
-    const clientResult = await this.ensureClient(
+    // Set when the stored-client redirect PUT ended without a definitive
+    // server answer (timeout/network error before a response): the mutation
+    // may STILL land later, so the lease must not be released — it goes stale
+    // after the flow timeout, and until then other flows register fresh
+    // clients instead of racing the orphaned update for the redirect slot.
+    let storedClientUpdateUncertain = false;
+    const ensureClientPromise = this.ensureClient(
       deploymentUrl,
       endpoints,
       loopback.redirectUri,
       flowAbort.signal,
-      ownsStoredClient
+      ownsStoredClient,
+      () => {
+        storedClientUpdateUncertain = true;
+      }
     );
+    if (releaseClientLease !== null) {
+      const release = releaseClientLease;
+      // Release only after BOTH the flow finished (the flow manager resolves
+      // resultDeferred on every completion/cancel/timeout path) AND the
+      // stored-client mutation settled: Cancel can win while the RFC 7592 PUT
+      // is in flight, and releasing on flow completion alone would let a
+      // replacement flow write redirect B before the earlier PUT lands with
+      // redirect A, invalidating the replacement's authorization URL.
+      void Promise.allSettled([resultDeferred.promise, ensureClientPromise]).then(() => {
+        if (storedClientUpdateUncertain) {
+          return; // Lease expires via its stale TTL instead.
+        }
+        release();
+      });
+    }
+
+    const clientResult = await ensureClientPromise;
     if (!clientResult.success) {
       // No-op if the flow already ended (its cancel/timeout aborted the RPC);
       // otherwise this closes the loopback listener too.
       await this.desktopFlows.finish(flowId, Err(clientResult.error));
       return Err(clientResult.error);
+    }
+    if (flowAbort.signal.aborted) {
+      // Cancel/flow-timeout won while the stored-client update settled (the
+      // PUT is deliberately not flow-aborted, see CLIENT_UPDATE_TIMEOUT_MS).
+      // The flow is already finished — don't hand out an authorize URL for it.
+      const finished = await resultDeferred.promise;
+      return Err(finished.success ? "Login was cancelled" : finished.error);
     }
     const client = clientResult.data;
 
@@ -670,10 +704,15 @@ export class CoderOauthService {
     redirectUri: string,
     // Aborted when the owning flow finishes (cancel/timeout/shutdown), so a
     // stalled registration endpoint cannot pin the RPC past the flow's life.
+    // Applies to fresh registrations only — the stored-client redirect update
+    // is timeout-bounded instead (see updateClientRedirectUri).
     signal: AbortSignal,
-    // Only the flow holding the stored-client reservation may reuse (and
-    // redirect-update) it; see storedClientOwnerFlowId.
-    allowStoredClient: boolean
+    // Only the flow holding the stored-client lease may reuse (and
+    // redirect-update) it; see the lease wiring in startDesktopFlow.
+    allowStoredClient: boolean,
+    // Invoked when the stored-client update ended without a definitive server
+    // answer — the caller must then keep the client lease reserved.
+    onStoredClientUpdateUncertain: () => void
   ): Promise<Result<CoderOauthClient, string>> {
     const stored = this.readStoredAuth();
     // Only reuse a client registered on the SAME deployment; a client from a
@@ -685,7 +724,11 @@ export class CoderOauthService {
       stored.registrationAccessToken &&
       stored.registrationClientUri
     ) {
-      const updated = await this.updateClientRedirectUri(stored, redirectUri, signal);
+      const updated = await this.updateClientRedirectUri(
+        stored,
+        redirectUri,
+        onStoredClientUpdateUncertain
+      );
       if (updated.success) {
         return updated;
       }
@@ -747,7 +790,8 @@ export class CoderOauthService {
   private async updateClientRedirectUri(
     stored: CoderOauthAuth,
     redirectUri: string,
-    signal: AbortSignal
+    // Reports an outcome the server may still commit (no response received).
+    onUncertainOutcome: () => void
   ): Promise<Result<CoderOauthClient, string>> {
     if (!stored.registrationAccessToken || !stored.registrationClientUri) {
       return Err("No registration access token stored");
@@ -755,6 +799,9 @@ export class CoderOauthService {
 
     try {
       // RFC 7592 requires the full metadata set on update, not a partial patch.
+      // Timeout-only bound, NOT the flow abort signal: aborting the fetch on
+      // Cancel would not retract a mutation the deployment may still commit,
+      // and the client lease is only released once this request settles.
       const response = await fetch(stored.registrationClientUri, {
         method: "PUT",
         headers: {
@@ -766,7 +813,7 @@ export class CoderOauthService {
           ...buildCoderClientMetadata(redirectUri),
           client_id: stored.clientId,
         }),
-        signal,
+        signal: AbortSignal.timeout(CLIENT_UPDATE_TIMEOUT_MS),
       });
 
       if (!response.ok) {
@@ -783,6 +830,9 @@ export class CoderOauthService {
         registrationClientUri: stored.registrationClientUri,
       });
     } catch (error) {
+      // Thrown before any response arrived (timeout / connection error): the
+      // deployment may have received the request and could still commit it.
+      onUncertainOutcome();
       return Err(`Coder OAuth client update failed: ${getErrorMessage(error)}`);
     }
   }

@@ -2069,6 +2069,91 @@ describe("CoderOauthService", () => {
       expect(deps.coderClientLeaseHeld).toBe(true);
     });
 
+    it("retains the stored-client lease until a cancelled flow's redirect update settles", async () => {
+      // Aborting a fetch does not retract a PUT the deployment may still
+      // commit: if Cancel released the lease while the redirect update was in
+      // flight, a replacement flow could acquire it and write redirect B
+      // before the cancelled flow's delayed update lands with redirect A —
+      // invalidating the replacement's authorization URL. The lease must be
+      // held until the update settles.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      let releasePut!: (response: Response) => void;
+      const putGate = new Promise<Response>((resolve) => (releasePut = resolve));
+      let putStarted = false;
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          putStarted = true;
+          return putGate;
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const flowId = "flow_lease_settle_test";
+      const startPromise = service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL, flowId });
+      await waitUntil(() => putStarted);
+
+      // Cancel completes while the PUT is still in flight...
+      await service.cancelDesktopFlow(flowId);
+      // ...and the lease is NOT released yet: the mutation may still land.
+      expect(deps.coderClientLeaseHeld).toBe(true);
+
+      // Once the update settles with a definitive answer, the lease releases.
+      releasePut(jsonResponse({ client_id: "client_test" }));
+      const start = await startPromise;
+      expect(start.success).toBe(false);
+      await waitUntil(() => !deps.coderClientLeaseHeld);
+    });
+
+    it("keeps the stored-client lease reserved when the redirect update outcome is uncertain", async () => {
+      // A PUT that fails without a server response (timeout / connection
+      // error) may STILL be committed by the deployment later. Releasing the
+      // lease on flow completion would let a replacement flow race that
+      // orphaned mutation for the redirect slot — instead the lease is left
+      // to expire via its stale TTL, and other flows register fresh clients.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return Promise.resolve(jsonResponse({ version: "v2.99.0" }));
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return Promise.resolve(discoveryResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return Promise.reject(new TypeError("fetch failed"));
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/register`) {
+          return Promise.resolve(
+            jsonResponse({ client_id: "client_fresh", client_secret: "secret_fresh" })
+          );
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      // The flow itself degrades to a fresh client and proceeds.
+      const start = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(start.success).toBe(true);
+      if (!start.success) return;
+      expect(new URL(start.data.authorizeUrl).searchParams.get("client_id")).toBe("client_fresh");
+
+      await service.cancelDesktopFlow(start.data.flowId);
+      // Flow teardown must NOT release the lease after an uncertain outcome.
+      expect(deps.coderClientLeaseHeld).toBe(true);
+    });
+
     it("registers a fresh client for a second overlapping flow instead of re-updating the stored one", async () => {
       // The stored dynamic client has a single redirect_uris slot: if two
       // overlapping flows both PUT-updated it, the later update would clobber

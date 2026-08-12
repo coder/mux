@@ -2652,10 +2652,19 @@ export class Config {
    * so staleness is judged against `ttlMs` (the flow timeout). A crashed
    * holder's lease is broken after that, and in the interim other flows
    * degrade gracefully to fresh client registrations.
+   *
+   * Ownership safety: a lease that crosses the staleness boundary can be
+   * broken and reacquired by another process at any instant, so neither
+   * release nor stale-breaking may check-then-recursively-remove (the check
+   * and the rm would race the handover). Instead each acquisition writes a
+   * generation-unique marker FILE inside the lease directory, and every
+   * destructive step is conditional at the filesystem layer: unlink can only
+   * remove the specific generation's marker (a successor's marker has a
+   * different name), and the non-recursive rmdir only removes an EMPTY
+   * directory — never a directory a successor generation re-marked.
    */
   tryAcquireCoderOauthClientLease(ttlMs: number): (() => void) | null {
     const leasePath = `${this.providersFile}.coder-client.lock`;
-    const ownerFile = path.join(leasePath, "owner");
 
     if (!fs.existsSync(this.rootDir)) {
       ensurePrivateDirSync(this.rootDir);
@@ -2664,48 +2673,113 @@ export class Config {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         fs.mkdirSync(leasePath);
-        // Ownership token: a lease that crosses the staleness boundary can be
-        // broken and reacquired by another process before this holder's
-        // release runs. A blind rmdir would then delete the NEW owner's lease
-        // and let a third flow acquire it concurrently — release only when
-        // the lease is still this generation's.
-        const token = crypto.randomBytes(16).toString("hex");
-        try {
-          fs.writeFileSync(ownerFile, token);
-        } catch (error) {
-          log.debug("Failed to write Coder OAuth client lease owner token:", error);
-        }
-        return () => {
-          try {
-            if (fs.readFileSync(ownerFile, "utf8") !== token) {
-              return; // Stale-broken and reacquired by another flow; keep it.
-            }
-            fs.rmSync(leasePath, { recursive: true, force: true });
-          } catch (error) {
-            log.debug("Failed to release Coder OAuth client lease:", error);
-          }
-        };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
           throw error;
         }
-        let stale = false;
-        try {
-          stale = Date.now() - fs.statSync(leasePath).mtimeMs > ttlMs;
-        } catch {
-          continue; // Released between mkdir and stat; retry once.
+        if (!this.tryBreakStaleCoderClientLease(leasePath, ttlMs)) {
+          return null; // Held by a live flow.
         }
-        if (!stale) {
-          return null;
-        }
-        try {
-          fs.rmSync(leasePath, { recursive: true, force: true });
-        } catch {
-          // Another process broke it first; retry once.
-        }
+        continue; // Stale lease broken (or it vanished); retry the mkdir once.
       }
+
+      const ownerFile = path.join(leasePath, `owner-${crypto.randomBytes(16).toString("hex")}`);
+      try {
+        fs.writeFileSync(ownerFile, "");
+      } catch (error) {
+        // Without a generation marker this lease could never be released
+        // safely (and looks like a crashed acquisition to breakers); abandon
+        // it rather than hold an unreleasable lock.
+        log.debug("Failed to write Coder OAuth client lease marker:", error);
+        try {
+          fs.rmdirSync(leasePath);
+        } catch {
+          // Best effort; a leftover empty directory is stale-broken later.
+        }
+        return null;
+      }
+
+      return () => {
+        try {
+          fs.unlinkSync(ownerFile);
+        } catch {
+          return; // Stale-broken and reacquired by another flow; keep it.
+        }
+        try {
+          fs.rmdirSync(leasePath);
+        } catch (error) {
+          // A release racing the staleness boundary can lose the directory to
+          // a concurrent breaker after the unlink above: ENOENT means the
+          // breaker finished the removal, ENOTEMPTY means a successor already
+          // acquired a new generation — both correctly leave it untouched.
+          log.debug("Failed to release Coder OAuth client lease:", error);
+        }
+      };
     }
     return null;
+  }
+
+  /**
+   * Break a Coder OAuth client lease left behind by a crashed holder.
+   * Returns true when the caller should retry acquisition (the lease was
+   * stale or vanished mid-check), false when it is held by a live flow.
+   */
+  private tryBreakStaleCoderClientLease(leasePath: string, ttlMs: number): boolean {
+    let entries: string[];
+    try {
+      entries = fs.readdirSync(leasePath);
+    } catch {
+      return true; // Released between the failed mkdir and now; retry.
+    }
+    const isStale = (mtimeMs: number) => Date.now() - mtimeMs > ttlMs;
+
+    if (entries.length === 0) {
+      // A holder crashed between mkdir and marker write (or a breaker crashed
+      // mid-break). Only the directory's own mtime is available to judge
+      // staleness; the non-recursive rmdir keeps this safe regardless — it
+      // cannot destroy a marker a concurrent acquisition writes.
+      try {
+        if (!isStale(fs.statSync(leasePath).mtimeMs)) {
+          return false;
+        }
+      } catch {
+        return true;
+      }
+      try {
+        fs.rmdirSync(leasePath);
+      } catch {
+        // ENOTEMPTY (a generation appeared) or ENOENT (another breaker won);
+        // the retried mkdir/staleness check sorts either out.
+      }
+      return true;
+    }
+
+    // Staleness binds to the OBSERVED generation's marker: marker names are
+    // generation-unique, so if the lease changes hands after this check the
+    // unlink below ENOENTs and the rmdir ENOTEMPTYs — a live successor lease
+    // is never destroyed (the reason breaking must not use recursive rm).
+    for (const entry of entries) {
+      const entryPath = path.join(leasePath, entry);
+      try {
+        if (!isStale(fs.statSync(entryPath).mtimeMs)) {
+          return false;
+        }
+      } catch {
+        continue; // Vanished mid-check; the conditional cleanup below is safe.
+      }
+      try {
+        fs.unlinkSync(entryPath);
+      } catch {
+        // Already removed by a concurrent breaker or by its owner's release.
+      }
+    }
+    try {
+      fs.rmdirSync(leasePath);
+    } catch {
+      // ENOTEMPTY (a generation appeared) or ENOENT (another breaker won);
+      // the retried mkdir/staleness check sorts either out.
+    }
+    return true;
   }
 
   /**

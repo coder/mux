@@ -2538,16 +2538,38 @@ describe("Config", () => {
       expect(fs.existsSync(leasePath)).toBe(false);
     });
 
+    it("judges staleness by the holder's generation marker, not the lease directory", () => {
+      const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
+
+      const release = config.tryAcquireCoderOauthClientLease(TTL_MS);
+      expect(release).not.toBeNull();
+
+      // A breaker that judged staleness by the directory alone could destroy
+      // a live successor generation created between its check and its remove
+      // (check/remove TOCTOU). Binding staleness to the marker file makes the
+      // destructive steps conditional: a fresh marker keeps the lease held
+      // even when the directory timestamp looks stale.
+      const staleTime = new Date(Date.now() - TTL_MS - 1_000);
+      fs.utimesSync(leasePath, staleTime, staleTime);
+
+      const otherProcess = new Config(tempDir);
+      expect(otherProcess.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
+      release!();
+    });
+
     it("does not release a lease that was stale-broken and reacquired by another process", () => {
       const leasePath = path.join(tempDir, "providers.jsonc.coder-client.lock");
 
       const originalRelease = config.tryAcquireCoderOauthClientLease(TTL_MS);
       expect(originalRelease).not.toBeNull();
 
-      // The lease crosses the staleness boundary; another process breaks it
-      // and acquires its own generation of the same path.
+      // The lease crosses the staleness boundary (staleness binds to the
+      // holder's generation marker); another process breaks it and acquires
+      // its own generation of the same path.
       const staleTime = new Date(Date.now() - TTL_MS - 1_000);
-      fs.utimesSync(leasePath, staleTime, staleTime);
+      for (const entry of fs.readdirSync(leasePath)) {
+        fs.utimesSync(path.join(leasePath, entry), staleTime, staleTime);
+      }
       const otherProcess = new Config(tempDir);
       const otherRelease = otherProcess.tryAcquireCoderOauthClientLease(TTL_MS);
       expect(otherRelease).not.toBeNull();
