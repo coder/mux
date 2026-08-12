@@ -1768,6 +1768,113 @@ describe("CoderOauthService", () => {
       expect((coderSection.coderOauth as CoderOauthAuth).refresh).toBe("rt_rollback_fail");
     });
 
+    it("disconnect cancels an in-flight re-login so it cannot commit afterwards", async () => {
+      // Regression: disconnect must be authoritative over outstanding login
+      // flows. A re-login that already exchanged its code (its persist is
+      // waiting on the providers-file lock) must not commit a replacement
+      // login after the user disconnected — that would silently reconnect
+      // the account. disconnect() cancels active flows first, so the raced
+      // flow's in-lock liveness check rejects its persist.
+      const priorAuth = validAuth({
+        sessionId: "session_prior",
+        access: "at_prior",
+        refresh: "rt_prior",
+      });
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: priorAuth,
+        },
+      };
+
+      // Gate only the FIRST section mutation (the re-login's persist); the
+      // disconnect's clear must pass straight through while it is blocked.
+      let releasePersist!: () => void;
+      const persistGate = new Promise<void>((resolve) => (releasePersist = resolve));
+      let persistStarted!: () => void;
+      const persistStartedPromise = new Promise<void>((resolve) => (persistStarted = resolve));
+      let sectionCalls = 0;
+
+      const gatedProviderService = {
+        ...createMockProviderService(deps),
+        updateProviderSection: async (
+          provider: string,
+          update: (
+            section: Record<string, unknown> | undefined
+          ) => { value: Record<string, unknown> } | null
+        ) => {
+          if (++sectionCalls === 1) {
+            persistStarted();
+            await persistGate;
+          }
+          return mockUpdateProviderSection(deps, provider, update);
+        },
+      };
+      service = new CoderOauthService(
+        createMockConfig(deps) as Config,
+        gatedProviderService as ProviderService,
+        createMockWindowService(deps) as WindowService
+      );
+
+      const revokedTokens: string[] = [];
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_relogin",
+            refresh_token: "rt_relogin",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          revokedTokens.push(new URLSearchParams(fetchBodyText(init)).get("token") ?? "");
+          return new Response(null, { status: 200 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_disconnect_race");
+      callbackUrl.searchParams.set("state", flowId);
+      const callbackPromise = originalFetch(callbackUrl).catch(() => null);
+
+      // The re-login's persist is now blocked mid-commit; disconnect.
+      await persistStartedPromise;
+      const disconnectResult = await service.disconnect();
+      expect(disconnectResult.success).toBe(true);
+      releasePersist();
+      await callbackPromise;
+
+      // The raced re-login's tokens are revoked (it must not stay alive)...
+      await waitUntil(() => revokedTokens.includes("rt_relogin"));
+      // ...alongside the disconnected prior credential.
+      expect(revokedTokens).toContain("rt_prior");
+      // And the account STAYS disconnected: no silent reconnect.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.coderOauth).toBeUndefined();
+      // The cancelled flow resolves as an error for any waiter.
+      const waitResult = await service.waitForDesktopFlow(flowId, { timeoutMs: 1000 });
+      expect(waitResult.success).toBe(false);
+    });
+
     it("keeps the original login when two overlapping logins are both cancelled", async () => {
       // Regression: rollback snapshots must not compose across overlapping
       // flows. Without commit serialization, flow B snapshots flow A's

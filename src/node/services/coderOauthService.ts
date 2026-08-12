@@ -243,6 +243,13 @@ export class CoderOauthService {
   }
 
   async disconnect(): Promise<Result<void, string>> {
+    // Cancel in-flight login flows FIRST: disconnect is authoritative. An
+    // outstanding flow could otherwise exchange its code and commit a
+    // replacement login right after the clear below — silently reconnecting
+    // the account the user just disconnected. Cancellation removes each flow
+    // from the manager before resolving, so the commit path's liveness
+    // checks (`desktopFlows.has`) reject those flows' persists/commits.
+    await this.desktopFlows.cancelAll();
     this.cachedAuth = null;
     const auth = this.readStoredAuth();
 

@@ -199,6 +199,37 @@ describe("OAuthFlowManager", () => {
   });
 
   // -----------------------------------------------------------------------
+  // cancelAll
+  // -----------------------------------------------------------------------
+
+  describe("cancelAll", () => {
+    it("cancels every active flow and removes them before resolving", async () => {
+      const entry1 = createFlowEntry();
+      const entry2 = createFlowEntry();
+      manager.register("f1", entry1);
+      manager.register("f2", entry2);
+
+      await manager.cancelAll();
+
+      // Removed synchronously with the cancel: commit-path liveness checks
+      // (`has`) must reject cancelled flows once cancelAll resolves.
+      expect(manager.has("f1")).toBe(false);
+      expect(manager.has("f2")).toBe(false);
+      for (const entry of [entry1, entry2]) {
+        const result = await entry.resultDeferred.promise;
+        expect(result.success).toBe(false);
+        if (!result.success) {
+          expect(result.error).toContain("cancelled");
+        }
+      }
+    });
+
+    it("is a no-op when there are no flows", async () => {
+      await manager.cancelAll();
+    });
+  });
+
+  // -----------------------------------------------------------------------
   // finish
   // -----------------------------------------------------------------------
 

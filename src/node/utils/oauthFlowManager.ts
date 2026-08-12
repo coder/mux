@@ -202,6 +202,18 @@ export class OAuthFlowManager {
   }
 
   /**
+   * Cancel every active flow. Used when an operation must be authoritative
+   * over in-flight logins (e.g. disconnect: an outstanding flow could
+   * otherwise commit a replacement login right after credentials are
+   * cleared). Each flow is removed from the manager before this resolves,
+   * so commit-path liveness checks (`has`) fail for the cancelled flows.
+   */
+  async cancelAll(): Promise<void> {
+    const flowIds = [...this.flows.keys()];
+    await Promise.all(flowIds.map((id) => this.cancel(id)));
+  }
+
+  /**
    * Shut down all active flows — resolves each with an error.
    *
    * Mirrors the `dispose` pattern where services iterate all flows
