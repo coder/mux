@@ -27,7 +27,7 @@ import type { TerminalSessionCreateOptions } from "@/browser/utils/terminal";
 import { useOpenTerminal } from "@/browser/hooks/useOpenTerminal";
 import { useOpenInEditor } from "@/browser/hooks/useOpenInEditor";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
-import { usePopoverError } from "@/browser/hooks/usePopoverError";
+import { resolvePopoverErrorAnchor, usePopoverError } from "@/browser/hooks/usePopoverError";
 import { isDesktopMode, DESKTOP_TITLEBAR_HEIGHT_CLASS } from "@/browser/hooks/useDesktopTitlebar";
 import { useExperimentValue } from "@/browser/hooks/useExperiments";
 import { DebugLlmRequestModal } from "../DebugLlmRequestModal/DebugLlmRequestModal";
@@ -181,17 +181,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
   const isDevcontainerWorkspace = isDevcontainerRuntime(runtimeConfig);
   const isRuntimeRunning = isDevcontainerWorkspace && runtimeStatus === "running";
 
-  const getMoreMenuAnchor = useCallback(() => {
-    const rect = moreActionsButtonRef.current?.getBoundingClientRect();
-    if (!rect) {
-      return undefined;
-    }
-
-    return {
-      top: rect.top + window.scrollY,
-      left: rect.right + 10,
-    };
-  }, []);
+  const getMoreMenuAnchor = useCallback(
+    () => resolvePopoverErrorAnchor(moreActionsButtonRef.current),
+    []
+  );
 
   const handleOpenTouchFullscreenReview = useCallback(() => {
     window.dispatchEvent(
@@ -239,11 +232,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
           return;
         }
         if (!res.success) {
-          const rect = anchorEl?.getBoundingClientRect();
           archiveError.showError(
             workspaceId,
             res.error ?? "Failed to archive chat",
-            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+            resolvePopoverErrorAnchor(anchorEl)
           );
         }
       } finally {
@@ -270,11 +262,10 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
         // Run preflight to check for untracked files that can't be preserved.
         const preflight = await preflightArchiveWorkspace(workspaceId);
         if (!preflight.success) {
-          const rect = anchorEl?.getBoundingClientRect();
           archiveError.showError(
             workspaceId,
             preflight.error ?? "Failed to check archive readiness",
-            rect ? { top: rect.top + window.scrollY, left: rect.right + 10 } : undefined
+            resolvePopoverErrorAnchor(anchorEl)
           );
           return;
         }
@@ -303,17 +294,11 @@ export const WorkspaceMenuBar: React.FC<WorkspaceMenuBarProps> = ({
 
   const handleForkChat = useCallback(
     async (anchorEl: HTMLElement) => {
+      const anchor = resolvePopoverErrorAnchor(anchorEl);
       if (!api) {
-        const rect = anchorEl.getBoundingClientRect();
-        forkError.showError(workspaceId, "Not connected to server", {
-          top: rect.top + window.scrollY,
-          left: rect.right + 10,
-        });
+        forkError.showError(workspaceId, "Not connected to server", anchor);
         return;
       }
-
-      const rect = anchorEl.getBoundingClientRect();
-      const anchor = { top: rect.top + window.scrollY, left: rect.right + 10 };
 
       try {
         const result = await forkWorkspace({
