@@ -705,6 +705,94 @@ describe("ProviderService model normalization", () => {
     });
   });
 
+  it("preserves policy-hidden Coder models during model edits", async () => {
+    await withTempPolicyProviderService(
+      {
+        policy_format_version: "0.1",
+        provider_access: [
+          {
+            id: "coder",
+            model_access: ["anthropic/visible-model", "anthropic/other-visible"],
+          },
+        ],
+      },
+      async (config, service) => {
+        // The persisted list is policy-unfiltered; getConfig() exposes only
+        // the allowed subset, so an edit round-trip can never include the
+        // hidden entry. setModels must carry it forward or the edit would
+        // carve it out of durable state until the next login even after the
+        // policy broadens.
+        config.saveProvidersConfig({
+          coder: {
+            deploymentUrl: "https://coder.example.com",
+            models: ["anthropic/visible-model", "anthropic/other-visible", "anthropic/hidden"],
+            discoveredModels: [
+              "anthropic/visible-model",
+              "anthropic/other-visible",
+              "anthropic/hidden",
+            ],
+          },
+        });
+
+        // The user (seeing only the two visible entries) removes one.
+        const result = await service.setModels("coder", ["anthropic/visible-model"]);
+        expect(result.success).toBe(true);
+
+        const stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+        // The hidden entry survives; only the visible removal took effect.
+        expect(stored.models).toEqual(["anthropic/visible-model", "anthropic/hidden"]);
+        expect(stored.removedModels).toEqual(["anthropic/other-visible"]);
+      }
+    );
+  });
+
+  it("records removals of discovered Coder models and clears them on re-add", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      config.saveProvidersConfig({
+        coder: {
+          deploymentUrl: "https://coder.example.com",
+          models: ["anthropic/model-a", "anthropic/model-b"],
+          discoveredModels: ["anthropic/model-a", "anthropic/model-b"],
+        },
+      });
+
+      // Removing a discovered model records the exclusion so catalog
+      // refreshes and re-logins cannot resurrect it.
+      const removal = await service.setModels("coder", ["anthropic/model-a"]);
+      expect(removal.success).toBe(true);
+      let stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+      expect(stored.models).toEqual(["anthropic/model-a"]);
+      expect(stored.removedModels).toEqual(["anthropic/model-b"]);
+
+      // Re-adding the model clears its exclusion.
+      const readd = await service.setModels("coder", ["anthropic/model-a", "anthropic/model-b"]);
+      expect(readd.success).toBe(true);
+      stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+      expect(stored.models).toEqual(["anthropic/model-a", "anthropic/model-b"]);
+      expect(stored.removedModels).toBeUndefined();
+    });
+  });
+
+  it("keeps prior Coder removals across edits made while the catalog is unknown", async () => {
+    await withTempConfigAsync(async (config, service) => {
+      // Post-login state: discoveredModels deleted (catalog unknown), but a
+      // removal recorded earlier must survive an unrelated edit — otherwise
+      // the pending discovery would resurrect the removed model.
+      config.saveProvidersConfig({
+        coder: {
+          deploymentUrl: "https://coder.example.com",
+          models: ["anthropic/model-a"],
+          removedModels: ["anthropic/model-b"],
+        },
+      });
+
+      const result = await service.setModels("coder", ["anthropic/model-a", "anthropic/manual"]);
+      expect(result.success).toBe(true);
+      const stored = config.loadProvidersConfig()?.coder as Record<string, unknown>;
+      expect(stored.removedModels).toEqual(["anthropic/model-b"]);
+    });
+  });
+
   it("normalizes malformed model entries before persisting", async () => {
     await withTempConfigAsync(async (config, service) => {
       const result = await service.setModels("openai", [

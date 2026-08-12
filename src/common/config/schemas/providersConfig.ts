@@ -86,6 +86,12 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    * user-managed entries survive re-logins and catalog refreshes.
    */
   discoveredModels: z.array(z.string()).optional(),
+  /**
+   * Discovered model IDs the user removed from the model list. User-managed
+   * exclusions: catalog refreshes and re-logins must not resurrect them
+   * (maintained by ProviderService.setModels, honored by discovery merges).
+   */
+  removedModels: z.array(z.string()).optional(),
 });
 
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;

@@ -935,7 +935,14 @@ export class ProviderService {
           providersConfig[provider] = {};
         }
 
-        providersConfig[provider].models = normalizedModels;
+        if (provider === "coder") {
+          this.applyCoderModelEdit(
+            providersConfig.coder as Record<string, unknown>,
+            normalizedModels
+          );
+        } else {
+          providersConfig[provider].models = normalizedModels;
+        }
         this.config.saveProvidersConfig(providersConfig);
       });
       this.notifyFromMutation();
@@ -944,6 +951,61 @@ export class ProviderService {
     } catch (error) {
       const message = getErrorMessage(error);
       return { success: false, error: `Failed to set models: ${message}` };
+    }
+  }
+
+  /**
+   * Apply a Models-settings edit to the coder section. Coder needs more than
+   * a plain overwrite because its persisted state is deliberately richer than
+   * what the editor sees:
+   *
+   * - Policy-hidden entries are preserved: getConfig() exposes only the
+   *   current policy's allowed subset, so the caller's list cannot contain
+   *   entries the policy hides. Overwriting would carve those out of the
+   *   policy-unfiltered persisted list until the next login even after the
+   *   policy broadens (policy is applied at exposure/routing, not storage).
+   * - Removals of discovered models are recorded in `removedModels` so
+   *   catalog refreshes and re-logins do not resurrect them. The set is
+   *   recomputed from the final list each edit, so re-adding a model clears
+   *   its exclusion; prior exclusions survive edits made while the catalog
+   *   is unknown (discoveredModels absent).
+   *
+   * Runs under the providers-file lock (called from setModels).
+   */
+  private applyCoderModelEdit(
+    section: Record<string, unknown>,
+    normalizedModels: ProviderModelEntry[]
+  ): void {
+    const allowedModels = this.policyService?.isEnforced()
+      ? (this.policyService.getEffectivePolicy()?.providerAccess?.find((p) => p.id === "coder")
+          ?.allowedModels ?? null)
+      : null;
+
+    const visibleIds = new Set(normalizedModels.map((entry) => getProviderModelEntryId(entry)));
+    const hiddenPreserved = Array.isArray(allowedModels)
+      ? normalizeProviderModelEntries(section.models).filter((entry) => {
+          const id = getProviderModelEntryId(entry);
+          return !allowedModels.includes(id) && !visibleIds.has(id);
+        })
+      : [];
+    const finalModels = [...normalizedModels, ...hiddenPreserved];
+    const finalIds = new Set(finalModels.map((entry) => getProviderModelEntryId(entry)));
+
+    const discovered = Array.isArray(section.discoveredModels)
+      ? section.discoveredModels.filter((id): id is string => typeof id === "string")
+      : [];
+    const priorRemoved = Array.isArray(section.removedModels)
+      ? section.removedModels.filter((id): id is string => typeof id === "string")
+      : [];
+    const removed = [...new Set([...priorRemoved, ...discovered])].filter(
+      (id) => !finalIds.has(id)
+    );
+
+    section.models = finalModels;
+    if (removed.length > 0) {
+      section.removedModels = removed;
+    } else {
+      delete section.removedModels;
     }
   }
 

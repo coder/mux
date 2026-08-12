@@ -2229,6 +2229,83 @@ describe("CoderOauthService", () => {
       expect(coderSection.models).toEqual(["anthropic/allowed-model", "anthropic/blocked-model"]);
     });
 
+    it("does not resurrect user-removed discovered models on re-login", async () => {
+      // The user removed a discovered model in Models settings (recorded in
+      // removedModels by setModels). A re-login rebuilds the catalog from the
+      // deployment — which still serves that model — but the merge must honor
+      // the recorded exclusion instead of resurrecting the deleted entry.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth({ sessionId: "session_prior" }),
+          models: ["anthropic/kept-model"],
+          discoveredModels: ["anthropic/kept-model", "anthropic/removed-model"],
+          removedModels: ["anthropic/removed-model"],
+        },
+      };
+
+      mockFetch(async (input, init) => {
+        const url = fetchUrl(input);
+        if (url.startsWith("http://127.0.0.1")) {
+          return originalFetch(input, init);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/buildinfo`) {
+          return jsonResponse({ version: "v2.99.0" });
+        }
+        if (url === `${DEPLOYMENT_URL}/.well-known/oauth-authorization-server`) {
+          return discoveryResponse();
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/clients/client_test` && init?.method === "PUT") {
+          return jsonResponse({ client_id: "client_test" });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/tokens`) {
+          return jsonResponse({
+            access_token: "at_removed",
+            refresh_token: "rt_removed",
+            expires_in: 86400,
+            token_type: "Bearer",
+          });
+        }
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return jsonResponse({ data: [{ id: "kept-model" }, { id: "removed-model" }] });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return new Response("aibridge not entitled", { status: 404 });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const startResult = await service.startDesktopFlow({ deploymentUrl: DEPLOYMENT_URL });
+      expect(startResult.success).toBe(true);
+      if (!startResult.success) return;
+      const { flowId, authorizeUrl } = startResult.data;
+
+      const waitPromise = service.waitForDesktopFlow(flowId, { timeoutMs: 5000 });
+      const callbackUrl = new URL(new URL(authorizeUrl).searchParams.get("redirect_uri")!);
+      callbackUrl.searchParams.set("code", "auth_code_removed");
+      callbackUrl.searchParams.set("state", flowId);
+      await originalFetch(callbackUrl);
+      const waitResult = await waitPromise;
+      expect(waitResult.success).toBe(true);
+
+      await waitUntil(() => {
+        const section = deps.providersConfig.coder as Record<string, unknown> | undefined;
+        return Array.isArray(section?.discoveredModels) && section.discoveredModels.length > 0;
+      });
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // The removed model stays excluded from the visible list even though
+      // the fresh catalog still contains it; the exclusion itself persists.
+      expect(coderSection.models).toEqual(["anthropic/kept-model"]);
+      expect(coderSection.discoveredModels).toEqual([
+        "anthropic/kept-model",
+        "anthropic/removed-model",
+      ]);
+      expect(coderSection.removedModels).toEqual(["anthropic/removed-model"]);
+    });
+
     it("preserves user-edited settings on discovered models across a re-login", async () => {
       // A discovered model the user edited in Models settings (context window
       // override / model mapping) becomes an object entry while its ID stays

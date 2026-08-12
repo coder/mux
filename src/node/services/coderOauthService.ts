@@ -1419,7 +1419,18 @@ export class CoderOauthService {
       }
       const manual = manualModelEntries(section);
       const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
-      const merged = [...manual, ...modelIds.filter((id) => !manualIds.has(id))];
+      // User-removed discovered models (recorded by setModels) stay excluded:
+      // a catalog refresh or re-login must not resurrect entries the user
+      // deleted from the model list.
+      const removed = new Set(
+        Array.isArray(section?.removedModels)
+          ? section.removedModels.filter((id): id is string => typeof id === "string")
+          : []
+      );
+      const merged = [
+        ...manual,
+        ...modelIds.filter((id) => !manualIds.has(id) && !removed.has(id)),
+      ];
       return {
         value: { ...(section ?? {}), models: merged, discoveredModels: modelIds },
       };
