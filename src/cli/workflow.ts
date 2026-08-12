@@ -26,6 +26,7 @@ import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { AgentSession } from "@/node/services/agentSession";
 import { CodexOauthService } from "@/node/services/codexOauthService";
 import { CoderOauthService } from "@/node/services/coderOauthService";
+import { PolicyService } from "@/node/services/policyService";
 import { ProviderService } from "@/node/services/providerService";
 import { createCoreServices } from "@/node/services/coreServices";
 import { log, type LogLevel } from "@/node/services/log";
@@ -86,6 +87,7 @@ interface WorkflowContext {
   codexOauthService: CodexOauthService;
   coderOauthService: CoderOauthService;
   realProviderService: ProviderService;
+  policyService: PolicyService;
 }
 
 export async function parseWorkflowArgs(input: ParseWorkflowArgsInput): Promise<unknown> {
@@ -241,6 +243,7 @@ async function disposeWorkflowResources(input: {
   codexOauthService?: CodexOauthService;
   coderOauthService?: CoderOauthService;
   realProviderService?: ProviderService;
+  policyService?: PolicyService;
 }): Promise<void> {
   // Suppress monitor:stopped before session.dispose() triggers cleanup() so persisted
   // armed-monitor registry records survive shutdown (post-restart "monitor lost" wakes).
@@ -279,6 +282,13 @@ async function disposeWorkflowResources(input: {
     });
   }
   try {
+    input.policyService?.dispose();
+  } catch (error) {
+    log.warn("mux workflow: failed to dispose policy service", {
+      error: getErrorMessage(error),
+    });
+  }
+  try {
     await input.services?.backgroundProcessManager.terminateAll();
   } catch (error) {
     log.warn("mux workflow: failed to terminate background processes", {
@@ -296,6 +306,7 @@ async function disposeWorkflowContext(ctx: WorkflowContext): Promise<void> {
     codexOauthService: ctx.codexOauthService,
     coderOauthService: ctx.coderOauthService,
     realProviderService: ctx.realProviderService,
+    policyService: ctx.policyService,
   });
 }
 
@@ -309,6 +320,7 @@ async function createWorkflowContext(options: {
   let codexOauthService: CodexOauthService | undefined;
   let coderOauthService: CoderOauthService | undefined;
   let realProviderService: ProviderService | undefined;
+  let policyService: PolicyService | undefined;
   try {
     const realConfig = new Config();
     const config = new Config(tempDir.path);
@@ -327,8 +339,17 @@ async function createWorkflowContext(options: {
     const runtimeConfig = parseRuntimeConfig(options.opts.runtime);
     const projectTrusted = await resolveProjectTrusted(realConfig, options.projectDir);
 
+    // Enforce managed policy (MUX_POLICY_FILE / Mux Governor) in headless
+    // workflows too, matching the desktop wiring: without this, `mux workflow`
+    // would keep using providers/models/credentials that providerAccess now
+    // denies. Bind to the REAL config so governor enrollment settings
+    // (muxGovernorUrl/Token) are honored.
+    policyService = new PolicyService(realConfig);
+    await policyService.initialize();
+
     services = createCoreServices({
       config,
+      policyService,
       extensionMetadataPath: path.join(tempDir.path, "extensionMetadata.json"),
       mcpConfig: realConfig,
     });
@@ -338,8 +359,15 @@ async function createWorkflowContext(options: {
     // Coder rotates the refresh token on every use, so persisting rotations
     // only to tempDir would strand ~/.mux/providers.jsonc with a consumed
     // (dead) refresh token once this CLI session exits.
-    realProviderService = new ProviderService(realConfig);
-    coderOauthService = new CoderOauthService(realConfig, realProviderService);
+    realProviderService = new ProviderService(realConfig, policyService);
+    coderOauthService = new CoderOauthService(
+      realConfig,
+      realProviderService,
+      undefined,
+      // Policy-aware: an enforced forcedBaseUrl overrides the deployment URL
+      // for token refreshes/issuer checks, and denied providers fail closed.
+      policyService
+    );
     services.aiService.setCoderOauthService(coderOauthService);
 
     session = new AgentSession({
@@ -375,6 +403,7 @@ async function createWorkflowContext(options: {
       codexOauthService,
       coderOauthService,
       realProviderService,
+      policyService,
     };
   } catch (error) {
     await disposeWorkflowResources({
@@ -384,6 +413,7 @@ async function createWorkflowContext(options: {
       codexOauthService,
       coderOauthService,
       realProviderService,
+      policyService,
     });
     throw error;
   }
