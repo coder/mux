@@ -1127,10 +1127,16 @@ export function ProvidersSection() {
     { kind: "idle" } | { kind: "refreshing" } | { kind: "error"; message: string }
   >({ kind: "idle" });
 
+  // Synchronous reentrancy guard: the button's disabled={refreshing} prop
+  // lags a render behind, so repeated or programmatic activation could start
+  // overlapping refreshes whose state updates race. The ref flips before the
+  // first await, making the second activation a deterministic no-op.
+  const coderModelRefreshInFlightRef = useRef(false);
   const refreshCoderModels = async () => {
-    if (!api) {
+    if (!api || coderModelRefreshInFlightRef.current) {
       return;
     }
+    coderModelRefreshInFlightRef.current = true;
     setCoderModelRefreshState({ kind: "refreshing" });
     try {
       const result = await api.coderOauth.refreshModels();
@@ -1142,6 +1148,8 @@ export function ProvidersSection() {
       await refresh();
     } catch (err) {
       setCoderModelRefreshState({ kind: "error", message: getErrorMessage(err) });
+    } finally {
+      coderModelRefreshInFlightRef.current = false;
     }
   };
 

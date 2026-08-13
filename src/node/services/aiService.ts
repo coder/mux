@@ -2818,7 +2818,11 @@ export class AIService extends EventEmitter {
                     this.providerService.getConfig()
                   );
                   const nextAllTools = await getToolsForModel(
-                    next.canonicalModelString,
+                    // Raw identity, mirroring the main path's getToolsForModel
+                    // call: canonicalization rewrites cross-typed Coder
+                    // instances (coder:openai/<claude>, type anthropic) to the
+                    // wrong provider family.
+                    nextModelString,
                     {
                       ...toolsForModelConfig,
                       capabilityModelString: nextCapabilityModelString,
@@ -2869,9 +2873,13 @@ export class AIService extends EventEmitter {
                     computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(nextTools)
                   ).sort();
                   const nextMemoryToolAvailable = nextTools.memory !== undefined;
+                  // Raw identity for prompt rebuilding too (the main path
+                  // passes its raw modelString): "Model:"-scoped instructions
+                  // and tokenizer-dependent memory budgeting must see the
+                  // instance-typed identity, not the name-canonicalized one.
                   const nextMemoryContext = await upgradeMemoryContextForModel(
                     nextMemoryToolAvailable,
-                    next.canonicalModelString
+                    nextModelString
                   );
 
                   // Rebuild the system prompt for the fallback model (tool
@@ -2882,19 +2890,18 @@ export class AIService extends EventEmitter {
                       advisorToolAvailable: nextTools.advisor !== undefined,
                       memoryToolAvailable: nextMemoryToolAvailable,
                     },
-                    next.canonicalModelString,
+                    nextModelString,
                     nextMemoryContext
                   );
                   let nextSystem = nextSystemContext.systemMessage;
                   let nextSystemTokens = nextSystemContext.systemMessageTokens;
                   if (mcpWarningPrefix != null) {
                     nextSystem = `${mcpWarningPrefix}${nextSystem}`;
+                    // nextCapabilityModelString already resolved the raw
+                    // coder identity; reuse it as the metadata model.
                     const nextTokenizer = await getTokenizerForModel(
-                      next.canonicalModelString,
-                      resolveModelForMetadata(
-                        next.canonicalModelString,
-                        this.providerService.getConfig()
-                      )
+                      nextModelString,
+                      nextCapabilityModelString
                     );
                     nextSystemTokens = await nextTokenizer.countTokens(nextSystem);
                   }

@@ -1836,6 +1836,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       | { capabilityModelString?: string }
       | undefined;
     expect(fallbackToolConfig?.capabilityModelString).toBe("anthropic:claude-opus-4-5");
+
+    // The whole prompt rebuild keys on the raw identity (toolset, memory
+    // context, "Model:"-scoped system sections): canonical "openai:" would
+    // select the wrong provider family for an Anthropic-wire request.
+    expect(harness.getToolsForModelSpy.mock.calls.at(-1)?.[0]).toBe(fallbackModel);
   });
 
   it("derives the main-path capability model from the raw Coder identity", async () => {
