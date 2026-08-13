@@ -1947,8 +1947,29 @@ export class CoderOauthService {
           if (!authoritative && previous) {
             nextProviders.push(previous);
           }
+        } else if (!authoritative && previous !== undefined) {
+          // "unavailable" on the PROBE path for an instance recorded by an
+          // earlier authoritative listing: the 404 proves only that the
+          // upstream serves no /models route — not that the admin removed
+          // the gateway instance (only an authoritative listing can say
+          // that). Dropping it would leave manually configured
+          // coder:<custom>/<model> entries unresolvable until a listing
+          // succeeds again, so keep the metadata and carry prior entries
+          // forward like a transient error.
+          nextProviders.push(previous);
+          if (previousKnown) {
+            modelIds.push(...previousDiscovered.filter((id) => id.startsWith(`${provider.name}/`)));
+          } else {
+            // No authoritative prior catalog: stale display entries must not
+            // be promoted into a conclusive write.
+            catalogInconclusive = true;
+            modelIds.push(...staleDiscovered.filter((id) => id.startsWith(`${provider.name}/`)));
+          }
         }
-        // "unavailable": the route/instance is conclusively absent — drop it.
+        // "unavailable" otherwise: the authoritative listing already names
+        // every existing instance (a listed instance whose /models 404s
+        // conclusively serves no catalog), and probe-default names carry no
+        // recorded metadata — the route is conclusively absent; drop it.
       }
 
       const manual = manualModelEntries(section);

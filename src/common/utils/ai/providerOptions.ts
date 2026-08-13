@@ -158,7 +158,14 @@ function resolveAnthropic1MCapabilityModel(
   const normalizedModel = normalizeToCanonical(modelString);
   return {
     normalizedModel,
-    capabilityModel: resolveModelForMetadata(normalizedModel, providersConfig ?? null),
+    // Metadata resolves from the RAW identity for Coder strings: name-based
+    // canonicalization rewrites cross-typed instances (coder:openai/x, type
+    // anthropic) to a direct-provider string before the instance metadata
+    // can map them to their real upstream.
+    capabilityModel: resolveModelForMetadata(
+      modelString.startsWith("coder:") ? modelString : normalizedModel,
+      providersConfig ?? null
+    ),
   };
 }
 
@@ -745,10 +752,14 @@ export function buildRequestHeaders(
   if (
     origin === "anthropic" &&
     routePassesHeaders &&
-    // The wire-canonical string, not the raw one: an Anthropic-wire model on a
-    // custom-named Coder instance must match the same 1M-capability rules as
-    // its default-named twin.
-    isAnthropic1MEffectivelyEnabled(normalized, muxProviderOptions, providersConfig)
+    // Wire origin gates WHICH header can be attached; capability is
+    // evaluated on the RAW identity. The wire-canonical string mangles
+    // metadata-divergent instances (coder:bedrock/anthropic.claude-* becomes
+    // anthropic:anthropic.claude-*, which the anchored Claude patterns
+    // reject), while the raw string resolves through the provider-type-aware
+    // metadata identity — matching the UI/compaction gates AND the raw-keyed
+    // per-model 1M intent toggles.
+    isAnthropic1MEffectivelyEnabled(modelString, muxProviderOptions, providersConfig)
   ) {
     headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
   }

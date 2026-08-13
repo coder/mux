@@ -446,6 +446,32 @@ describe("Coder gateway-scoped models (wire-canonical option building)", () => {
     expect(headers).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
 
+  test("bedrock-typed instance resolves 1M capability through its metadata identity", () => {
+    // The wire-canonical string mangles metadata-divergent instances
+    // (anthropic:anthropic.claude-* fails the anchored Claude patterns);
+    // capability must resolve from the raw identity via the instance type
+    // (bedrock:anthropic.claude-* → anthropic:claude-*), with intent keyed
+    // by the raw string like the UI's per-model toggles.
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "bedrock", type: "bedrock" }],
+      },
+    };
+    const headers = buildRequestHeaders(
+      "coder:bedrock/anthropic.claude-sonnet-4-5",
+      {
+        anthropic: { use1MContextModels: ["coder:bedrock/anthropic.claude-sonnet-4-5"] },
+      },
+      undefined,
+      config,
+      "coder"
+    );
+    expect(headers).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+  });
+
   // Discovered metadata must win over the instance NAME: a valid instance can
   // use a canonical route name with a different type, and normalizing the name
   // before consulting metadata would emit options for the wrong wire.

@@ -4411,6 +4411,52 @@ describe("CoderOauthService", () => {
       expect(coderSection.staleDiscoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
     });
 
+    it("keeps previously listed providers whose /models 404s when probing without a listing", async () => {
+      // Probe path (listing member-forbidden): a 404 from a custom instance
+      // recorded by an earlier authoritative listing proves only that its
+      // upstream serves no /models route — not that the admin removed the
+      // instance. Its metadata must stay resolvable (manually configured
+      // coder:<custom>/<model> entries) and its prior catalog entries carry
+      // forward like a transient error.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: ["anthropic/claude-old", "llm/custom-model"],
+          discoveredModels: ["anthropic/claude-old", "llm/custom-model"],
+          discoveredProviders: [
+            { name: "anthropic", type: "anthropic" },
+            { name: "llm", type: "openai-compat" },
+          ],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(new Response("forbidden", { status: 403 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-new" }] }));
+        }
+        // llm (and every absent default route) serves no /models.
+        if (url.includes("/api/v2/aibridge/")) {
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-new", "llm/custom-model"]);
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "anthropic", type: "anthropic" },
+        { name: "llm", type: "openai-compat" },
+      ]);
+    });
+
     it("retains stale display entries across consecutive inconclusive refreshes", async () => {
       // After an inconclusive refresh the authoritative catalog is gone and
       // only staleDiscoveredModels remains. A second refresh where the same
