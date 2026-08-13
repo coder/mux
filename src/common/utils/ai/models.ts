@@ -32,18 +32,28 @@ export function isValidModelFormat(model: string): boolean {
 
 /**
  * Usage-ledger key for a model string. Same as normalizeToCanonical, except
- * raw Coder gateway identities are preserved: name-based canonicalization
- * rewrites a cross-typed instance (coder:openai/<claude>, type anthropic) to
- * openai:<claude>, and repricing (resolveModelForMetadata over the persisted
- * key) would then price the recorded Anthropic usage against the wrong
- * provider family — stripping the costs as unknown OpenAI-model costs.
- * resolveModelForMetadata resolves raw coder:<instance>/<model> keys through
- * instance metadata, so the raw identity is the durable, reprice-safe key.
- * (A custom provider shadowing the "coder" prefix also keeps its raw key,
- * which is that provider's real config identity.)
+ * Coder gateway identities resolve through instance metadata AT RECORD TIME
+ * to their stable upstream catalog identity (coder:prod-anthropic/<claude>
+ * -> anthropic:<claude>). Two failure modes rule out the alternatives:
+ * name-based canonicalization keys a cross-typed instance ({name: "openai",
+ * type: "anthropic"}) under openai:<claude>, so later repricing strips the
+ * recorded Anthropic costs as unknown OpenAI-model costs; the raw gateway
+ * key depends on mutable discoveredProviders metadata, so an authoritative
+ * refresh that removes the instance makes the key unresolvable and repricing
+ * strips its costs too. The record-time metadata identity survives both, and
+ * matches how default-named coder:anthropic/<model> keys were persisted
+ * before instance generalization. Unmappable identities (openai-compat
+ * instances, unknown instances, a custom provider shadowing the "coder"
+ * prefix) keep the raw key — it is their only durable identity.
  */
-export function normalizeUsageModelKey(modelString: string): string {
-  return modelString.startsWith("coder:") ? modelString : normalizeToCanonical(modelString);
+export function normalizeUsageModelKey(
+  modelString: string,
+  providersConfig?: Record<string, unknown> | null
+): string {
+  if (modelString.startsWith("coder:")) {
+    return resolveCoderGatewayMetadataModel(modelString, providersConfig) ?? modelString;
+  }
+  return normalizeToCanonical(modelString);
 }
 
 /**

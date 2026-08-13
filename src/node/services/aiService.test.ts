@@ -1852,10 +1852,10 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       | undefined;
     expect(fallbackToolConfig?.capabilityModelString).toBe("anthropic:claude-opus-4-5");
 
-    // The whole prompt rebuild keys on the raw identity (toolset, memory
-    // context, "Model:"-scoped system sections): canonical "openai:" would
-    // select the wrong provider family for an Anthropic-wire request.
-    expect(harness.getToolsForModelSpy.mock.calls.at(-1)?.[0]).toBe(fallbackModel);
+    // Tool assembly keys on the WIRE identity (anthropic:<model>): the raw
+    // coder string would parse as provider "coder" and skip the Anthropic
+    // tool branch, while canonical "openai:" selects the wrong family.
+    expect(harness.getToolsForModelSpy.mock.calls.at(-1)?.[0]).toBe("anthropic:claude-opus-4-5");
   });
 
   it("derives the main-path capability model from the raw Coder identity", async () => {
@@ -1918,6 +1918,9 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       | { capabilityModelString?: string }
       | undefined;
     expect(toolConfig?.capabilityModelString).toBe("anthropic:claude-opus-4-5");
+    // Tool assembly gets the WIRE identity so provider-specific branches
+    // (Anthropic native web tools) fire; raw "coder:" would skip them.
+    expect(harness.getToolsForModelSpy.mock.calls[0]?.[0]).toBe("anthropic:claude-opus-4-5");
   });
 
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {

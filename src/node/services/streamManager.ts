@@ -1583,9 +1583,10 @@ export class StreamManager extends EventEmitter {
     try {
       await this.sessionUsageService.recordUsage(
         workspaceId as string,
-        // Raw Coder identities stay: canonical keys would reprice cross-typed
-        // instances against the wrong provider family (see normalizeUsageModelKey).
-        normalizeUsageModelKey(model),
+        // Coder identities resolve to their record-time metadata identity so
+        // ledger keys stay priceable after instance metadata changes (see
+        // normalizeUsageModelKey).
+        normalizeUsageModelKey(model, this.getProvidersConfig()),
         messageUsage
       );
     } catch (error) {

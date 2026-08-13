@@ -106,6 +106,8 @@ import {
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
+import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
@@ -1214,6 +1216,26 @@ export class AIService extends EventEmitter {
         modelString.startsWith("coder:") ? modelString : canonicalModelString,
         this.providerService.getConfig()
       );
+      // Provider-specific tool assembly keys on the WIRE identity: raw
+      // coder:<instance>/<model> strings parse as provider "coder" inside
+      // getToolsForModel, which skips the Anthropic branch (native web tools)
+      // and the OpenAI branch (MCP schema sanitization for Responses). The
+      // capability identity above stays raw-derived; only the branch-selecting
+      // model string is wire-translated. A custom provider shadowing the
+      // "coder" prefix keeps its raw identity; unknown instances fall back to
+      // the name-canonical form.
+      const resolveToolsModelString = (raw: string, canonical: string): string => {
+        if (!raw.startsWith("coder:")) {
+          return raw;
+        }
+        const coderSection = this.providerService.getConfig()?.coder;
+        if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
+          return raw;
+        }
+        const wire = resolveCoderWireCanonicalModel(raw.slice("coder:".length), coderSection);
+        return wire ? `${wire.origin}:${wire.modelId}` : canonical;
+      };
+      const toolsModelString = resolveToolsModelString(modelString, canonicalModelString);
 
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
@@ -2229,10 +2251,12 @@ export class AIService extends EventEmitter {
                 if (!displayUsage) {
                   return;
                 }
-                // Ledger keys keep raw Coder identities (normalizeUsageModelKey):
-                // canonical keys would reprice cross-typed instances against
-                // the wrong provider family.
-                const canonicalModel = normalizeUsageModelKey(eventModel);
+                // Ledger keys resolve Coder identities to their record-time
+                // metadata identity (see normalizeUsageModelKey).
+                const canonicalModel = normalizeUsageModelKey(
+                  eventModel,
+                  this.providerService.getConfig()
+                );
                 await this.sessionUsageService.recordUsage(
                   workspaceId,
                   canonicalModel,
@@ -2296,7 +2320,7 @@ export class AIService extends EventEmitter {
         trusted: sharedExecutionTrusted,
       };
       const allTools = await getToolsForModel(
-        modelString,
+        toolsModelString,
         toolsForModelConfig,
         workspaceId,
         this.initStateManager,
@@ -2861,11 +2885,11 @@ export class AIService extends EventEmitter {
                     this.providerService.getConfig()
                   );
                   const nextAllTools = await getToolsForModel(
-                    // Raw identity, mirroring the main path's getToolsForModel
-                    // call: canonicalization rewrites cross-typed Coder
-                    // instances (coder:openai/<claude>, type anthropic) to the
-                    // wrong provider family.
-                    nextModelString,
+                    // Wire identity, mirroring the main path: provider-specific
+                    // tool branches (Anthropic native web tools, OpenAI MCP
+                    // schema sanitization) must key on the wire, not on the
+                    // "coder" prefix or the name-canonical form.
+                    resolveToolsModelString(nextModelString, next.canonicalModelString),
                     {
                       ...toolsForModelConfig,
                       capabilityModelString: nextCapabilityModelString,

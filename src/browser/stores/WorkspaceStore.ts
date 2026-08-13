@@ -918,9 +918,9 @@ export class WorkspaceStore {
         );
         if (usage) {
           // Must match the backend's ledger keys (normalizeUsageModelKey):
-          // raw Coder identities are preserved for reprice-safe metadata
-          // resolution, so the live delta must accumulate under the same key.
-          const normalizedModel = normalizeUsageModelKey(model);
+          // Coder identities resolve to their record-time metadata identity,
+          // so the live delta must accumulate under the same key.
+          const normalizedModel = normalizeUsageModelKey(model, this.providersConfig);
           const current = this.sessionUsage.get(workspaceId) ?? {
             byModel: {},
             version: 1 as const,

@@ -235,7 +235,7 @@ export class SessionUsageService {
       // callers that already normalized.
       providerMetadata = withCacheWriteMetadata(providerMetadata, usage);
       usage = normalizeUsage(usage);
-      const canonicalModel = normalizeUsageModelKey(modelString);
+      const canonicalModel = normalizeUsageModelKey(modelString, this.getProvidersConfig());
       // Resolve mappedToModel aliases for pricing (mirrors StreamManager's
       // resolveMetadataModel): custom provider models would otherwise price
       // against the raw custom ID (unknown → $0).
@@ -582,7 +582,7 @@ export class SessionUsageService {
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
     const mergeUsageForModel = (rawModel: string, usage: ChatUsageDisplay): void => {
-      const model = normalizeUsageModelKey(rawModel);
+      const model = normalizeUsageModelKey(rawModel, this.getProvidersConfig());
       const existing = result.byModel[model];
       result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
     };
@@ -643,7 +643,10 @@ export class SessionUsageService {
 
           if (usage) {
             mergeUsageForModel(rawModel, usage);
-            lastAssistantUsage = { model: normalizeUsageModelKey(rawModel), usage };
+            lastAssistantUsage = {
+              model: normalizeUsageModelKey(rawModel, this.getProvidersConfig()),
+              usage,
+            };
           }
         }
 
