@@ -119,7 +119,7 @@ describe("AgentSession MCP prompt snapshots", () => {
     }
   });
 
-  test("drops failed prompt refs without blocking the user message", async () => {
+  test("fails the send visibly when a slash-selected prompt cannot expand", async () => {
     const harness = await createAgentSessionHarness({
       workspaceId: "workspace",
       mcpServerManager: {
@@ -132,6 +132,40 @@ describe("AgentSession MCP prompt snapshots", () => {
         model: "anthropic:claude-3-5-sonnet-latest",
         agentId: "exec",
         muxMetadata: promptMetadata(),
+      });
+      expect(result.success).toBe(false);
+      if (result.success) throw new Error("Expected slash prompt send to fail");
+      expect(result.error.type).toBe("unknown");
+      expect(JSON.stringify(result.error)).toContain("Cannot expand MCP prompt 'coder/review'");
+
+      const history = await harness.historyService.getLastMessages("workspace", 10);
+      expect(history.success).toBe(true);
+      if (!history.success) throw new Error(history.error);
+      expect(history.data).toHaveLength(0);
+    } finally {
+      harness.session.dispose();
+      await harness.cleanup();
+    }
+  });
+
+  test("drops failed inline prompt refs without blocking the user message", async () => {
+    const harness = await createAgentSessionHarness({
+      workspaceId: "workspace",
+      mcpServerManager: {
+        getPrompt: mock(() => Promise.reject(new Error("server unavailable"))),
+      } as unknown as MCPServerManager,
+    });
+
+    try {
+      const base = promptMetadata();
+      const metadata = {
+        ...base,
+        mcpPromptRefs: [{ ...base.mcpPromptRefs[0], source: "inline" as const }],
+      };
+      const result = await harness.session.sendMessage("Check $mcp__coder__review please", {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+        muxMetadata: metadata,
       });
       expect(result.success).toBe(true);
 

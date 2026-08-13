@@ -123,6 +123,10 @@ rl.on("line", (line) => {
 
       case "prompts/get": {
         const promptName = message.params?.name;
+        // Unlisted prompt that never responds, for client-side abort tests.
+        if (promptName === "hang") {
+          return;
+        }
         if (!PROMPTS.some((prompt) => prompt.name === promptName)) {
           send({
             jsonrpc: "2.0",

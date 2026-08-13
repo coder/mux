@@ -2420,7 +2420,8 @@ export class MCPServerManager {
           autoFallbackUsed: false,
           tools,
           prompts: [],
-          getPrompt: (promptName, args) => readyClient.getPrompt(promptName, args),
+          getPrompt: (promptName, args, options) =>
+            readyClient.getPrompt(promptName, args, options),
           refreshPrompts: async () => {
             instance.prompts = await readyClient.prompts();
           },
@@ -2672,7 +2673,7 @@ export class MCPServerManager {
         autoFallbackUsed,
         tools,
         prompts: [],
-        getPrompt: (promptName, args) => activeClient.getPrompt(promptName, args),
+        getPrompt: (promptName, args, options) => activeClient.getPrompt(promptName, args, options),
         refreshPrompts: async () => {
           instance.prompts = await activeClient.prompts();
         },

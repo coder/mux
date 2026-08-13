@@ -357,8 +357,8 @@ export class StreamTranslator {
       return { kind: "suppress" };
     }
 
-    const agentSkillCommand = extractAgentSkillRawCommand(event.metadata);
-    if (agentSkillCommand == null) {
+    const rawCommand = extractRawCommand(event.metadata);
+    if (rawCommand == null) {
       return { kind: "parts" };
     }
 
@@ -366,7 +366,7 @@ export class StreamTranslator {
     // transformed backend prompt so resumed transcripts remain user-readable.
     return {
       kind: "raw-command",
-      rawCommand: agentSkillCommand,
+      rawCommand,
     };
   }
 
@@ -678,9 +678,7 @@ export class StreamTranslator {
   }
 }
 
-function extractAgentSkillRawCommand(
-  metadata: MessageMetadataWithFrontendFields | undefined
-): string | null {
+function extractRawCommand(metadata: MessageMetadataWithFrontendFields | undefined): string | null {
   if (metadata == null) {
     return null;
   }
@@ -698,7 +696,10 @@ function extractRawCommandFromFrontendMetadata(frontendMetadata: unknown): strin
     return null;
   }
 
-  if (frontendMetadata.type !== "agent-skill") {
+  // "normal" carries rawCommand for MCP prompt invocations and one-shot
+  // overrides; both persist transformed text, so replay the authored command
+  // like the desktop transcript's getRawCommand does.
+  if (frontendMetadata.type !== "agent-skill" && frontendMetadata.type !== "normal") {
     return null;
   }
 

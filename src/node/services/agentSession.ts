@@ -6209,6 +6209,16 @@ export class AgentSession {
             },
           });
         } catch (error) {
+          // Cancellation is handled by cancelBeforeAcceptance after this returns.
+          if (cancelSignal?.aborted) return null;
+          // A slash-invoked prompt was explicitly selected; sending the turn
+          // without its expansion would silently change what the user asked
+          // for. Inline references degrade to the authored text instead.
+          if (ref.source === "slash") {
+            throw new Error(
+              `Cannot expand MCP prompt '${ref.serverName}/${ref.promptName}': ${getErrorMessage(error)}`
+            );
+          }
           log.debug("Failed to materialize MCP prompt reference", {
             workspaceId: this.workspaceId,
             serverName: ref.serverName,

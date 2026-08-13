@@ -78,6 +78,47 @@ describeIntegration("MCP prompts", () => {
     }
   }, 60_000);
 
+  test("aborting a send cancels an in-flight prompts/get", async () => {
+    const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider("mcp-prompts-abort");
+    env.services.aiService.enableMockMode();
+    const client = resolveOrpcClient(env);
+
+    try {
+      const addResult = await client.mcp.add({
+        name: "prompt server",
+        command: MCP_SERVER_COMMAND,
+      });
+      expect(addResult.success).toBe(true);
+
+      // Start servers and record workspace request options for getPrompt.
+      await client.workspace.mcp.prompts.list({ workspaceId });
+
+      const controller = new AbortController();
+      const promptPromise = env.services.mcpServerManager.getPrompt(
+        workspaceId,
+        "prompt server",
+        "hang",
+        {},
+        { signal: controller.signal }
+      );
+      setTimeout(() => controller.abort(), 250);
+
+      const startedAt = Date.now();
+      let rejected = false;
+      try {
+        await promptPromise;
+      } catch {
+        rejected = true;
+      }
+      expect(rejected).toBe(true);
+      // Well under PROMPT_GET_TIMEOUT_MS: proves the abort signal reached the
+      // SDK request instead of being dropped by the instance wrapper.
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
   test("lists prompts from a server without the tools capability", async () => {
     const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider("mcp-prompts-only");
     env.services.aiService.enableMockMode();
