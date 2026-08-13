@@ -1879,7 +1879,17 @@ export class CoderOauthService {
       // legitimate "no entries").
       if (!previousKnown && results.some(({ result }) => result.kind === "error")) {
         inconclusiveFreshCatalog = true;
-        return null;
+        if (!authoritative) {
+          // Probe-derived provider metadata is just the name === type
+          // default, which resolveCoderGatewayProvider already applies
+          // without persistence — nothing conclusive is lost by skipping.
+          return null;
+        }
+        // The admin listing is conclusive independently of the catalog
+        // fetches: persist it so custom-named instances stay resolvable
+        // (e.g. for manually added models) while discoveredModels stays
+        // absent — catalog unknown, routing fails open.
+        return { value: { ...(section ?? {}), discoveredProviders: providers } };
       }
       const previousDiscovered = Array.isArray(section?.discoveredModels)
         ? section.discoveredModels.filter((id): id is string => typeof id === "string")
@@ -1956,15 +1966,18 @@ export class CoderOauthService {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);
       return Err(setResult.error);
     }
+    if (inconclusiveFreshCatalog) {
+      // Applied or not, the catalog itself was not written (at most the
+      // authoritative provider list was persisted): surface the failure so
+      // the user knows to refresh again.
+      log.debug(
+        "[Coder OAuth] Catalog left unknown: prior catalog unknown and a provider failed transiently"
+      );
+      return Err(
+        "Model discovery failed for at least one AI Gateway provider; try refreshing again"
+      );
+    }
     if (!setResult.data.applied) {
-      if (inconclusiveFreshCatalog) {
-        log.debug(
-          "[Coder OAuth] Skipping catalog write: prior catalog unknown and a provider failed transiently"
-        );
-        return Err(
-          "Model discovery failed for at least one AI Gateway provider; try refreshing again"
-        );
-      }
       log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
     }
     return Ok(undefined);

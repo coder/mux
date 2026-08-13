@@ -4241,7 +4241,10 @@ describe("CoderOauthService", () => {
       // fails open). One provider succeeds, the other errors after retries.
       // Persisting the partial list would read as an authoritative catalog
       // and block every model of the failed provider until the next refresh;
-      // the write must be skipped so routing stays fail-open.
+      // the catalog write must be skipped so routing stays fail-open. The
+      // authoritative provider LISTING is conclusive independently of the
+      // catalogs, so it is still persisted — custom-named instances must stay
+      // resolvable for manually added models.
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
       };
@@ -4249,12 +4252,51 @@ describe("CoderOauthService", () => {
       mockFetch((input) => {
         const url = fetchUrl(input);
         if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
-          return Promise.resolve(aiProvidersResponse());
+          return Promise.resolve(
+            jsonResponse([
+              { name: "prod-anthropic", type: "anthropic", enabled: true },
+              { name: "openai", type: "openai", enabled: true },
+            ])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/prod-anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toBeUndefined();
+      expect(coderSection.models).toBeUndefined();
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "prod-anthropic", type: "anthropic" },
+        { name: "openai", type: "openai" },
+      ]);
+    });
+
+    it("skips all persistence on an inconclusive fresh probe fallback", async () => {
+      // Same fresh-unknown state, but the provider listing is forbidden:
+      // probe-derived metadata is only the name === type default, which
+      // routing applies without persistence — nothing conclusive to write.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(new Response("forbidden", { status: 403 }));
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
         }
-        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+        if (url.includes("/api/v2/aibridge/")) {
           return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
         }
         return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
