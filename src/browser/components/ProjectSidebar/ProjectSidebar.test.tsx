@@ -946,6 +946,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
+      // Sets serialize to empty objects through the stub's JSON round-trip.
+      workflowRunIds: {},
     });
     // The delegated activity still reaches the parent row for its live dot.
     expect(parentRow.dataset.delegatedActive).toBe("1");
@@ -1014,6 +1016,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 1,
       queuedWorkflowAgentCount: 1,
+      workflowRunIds: {},
       workflowName: "review-pipeline",
     });
   });

@@ -386,6 +386,12 @@ export interface WorkspaceSubAgentsSummary {
   runningWorkflowAgentCount: number;
   /** Queued workflow-owned descendant workers across runs. */
   queuedWorkflowAgentCount: number;
+  /**
+   * IDs of the runs behind the run counts, so a parent's own active runs
+   * that currently have no live worker can be reconciled instead of hidden
+   * behind a concurrent run's workers.
+   */
+  workflowRunIds: ReadonlySet<string>;
   /** Name of the first running workflow run, or first queued run when none run. */
   workflowName?: string;
 }
@@ -513,6 +519,7 @@ export function computeSubAgentsSummaryByWorkspaceId(
         queuedWorkflowRunCount,
         runningWorkflowAgentCount: summary.runningWorkflowAgentCount,
         queuedWorkflowAgentCount: summary.queuedWorkflowAgentCount,
+        workflowRunIds: new Set(summary.workflowRunsById.keys()),
         // A queued-only run must never lend its name to the running label.
         workflowName: runningWorkflowRunCount > 0 ? runningWorkflowName : queuedWorkflowName,
       });

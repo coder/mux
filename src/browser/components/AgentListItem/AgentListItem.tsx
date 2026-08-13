@@ -238,6 +238,7 @@ function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): stri
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
+const EMPTY_WORKFLOW_RUN_IDS: readonly string[] = [];
 /**
  * Status line for a parent whose sub-agent rows are hidden, styled after the
  * transcript's sub-agent decoration. An active workflow wins as the more
@@ -245,39 +246,41 @@ function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): stri
  */
 function formatHiddenSubAgentsPresentation(
   summary: WorkspaceSubAgentsSummary,
-  ownActiveWorkflowRunCount: number
+  ownActiveWorkflowRunIds: readonly string[]
 ): { icon: LucideIcon; text: string } | null {
-  if (summary.runningWorkflowRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
+  // An own active run without a live worker (between sequential steps, or
+  // before its first worker spawns) is still in progress; count it as running
+  // so a concurrent run's workers cannot make it look finished while its rows
+  // are hidden.
+  const gapRunCount = ownActiveWorkflowRunIds.filter(
+    (runId) => !summary.workflowRunIds.has(runId)
+  ).length;
+  const runningRunCount = summary.runningWorkflowRunCount + gapRunCount;
+  if (runningRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
     // Queued-only runs must not read as running (parallelism limits can park
     // every worker), mirroring the delegated-status running/queued split. The
     // label counts only runs in the leading state; queued workers of other
     // runs surface through the queued suffix.
-    const hasRunningRun = summary.runningWorkflowRunCount > 0;
+    const hasRunningRun = runningRunCount > 0;
     const verb = hasRunningRun ? "running" : "queued";
-    const runCount = hasRunningRun
-      ? summary.runningWorkflowRunCount
-      : summary.queuedWorkflowRunCount;
+    const runCount = hasRunningRun ? runningRunCount : summary.queuedWorkflowRunCount;
+    // With no running worker, summary.workflowName is a queued run's name; a
+    // gap-only running label must not borrow it.
+    const workflowName =
+      hasRunningRun && summary.runningWorkflowRunCount === 0 ? undefined : summary.workflowName;
     const base =
-      runCount === 1
-        ? `${summary.workflowName ?? "Workflow"} ${verb}`
-        : `${runCount} workflows ${verb}`;
+      runCount === 1 ? `${workflowName ?? "Workflow"} ${verb}` : `${runCount} workflows ${verb}`;
     const agentCount = hasRunningRun
       ? summary.runningWorkflowAgentCount
       : summary.queuedWorkflowAgentCount;
+    // Gap-only runs have no countable workers; skip the "(0 agents)" noise.
+    const agentSuffix =
+      agentCount > 0 ? ` (${agentCount} agent${agentCount === 1 ? "" : "s"})` : "";
     const queuedSuffix =
       hasRunningRun && summary.queuedWorkflowAgentCount > 0
         ? ` · ${summary.queuedWorkflowAgentCount} queued`
         : "";
-    return {
-      icon: Workflow,
-      text: `${base} (${agentCount} agent${agentCount === 1 ? "" : "s"})${queuedSuffix}`,
-    };
-  }
-  // Between sequential workflow steps no worker task exists, but the run is
-  // still active on this workspace; keep the workflow line up so an active
-  // workflow never looks finished while its rows are hidden.
-  if (ownActiveWorkflowRunCount > 0) {
-    return { icon: Workflow, text: formatWorkflowRunCount(ownActiveWorkflowRunCount) };
+    return { icon: Workflow, text: `${base}${agentSuffix}${queuedSuffix}` };
   }
   if (summary.runningSubAgentCount > 0 || summary.queuedSubAgentCount > 0) {
     const parts = [`${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"}`];
@@ -694,6 +697,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     awaitingUserQuestion,
     isStarting,
     agentStatus,
+    activeWorkflowRunIds,
     activeWorkflowRunCount,
     activeBashMonitorCount,
     terminalActiveCount,
@@ -737,7 +741,10 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     shouldShowBashMonitorStatus;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const hiddenSubAgentsPresentation = hiddenSubAgentsSummary
-    ? formatHiddenSubAgentsPresentation(hiddenSubAgentsSummary, activeWorkflowRunCount)
+    ? formatHiddenSubAgentsPresentation(
+        hiddenSubAgentsSummary,
+        activeWorkflowRunIds ?? EMPTY_WORKFLOW_RUN_IDS
+      )
     : null;
   // The summary supersedes the plain delegated/workflow lines; questions,
   // streaming, deletion, an armed bash monitor, and errors still win.

@@ -84,6 +84,22 @@ function createWorkspaceSidebarState(
   };
 }
 
+function makeHiddenSummary(
+  overrides: Partial<WorkspaceSubAgentsSummary> = {}
+): WorkspaceSubAgentsSummary {
+  return {
+    subAgentCount: 0,
+    runningSubAgentCount: 0,
+    queuedSubAgentCount: 0,
+    runningWorkflowRunCount: 0,
+    queuedWorkflowRunCount: 0,
+    runningWorkflowAgentCount: 0,
+    queuedWorkflowAgentCount: 0,
+    workflowRunIds: new Set(),
+    ...overrides,
+  };
+}
+
 function createMetadata(
   overrides: Partial<FrontendWorkspaceMetadata> = {}
 ): FrontendWorkspaceMetadata {
@@ -558,15 +574,7 @@ describe("AgentListItem", () => {
         workflowActiveCount: 0,
         workflowQueuedCount: 0,
       },
-      hiddenSubAgentsSummary: {
-        subAgentCount: 3,
-        runningSubAgentCount: 1,
-        queuedSubAgentCount: 0,
-        runningWorkflowRunCount: 0,
-        queuedWorkflowRunCount: 0,
-        runningWorkflowAgentCount: 0,
-        queuedWorkflowAgentCount: 0,
-      },
+      hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 3, runningSubAgentCount: 1 }),
     });
     const rowView = within(row);
 
@@ -578,19 +586,18 @@ describe("AgentListItem", () => {
   });
 
   test("summarizes a hidden workflow run with its name and agent count", () => {
-    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeWorkflowRunCount: 1 });
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunIds: ["run-1"],
+      activeWorkflowRunCount: 1,
+    });
 
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 0,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
+      hiddenSubAgentsSummary: makeHiddenSummary({
         runningWorkflowRunCount: 1,
-        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 5,
-        queuedWorkflowAgentCount: 0,
+        workflowRunIds: new Set(["run-1"]),
         workflowName: "Deep Research",
-      },
+      }),
     });
     const rowView = within(row);
 
@@ -604,15 +611,7 @@ describe("AgentListItem", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
 
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 2,
-        runningSubAgentCount: 2,
-        queuedSubAgentCount: 0,
-        runningWorkflowRunCount: 0,
-        queuedWorkflowRunCount: 0,
-        runningWorkflowAgentCount: 0,
-        queuedWorkflowAgentCount: 0,
-      },
+      hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 2, runningSubAgentCount: 2 }),
     });
     const rowView = within(row);
 
@@ -622,15 +621,11 @@ describe("AgentListItem", () => {
 
   test("distinguishes queued from running hidden sub-agents", () => {
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
+      hiddenSubAgentsSummary: makeHiddenSummary({
         subAgentCount: 3,
         runningSubAgentCount: 1,
         queuedSubAgentCount: 2,
-        runningWorkflowRunCount: 0,
-        queuedWorkflowRunCount: 0,
-        runningWorkflowAgentCount: 0,
-        queuedWorkflowAgentCount: 0,
-      },
+      }),
     });
 
     expect(
@@ -640,16 +635,12 @@ describe("AgentListItem", () => {
 
   test("labels a workflow with only queued workers as queued, not running", () => {
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 0,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
-        runningWorkflowRunCount: 0,
+      hiddenSubAgentsSummary: makeHiddenSummary({
         queuedWorkflowRunCount: 1,
-        runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 2,
+        workflowRunIds: new Set(["run-1"]),
         workflowName: "Deep Research",
-      },
+      }),
     });
 
     expect(
@@ -659,16 +650,13 @@ describe("AgentListItem", () => {
 
   test("appends queued workflow workers after the running count", () => {
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 0,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
+      hiddenSubAgentsSummary: makeHiddenSummary({
         runningWorkflowRunCount: 1,
-        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 2,
         queuedWorkflowAgentCount: 1,
+        workflowRunIds: new Set(["run-1"]),
         workflowName: "Deep Research",
-      },
+      }),
     });
 
     expect(
@@ -680,16 +668,14 @@ describe("AgentListItem", () => {
     // One run has a running worker, a second run is entirely queued: the
     // label must claim only the running run.
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 0,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
+      hiddenSubAgentsSummary: makeHiddenSummary({
         runningWorkflowRunCount: 1,
         queuedWorkflowRunCount: 1,
         runningWorkflowAgentCount: 2,
         queuedWorkflowAgentCount: 1,
+        workflowRunIds: new Set(["run-1", "run-2"]),
         workflowName: "Deep Research",
-      },
+      }),
     });
 
     expect(
@@ -700,18 +686,13 @@ describe("AgentListItem", () => {
   test("keeps a workflow line through step gaps when only the run itself is active", () => {
     // Between sequential steps no worker task exists, so the summary carries
     // no active counts; the row's own active run keeps the line up.
-    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeWorkflowRunCount: 1 });
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunIds: ["run-1"],
+      activeWorkflowRunCount: 1,
+    });
 
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 0,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
-        runningWorkflowRunCount: 0,
-        queuedWorkflowRunCount: 0,
-        runningWorkflowAgentCount: 0,
-        queuedWorkflowAgentCount: 0,
-      },
+      hiddenSubAgentsSummary: makeHiddenSummary(),
     });
     const rowView = within(row);
 
@@ -720,17 +701,53 @@ describe("AgentListItem", () => {
     expect(indicator.querySelector("svg")).toBeTruthy();
   });
 
+  test("counts an own run in a step gap alongside a concurrent run's workers", () => {
+    // run-2 is between steps (no live worker), so only the workspace's own
+    // active run list knows about it; the label must not report just run-1.
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunIds: ["run-1", "run-2"],
+      activeWorkflowRunCount: 2,
+    });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: makeHiddenSummary({
+        runningWorkflowRunCount: 1,
+        runningWorkflowAgentCount: 1,
+        workflowRunIds: new Set(["run-1"]),
+        workflowName: "Deep Research",
+      }),
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("2 workflows running (1 agent)");
+  });
+
+  test("does not borrow a queued run's name for a gap-only running label", () => {
+    // The only running run has no workers (step gap), so its name is unknown;
+    // the queued run's name must stay off the running label.
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunIds: ["run-queued", "run-gap"],
+      activeWorkflowRunCount: 2,
+    });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: makeHiddenSummary({
+        queuedWorkflowRunCount: 1,
+        queuedWorkflowAgentCount: 2,
+        workflowRunIds: new Set(["run-queued"]),
+        workflowName: "Deep Research",
+      }),
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("Workflow running · 2 queued");
+  });
+
   test("falls back to the normal status line when hidden sub-agents are all inactive", () => {
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: {
-        subAgentCount: 3,
-        runningSubAgentCount: 0,
-        queuedSubAgentCount: 0,
-        runningWorkflowRunCount: 0,
-        queuedWorkflowRunCount: 0,
-        runningWorkflowAgentCount: 0,
-        queuedWorkflowAgentCount: 0,
-      },
+      hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 3 }),
     });
     const rowView = within(row);
 

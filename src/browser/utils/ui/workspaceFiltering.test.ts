@@ -979,6 +979,7 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
+      workflowRunIds: new Set(),
       workflowName: undefined,
     });
   });
@@ -1017,6 +1018,7 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowRunCount: 1,
       runningWorkflowAgentCount: 2,
       queuedWorkflowAgentCount: 1,
+      workflowRunIds: new Set(["run-1", "run-2"]),
       workflowName: "Deep Research",
     });
   });
@@ -1040,6 +1042,7 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 2,
       queuedWorkflowAgentCount: 0,
+      workflowRunIds: new Set(["run-1"]),
       workflowName: undefined,
     });
   });
@@ -1064,6 +1067,7 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
+      workflowRunIds: new Set(),
       workflowName: undefined,
     });
   });
