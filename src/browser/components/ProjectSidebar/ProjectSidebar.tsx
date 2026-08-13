@@ -17,6 +17,7 @@ import {
   EXPANDED_PROJECTS_KEY,
   MOBILE_LEFT_SIDEBAR_SCROLL_TOP_KEY,
   SIDEBAR_AGE_GROUPING_KEY,
+  SIDEBAR_HIDE_SUBAGENTS_KEY,
   getDraftScopeId,
   getInputAttachmentsKey,
   getInputKey,
@@ -53,6 +54,8 @@ import {
   AGE_THRESHOLDS_DAYS,
   computeWorkspaceDepthMap,
   computeDelegatedActivityByWorkspaceId,
+  computeSubAgentsSummaryByWorkspaceId,
+  excludeSubAgentRows,
   filterVisibleAgentRows,
   computeAgentRowRenderMeta,
   findNextNonEmptyTier,
@@ -832,6 +835,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // Whether workspaces are grouped under collapsible "Older than X days" tiers.
   // Toggled from Settings → General; listener keeps the sidebar live-updated.
   const [ageGroupingEnabled] = usePersistedState<boolean>(SIDEBAR_AGE_GROUPING_KEY, true, {
+    listener: true,
+  });
+
+  // Opt-in: hide sub-agent rows and summarize them on parent rows instead.
+  const [hideSubAgentRows] = usePersistedState<boolean>(SIDEBAR_HIDE_SUBAGENTS_KEY, false, {
     listener: true,
   });
 
@@ -1646,10 +1654,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
       return false;
     }
   };
+  const allSidebarWorkspaces = Array.from(sortedWorkspacesByProject.values()).flat();
   const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
-    Array.from(sortedWorkspacesByProject.values()).flat(),
+    allSidebarWorkspaces,
     { isWorkspaceLiveActive }
   );
+  const subAgentsSummaryByWorkspaceId = hideSubAgentRows
+    ? computeSubAgentsSummaryByWorkspaceId(allSidebarWorkspaces, { isWorkspaceLiveActive })
+    : null;
 
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
   const scratchWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
@@ -1683,14 +1695,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const scratchWorkspaces = orderMultiProjectSectionRows(
     Array.from(scratchWorkspacesById.values())
   );
-  const scratchDepthByWorkspaceId = computeWorkspaceDepthMap(scratchWorkspaces);
+  const scratchRowsForDisplay = hideSubAgentRows
+    ? excludeSubAgentRows(scratchWorkspaces)
+    : scratchWorkspaces;
+  const scratchDepthByWorkspaceId = computeWorkspaceDepthMap(scratchRowsForDisplay);
   const visibleScratchWorkspaces = filterVisibleAgentRows(
-    scratchWorkspaces,
+    scratchRowsForDisplay,
     expandedCompletedParentIds,
     { isWorkspaceLiveActive }
   );
   const scratchRowMetaByWorkspaceId = computeAgentRowRenderMeta(
-    scratchWorkspaces,
+    scratchRowsForDisplay,
     scratchDepthByWorkspaceId,
     expandedCompletedParentIds,
     { isWorkspaceLiveActive }
@@ -1705,14 +1720,17 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const multiProjectWorkspaces = orderMultiProjectSectionRows(
     Array.from(multiProjectWorkspacesById.values())
   );
-  const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectWorkspaces);
+  const multiProjectRowsForDisplay = hideSubAgentRows
+    ? excludeSubAgentRows(multiProjectWorkspaces)
+    : multiProjectWorkspaces;
+  const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectRowsForDisplay);
   const visibleMultiProjectWorkspaces = filterVisibleAgentRows(
-    multiProjectWorkspaces,
+    multiProjectRowsForDisplay,
     expandedCompletedParentIds,
     { isWorkspaceLiveActive }
   );
   const multiProjectRowMetaByWorkspaceId = computeAgentRowRenderMeta(
-    multiProjectWorkspaces,
+    multiProjectRowsForDisplay,
     multiProjectDepthByWorkspaceId,
     expandedCompletedParentIds,
     { isWorkspaceLiveActive }
@@ -1991,6 +2009,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             rowRenderMeta={rowRenderMeta}
                             isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                             delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
+                            hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(metadata.id)}
                             completedChildrenExpanded={expandedCompletedParentIds.has(metadata.id)}
                             onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                           />
@@ -2072,6 +2091,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               rowRenderMeta={rowRenderMeta}
                               isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                               delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
+                              hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(
+                                metadata.id
+                              )}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
                                 metadata.id
                               )}
@@ -2332,7 +2354,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               const promotedWorkspaceIds = new Set(
                                 Object.values(activeDraftPromotions).map((metadata) => metadata.id)
                               );
-                              const workspacesForNormalRendering = projectWorkspaces.filter(
+                              const projectRowsForDisplay = hideSubAgentRows
+                                ? excludeSubAgentRows(projectWorkspaces)
+                                : projectWorkspaces;
+                              const workspacesForNormalRendering = projectRowsForDisplay.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
                               );
                               const sections: SectionConfig[] = getSubProjectsForParent(
@@ -2459,6 +2484,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     taskGroupHeaderTitle={taskGroupHeaderTitle}
                                     isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                                     delegatedActivity={delegatedActivityByWorkspaceId.get(
+                                      metadata.id
+                                    )}
+                                    hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(
                                       metadata.id
                                     )}
                                     completedChildrenExpanded={expandedCompletedParentIds.has(
@@ -2811,6 +2839,11 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                   ) {
                                     retainedWorkflowTaskGroupsRef.current.delete(storageKey);
                                     sessionActiveTaskGroupKeysRef.current.delete(storageKey);
+                                    continue;
+                                  }
+                                  // The parent's hidden-sub-agents summary replaces retained
+                                  // workflow headers while sub-agent rows are hidden.
+                                  if (hideSubAgentRows) {
                                     continue;
                                   }
                                   if (!visibleRowIds.has(retainedGroup.parentWorkspaceId)) {

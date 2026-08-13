@@ -673,6 +673,13 @@ export const LEFT_SIDEBAR_COLLAPSED_KEY = "sidebarCollapsed";
 export const SIDEBAR_AGE_GROUPING_KEY = "sidebarAgeGrouping";
 
 /**
+ * Hide sub-agent rows in the left sidebar and summarize their activity on
+ * parent rows instead.
+ * Format: "sidebarHideSubAgents" (boolean, default false)
+ */
+export const SIDEBAR_HIDE_SUBAGENTS_KEY = "sidebarHideSubAgents";
+
+/**
  * Left sidebar width
  * Format: "left-sidebar:width"
  */

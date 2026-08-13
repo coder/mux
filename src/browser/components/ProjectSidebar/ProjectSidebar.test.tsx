@@ -7,12 +7,15 @@ import * as ReactDndModule from "react-dnd";
 import * as ReactDndHtml5BackendModule from "react-dnd-html5-backend";
 import * as ReactColorfulModule from "react-colorful";
 import { installDom } from "../../../../tests/ui/dom";
-import { EXPANDED_PROJECTS_KEY } from "@/common/constants/storage";
+import { EXPANDED_PROJECTS_KEY, SIDEBAR_HIDE_SUBAGENTS_KEY } from "@/common/constants/storage";
 import { getDraftScopeId, getInputKey } from "@/common/constants/storage";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_SIDEBAR_SECTION_ID } from "@/common/constants/scratch";
 import { MULTI_PROJECT_SIDEBAR_SECTION_ID } from "@/common/constants/multiProject";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
-import type { AgentRowRenderMeta } from "@/browser/utils/ui/workspaceFiltering";
+import type {
+  AgentRowRenderMeta,
+  WorkspaceSubAgentsSummary,
+} from "@/browser/utils/ui/workspaceFiltering";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import * as DesktopTitlebarModule from "@/browser/hooks/useDesktopTitlebar";
 import * as ThemeContextModule from "@/browser/contexts/ThemeContext";
@@ -121,6 +124,7 @@ interface MockAgentListItemProps {
   depth?: number;
   rowRenderMeta?: AgentRowRenderMeta;
   delegatedActivity?: { activeCount: number; queuedCount: number };
+  hiddenSubAgentsSummary?: WorkspaceSubAgentsSummary;
   subAgentConnectorLayout?: "default" | "task-group-member";
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -343,6 +347,9 @@ function installProjectSidebarTestDoubles() {
           data-completed-expanded={String(props.completedChildrenExpanded ?? false)}
           data-delegated-active={String(props.delegatedActivity?.activeCount ?? 0)}
           data-delegated-queued={String(props.delegatedActivity?.queuedCount ?? 0)}
+          data-hidden-subagents={
+            props.hiddenSubAgentsSummary ? JSON.stringify(props.hiddenSubAgentsSummary) : undefined
+          }
         >
           <span>{displayTitle}</span>
           {hasCompletedChildren && props.onToggleCompletedChildren ? (
@@ -901,6 +908,108 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.queryByTestId(agentItemTestId("completed-child"))).toBeNull();
     expect(view.queryByTestId(agentItemTestId("interrupted-child"))).toBeNull();
     expect(view.queryByRole("button", { name: toggleButtonLabel("parent") })).toBeNull();
+  });
+
+  test("hides sub-agent rows behind a parent summary when the setting is on", () => {
+    window.localStorage.setItem(SIDEBAR_HIDE_SUBAGENTS_KEY, JSON.stringify(true));
+    const parentWorkspace = createWorkspace("parent", { title: "Parent workspace" });
+    const runningChild = createWorkspace("running-child", {
+      parentWorkspaceId: "parent",
+      taskStatus: "running",
+      title: "Reviewer",
+    });
+    const reportedChild = createWorkspace("reported-child", {
+      parentWorkspaceId: "parent",
+      taskStatus: "reported",
+      title: "Auditor",
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [parentWorkspace, runningChild, reportedChild]]])
+        }
+        workspaceRecency={{}}
+      />
+    );
+
+    const parentRow = view.getByTestId(agentItemTestId("parent"));
+    expect(view.queryByTestId(agentItemTestId("running-child"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("reported-child"))).toBeNull();
+    expect(JSON.parse(parentRow.dataset.hiddenSubagents ?? "null")).toEqual({
+      subAgentCount: 2,
+      activeSubAgentCount: 1,
+      activeWorkflowRunCount: 0,
+      activeWorkflowAgentCount: 0,
+    });
+    // The delegated activity still reaches the parent row for its live dot.
+    expect(parentRow.dataset.delegatedActive).toBe("1");
+  });
+
+  test("summarizes a hidden workflow run on the parent row instead of a group header", () => {
+    window.localStorage.setItem(SIDEBAR_HIDE_SUBAGENTS_KEY, JSON.stringify(true));
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const workerOne = {
+      ...createWorkspace("worker-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Extract claims",
+        workflowTask: { runId: "wfr_alpha", stepId: "claims", workflowName: "review-pipeline" },
+      }),
+      projects: singleProjectRefs,
+    };
+    const workerTwo = {
+      ...createWorkspace("worker-2", {
+        parentWorkspaceId: "parent",
+        taskStatus: "queued",
+        title: "Verify claims",
+        workflowTask: { runId: "wfr_alpha", stepId: "verify", workflowName: "review-pipeline" },
+      }),
+      projects: singleProjectRefs,
+    };
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([["/projects/demo-project", [parentWorkspace, workerOne, workerTwo]]])
+        }
+        workspaceRecency={{
+          parent: Date.now(),
+          "worker-1": Date.now(),
+          "worker-2": Date.now(),
+        }}
+      />
+    );
+
+    expect(view.queryByTestId("task-group-wfr_alpha")).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("worker-1"))).toBeNull();
+    expect(view.queryByTestId(agentItemTestId("worker-2"))).toBeNull();
+    expect(
+      JSON.parse(view.getByTestId(agentItemTestId("parent")).dataset.hiddenSubagents ?? "null")
+    ).toEqual({
+      subAgentCount: 0,
+      activeSubAgentCount: 0,
+      activeWorkflowRunCount: 1,
+      activeWorkflowAgentCount: 2,
+      workflowName: "review-pipeline",
+    });
   });
 
   test("keeps promoted active descendants in the visible ancestor connector group", () => {

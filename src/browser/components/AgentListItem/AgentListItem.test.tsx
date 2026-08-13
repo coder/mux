@@ -20,6 +20,7 @@ import * as WorkspaceStatusIndicatorModule from "../WorkspaceStatusIndicator/Wor
 import type {
   AgentRowRenderMeta,
   WorkspaceDelegatedActivity,
+  WorkspaceSubAgentsSummary,
 } from "@/browser/utils/ui/workspaceFiltering";
 import type { StreamAbortReasonSnapshot } from "@/common/types/stream";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
@@ -253,6 +254,7 @@ function renderWorkspaceItem(
     taskGroupHeaderTitle?: string;
     isWorkspaceLiveActive?: boolean;
     delegatedActivity?: WorkspaceDelegatedActivity;
+    hiddenSubAgentsSummary?: WorkspaceSubAgentsSummary;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
     onSelectWorkspace?: (selection: WorkspaceSelection) => void;
@@ -272,6 +274,7 @@ function renderWorkspaceItem(
       taskGroupHeaderTitle={options.taskGroupHeaderTitle}
       isWorkspaceLiveActive={options.isWorkspaceLiveActive}
       delegatedActivity={options.delegatedActivity}
+      hiddenSubAgentsSummary={options.hiddenSubAgentsSummary}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
       onSelectWorkspace={options.onSelectWorkspace ?? (() => undefined)}
@@ -545,6 +548,81 @@ describe("AgentListItem", () => {
 
     expect(row.querySelector(".bg-content-destructive.border-surface-destructive")).toBeTruthy();
     expect(rowView.queryByText("Workflow running · 1 sub-agent active")).toBeNull();
+  });
+
+  test("summarizes hidden sub-agents with total and active counts", () => {
+    const { row } = renderWorkspaceItem({
+      delegatedActivity: {
+        activeCount: 1,
+        queuedCount: 0,
+        workflowActiveCount: 0,
+        workflowQueuedCount: 0,
+      },
+      hiddenSubAgentsSummary: {
+        subAgentCount: 3,
+        activeSubAgentCount: 1,
+        activeWorkflowRunCount: 0,
+        activeWorkflowAgentCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(row.querySelector(".workspace-status-dot-active")).toBeTruthy();
+    const indicator = rowView.getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`);
+    expect(indicator.textContent).toBe("3 sub-agents · 1 active");
+    expect(indicator.querySelector("svg")).toBeTruthy();
+    expect(rowView.queryByTestId(`workspace-delegated-activity-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("summarizes a hidden workflow run with its name and agent count", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeWorkflowRunCount: 1 });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 0,
+        activeSubAgentCount: 0,
+        activeWorkflowRunCount: 1,
+        activeWorkflowAgentCount: 5,
+        workflowName: "Deep Research",
+      },
+    });
+    const rowView = within(row);
+
+    expect(rowView.getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent).toBe(
+      "Deep Research running (5 agents)"
+    );
+    expect(rowView.queryByText("Workflow running")).toBeNull();
+  });
+
+  test("keeps coordinator streaming copy ahead of the hidden sub-agents summary", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 2,
+        activeSubAgentCount: 2,
+        activeWorkflowRunCount: 0,
+        activeWorkflowAgentCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
+    expect(rowView.queryByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("falls back to the normal status line when hidden sub-agents are all inactive", () => {
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 3,
+        activeSubAgentCount: 0,
+        activeWorkflowRunCount: 0,
+        activeWorkflowAgentCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    expect(rowView.queryByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
   test("keeps archiving feedback inline instead of rendering a secondary status row", () => {

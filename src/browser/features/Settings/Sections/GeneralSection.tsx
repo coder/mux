@@ -24,6 +24,7 @@ import {
   CHAT_TRANSCRIPT_FULL_WIDTH_KEY,
   DEFAULT_BASH_COLLAPSED_SUMMARY_MODE,
   SIDEBAR_AGE_GROUPING_KEY,
+  SIDEBAR_HIDE_SUBAGENTS_KEY,
   TRANSCRIPT_DENSITIES,
   normalizeBashCollapsedSummaryMode,
   normalizeEditorConfig,
@@ -157,6 +158,10 @@ export function GeneralSection() {
   const [sidebarAgeGrouping, setSidebarAgeGrouping] = usePersistedState<boolean>(
     SIDEBAR_AGE_GROUPING_KEY,
     true
+  );
+  const [sidebarHideSubAgents, setSidebarHideSubAgents] = usePersistedState<boolean>(
+    SIDEBAR_HIDE_SUBAGENTS_KEY,
+    false
   );
   const [transcriptDensity, setTranscriptDensity] = useTranscriptDensity();
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
@@ -556,6 +561,21 @@ export function GeneralSection() {
               checked={sidebarAgeGrouping}
               onCheckedChange={setSidebarAgeGrouping}
               aria-label="Toggle sidebar workspace age grouping"
+            />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex-1">
+              <div className="text-foreground text-sm">Hide sub-agents in the sidebar</div>
+              <div className="text-muted text-xs">
+                Show only top-level workspaces. Parents summarize hidden sub-agent and workflow
+                activity in their status line.
+              </div>
+            </div>
+            <Switch
+              checked={sidebarHideSubAgents}
+              onCheckedChange={setSidebarHideSubAgents}
+              aria-label="Toggle hiding sub-agents in the sidebar"
             />
           </div>
 
