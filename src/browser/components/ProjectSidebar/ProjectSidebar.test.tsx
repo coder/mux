@@ -348,7 +348,11 @@ function installProjectSidebarTestDoubles() {
           data-delegated-active={String(props.delegatedActivity?.activeCount ?? 0)}
           data-delegated-queued={String(props.delegatedActivity?.queuedCount ?? 0)}
           data-hidden-subagents={
-            props.hiddenSubAgentsSummary ? JSON.stringify(props.hiddenSubAgentsSummary) : undefined
+            props.hiddenSubAgentsSummary
+              ? JSON.stringify(props.hiddenSubAgentsSummary, (_key, value: unknown) =>
+                  value instanceof Set ? [...value] : value
+                )
+              : undefined
           }
         >
           <span>{displayTitle}</span>
@@ -946,8 +950,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
-      // Sets serialize to empty objects through the stub's JSON round-trip.
-      workflowRunIds: {},
+      workflowRunIds: [],
     });
     // The delegated activity still reaches the parent row for its live dot.
     expect(parentRow.dataset.delegatedActive).toBe("1");
@@ -1016,7 +1019,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowRunCount: 0,
       runningWorkflowAgentCount: 1,
       queuedWorkflowAgentCount: 1,
-      workflowRunIds: {},
+      workflowRunIds: ["wfr_alpha"],
       workflowName: "review-pipeline",
     });
   });

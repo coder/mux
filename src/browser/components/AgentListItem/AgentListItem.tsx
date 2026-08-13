@@ -261,9 +261,7 @@ function formatHiddenSubAgentsPresentation(
   let workflowText: string | null = null;
   if (runningRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
     // Queued-only runs must not read as running (parallelism limits can park
-    // every worker), mirroring the delegated-status running/queued split. The
-    // label counts only runs in the leading state; queued workers of other
-    // runs surface through the queued suffix.
+    // every worker), mirroring the delegated-status running/queued split.
     const hasRunningRun = runningRunCount > 0;
     const verb = hasRunningRun ? "running" : "queued";
     const runCount = hasRunningRun ? runningRunCount : summary.queuedWorkflowRunCount;

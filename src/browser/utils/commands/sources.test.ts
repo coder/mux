@@ -1346,7 +1346,6 @@ test("toggle hide sub-agents command flips the persisted sidebar setting", () =>
     toggle();
     expect(window.localStorage.getItem(SIDEBAR_HIDE_SUBAGENTS_KEY)).toBe("true");
 
-    // Re-built actions must reflect the new state and toggle back off.
     const rebuilt = getActions().find((a) => a.id === "nav:toggle-hide-subagents");
     expect(rebuilt?.subtitle).toContain("Hidden");
     toggle();

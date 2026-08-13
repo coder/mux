@@ -665,8 +665,6 @@ describe("AgentListItem", () => {
   });
 
   test("does not count queued-only runs in the running workflow label", () => {
-    // One run has a running worker, a second run is entirely queued: the
-    // label must claim only the running run.
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: makeHiddenSummary({
         runningWorkflowRunCount: 1,
@@ -684,8 +682,6 @@ describe("AgentListItem", () => {
   });
 
   test("keeps a workflow line through step gaps when only the run itself is active", () => {
-    // Between sequential steps no worker task exists, so the summary carries
-    // no active counts; the row's own active run keeps the line up.
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       activeWorkflowRunIds: ["run-1"],
       activeWorkflowRunCount: 1,
@@ -724,8 +720,6 @@ describe("AgentListItem", () => {
   });
 
   test("does not borrow a queued run's name for a gap-only running label", () => {
-    // The only running run has no workers (step gap), so its name is unknown;
-    // the queued run's name must stay off the running label.
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       activeWorkflowRunIds: ["run-queued", "run-gap"],
       activeWorkflowRunCount: 2,
@@ -746,8 +740,6 @@ describe("AgentListItem", () => {
   });
 
   test("shows running sub-agents ahead of a queued-only workflow", () => {
-    // A queued-only workflow must not hide the only running activity; the
-    // running family leads the combined line.
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: makeHiddenSummary({
         subAgentCount: 2,

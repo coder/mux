@@ -1073,8 +1073,6 @@ describe("hidden sub-agents summary roll-up", () => {
   });
 
   it("counts a hidden owner's workerless active run as running", () => {
-    // The child's workflow run is between sequential steps, so no worker
-    // task exists; only the owner's live run list knows about it.
     const workspaces = [
       createWorkspace("parent"),
       createWorkspace("owner-child", { parentWorkspaceId: "parent", taskStatus: "running" }),
