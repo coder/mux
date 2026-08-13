@@ -37,6 +37,21 @@ const TOOLS = [
   },
 ];
 
+const PROMPTS = [
+  {
+    name: "review",
+    description: "Build a deterministic review prompt for tests.",
+    arguments: [
+      { name: "path", description: "Path to review", required: true },
+      { name: "focus", description: "Optional review focus", required: false },
+    ],
+  },
+  {
+    name: "status",
+    description: "Build a no-argument status prompt for tests.",
+  },
+];
+
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 
 rl.on("line", (line) => {
@@ -68,7 +83,7 @@ rl.on("line", (line) => {
           id,
           result: {
             protocolVersion,
-            capabilities: { tools: {} },
+            capabilities: { tools: {}, prompts: {} },
             serverInfo: SERVER_INFO,
           },
         });
@@ -77,6 +92,52 @@ rl.on("line", (line) => {
 
       case "tools/list": {
         send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
+        return;
+      }
+
+      case "prompts/list": {
+        send({ jsonrpc: "2.0", id, result: { prompts: PROMPTS } });
+        return;
+      }
+
+      case "prompts/get": {
+        const promptName = message.params?.name;
+        if (!PROMPTS.some((prompt) => prompt.name === promptName)) {
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32602, message: `Unknown prompt: ${promptName}` },
+          });
+          return;
+        }
+        const args = message.params?.arguments ?? {};
+        if (promptName === "review" && !args.path) {
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32602, message: "path is required" },
+          });
+          return;
+        }
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: {
+            description: `Expanded ${promptName} prompt`,
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text:
+                    promptName === "review"
+                      ? `Review ${args.path}${args.focus ? ` with focus on ${args.focus}` : ""}`
+                      : "Report workspace status",
+                },
+              },
+            ],
+          },
+        });
         return;
       }
 

@@ -288,6 +288,36 @@ export function withAgentSkillRefs(
   };
 }
 
+export interface MCPPromptReference {
+  serverName: string;
+  promptName: string;
+  commandKey: string;
+  source: "slash" | "inline";
+  arguments?: Record<string, string>;
+}
+
+export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
+  const deduped = new Map<string, MCPPromptReference>();
+  for (const ref of refs) {
+    const key = `${ref.serverName}\u0000${ref.promptName}`;
+    const existing = deduped.get(key);
+    if (!existing || (existing.source === "inline" && ref.source === "slash")) {
+      deduped.set(key, ref);
+    }
+  }
+  return [...deduped.values()];
+}
+
+export function withMcpPromptRefs(
+  metadata: MuxMessageMetadata | undefined,
+  refs: MCPPromptReference[]
+): MuxMessageMetadata | undefined {
+  const existing = Array.isArray(metadata?.mcpPromptRefs) ? metadata.mcpPromptRefs : [];
+  if (existing.length === 0 && refs.length === 0) return metadata;
+  const mcpPromptRefs = dedupeMcpPromptRefs([...existing, ...refs]);
+  return metadata ? { ...metadata, mcpPromptRefs } : { type: "normal", mcpPromptRefs };
+}
+
 export interface BuildAgentSkillMetadataOptions {
   rawCommand: string;
   skillName: string;
@@ -345,6 +375,7 @@ interface MuxMessageMetadataBase {
    * muxMetadata loose by design, so this orthogonal field needs no schema change.
    */
   agentSkillRefs?: AgentSkillReference[];
+  mcpPromptRefs?: MCPPromptReference[];
   /** Display-only insertion point within an assistant message that was streaming. */
   transcriptAnchor?: TranscriptAnchor;
 }
@@ -640,6 +671,12 @@ export interface MuxMetadata {
      * Optional for backwards compatibility with older histories.
      */
     frontmatterYaml?: string;
+  };
+  mcpPromptSnapshot?: {
+    serverName: string;
+    promptName: string;
+    commandKey: string;
+    description?: string;
   };
 }
 

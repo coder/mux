@@ -4,6 +4,7 @@ import {
   hasProjectScopedSkillRef,
   parseCommandWithSkillInvocation,
   resolveInlineSkillRefsForSend,
+  resolveMcpPromptRefsForSend,
   type SkillInvocation,
 } from "./utils";
 
@@ -12,6 +13,19 @@ function descriptor(
   scope: AgentSkillDescriptor["scope"] = "global"
 ): AgentSkillDescriptor {
   return { name, description: `${name} description`, scope };
+}
+
+function promptDescriptor() {
+  return {
+    commandKey: "mcp__coder__review",
+    serverName: "coder",
+    promptName: "review",
+    description: "Review code",
+    arguments: [
+      { name: "path", required: true },
+      { name: "focus", required: false },
+    ],
+  };
 }
 
 function slashInvocation(skill: AgentSkillDescriptor): SkillInvocation {
@@ -60,6 +74,37 @@ describe("parseCommandWithSkillInvocation", () => {
     });
 
     expect(result.skillInvocation?.descriptor.name).toBe("tdd");
+  });
+
+  test("maps quoted MCP prompt arguments positionally and lets the last consume the remainder", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: '/mcp__coder__review "src app" security and tests',
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [promptDescriptor()],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation?.arguments).toEqual({
+      path: "src app",
+      focus: "security and tests",
+    });
+    expect(result.mcpPromptInvocation?.userText).toBe(
+      'Using MCP prompt coder/review: "src app" security and tests'
+    );
+  });
+
+  test("reports a missing required MCP prompt argument before send", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [promptDescriptor()],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation).toBeNull();
+    expect(result.error).toBe("Missing required MCP prompt argument: path");
   });
 });
 
@@ -173,6 +218,31 @@ describe("resolveInlineSkillRefsForSend", () => {
         discovery: null,
       })
     ).toEqual([]);
+  });
+});
+
+describe("resolveMcpPromptRefsForSend", () => {
+  test("resolves inline no-required-argument prompts and drops required prompts", async () => {
+    const noArgs = { ...promptDescriptor(), arguments: [] };
+    const refs = await resolveMcpPromptRefsForSend({
+      messageText: "Use $mcp__coder__review and $mcp__coder__required",
+      slashInvocation: null,
+      descriptors: [
+        noArgs,
+        { ...promptDescriptor(), commandKey: "mcp__coder__required", promptName: "required" },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(refs).toEqual([
+      {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+        source: "inline",
+      },
+    ]);
   });
 });
 

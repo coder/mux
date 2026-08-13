@@ -11,6 +11,7 @@
 
 import type { ExperimentId } from "@/common/constants/experiments";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
+import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { ParsedThinkingInput } from "@/common/types/thinking";
 
 export type ParsedCommand =
@@ -101,6 +102,7 @@ export interface SlashSuggestion {
 
 export interface SlashSuggestionContext extends SlashCommandVisibilityContext {
   agentSkills?: AgentSkillDescriptor[];
+  mcpPrompts?: MCPPromptDescriptor[];
 }
 
 export interface SuggestionDefinition {

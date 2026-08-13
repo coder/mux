@@ -3496,6 +3496,7 @@ export class WorkspaceService extends EventEmitter {
       config: this.config,
       historyService: this.historyService,
       aiService: this.aiService,
+      mcpServerManager: this.mcpServerManager,
       telemetryService: this.telemetryService,
       initStateManager: this.initStateManager,
       workspaceGoalService: this.workspaceGoalService,

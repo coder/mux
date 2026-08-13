@@ -259,6 +259,9 @@ function buildUserDisplayedMessages(options: {
     }));
 
   let rawCommand = getRawCommand(muxMeta);
+  const slashMcpPromptRef = Array.isArray(muxMeta?.mcpPromptRefs)
+    ? muxMeta.mcpPromptRefs.find((ref) => ref.source === "slash")
+    : undefined;
   const agentSkill =
     muxMeta?.type === "agent-skill"
       ? {
@@ -267,7 +270,13 @@ function buildUserDisplayedMessages(options: {
           arguments: muxMeta.arguments,
           snapshot: agentSkillSnapshot,
         }
-      : undefined;
+      : slashMcpPromptRef
+        ? {
+            skillName: slashMcpPromptRef.commandKey,
+            scope: "built-in" as const,
+            snapshot: agentSkillSnapshot,
+          }
+        : undefined;
 
   const bashMonitorWakeRecords = getValidBashMonitorWakeRecords(muxMeta);
 

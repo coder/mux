@@ -7,6 +7,8 @@ import {
   isModernEra,
   MCP_TOOL_CALL_TIMEOUT_MS,
   type MCPClientHandle,
+  type MCPGetPromptResult,
+  type MCPPrompt,
 } from "@/node/services/mcpClient";
 import { log } from "@/node/services/log";
 import { MCPStdioTransport } from "@/node/services/mcpStdioTransport";
@@ -35,7 +37,8 @@ import {
 } from "@/node/services/mcpOauthService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
-import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
+import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
+import { buildMcpPromptCommandKey, buildMcpToolName } from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
 
 const TEST_TIMEOUT_MS = 10_000;
@@ -746,12 +749,41 @@ async function runServerTest(
   return Promise.race([testPromise, timeoutPromise]);
 }
 
+type MCPPromptContent = MCPGetPromptResult["messages"][number]["content"];
+
+function flattenPromptContent(content: MCPPromptContent): string {
+  switch (content.type) {
+    case "text":
+      return content.text;
+    case "resource":
+      return "text" in content.resource ? content.resource.text : "[Resource content omitted]";
+    case "image":
+      return "[Image content omitted]";
+    case "audio":
+      return "[Audio content omitted]";
+    default:
+      return "[Unsupported content omitted]";
+  }
+}
+
+export function flattenMcpPrompt(result: MCPGetPromptResult): string {
+  return result.messages
+    .map((message) => {
+      const text = flattenPromptContent(message.content);
+      return message.role === "user" ? text : `[${message.role}]\n${text}`;
+    })
+    .filter((message) => message.length > 0)
+    .join("\n\n");
+}
+
 interface MCPServerInstance {
   name: string;
   /** Resolved transport actually used (auto may fall back to sse). */
   resolvedTransport: ResolvedTransport;
   autoFallbackUsed: boolean;
   tools: Record<string, Tool>;
+  prompts: MCPPrompt[];
+  getPrompt: MCPClientHandle["getPrompt"];
   /** True once the underlying MCP client/transport has been closed. */
   isClosed: boolean;
   /**
@@ -763,6 +795,7 @@ interface MCPServerInstance {
    * results carry no freshness hints).
    */
   refreshTools?: () => Promise<void>;
+  refreshPrompts?: () => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -779,6 +812,17 @@ export interface MCPWorkspaceStats {
   hasHttp: boolean;
   hasSse: boolean;
   transportMode: MCPTransportMode;
+}
+
+export interface MCPWorkspaceRequestOptions {
+  workspaceId: string;
+  projectPath: string;
+  runtime: Runtime;
+  workspacePath: string;
+  trusted?: boolean;
+  overrides?: WorkspaceMCPOverrides;
+  projectSecrets?: Record<string, string>;
+  agentPlugins?: AgentPluginsMcpContext | null;
 }
 
 interface MCPToolsForWorkspaceResult {
@@ -866,28 +910,39 @@ export class MCPServerManager {
     this.eraVerdicts.set(key, { prior, cachedAtMs: Date.now() });
   }
 
-  /**
-   * Best-effort tools/list refresh for cached modern-era instances
-   * (SEP-2549): a still-fresh cached list is served by the SDK with zero
-   * round trips; a stale one refetches. Failures keep the existing tool set —
-   * tool availability must never regress because a refresh failed.
-   */
   private async refreshModernInstanceTools(
     instances: Map<string, MCPServerInstance>
   ): Promise<void> {
     await Promise.all(
-      [...instances.values()]
-        .filter((instance) => instance.refreshTools !== undefined && !instance.isClosed)
-        .map(async (instance) => {
-          try {
-            await instance.refreshTools!();
-          } catch (error) {
-            log.debug("[MCP] Tool list refresh failed; keeping cached tools", {
-              name: instance.name,
-              error: getErrorMessage(error),
-            });
-          }
-        })
+      [...instances.values()].map(async (instance) => {
+        if (instance.isClosed || !instance.refreshTools) return;
+        try {
+          await instance.refreshTools();
+        } catch (error) {
+          log.debug("[MCP] Tool list refresh failed; keeping cached tools", {
+            name: instance.name,
+            error: getErrorMessage(error),
+          });
+        }
+      })
+    );
+  }
+
+  private async refreshModernInstancePrompts(
+    instances: Map<string, MCPServerInstance>
+  ): Promise<void> {
+    await Promise.all(
+      [...instances.values()].map(async (instance) => {
+        if (instance.isClosed || !instance.refreshPrompts) return;
+        try {
+          await instance.refreshPrompts();
+        } catch (error) {
+          log.debug("[MCP] Prompt list refresh failed; keeping cached prompts", {
+            name: instance.name,
+            error: getErrorMessage(error),
+          });
+        }
+      })
     );
   }
 
@@ -1164,20 +1219,9 @@ export class MCPServerManager {
     return filtered;
   }
 
-  async getToolsForWorkspace(options: {
-    workspaceId: string;
-    projectPath: string;
-    runtime: Runtime;
-    workspacePath: string;
-    /** Whether repo-local MCP config is allowed for this project. */
-    trusted?: boolean;
-    /** Per-workspace MCP overrides (disabled servers, tool allowlists) */
-    overrides?: WorkspaceMCPOverrides;
-    /** Project secrets, used for resolving {secret: "KEY"} header references. */
-    projectSecrets?: Record<string, string>;
-    /** Agent Plugins discovery context (null = off-host workspace, no plugin servers). */
-    agentPlugins?: AgentPluginsMcpContext | null;
-  }): Promise<MCPToolsForWorkspaceResult> {
+  async getToolsForWorkspace(
+    options: MCPWorkspaceRequestOptions
+  ): Promise<MCPToolsForWorkspaceResult> {
     const {
       workspaceId,
       projectPath,
@@ -1386,8 +1430,7 @@ export class MCPServerManager {
         serverCount: enabledEntries.length,
       });
 
-      // Honor SEP-2549 freshness hints on modern-era connections instead of
-      // caching tool lists for the instance lifetime.
+      // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
       await this.refreshModernInstanceTools(existing.instances);
 
       return {
@@ -1500,8 +1543,7 @@ export class MCPServerManager {
       );
       existing.stats = leasedStats;
 
-      // Honor SEP-2549 freshness hints on modern-era connections instead of
-      // caching tool lists for the instance lifetime.
+      // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
       await this.refreshModernInstanceTools(instancesForTools);
 
       return {
@@ -1553,6 +1595,57 @@ export class MCPServerManager {
     return {
       tools: this.collectTools(instances, fullServerInfo, overrides),
       stats,
+    };
+  }
+
+  async getPromptsForWorkspace(
+    options: MCPWorkspaceRequestOptions
+  ): Promise<MCPPromptDescriptor[]> {
+    await this.getToolsForWorkspace(options);
+    const entry = this.workspaceServers.get(options.workspaceId);
+    if (!entry) return [];
+
+    await this.refreshModernInstancePrompts(entry.instances);
+    const descriptors: MCPPromptDescriptor[] = [];
+    const usedNames = new Set<string>();
+    const instances = [...entry.instances.values()].sort((a, b) => a.name.localeCompare(b.name));
+    for (const instance of instances) {
+      const prompts = [...instance.prompts].sort((a, b) => a.name.localeCompare(b.name));
+      for (const prompt of prompts) {
+        const command = buildMcpPromptCommandKey({
+          serverName: instance.name,
+          promptName: prompt.name,
+          usedNames,
+        });
+        if (!command) continue;
+        descriptors.push({
+          commandKey: command.toolName,
+          serverName: instance.name,
+          promptName: prompt.name,
+          ...(prompt.description !== undefined ? { description: prompt.description } : {}),
+          ...(prompt.arguments !== undefined ? { arguments: prompt.arguments } : {}),
+        });
+      }
+    }
+    return descriptors;
+  }
+
+  async getPrompt(
+    workspaceId: string,
+    serverName: string,
+    promptName: string,
+    args: Record<string, string>
+  ): Promise<{ text: string; description?: string }> {
+    const entry = this.workspaceServers.get(workspaceId);
+    const instance = entry?.instances.get(serverName);
+    if (!instance || instance.isClosed) {
+      throw new Error(`MCP server '${serverName}' is not connected`);
+    }
+    this.markActivity(workspaceId);
+    const result = await instance.getPrompt(promptName, args);
+    return {
+      text: flattenMcpPrompt(result),
+      ...(result.description !== undefined ? { description: result.description } : {}),
     };
   }
 
@@ -2177,6 +2270,15 @@ export class MCPServerManager {
         }
 
         const rawTools = await client.tools();
+        let prompts: MCPPrompt[] = [];
+        try {
+          prompts = await client.prompts();
+        } catch (error) {
+          log.debug("[MCP] Prompt list unavailable during startup", {
+            name,
+            error: getErrorMessage(error),
+          });
+        }
         if (signal.aborted) {
           await cleanupStartupResources();
           return null;
@@ -2211,12 +2313,17 @@ export class MCPServerManager {
           resolvedTransport: "stdio",
           autoFallbackUsed: false,
           tools,
+          prompts,
+          getPrompt: (promptName, args) => readyClient.getPrompt(promptName, args),
           isClosed: transportClosed,
           ...(isModernEra(negotiatedPrior)
             ? {
                 refreshTools: async () => {
                   const raw = await readyClient.tools();
                   instance.tools = wrapRawTools(raw);
+                },
+                refreshPrompts: async () => {
+                  instance.prompts = await readyClient.prompts();
                 },
               }
             : {}),
@@ -2426,6 +2533,15 @@ export class MCPServerManager {
       }
 
       const rawTools = await activeClient.tools();
+      let prompts: MCPPrompt[] = [];
+      try {
+        prompts = await activeClient.prompts();
+      } catch (error) {
+        log.debug("[MCP] Prompt list unavailable during startup", {
+          name,
+          error: getErrorMessage(error),
+        });
+      }
       if (signal.aborted) {
         await cleanupStartupClient();
         return null;
@@ -2458,12 +2574,17 @@ export class MCPServerManager {
         resolvedTransport,
         autoFallbackUsed,
         tools,
+        prompts,
+        getPrompt: (promptName, args) => activeClient.getPrompt(promptName, args),
         isClosed: transportErrored || clientClosed,
         ...(isModernEra(negotiatedPrior)
           ? {
               refreshTools: async () => {
                 const raw = await activeClient.tools();
                 instance.tools = wrapRawTools(raw);
+              },
+              refreshPrompts: async () => {
+                instance.prompts = await activeClient.prompts();
               },
             }
           : {}),

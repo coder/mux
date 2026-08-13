@@ -32,7 +32,9 @@ function isSkillStartChar(ch: string | undefined): boolean {
 }
 
 function isSkillContinuationChar(ch: string | undefined): boolean {
-  return Boolean(ch && ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "-"));
+  return Boolean(
+    ch && ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9") || ch === "-" || ch === "_")
+  );
 }
 
 function hasSaneLeftBoundary(text: string, dollarIndex: number): boolean {
@@ -101,7 +103,7 @@ export function extractInlineSkillReferenceCandidates(text: string): InlineSkill
       tokenEnd--;
     }
 
-    if (SkillNameSchema.safeParse(skillName).success) {
+    if (SkillNameSchema.safeParse(skillName).success || /^mcp__[a-z0-9_]+$/.test(skillName)) {
       candidates.push({ skillName, startIndex: index, endIndex: tokenEnd });
     }
 

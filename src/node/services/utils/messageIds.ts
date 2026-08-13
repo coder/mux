@@ -24,6 +24,9 @@ export const createFileSnapshotMessageId = (): string =>
 export const createAgentSkillSnapshotMessageId = (): string =>
   `agent-skill-snapshot-${Date.now()}-${randomSuffix(7)}`;
 
+export const createMcpPromptSnapshotMessageId = (): string =>
+  `mcp-prompt-snapshot-${Date.now()}-${randomSuffix(7)}`;
+
 /** Compaction summary message IDs: summary-{timestamp}-{random} */
 export const createCompactionSummaryMessageId = (): string =>
   `summary-${Date.now()}-${randomSuffix(9)}`;

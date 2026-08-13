@@ -522,6 +522,65 @@ describe("Agent skill snapshot association", () => {
     });
   });
 
+  it("attaches MCP prompt snapshots to slash and inline invocation surfaces", () => {
+    const aggregator = createAggregator();
+    const snapshot = createMuxMessage("prompt-snapshot", "user", "Expanded prompt body", {
+      historySequence: 1,
+      timestamp: 0,
+      synthetic: true,
+      mcpPromptSnapshot: {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+      },
+    });
+    const slash = createMuxMessage("prompt-slash", "user", "Using MCP prompt coder/review", {
+      historySequence: 2,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        rawCommand: "/mcp__coder__review",
+        commandPrefix: "/mcp__coder__review",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "slash",
+          },
+        ],
+      },
+    });
+    const inline = createMuxMessage("prompt-inline", "user", "Use $mcp__coder__review", {
+      historySequence: 3,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "inline",
+          },
+        ],
+      },
+    });
+
+    aggregator.loadHistoricalMessages([snapshot, slash, inline]);
+    const displayed = aggregator.getDisplayedMessages();
+    expect(displayed).toHaveLength(2);
+    const slashMessage = displayed[0];
+    const inlineMessage = displayed[1];
+    if (slashMessage?.type !== "user" || inlineMessage?.type !== "user") {
+      throw new Error("Expected displayed user messages");
+    }
+    expect(slashMessage.agentSkill?.snapshot?.body).toBe("Expanded prompt body");
+    expect(inlineMessage.inlineSkillSnapshots?.mcp__coder__review?.snapshot.body).toBe(
+      "Expanded prompt body"
+    );
+  });
+
   it("uses the latest snapshot available at each invocation turn", () => {
     const aggregator = createAggregator();
     const firstFrontmatter = "name: pull-requests\ndescription: First";

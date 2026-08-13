@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 
 import { uniqueSuffix } from "@/common/utils/hasher";
 
-import { buildMcpToolName, normalizeMcpToolNamePart } from "./mcpToolName";
+import {
+  buildMcpPromptCommandKey,
+  buildMcpToolName,
+  normalizeMcpToolNamePart,
+} from "./mcpToolName";
 
 describe("mcpToolName", () => {
   describe("normalizeMcpToolNamePart", () => {
@@ -67,5 +71,23 @@ describe("mcpToolName", () => {
       expect(result!.toolName.endsWith(`_${expectedSuffix}`)).toBe(true);
       expect(result!.toolName).toMatch(/^[a-z0-9_]+$/);
     });
+  });
+  test("builds namespaced prompt command keys and hashes normalized collisions", () => {
+    const usedNames = new Set<string>();
+    expect(
+      buildMcpPromptCommandKey({
+        serverName: "Coder Server",
+        promptName: "Code Review",
+        usedNames,
+      })?.toolName
+    ).toBe("mcp__coder_server__code_review");
+
+    const collision = buildMcpPromptCommandKey({
+      serverName: "coder_server",
+      promptName: "code_review",
+      usedNames,
+    });
+    expect(collision?.wasSuffixed).toBe(true);
+    expect(collision?.toolName).toStartWith("mcp__coder_server__code_review_");
   });
 });

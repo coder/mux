@@ -94,6 +94,30 @@ describe("getSlashCommandSuggestions", () => {
     expect(skillSuggestion?.description).toContain("(project)");
   });
 
+  it("includes MCP prompts with positional argument hints", () => {
+    const suggestions = getSlashCommandSuggestions("/mcp__coder", {
+      mcpPrompts: [
+        {
+          commandKey: "mcp__coder__review",
+          serverName: "coder",
+          promptName: "review",
+          description: "Review code",
+          arguments: [
+            { name: "path", required: true },
+            { name: "focus", required: false },
+          ],
+        },
+      ],
+    });
+
+    expect(suggestions).toContainEqual({
+      id: "mcp-prompt:mcp__coder__review",
+      display: "/mcp__coder__review [path] [focus?]",
+      description: "Review code (coder)",
+      replacement: "/mcp__coder__review ",
+    });
+  });
+
   it("hides user-invocable: false skills from slash suggestions", () => {
     const suggestions = getSlashCommandSuggestions("/", {
       agentSkills: [

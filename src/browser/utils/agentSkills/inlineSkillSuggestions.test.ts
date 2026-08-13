@@ -37,6 +37,29 @@ describe("getInlineSkillSuggestions", () => {
     ]);
   });
 
+  test("suggests only MCP prompts without required arguments", () => {
+    expect(
+      getInlineSkillSuggestions({
+        partial: "mcp__coder",
+        descriptors: [],
+        mcpPrompts: [
+          {
+            commandKey: "mcp__coder__review",
+            serverName: "coder",
+            promptName: "review",
+            arguments: [],
+          },
+          {
+            commandKey: "mcp__coder__required",
+            serverName: "coder",
+            promptName: "required",
+            arguments: [{ name: "path", required: true }],
+          },
+        ],
+      }).map((suggestion) => suggestion.display)
+    ).toEqual(["$mcp__coder__review"]);
+  });
+
   test("hides user-invocable: false skills from suggestions", () => {
     expect(
       getInlineSkillSuggestions({

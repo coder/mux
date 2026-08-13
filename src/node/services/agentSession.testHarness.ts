@@ -12,6 +12,7 @@ import type { BackgroundProcessManager } from "@/node/services/backgroundProcess
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 
 function createAgentSessionTestConfig(sessionDir = "/tmp"): Config {
@@ -67,6 +68,7 @@ export interface AgentSessionHarnessOptions {
   backgroundProcessManager?: BackgroundProcessManager;
   backgroundProcessManagerOverrides?: Partial<BackgroundProcessManager>;
   workspaceGoalService?: WorkspaceGoalService;
+  mcpServerManager?: MCPServerManager;
   onCompactionComplete?: (metadata: CompactionCompletionMetadata) => void;
   captureEvents?: boolean;
 }
@@ -107,6 +109,7 @@ export async function createAgentSessionHarness(
     config,
     historyService,
     aiService,
+    mcpServerManager: options.mcpServerManager,
     initStateManager,
     workspaceGoalService: options.workspaceGoalService,
     backgroundProcessManager,

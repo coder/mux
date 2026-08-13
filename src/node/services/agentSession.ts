@@ -9,6 +9,7 @@ import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
 import type { InitStateManager } from "@/node/services/initStateManager";
+import type { MCPServerManager } from "@/node/services/mcpServerManager";
 
 import type { FrontendWorkspaceMetadata, WorkspaceMetadata } from "@/common/types/workspace";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -45,6 +46,7 @@ import {
   createUserMessageId,
   createFileSnapshotMessageId,
   createAgentSkillSnapshotMessageId,
+  createMcpPromptSnapshotMessageId,
 } from "@/node/services/utils/messageIds";
 import {
   FileChangeTracker,
@@ -63,6 +65,7 @@ import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverrid
 import {
   createMuxMessage,
   dedupeAgentSkillRefs,
+  dedupeMcpPromptRefs,
   isCompactionSummaryMetadata,
   pickPreservedSendOptions,
   pickStartupRetrySendOptions,
@@ -376,6 +379,7 @@ interface AgentSessionOptions {
   config: Config;
   historyService: HistoryService;
   aiService: AIService;
+  mcpServerManager?: MCPServerManager;
   initStateManager: InitStateManager;
   telemetryService?: TelemetryService;
   backgroundProcessManager: BackgroundProcessManager;
@@ -419,6 +423,7 @@ export class AgentSession {
   private readonly config: Config;
   private readonly historyService: HistoryService;
   private readonly aiService: AIService;
+  private readonly mcpServerManager?: MCPServerManager;
   private readonly initStateManager: InitStateManager;
   private readonly backgroundProcessManager: BackgroundProcessManager;
   private readonly workspaceGoalService?: WorkspaceGoalService;
@@ -632,6 +637,7 @@ export class AgentSession {
       config,
       historyService,
       aiService,
+      mcpServerManager,
       initStateManager,
       telemetryService,
       backgroundProcessManager,
@@ -650,6 +656,7 @@ export class AgentSession {
     this.config = config;
     this.historyService = historyService;
     this.aiService = aiService;
+    this.mcpServerManager = mcpServerManager;
     this.initStateManager = initStateManager;
     this.backgroundProcessManager = backgroundProcessManager;
     this.workspaceGoalService = workspaceGoalService;
@@ -3024,16 +3031,16 @@ export class AgentSession {
     // On on-send compaction paths, snapshots are deferred with the follow-up turn.
     const shouldPersistTurnSnapshots = autoCompactionMessage === null;
 
-    // Materialize skill snapshots only for turns that send immediately (see the
-    // compaction-decision comment above: deferred turns re-materialize on follow-up,
-    // and materialization may execute dynamic context directives).
+    // Deferral preserves send-time resolution for dynamic snapshot sources.
     let skillSnapshotMessages: MuxMessage[] = [];
+    let mcpPromptSnapshotMessages: MuxMessage[] = [];
     if (shouldPersistTurnSnapshots) {
       try {
         skillSnapshotMessages = await this.materializeAgentSkillSnapshots(
           typedMuxMetadata,
           options?.disableWorkspaceAgents
         );
+        mcpPromptSnapshotMessages = await this.materializeMcpPromptSnapshots(typedMuxMetadata);
       } catch (error) {
         return Err(createUnknownSendMessageError(getErrorMessage(error)));
       }
@@ -3069,6 +3076,20 @@ export class AgentSession {
         if (await cancelBeforeAcceptance()) {
           return Ok(undefined);
         }
+      }
+    }
+
+    if (shouldPersistTurnSnapshots && mcpPromptSnapshotMessages.length > 0) {
+      for (const snapshotMessage of mcpPromptSnapshotMessages) {
+        const appendResult = await this.historyService.appendToHistory(
+          this.workspaceId,
+          snapshotMessage
+        );
+        if (!appendResult.success) {
+          return Err(createUnknownSendMessageError(appendResult.error));
+        }
+        persistedCancelableMessageIds.push(snapshotMessage.id);
+        if (await cancelBeforeAcceptance()) return Ok(undefined);
       }
     }
 
@@ -6161,6 +6182,45 @@ export class AgentSession {
     });
 
     return { snapshotMessage, materializedTokens: tokens };
+  }
+
+  private async materializeMcpPromptSnapshots(
+    muxMetadata: MuxMessageMetadata | undefined
+  ): Promise<MuxMessage[]> {
+    if (!this.mcpServerManager || !Array.isArray(muxMetadata?.mcpPromptRefs)) return [];
+
+    const refs = dedupeMcpPromptRefs(muxMetadata.mcpPromptRefs);
+    const snapshots: MuxMessage[] = [];
+    for (const ref of refs) {
+      try {
+        const prompt = await this.mcpServerManager.getPrompt(
+          this.workspaceId,
+          ref.serverName,
+          ref.promptName,
+          ref.arguments ?? {}
+        );
+        snapshots.push(
+          createMuxMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
+            timestamp: Date.now(),
+            synthetic: true,
+            mcpPromptSnapshot: {
+              serverName: ref.serverName,
+              promptName: ref.promptName,
+              commandKey: ref.commandKey,
+              ...(prompt.description !== undefined ? { description: prompt.description } : {}),
+            },
+          })
+        );
+      } catch (error) {
+        log.debug("Failed to materialize MCP prompt reference", {
+          workspaceId: this.workspaceId,
+          serverName: ref.serverName,
+          promptName: ref.promptName,
+          error: getErrorMessage(error),
+        });
+      }
+    }
+    return snapshots;
   }
 
   private async materializeAgentSkillSnapshots(

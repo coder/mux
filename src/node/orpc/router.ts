@@ -44,6 +44,7 @@ import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMe
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import {
   appendSubProjectRelativePath,
+  createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
@@ -5553,6 +5554,40 @@ export const router = (authToken?: string) => {
               return {};
             }
           }),
+        prompts: {
+          list: t
+            .input(schemas.workspace.mcp.prompts.list.input)
+            .output(schemas.workspace.mcp.prompts.list.output)
+            .handler(async ({ context, input }) => {
+              await context.aiService.waitForInit(input.workspaceId);
+              const metadataResult = await context.aiService.getWorkspaceMetadata(
+                input.workspaceId
+              );
+              if (!metadataResult.success) throw new Error(metadataResult.error);
+              const metadata = metadataResult.data;
+              const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+              const overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+              const agentPlugins = await resolveWorkspaceAgentPluginsMcpContext(
+                context,
+                input.workspaceId,
+                metadata.projectPath
+              );
+              return context.mcpServerManager.getPromptsForWorkspace({
+                workspaceId: input.workspaceId,
+                projectPath: metadata.projectPath,
+                runtime,
+                workspacePath,
+                trusted: isWorkspaceProjectTrusted(context.config, metadata),
+                overrides,
+                projectSecrets: await secretsToRecord(
+                  context.config.getEffectiveSecrets(metadata.projectPath)
+                ),
+                agentPlugins,
+              });
+            }),
+        },
         set: t
           .input(schemas.workspace.mcp.set.input)
           .output(schemas.workspace.mcp.set.output)

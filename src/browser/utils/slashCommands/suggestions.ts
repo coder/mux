@@ -92,6 +92,20 @@ function buildTopLevelSuggestions(
     };
   });
 
+  const promptSuggestions = (context.mcpPrompts ?? [])
+    .filter((prompt) => matchesNameBySegmentPrefix(prompt.commandKey, partial))
+    .map((prompt) => {
+      const argumentHint = (prompt.arguments ?? [])
+        .map((argument) => `[${argument.name}${argument.required ? "" : "?"}]`)
+        .join(" ");
+      return {
+        id: `mcp-prompt:${prompt.commandKey}`,
+        display: `/${prompt.commandKey}${argumentHint ? ` ${argumentHint}` : ""}`,
+        description: `${prompt.description ?? "MCP prompt"} (${prompt.serverName})`,
+        replacement: `/${prompt.commandKey} `,
+      };
+    });
+
   // Model alias one-shot suggestions (e.g., /haiku, /sonnet, /opus+high).
   // The build callback below hardcodes the trailing space, so `appendSpace`
   // is intentionally omitted here.
@@ -113,7 +127,12 @@ function buildTopLevelSuggestions(
     })
   );
 
-  return [...commandSuggestions, ...skillSuggestions, ...modelAliasSuggestions];
+  return [
+    ...commandSuggestions,
+    ...skillSuggestions,
+    ...promptSuggestions,
+    ...modelAliasSuggestions,
+  ];
 }
 
 function buildSubcommandSuggestions(

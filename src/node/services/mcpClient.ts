@@ -82,9 +82,14 @@ export interface MCPClientConfig {
   prior?: PriorDiscovery;
 }
 
+export type MCPPrompt = Awaited<ReturnType<Client["listPrompts"]>>["prompts"][number];
+export type MCPGetPromptResult = Awaited<ReturnType<Client["getPrompt"]>>;
+
 export interface MCPClientHandle {
   /** Fetch tools/list and build AI SDK tools whose execute calls tools/call. */
   tools(): Promise<Record<string, Tool>>;
+  prompts(): Promise<MCPPrompt[]>;
+  getPrompt(name: string, args: Record<string, string>): Promise<MCPGetPromptResult>;
   /**
    * The MCP protocol revision negotiated at connect ("2026-07-28" once the
    * server/discover probe finds a modern server; "2025-11-25" or earlier on
@@ -271,6 +276,18 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
       }
       return tools;
     },
+    prompts: async () => {
+      const result = await client.listPrompts();
+      assert(Array.isArray(result.prompts), "MCP prompts/list result must carry a prompts array");
+      return result.prompts;
+    },
+    getPrompt: (name, args) =>
+      client.getPrompt(
+        { name, arguments: args },
+        {
+          timeout: SDK_TOOL_CALL_TIMEOUT_MS,
+        }
+      ),
     negotiatedProtocolVersion: () => client.getNegotiatedProtocolVersion(),
     priorDiscovery: (): PriorDiscovery => {
       const discover = client.getDiscoverResult();

@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
+  flattenMcpPrompt,
   isClosedClientError,
   prepareStdioLaunch,
   runMCPToolWithDeadline,
@@ -58,6 +59,12 @@ function testInstance(
   name: string,
   options: {
     tools?: Record<string, Tool>;
+    prompts?: Array<{
+      name: string;
+      description?: string;
+      arguments?: Array<{ name: string; description?: string; required?: boolean }>;
+    }>;
+    getPrompt?: ReturnType<typeof mock>;
     close?: ReturnType<typeof mock>;
     isClosed?: boolean;
   } = {}
@@ -67,6 +74,8 @@ function testInstance(
     resolvedTransport: "stdio" as const,
     autoFallbackUsed: false,
     tools: options.tools ?? {},
+    prompts: options.prompts ?? [],
+    getPrompt: options.getPrompt ?? mock(() => Promise.resolve({ messages: [] })),
     isClosed: options.isClosed ?? false,
     close: options.close ?? mock(() => Promise.resolve(undefined)),
   };
@@ -95,7 +104,7 @@ function cachedStats(overrides: Record<string, unknown> = {}) {
     hasStdio: false,
     hasHttp: false,
     hasSse: false,
-    transportMode: "none",
+    transportMode: "none" as const,
     ...overrides,
   };
 }
@@ -1125,6 +1134,88 @@ describe("MCPServerManager", () => {
     expect(Object.keys(firstStartedServers ?? {})).toEqual(["global"]);
     expect(Object.keys(secondStartedServers ?? {}).sort()).toEqual(["global", "repo"]);
   });
+  test("lists namespaced prompt descriptors from connected instances", async () => {
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+      tools: {},
+      stats: cachedStats(),
+    });
+    access.workspaceServers.set("workspace", {
+      instances: new Map([
+        [
+          "Coder Server",
+          testInstance("Coder Server", {
+            prompts: [
+              {
+                name: "Code Review",
+                description: "Review code",
+                arguments: [{ name: "path", required: true }],
+              },
+            ],
+          }),
+        ],
+      ]),
+    });
+
+    expect(await manager.getPromptsForWorkspace(workspaceRequest("workspace"))).toEqual([
+      {
+        commandKey: "mcp__coder_server__code_review",
+        serverName: "Coder Server",
+        promptName: "Code Review",
+        description: "Review code",
+        arguments: [{ name: "path", required: true }],
+      },
+    ]);
+    getToolsSpy.mockRestore();
+  });
+
+  test("forwards prompt arguments and flattens supported content", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        description: "Expanded review",
+        messages: [
+          { role: "user", content: { type: "text", text: "Review src" } },
+          {
+            role: "assistant",
+            content: {
+              type: "resource",
+              resource: { uri: "file:///guide", text: "Use the guide" },
+            },
+          },
+          {
+            role: "assistant",
+            content: { type: "image", data: "abc", mimeType: "image/png" },
+          },
+        ],
+      })
+    );
+    access.workspaceServers.set("workspace", {
+      instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+    });
+
+    expect(await manager.getPrompt("workspace", "coder", "review", { path: "src" })).toEqual({
+      description: "Expanded review",
+      text: "Review src\n\n[assistant]\nUse the guide\n\n[assistant]\n[Image content omitted]",
+    });
+    expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" });
+  });
+
+  test("flattens audio and binary resources as omission markers", () => {
+    expect(
+      flattenMcpPrompt({
+        messages: [
+          {
+            role: "user",
+            content: { type: "audio", data: "abc", mimeType: "audio/wav" },
+          },
+          {
+            role: "user",
+            content: { type: "resource", resource: { uri: "file:///blob", blob: "abc" } },
+          },
+        ],
+      })
+    ).toBe("[Audio content omitted]\n\n[Resource content omitted]");
+  });
+
   test("test() includes oauthChallenge when server responds 401 + WWW-Authenticate Bearer", async () => {
     let baseUrl = "";
     let resourceMetadataUrl = "";
