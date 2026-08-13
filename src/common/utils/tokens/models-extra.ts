@@ -539,16 +539,17 @@ export const modelsExtra: Record<string, ModelData> = {
   },
 
   // Gemini 3.7 Flash - GA on August 13, 2026. Stable `gemini-3.7-flash` model ID with
-  // 1M context, 65K max output. We encode the standard list rates ($1.50/M input,
-  // $7.50/M output, $0.15/M cached input — unchanged from 3.6 Flash); Google bills a
-  // half-off introductory rate ($0.75/$3.75/$0.075) through December 31, 2026.
-  // Source: Gemini API pricing docs as of 2026-08-13.
+  // 1M context, 65K max output. We encode the introductory rates Google actually
+  // bills through December 31, 2026 ($0.75/M input, $3.75/M output, $0.075/M cached
+  // input) so displayed costs and goal budgets match real charges. TODO(2027-01-01):
+  // raise to the standard list rates ($1.50/$7.50/$0.15) when the intro pricing
+  // expires. Source: Gemini API pricing docs as of 2026-08-13.
   "gemini-3.7-flash": {
     max_input_tokens: 1048576,
     max_output_tokens: 65536,
-    input_cost_per_token: 0.0000015, // $1.50 per million input tokens
-    output_cost_per_token: 0.0000075, // $7.50 per million output tokens, including thinking tokens
-    cache_read_input_token_cost: 0.00000015, // $0.15 per million cached input tokens
+    input_cost_per_token: 0.00000075, // $0.75 per million input tokens (intro rate)
+    output_cost_per_token: 0.00000375, // $3.75 per million output tokens, including thinking tokens (intro rate)
+    cache_read_input_token_cost: 0.000000075, // $0.075 per million cached input tokens (intro rate)
     litellm_provider: "vertex_ai-language-models",
     mode: "chat",
     supports_function_calling: true,
