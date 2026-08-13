@@ -23,8 +23,11 @@ import {
 import assert from "@/common/utils/assert";
 import { isWorkspacePinnable, isWorkspacePinned } from "@/common/utils/pin";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
-import { RIGHT_SIDEBAR_COLLAPSED_KEY } from "@/common/constants/storage";
-import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import {
+  RIGHT_SIDEBAR_COLLAPSED_KEY,
+  SIDEBAR_HIDE_SUBAGENTS_KEY,
+} from "@/common/constants/storage";
+import { readPersistedState, updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { CommandIds } from "@/browser/utils/commandIds";
 import { isTabType, type TabType } from "@/browser/types/rightSidebar";
 import {
@@ -699,6 +702,16 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         section: section.navigation,
         shortcutHint: formatKeybind(KEYBINDS.TOGGLE_SIDEBAR),
         run: () => p.onToggleSidebar(),
+      },
+      {
+        id: CommandIds.navToggleHideSubAgents(),
+        title: "Toggle Hide Sub-Agents in Sidebar",
+        subtitle: `Current: ${readPersistedState(SIDEBAR_HIDE_SUBAGENTS_KEY, false) ? "Hidden" : "Shown"}`,
+        section: section.navigation,
+        keywords: ["sub-agents", "subagents", "hide", "show", "sidebar"],
+        run: () => {
+          updatePersistedState<boolean>(SIDEBAR_HIDE_SUBAGENTS_KEY, (prev) => !prev, false);
+        },
       },
     ];
 
