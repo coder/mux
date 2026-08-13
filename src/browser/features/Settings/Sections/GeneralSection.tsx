@@ -159,9 +159,12 @@ export function GeneralSection() {
     SIDEBAR_AGE_GROUPING_KEY,
     true
   );
+  // The command palette also toggles this key, so stay subscribed to
+  // external updates while Settings is mounted.
   const [sidebarHideSubAgents, setSidebarHideSubAgents] = usePersistedState<boolean>(
     SIDEBAR_HIDE_SUBAGENTS_KEY,
-    false
+    false,
+    { listener: true }
   );
   const [transcriptDensity, setTranscriptDensity] = useTranscriptDensity();
   const [rawTerminalFontConfig, setTerminalFontConfig] = usePersistedState<TerminalFontConfig>(
