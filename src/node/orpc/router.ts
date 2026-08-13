@@ -2651,6 +2651,12 @@ export const router = (authToken?: string) => {
         .handler(({ context }) => {
           return context.coderOauthService.disconnect();
         }),
+      refreshModels: t
+        .input(schemas.coderOauth.refreshModels.input)
+        .output(schemas.coderOauth.refreshModels.output)
+        .handler(({ context }) => {
+          return context.coderOauthService.refreshModels();
+        }),
     },
     general: {
       listDirectory: t

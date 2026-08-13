@@ -2080,6 +2080,118 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("routes custom-named provider instances using the discovered type", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+      let capturedBaseURL: string | undefined;
+
+      // A deployment with a custom-named OpenAI provider instance: the model
+      // prefix is the instance name (gateway route segment), not a type.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "prod-openai", type: "openai" }],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            capturedBaseURL = options?.baseURL;
+            return module.createOpenAI(options);
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("coder:prod-openai/gpt-5.2");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(capturedBaseURL).toBe(`${CODER_DEPLOYMENT_URL}/api/v2/aibridge/prod-openai/v1`);
+        expect((result.data as { modelId?: unknown }).modelId).toBe("gpt-5.2");
+        expect((result.data as { provider?: unknown }).provider).toBe("openai.responses");
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
+      }
+    });
+  });
+
+  it("speaks chat completions to OpenAI-compatible provider types and honors additionalProviders", async () => {
+    await withTempConfig(async (config, factory) => {
+      // additionalProviders is the user-managed escape hatch for deployments
+      // where the member cannot list providers; openai-compat upstreams only
+      // guarantee /chat/completions, not the Responses API.
+      saveCoderConfig(config, {
+        additionalProviders: [{ name: "llm-proxy", type: "openai-compat" }],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.createModel("coder:llm-proxy/llama-3.3-70b");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect((result.data as { modelId?: unknown }).modelId).toBe("llama-3.3-70b");
+      expect((result.data as { provider?: unknown }).provider).toBe("openai.chat");
+    });
+  });
+
+  it("speaks the Anthropic wire protocol to bedrock-type provider instances", async () => {
+    await withTempConfig(async (config, factory) => {
+      // The gateway serves Bedrock through its Anthropic client (/v1/messages).
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.createModel("coder:bedrock/claude-sonnet-4-5");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect((result.data as { provider?: unknown }).provider).toBe("anthropic.messages");
+    });
+  });
+
+  it("rejects unknown provider names with an actionable error", async () => {
+    await withTempConfig(async (config, factory) => {
+      saveCoderConfig(config);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.createModel("coder:mystery-provider/some-model");
+      expect(result.success).toBe(false);
+      if (result.success) {
+        return;
+      }
+      expect(result.error.type).toBe("invalid_model_string");
+      if (result.error.type === "invalid_model_string") {
+        expect(result.error.message).toContain("additionalProviders");
+      }
+    });
+  });
+
+  it("rejects copilot-type provider instances as unsupported", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Copilot gateway routes need request-time tokens only an official
+      // Copilot client can mint; Mux's Coder OAuth token is not enough.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "copilot", type: "copilot" }],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.createModel("coder:copilot/gpt-5.2");
+      expect(result.success).toBe(false);
+      if (result.success) {
+        return;
+      }
+      expect(result.error.type).toBe("invalid_model_string");
+      if (result.error.type === "invalid_model_string") {
+        expect(result.error.message).toContain("not supported");
+      }
+    });
+  });
+
   it("injects a fresh Bearer token per request and strips the placeholder x-api-key", async () => {
     await withTempConfig(async (config, factory) => {
       const originalAnthropicRegistry = PROVIDER_REGISTRY.anthropic;

@@ -92,6 +92,7 @@ export const CommandIds = {
   settingsOpen: () => "settings:open" as const,
   settingsOpenSection: (section: string) => `settings:open:${section}` as const,
   coderDisconnect: () => "providers:coder:disconnect" as const,
+  coderRefreshModels: () => "providers:coder:refresh-models" as const,
 
   // Help commands
   helpKeybinds: () => "help:keybinds" as const,

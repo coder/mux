@@ -1635,6 +1635,47 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
         }
       },
     },
+    {
+      id: CommandIds.coderRefreshModels(),
+      title: "Settings: Refresh Coder Models",
+      subtitle: "Re-discover the deployment's AI Gateway providers and models",
+      section: section.settings,
+      keywords: ["coder", "models", "refresh", "discover", "gateway", "aibridge"],
+      // Gated on routability (not mere credential presence): discovery needs a
+      // credential that is valid for the currently effective deployment.
+      visible: () => p.providersConfig?.coder?.coderOauthSet === true,
+      run: async () => {
+        if (!p.api) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Coder Model Refresh Failed",
+            message: "Mux API not connected.",
+          });
+          return;
+        }
+        try {
+          const result = await p.api.coderOauth.refreshModels();
+          if (!result.success) {
+            showCommandFeedbackToast({
+              type: "error",
+              title: "Coder Model Refresh Failed",
+              message: result.error,
+            });
+            return;
+          }
+          showCommandFeedbackToast({
+            type: "success",
+            message: "Coder model catalog refreshed.",
+          });
+        } catch (error) {
+          showCommandFeedbackToast({
+            type: "error",
+            title: "Coder Model Refresh Failed",
+            message: getErrorMessage(error),
+          });
+        }
+      },
+    },
   ]);
 
   return actions;

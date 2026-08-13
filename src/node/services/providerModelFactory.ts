@@ -42,7 +42,12 @@ import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CoderOauthService } from "@/node/services/coderOauthService";
-import { coderAibridgeBaseUrl, isCoderAibridgeOrigin } from "@/common/constants/coderOAuth";
+import {
+  coderAibridgeBaseUrl,
+  coderGatewayWireProtocol,
+  parseCoderGatewayProviders,
+  resolveCoderGatewayProvider,
+} from "@/common/constants/coderOAuth";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
@@ -1981,16 +1986,40 @@ export class ProviderModelFactory {
           });
         }
 
-        // Model IDs are <origin>/<modelId> (mux-gateway style) because the
-        // bridge has no cross-provider routing: Anthropic models must use
-        // /anthropic/v1/messages, OpenAI models /openai/v1/*.
+        // Model IDs are <providerName>/<modelId> (mux-gateway style) because
+        // the gateway has no cross-provider routing: each configured provider
+        // instance is mounted at /<name>/... and only serves its own wire
+        // format. The FIRST slash separates the instance name (names cannot
+        // contain slashes) from the upstream model ID (which can — e.g.
+        // OpenRouter's vendor/model IDs). The instance's type — from the
+        // discovered provider list, the user-managed additionalProviders
+        // escape hatch, or the default name === type convention — selects the
+        // wire protocol to speak.
         const separatorIndex = modelId.indexOf("/");
-        const origin = separatorIndex > 0 ? modelId.slice(0, separatorIndex) : "";
+        const gatewayProviderName = separatorIndex > 0 ? modelId.slice(0, separatorIndex) : "";
         const originModelId = separatorIndex > 0 ? modelId.slice(separatorIndex + 1) : "";
-        if (!isCoderAibridgeOrigin(origin) || !originModelId) {
+        const gatewayProvider = gatewayProviderName
+          ? resolveCoderGatewayProvider(
+              gatewayProviderName,
+              parseCoderGatewayProviders(
+                (providerConfig as { discoveredProviders?: unknown }).discoveredProviders
+              ),
+              parseCoderGatewayProviders(
+                (providerConfig as { additionalProviders?: unknown }).additionalProviders
+              )
+            )
+          : null;
+        if (!gatewayProvider || !originModelId) {
           return Err({
             type: "invalid_model_string",
-            message: `Invalid Coder model "${modelId}". Expected coder:anthropic/<model> or coder:openai/<model>.`,
+            message: `Invalid Coder model "${modelId}". Expected coder:<provider>/<model> where <provider> is an AI Gateway provider on the deployment (e.g. coder:anthropic/<model>). Unknown provider names can be declared under the coder provider's additionalProviders setting.`,
+          });
+        }
+        const wire = coderGatewayWireProtocol(gatewayProvider.type);
+        if (!wire) {
+          return Err({
+            type: "invalid_model_string",
+            message: `The Coder AI Gateway provider "${gatewayProvider.name}" (type ${gatewayProvider.type}) is not supported by Mux.`,
           });
         }
 
@@ -2055,7 +2084,8 @@ export class ProviderModelFactory {
         };
         const coderFetch = Object.assign(coderFetchFn, baseFetch) as typeof fetch;
 
-        if (origin === "anthropic") {
+        const gatewayBaseUrl = coderAibridgeBaseUrl(deploymentUrl, gatewayProvider.name);
+        if (wire === "anthropic") {
           const disableBeta = muxProviderOptions?.anthropic?.disableBetaFeatures === true;
           // Same cache_control normalization as direct Anthropic / mux-gateway:
           // the bridge forwards origin-shaped payloads to the real Anthropic API.
@@ -2067,7 +2097,7 @@ export class ProviderModelFactory {
           const { createAnthropic } = await PROVIDER_REGISTRY.anthropic();
           const provider = createAnthropic({
             apiKey: "coder", // placeholder; real auth injected by the fetch wrapper
-            baseURL: coderAibridgeBaseUrl(deploymentUrl, origin),
+            baseURL: gatewayBaseUrl,
             fetch: providerFetch,
           });
           return Ok(provider(originModelId));
@@ -2076,12 +2106,19 @@ export class ProviderModelFactory {
         const { createOpenAI } = await PROVIDER_REGISTRY.openai();
         const provider = createOpenAI({
           apiKey: "coder", // placeholder; real auth injected by the fetch wrapper
-          baseURL: coderAibridgeBaseUrl(deploymentUrl, origin),
+          baseURL: gatewayBaseUrl,
           fetch: coderFetch,
         });
-        // The bridge intercepts both /responses and /chat/completions; use the
-        // Responses API to match Mux's default OpenAI wire format.
-        return Ok(provider.responses(originModelId));
+        // The gateway intercepts both /responses and /chat/completions. Real
+        // OpenAI upstreams get the Responses API to match Mux's default OpenAI
+        // wire format; the other OpenAI-wire provider types front
+        // OpenAI-compatible upstreams where only /chat/completions can be
+        // assumed (see coderGatewayWireProtocol).
+        return Ok(
+          wire === "openai-responses"
+            ? provider.responses(originModelId)
+            : provider.chat(originModelId)
+        );
       }
 
       // Generic handler for simple providers (standard API key + factory pattern)

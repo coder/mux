@@ -9,6 +9,7 @@ import type { WindowService } from "@/node/services/windowService";
 import type { ProviderModelEntry } from "@/common/config/schemas/providerModelEntry";
 import type { CoderOauthAuth } from "@/node/utils/coderOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
+import { CODER_GATEWAY_DEFAULT_PROVIDER_NAMES } from "@/common/constants/coderOAuth";
 import { CoderOauthService } from "./coderOauthService";
 
 // ---------------------------------------------------------------------------
@@ -55,6 +56,18 @@ function discoveryResponse(): Response {
     revocation_endpoint: `${DEPLOYMENT_URL}/oauth2/revoke`,
     code_challenge_methods_supported: ["S256"],
   });
+}
+
+/**
+ * Authoritative AI Gateway provider listing with the classic two default
+ * instances; keeps model discovery scoped to the anthropic/openai catalog
+ * mocks the individual tests define.
+ */
+function aiProvidersResponse(): Response {
+  return jsonResponse([
+    { name: "anthropic", type: "anthropic", enabled: true },
+    { name: "openai", type: "openai", enabled: true },
+  ]);
 }
 
 function sha256Base64Url(value: string): string {
@@ -921,6 +934,9 @@ describe("CoderOauthService", () => {
               token_type: "Bearer",
             })
           );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return Promise.resolve(
@@ -3337,6 +3353,9 @@ describe("CoderOauthService", () => {
             token_type: "Bearer",
           });
         }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
+        }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return jsonResponse({ data: [{ id: "allowed-model" }, { id: "blocked-model" }] });
         }
@@ -3411,6 +3430,9 @@ describe("CoderOauthService", () => {
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
           return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return jsonResponse({ data: [{ id: "kept-model" }, { id: "removed-model" }] });
@@ -3490,6 +3512,9 @@ describe("CoderOauthService", () => {
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
           return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return jsonResponse({ data: [{ id: "tuned-model" }, { id: "plain-model" }] });
@@ -3711,7 +3736,12 @@ describe("CoderOauthService", () => {
             token_type: "Bearer",
           });
         }
-        // Both bridge catalogs unavailable (e.g. AI Bridge not entitled).
+        // Provider listing unavailable (member RBAC / older coderd): discovery
+        // falls back to probing the default provider names.
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return new Response("forbidden", { status: 403 });
+        }
+        // Every probed route absent (e.g. AI Gateway not entitled).
         if (url.includes("/api/v2/aibridge/")) {
           return new Response("aibridge not entitled", { status: 404 });
         }
@@ -3777,6 +3807,9 @@ describe("CoderOauthService", () => {
         }
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
           return new Response(null, { status: 200 });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           return jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] });
@@ -3846,6 +3879,9 @@ describe("CoderOauthService", () => {
             expires_in: 86400,
             token_type: "Bearer",
           });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
         }
         if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
           catalogSignals.push(init?.signal);
@@ -3927,6 +3963,9 @@ describe("CoderOauthService", () => {
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
           return new Response(null, { status: 200 });
         }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return aiProvidersResponse();
+        }
         if (url.includes("/api/v2/aibridge/")) {
           catalogRequests++;
           return new Response("bridge overloaded", { status: 500 });
@@ -3998,6 +4037,9 @@ describe("CoderOauthService", () => {
         if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
           return new Response(null, { status: 200 });
         }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return aiProvidersResponse();
+        }
         if (url.includes("/api/v2/aibridge/")) {
           catalogRequests++;
           return new Response("Unauthorized", { status: 401 });
@@ -4056,6 +4098,9 @@ describe("CoderOauthService", () => {
             expires_in: 86400,
             token_type: "Bearer",
           });
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return aiProvidersResponse();
         }
         if (url.includes("/api/v2/aibridge/")) {
           catalogStarted();
@@ -4129,6 +4174,173 @@ describe("CoderOauthService", () => {
       if (!result.success) {
         expect(result.error).toContain("cancelled");
       }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // refreshModels (manual AI Gateway re-discovery)
+  // -------------------------------------------------------------------------
+
+  describe("refreshModels", () => {
+    it("fails without a stored credential", async () => {
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("Login with Coder");
+      }
+    });
+
+    it("discovers custom-named provider instances from the authoritative listing", async () => {
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      const catalogUrls: string[] = [];
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([
+              { name: "prod-anthropic", type: "anthropic", enabled: true },
+              { name: "llm-proxy", type: "openai-compat", enabled: true },
+              // Disabled and Copilot instances must not be probed or persisted.
+              { name: "old-openai", type: "openai", enabled: false },
+              { name: "copilot", type: "copilot", enabled: true },
+            ])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/prod-anthropic/v1/models`) {
+          catalogUrls.push(url);
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/llm-proxy/v1/models`) {
+          catalogUrls.push(url);
+          return Promise.resolve(jsonResponse({ data: [{ id: "llama-3.3-70b" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      // Only the enabled, non-Copilot instances were probed.
+      expect(catalogUrls).toHaveLength(2);
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual([
+        "prod-anthropic/claude-sonnet-4-5",
+        "llm-proxy/llama-3.3-70b",
+      ]);
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "prod-anthropic", type: "anthropic" },
+        { name: "llm-proxy", type: "openai-compat" },
+      ]);
+    });
+
+    it("carries a provider's previous models forward through a transient catalog failure", async () => {
+      // Per-provider conclusiveness: one provider's flake (or an upstream
+      // without a real /models route, like Bedrock) must not wipe its
+      // previously discovered entries, nor poison the healthy provider's
+      // refresh. Conclusive 404s still clear their provider's entries.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: ["anthropic/claude-sonnet-4-5", "openai/gpt-5-old"],
+          discoveredModels: ["anthropic/claude-sonnet-4-5", "openai/gpt-5-old"],
+          discoveredProviders: [
+            { name: "anthropic", type: "anthropic" },
+            { name: "openai", type: "openai" },
+          ],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-opus-4-6" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // anthropic replaced conclusively; openai carried forward.
+      expect(coderSection.discoveredModels).toEqual([
+        "anthropic/claude-opus-4-6",
+        "openai/gpt-5-old",
+      ]);
+    });
+
+    it("falls back to probing default provider names when the listing is member-forbidden", async () => {
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      const probedNames: string[] = [];
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(new Response("forbidden", { status: 403 }));
+        }
+        const match = /\/api\/v2\/aibridge\/([^/]+)\/v1\/models$/.exec(url);
+        if (match) {
+          probedNames.push(match[1]);
+          if (match[1] === "anthropic") {
+            return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+          }
+          // Every other default route is absent on this deployment.
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      // All non-Copilot default names were probed...
+      expect(probedNames.sort()).toEqual([...CODER_GATEWAY_DEFAULT_PROVIDER_NAMES].sort());
+      // ...and only the present route contributed models + provider metadata.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+      expect(coderSection.discoveredProviders).toEqual([{ name: "anthropic", type: "anthropic" }]);
+    });
+
+    it("probes user-declared additionalProviders when the listing is unavailable", async () => {
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          additionalProviders: [{ name: "llm-proxy", type: "openai-compat" }],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(new Response("forbidden", { status: 403 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/llm-proxy/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "llama-3.3-70b" }] }));
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          return Promise.resolve(new Response("not found", { status: 404 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["llm-proxy/llama-3.3-70b"]);
     });
   });
 

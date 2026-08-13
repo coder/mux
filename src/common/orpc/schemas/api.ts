@@ -570,6 +570,12 @@ export const coderOauth = {
     input: z.void(),
     output: ResultSchema(z.void(), z.string()),
   },
+  // Re-run AI Gateway provider/model discovery with the stored credential so
+  // newly configured providers/models appear without a re-login.
+  refreshModels: {
+    input: z.void(),
+    output: ResultSchema(z.void(), z.string()),
+  },
 };
 
 // Mux Gateway

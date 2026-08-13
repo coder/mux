@@ -95,6 +95,22 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    */
   removedModels: z.array(z.string()).optional(),
   /**
+   * AI Gateway provider instances discovered from the deployment (written by
+   * coderOauthService only). `name` is the gateway route segment and model ID
+   * prefix (coder:<name>/<model>); `type` decides the wire protocol (see
+   * coderGatewayWireProtocol). Purely additive routing metadata — never a
+   * gate: names absent here still resolve through additionalProviders and the
+   * default name === type convention.
+   */
+  discoveredProviders: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
+  /**
+   * User-managed gateway provider metadata, same shape as discoveredProviders
+   * and consulted first. Escape hatch for custom-named provider instances on
+   * deployments where the member cannot list providers (the providers API is
+   * admin-only) and probing default names cannot find them.
+   */
+  additionalProviders: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
+  /**
    * Cross-process disconnect generation (monotonic counter, incremented by
    * coderOauthService.disconnect). Each login flow snapshots the persisted
    * value at start; a flow whose snapshot no longer matches at commit time —

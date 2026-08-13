@@ -185,13 +185,13 @@ Operational notes:
 ### Coder (Login with Coder)
 
 The Coder provider routes requests through a [Coder](https://coder.com) deployment's
-AI Bridge (`/api/v2/aibridge`), so usage is authenticated, governed, and audited by the
+AI Gateway (`/api/v2/aibridge`), so usage is authenticated, governed, and audited by the
 deployment instead of a personal API key.
 
 Deployment prerequisites (admin-side):
 
 - The OAuth2 provider experiment: start `coderd` with `--experiments=oauth2` (or `CODER_EXPERIMENTS=oauth2`)
-- AI Bridge entitlement and `--aibridge-enabled`, with at least one upstream (Anthropic and/or OpenAI) configured
+- AI Gateway entitlement and `--aibridge-enabled`, with at least one provider configured
 
 To connect:
 
@@ -202,10 +202,30 @@ To connect:
 Mux registers itself as an OAuth2 client on the deployment (RFC 7591 dynamic client
 registration), completes an authorization-code + PKCE flow, and stores the resulting tokens
 in `~/.mux/providers.jsonc`. Tokens refresh automatically; **Disconnect** revokes and clears
-them. After login, Mux lists models from the bridge's upstream catalogs as
-`coder:anthropic/<model>` and `coder:openai/<model>`; you can also add model IDs manually
-under the provider's model list. Manual edits are preserved across re-logins and catalog
-refreshes: added entries stay listed, and removed catalog entries stay removed.
+them.
+
+After login, Mux discovers the deployment's configured AI Gateway providers and their model
+catalogs, listing models as `coder:<provider>/<model>` (e.g. `coder:anthropic/<model>`,
+`coder:my-openai/<model>`). Each provider's type (anthropic, openai, bedrock,
+openai-compat, ...) decides the wire protocol Mux speaks to its gateway route. Use the
+**Refresh models** button (or the "Settings: Refresh Coder Models" command) to re-discover
+without a re-login. You can also add model IDs manually under the provider's model list;
+manual edits are preserved across re-logins and catalog refreshes: added entries stay
+listed, and removed catalog entries stay removed.
+
+Listing the deployment's providers requires an admin-level API on some deployments; when it
+is unavailable Mux probes the default provider names instead. If your deployment uses
+custom-named provider instances that Mux cannot discover, declare them by hand in
+`~/.mux/providers.jsonc`:
+
+```jsonc
+{
+  "coder": {
+    "additionalProviders": [{ "name": "llm-proxy", "type": "openai-compat" }],
+    "models": ["llm-proxy/llama-3.3-70b"],
+  },
+}
+```
 
 Login is available from the desktop app or a locally hosted Mux server. On a remote Mux
 server the OAuth callback cannot reach your browser's machine (Coder does not support the
