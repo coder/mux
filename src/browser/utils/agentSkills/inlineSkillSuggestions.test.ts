@@ -45,12 +45,14 @@ describe("getInlineSkillSuggestions", () => {
         mcpPrompts: [
           {
             commandKey: "mcp__coder__review",
+            stableKey: "mcp__coder__review_11111111",
             serverName: "coder",
             promptName: "review",
             arguments: [],
           },
           {
             commandKey: "mcp__coder__required",
+            stableKey: "mcp__coder__required_22222222",
             serverName: "coder",
             promptName: "required",
             arguments: [{ name: "path", required: true }],

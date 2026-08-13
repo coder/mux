@@ -41,6 +41,7 @@ import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import {
   buildMcpPromptBaseKey,
   buildMcpPromptCommandKey,
+  buildMcpPromptStableKey,
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -1652,9 +1653,11 @@ export class MCPServerManager {
           forceSuffix:
             (baseKeyCounts.get(buildMcpPromptBaseKey(instance.name, prompt.name)) ?? 0) > 1,
         });
-        if (!command) continue;
+        const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
+        if (!command || stableKey === null) continue;
         descriptors.push({
           commandKey: command.toolName,
+          stableKey,
           serverName: instance.name,
           promptName: prompt.name,
           ...(prompt.description !== undefined ? { description: prompt.description } : {}),

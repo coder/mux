@@ -1158,15 +1158,17 @@ describe("MCPServerManager", () => {
       ]),
     });
 
-    expect(await manager.getPromptsForWorkspace(workspaceRequest("workspace"))).toEqual([
-      {
-        commandKey: "mcp__coder_server__code_review",
-        serverName: "Coder Server",
-        promptName: "Code Review",
-        description: "Review code",
-        arguments: [{ name: "path", required: true }],
-      },
-    ]);
+    const listed = await manager.getPromptsForWorkspace(workspaceRequest("workspace"));
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.stableKey).toMatch(/^mcp__coder_server__code_review_[0-9a-f]{8}$/);
+    expect(listed[0]).toEqual({
+      commandKey: "mcp__coder_server__code_review",
+      stableKey: listed[0]?.stableKey ?? "",
+      serverName: "Coder Server",
+      promptName: "Code Review",
+      description: "Review code",
+      arguments: [{ name: "path", required: true }],
+    });
     getToolsSpy.mockRestore();
   });
 
@@ -1228,6 +1230,20 @@ describe("MCPServerManager", () => {
     // Keys derive from each prompt's own identity, so ordering cannot swap them.
     expect(reversedKeys).toEqual(keys);
     expect(keys.get("status")).toBe("mcp__coder__status");
+
+    // When the colliding sibling disappears, the survivor's commandKey drops the
+    // suffix, but its stableKey still equals the previously suffixed key.
+    const soloDescriptors = await (async () => {
+      access.workspaceServers.set("workspace", {
+        enabledServerNames: new Set(["coder"]),
+        instances: new Map([
+          ["coder", testInstance("coder", { prompts: [{ name: "code_review" }] })],
+        ]),
+      });
+      return manager.getPromptsForWorkspace(workspaceRequest("workspace"));
+    })();
+    expect(soloDescriptors[0]?.commandKey).toBe("mcp__coder__code_review");
+    expect(soloDescriptors[0]?.stableKey).toBe(keys.get("code_review") ?? "");
     getToolsSpy.mockRestore();
   });
 

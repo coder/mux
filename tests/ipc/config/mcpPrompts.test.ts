@@ -21,6 +21,7 @@ describeIntegration("MCP prompts", () => {
       const prompts = await client.workspace.mcp.prompts.list({ workspaceId });
       expect(prompts).toContainEqual({
         commandKey: "mcp__prompt_server__review",
+        stableKey: expect.stringMatching(/^mcp__prompt_server__review_[0-9a-f]{8}$/),
         serverName: "prompt server",
         promptName: "review",
         description: "Build a deterministic review prompt for tests.",
@@ -33,6 +34,7 @@ describeIntegration("MCP prompts", () => {
       // page two, so its presence pins whole-catalog pagination.
       expect(prompts).toContainEqual({
         commandKey: "mcp__prompt_server__status",
+        stableKey: expect.stringMatching(/^mcp__prompt_server__status_[0-9a-f]{8}$/),
         serverName: "prompt server",
         promptName: "status",
         description: "Build a no-argument status prompt for tests.",

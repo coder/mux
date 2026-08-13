@@ -93,6 +93,12 @@ function formatSkillInvocationText(skillName: string, userMessage: string): stri
   return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
 }
 
+// stableKey keeps previously inserted collision-suffixed keys (drafts, history
+// recall) resolving after catalog changes strip the survivor's suffix.
+function matchesPromptCommandKey(descriptor: MCPPromptDescriptor, command: string): boolean {
+  return descriptor.commandKey === command || descriptor.stableKey === command;
+}
+
 async function loadMcpPromptDescriptors(options: {
   descriptors: MCPPromptDescriptor[];
   api: APIClient | null;
@@ -100,7 +106,7 @@ async function loadMcpPromptDescriptors(options: {
   commandKeys: string[];
 }): Promise<MCPPromptDescriptor[] | null> {
   const hasAllDescriptors = options.commandKeys.every((commandKey) =>
-    options.descriptors.some((descriptor) => descriptor.commandKey === commandKey)
+    options.descriptors.some((descriptor) => matchesPromptCommandKey(descriptor, commandKey))
   );
   if (hasAllDescriptors || !options.api || options.discovery?.kind !== "workspace") {
     return options.descriptors;
@@ -137,7 +143,7 @@ async function resolveMcpPromptInvocation(options: {
     discovery: options.discovery,
     commandKeys: [command],
   });
-  const descriptor = descriptors?.find((candidate) => candidate.commandKey === command);
+  const descriptor = descriptors?.find((candidate) => matchesPromptCommandKey(candidate, command));
   if (!descriptor) return { invocation: null };
 
   const mapped = mapPromptArguments(descriptor, afterPrefix.trim());
@@ -344,7 +350,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   for (const candidate of candidates) {
     const prompt = descriptors.find(
       (descriptor) =>
-        descriptor.commandKey === candidate.skillName &&
+        matchesPromptCommandKey(descriptor, candidate.skillName) &&
         !(descriptor.arguments ?? []).some((argument) => argument.required)
     );
     if (!prompt) continue;

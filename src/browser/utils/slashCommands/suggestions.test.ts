@@ -99,6 +99,7 @@ describe("getSlashCommandSuggestions", () => {
       mcpPrompts: [
         {
           commandKey: "mcp__coder__review",
+          stableKey: "mcp__coder__review_11111111",
           serverName: "coder",
           promptName: "review",
           description: "Review code",

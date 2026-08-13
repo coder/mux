@@ -77,6 +77,8 @@ export const MCPServerInfoSchema = z.discriminatedUnion("transport", [
 
 export const MCPPromptDescriptorSchema = z.object({
   commandKey: z.string(),
+  /** Identity-derived alias (always hash-suffixed); stable across catalog changes. */
+  stableKey: z.string(),
   serverName: z.string(),
   promptName: z.string(),
   description: z.string().optional(),

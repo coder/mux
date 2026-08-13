@@ -18,6 +18,7 @@ function descriptor(
 function promptDescriptor() {
   return {
     commandKey: "mcp__coder__review",
+    stableKey: "mcp__coder__review_11111111",
     serverName: "coder",
     promptName: "review",
     description: "Review code",
@@ -92,6 +93,19 @@ describe("parseCommandWithSkillInvocation", () => {
     expect(result.mcpPromptInvocation?.userText).toBe(
       'Using MCP prompt coder/review: "src app" security and tests'
     );
+  });
+
+  test("resolves a stale collision-suffixed key via the descriptor stableKey", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review_11111111 src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [promptDescriptor()],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation?.descriptor.commandKey).toBe("mcp__coder__review");
+    expect(result.mcpPromptInvocation?.arguments).toEqual({ path: "src" });
   });
 
   test("reports a missing required MCP prompt argument before send", async () => {
@@ -229,7 +243,12 @@ describe("resolveMcpPromptRefsForSend", () => {
       slashInvocation: null,
       descriptors: [
         noArgs,
-        { ...promptDescriptor(), commandKey: "mcp__coder__required", promptName: "required" },
+        {
+          ...promptDescriptor(),
+          commandKey: "mcp__coder__required",
+          stableKey: "mcp__coder__required_22222222",
+          promptName: "required",
+        },
       ],
       api: null,
       discovery: null,

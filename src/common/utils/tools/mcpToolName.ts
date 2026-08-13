@@ -125,6 +125,22 @@ export function buildMcpToolName(options: BuildMcpToolNameOptions): BuildMcpTool
   });
 }
 
+/**
+ * Identity-derived alias for a prompt: always hash-suffixed, so it never
+ * changes with catalog membership. Composer matching falls back to it, which
+ * keeps previously inserted collision-suffixed keys resolving after the
+ * colliding sibling disappears and its survivor's commandKey loses the suffix.
+ */
+export function buildMcpPromptStableKey(serverName: string, promptName: string): string | null {
+  const result = buildMcpName({
+    baseName: buildMcpPromptBaseKey(serverName, promptName),
+    identityParts: [serverName, promptName],
+    usedNames: new Set(),
+    forceSuffix: true,
+  });
+  return result?.toolName ?? null;
+}
+
 export function buildMcpPromptCommandKey(
   options: BuildMcpPromptCommandKeyOptions
 ): BuildMcpToolNameResult | null {
