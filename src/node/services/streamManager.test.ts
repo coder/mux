@@ -672,6 +672,10 @@ describe("StreamManager - Anthropic cache TTL overrides", () => {
     if (!buildRequestConfig) {
       throw new Error("Expected StreamManager.buildStreamRequestConfig to exist");
     }
+    // Rebind: buildStreamRequestConfig reads this.getProvidersConfig for
+    // cache-marker eligibility; a detached Reflect.get reference loses `this`.
+    const buildRequestConfigBound: BuildStreamRequestConfig = (...args) =>
+      buildRequestConfig.apply(streamManager, args);
 
     const model = createAnthropic({ apiKey: "test" })("claude-sonnet-4-5");
     const modelString = KNOWN_MODELS.SONNET.id;
@@ -695,7 +699,7 @@ describe("StreamManager - Anthropic cache TTL overrides", () => {
       }),
     };
 
-    const request = buildRequestConfig(
+    const request = buildRequestConfigBound(
       model,
       modelString,
       messages,
@@ -1006,7 +1010,9 @@ describe("StreamManager - sequential tool execution", () => {
     }
 
     return {
-      buildRequestConfig,
+      // .apply: buildStreamRequestConfig reads this.getProvidersConfig for
+      // cache-marker eligibility; a detached Reflect.get reference loses `this`.
+      buildRequestConfig: (...args) => buildRequestConfig.apply(streamManager, args),
       createStreamResult: (request, abortController) =>
         createStreamResultMethod.call(streamManager, request, abortController),
     };
@@ -1153,7 +1159,9 @@ describe("StreamManager - call settings overrides", () => {
     }
 
     return {
-      buildRequestConfig,
+      // .apply: buildStreamRequestConfig reads this.getProvidersConfig for
+      // cache-marker eligibility; a detached Reflect.get reference loses `this`.
+      buildRequestConfig: (...args) => buildRequestConfig.apply(streamManager, args),
       createStreamResult: (request, abortController) =>
         createStreamResultMethod.call(streamManager, request, abortController),
     };
@@ -5103,7 +5111,9 @@ describe("StreamManager - tool search activeTools scoping", () => {
     }
 
     return {
-      buildRequestConfig,
+      // .apply: buildStreamRequestConfig reads this.getProvidersConfig for
+      // cache-marker eligibility; a detached Reflect.get reference loses `this`.
+      buildRequestConfig: (...args) => buildRequestConfig.apply(streamManager, args),
       createStreamResult: (request, abortController) =>
         createStreamResultMethod.call(streamManager, request, abortController),
     };

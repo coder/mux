@@ -31,6 +31,14 @@ export function supportsAnthropicCache(
   modelString: string,
   providersConfig?: ProvidersConfigMap | null
 ): boolean {
+  // ZDR: the backend-authoritative disableBetaFeatures flag turns prompt
+  // caching off for every Anthropic-wire route (direct, mux-gateway,
+  // Coder instances). The provider fetch wrapper only skips INJECTING
+  // markers — it never strips ones already serialized by these helpers —
+  // so eligibility itself must be rejected here.
+  if (providersConfig?.anthropic?.disableBetaFeatures === true) {
+    return false;
+  }
   if (
     modelString.startsWith("coder:") &&
     !isCustomOpenAICompatibleProviderConfig(providersConfig?.coder)

@@ -2306,12 +2306,38 @@ export class ProviderModelFactory {
         providersConfigForShadowCheck,
         this.policyService
       );
-      const coderSelectionRoutable =
-        this.isProviderAvailableForRouting("coder", providersConfigForShadowCheck, appConfig) &&
-        isGatewayModelAccessible("coder", rawCoderGatewayModelId);
-      effectiveModelString = coderSelectionRoutable
-        ? modelString
-        : this.resolveGatewayModelString(routeSeedModelString, routeContext, undefined);
+      const coderProviderRoutable = this.isProviderAvailableForRouting(
+        "coder",
+        providersConfigForShadowCheck,
+        appConfig
+      );
+      const coderModelAccessible = isGatewayModelAccessible("coder", rawCoderGatewayModelId);
+      if (coderProviderRoutable && coderModelAccessible) {
+        effectiveModelString = modelString;
+      } else if (
+        coderProviderRoutable &&
+        !coderModelAccessible &&
+        routeSeedModelString.startsWith("coder:")
+      ) {
+        // The authoritative catalog / removedModels tombstone / policy
+        // conclusively rejected this gateway model, and the instance type has
+        // no distinct canonical fallback identity (openai-compat and copilot
+        // front arbitrary upstreams; vendor-less vercel IDs are unmappable).
+        // Feeding the rejected coder: identity back into route resolution
+        // would land on the last-resort direct Coder route and send the
+        // request through the gateway anyway, bypassing the rejection.
+        return Err({
+          type: "model_not_available",
+          provider: "coder",
+          modelId: rawCoderGatewayModelId,
+        });
+      } else {
+        effectiveModelString = this.resolveGatewayModelString(
+          routeSeedModelString,
+          routeContext,
+          undefined
+        );
+      }
     } else {
       effectiveModelString = this.resolveGatewayModelString(
         effectiveModelString,

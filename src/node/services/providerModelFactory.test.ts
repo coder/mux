@@ -2341,6 +2341,32 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("rejects catalog-excluded models on instances without a canonical fallback", async () => {
+    await withTempConfig(async (config, factory) => {
+      // openai-compat fronts an arbitrary upstream, so a catalog-excluded
+      // model has NO distinct canonical identity to fall back to. Feeding the
+      // rejected coder: string back into routing would resolve the last-resort
+      // direct Coder route and bypass the catalog decision entirely.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "llm-proxy", type: "openai-compat" }],
+        models: ["llm-proxy/allowed-model"],
+        discoveredModels: ["llm-proxy/allowed-model"],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:llm-proxy/excluded-model", "off");
+      expect(result.success).toBe(false);
+      if (result.success) {
+        return;
+      }
+      expect(result.error).toEqual({
+        type: "model_not_available",
+        provider: "coder",
+        modelId: "llm-proxy/excluded-model",
+      });
+    });
+  });
+
   it("rejects unknown provider names with an actionable error", async () => {
     await withTempConfig(async (config, factory) => {
       saveCoderConfig(config);
