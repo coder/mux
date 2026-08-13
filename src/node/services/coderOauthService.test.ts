@@ -4280,6 +4280,96 @@ describe("CoderOauthService", () => {
       ]);
     });
 
+    it("persists the authoritative provider listing when every catalog fetch fails", async () => {
+      // Fresh login + authoritative listing + all /models requests failing:
+      // the listing is conclusive independently of the catalogs, so provider
+      // metadata must still be persisted (custom-named instances stay
+      // resolvable for manually added models) while the catalog stays
+      // unknown (routing fails open).
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([{ name: "prod-anthropic", type: "anthropic", enabled: true }])
+          );
+        }
+        if (url.includes("/api/v2/aibridge/")) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toBeUndefined();
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "prod-anthropic", type: "anthropic" },
+      ]);
+    });
+
+    it("flips the catalog to unknown when a newly listed provider's first fetch fails", async () => {
+      // A KNOWN catalog + an admin-added provider whose first catalog fetch
+      // errors: the new provider has no prior state to carry forward, so
+      // persisting the other providers' lists would read as an authoritative
+      // catalog that blocks every model of the new provider. The catalog
+      // must flip to unknown (fail-open) — losing one refresh's worth of
+      // data — while manual entries and the authoritative listing persist.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: [
+            { id: "anthropic/claude-old", contextWindowTokens: 100000 },
+            "anthropic/claude-old-2",
+          ],
+          discoveredModels: ["anthropic/claude-old-2"],
+          discoveredProviders: [{ name: "anthropic", type: "anthropic" }],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([
+              { name: "anthropic", type: "anthropic", enabled: true },
+              { name: "vertex", type: "google", enabled: true },
+            ])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-new" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/vertex/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // Catalog unknown: vertex models stay reachable through fail-open routing.
+      expect(coderSection.discoveredModels).toBeUndefined();
+      // Manual (user-edited) entries survive; discovered-only entries drop
+      // with the catalog and are rebuilt on the next successful refresh.
+      expect(coderSection.models).toEqual([
+        { id: "anthropic/claude-old", contextWindowTokens: 100000 },
+      ]);
+      // The authoritative listing (including the new instance) is persisted.
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "anthropic", type: "anthropic" },
+        { name: "vertex", type: "google" },
+      ]);
+    });
+
     it("skips all persistence on an inconclusive fresh probe fallback", async () => {
       // Same fresh-unknown state, but the provider listing is forbidden:
       // probe-derived metadata is only the name === type default, which

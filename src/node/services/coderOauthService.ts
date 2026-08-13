@@ -1839,14 +1839,8 @@ export class CoderOauthService {
       }))
     );
 
-    // A fully failed discovery must not flip a fresh (unknown) catalog to
-    // authoritatively empty — routing fails open while the catalog is
-    // unknown, and an empty write would strand every model until the next
-    // refresh despite nothing being conclusively known.
-    if (results.length > 0 && results.every(({ result }) => result.kind === "error")) {
-      log.debug("[Coder OAuth] Skipping catalog write: discovery failed for every provider");
-      return Err("Model discovery failed for every AI Gateway provider");
-    }
+    const everyFetchFailed =
+      results.length > 0 && results.every(({ result }) => result.kind === "error");
 
     // Discovery races logins/disconnects: the flow resolves before this runs,
     // so a newer login (or a disconnect) may replace or clear the stored
@@ -1859,7 +1853,7 @@ export class CoderOauthService {
     // `models` stays the user-visible union: manually added entries (those
     // not recorded in discoveredModels) are carried forward ahead of the
     // fresh catalog, so discovery never clobbers user-managed data.
-    let inconclusiveFreshCatalog = false;
+    let catalogInconclusive = false;
     const setResult = await this.providerService.updateProviderSection("coder", (section) => {
       const stored = parseCoderOauthAuth(section?.coderOauth);
       if (!stored || stored.access !== auth.access || stored.deploymentUrl !== auth.deploymentUrl) {
@@ -1868,29 +1862,6 @@ export class CoderOauthService {
       // Prior catalog state must be read INSIDE the locked mutation (a
       // concurrent login/refresh may have changed it since discovery began).
       const previousKnown = Array.isArray(section?.discoveredModels);
-      // When the prior catalog is UNKNOWN (fresh login cleared it, or
-      // discovery never succeeded), a transiently-failed provider has no
-      // previous entries to carry forward — persisting the other providers'
-      // lists would flip routing from fail-open (unknown catalog) to an
-      // authoritative partial catalog that blocks the failed provider's
-      // models until the next successful refresh. Keep the catalog unknown
-      // instead; a KNOWN prior catalog is safe because carry-forward
-      // preserves the failed provider's previous state (including a
-      // legitimate "no entries").
-      if (!previousKnown && results.some(({ result }) => result.kind === "error")) {
-        inconclusiveFreshCatalog = true;
-        if (!authoritative) {
-          // Probe-derived provider metadata is just the name === type
-          // default, which resolveCoderGatewayProvider already applies
-          // without persistence — nothing conclusive is lost by skipping.
-          return null;
-        }
-        // The admin listing is conclusive independently of the catalog
-        // fetches: persist it so custom-named instances stay resolvable
-        // (e.g. for manually added models) while discoveredModels stays
-        // absent — catalog unknown, routing fails open.
-        return { value: { ...(section ?? {}), discoveredProviders: providers } };
-      }
       const previousDiscovered = Array.isArray(section?.discoveredModels)
         ? section.discoveredModels.filter((id): id is string => typeof id === "string")
         : [];
@@ -1901,7 +1872,13 @@ export class CoderOauthService {
       // carries the provider's previous entries forward — one provider whose
       // upstream rejects /models (Bedrock) or merely flaked must not poison
       // every other provider's refresh, and a recovered provider heals on the
-      // next refresh instead of the next login.
+      // next refresh instead of the next login. Carry-forward requires PRIOR
+      // STATE for that provider (a prior catalog naming it, or prior entries
+      // under its prefix): an errored provider without prior state — fresh
+      // login, or an instance the admin just added — makes the whole catalog
+      // inconclusive, because persisting the other providers' lists would
+      // read as an authoritative catalog that blocks every model of the
+      // failed provider until a later successful refresh.
       // The COMPLETE discovered catalog is persisted, deliberately without
       // policy filtering: policies refresh remotely, so a temporarily
       // restrictive policy must not carve models out of the durable catalog.
@@ -1911,35 +1888,64 @@ export class CoderOauthService {
       const modelIds: string[] = [];
       const nextProviders: CoderGatewayProvider[] = [];
       for (const { provider, result } of results) {
+        const previous = previousProviders.find((prev) => prev.name === provider.name);
+        const hasPriorState =
+          previousKnown &&
+          (previous !== undefined ||
+            previousDiscovered.some((id) => id.startsWith(`${provider.name}/`)));
         if (result.kind === "ok") {
           modelIds.push(...result.ids);
           if (!authoritative) {
             // The probe confirmed the route exists; prefer previously stored
             // metadata (its type may come from an earlier authoritative
             // listing) over the probe-derived name === type default.
-            nextProviders.push(
-              previousProviders.find((prev) => prev.name === provider.name) ?? provider
-            );
+            nextProviders.push(previous ?? provider);
           }
         } else if (result.kind === "error") {
+          if (!hasPriorState) {
+            catalogInconclusive = true;
+            continue;
+          }
           modelIds.push(...previousDiscovered.filter((id) => id.startsWith(`${provider.name}/`)));
-          if (!authoritative) {
-            const previous = previousProviders.find((prev) => prev.name === provider.name);
-            if (previous) {
-              nextProviders.push(previous);
-            }
+          if (!authoritative && previous) {
+            nextProviders.push(previous);
           }
         }
         // "unavailable": the route/instance is conclusively absent — drop it.
       }
+
+      const manual = manualModelEntries(section);
+      if (catalogInconclusive) {
+        // The catalog cannot be written as authoritative. Keep/flip it to
+        // UNKNOWN so routing fails open (the failed provider's models stay
+        // reachable), losing at worst one refresh's worth of catalog data —
+        // the next successful refresh rebuilds it. The authoritative admin
+        // listing is conclusive independently of the catalog fetches, so it
+        // is still persisted: custom-named instances must stay resolvable
+        // (e.g. for manually added models). Probe-derived metadata is just
+        // the name === type default that resolveCoderGatewayProvider already
+        // applies without persistence, so the probe path persists nothing
+        // new and keeps any previously stored metadata.
+        const next = { ...(section ?? {}) };
+        if (manual.length > 0) {
+          next.models = manual;
+        } else {
+          delete next.models;
+        }
+        delete next.discoveredModels;
+        if (authoritative) {
+          next.discoveredProviders = providers;
+        }
+        return { value: next };
+      }
+
       if (authoritative) {
         // The admin listing is authoritative metadata: every listed instance
         // is persisted (routable for manually added models even when its
         // catalog fetch failed), and deleted/disabled instances drop out.
+        nextProviders.length = 0;
         nextProviders.push(...providers);
       }
-
-      const manual = manualModelEntries(section);
       const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
       // User-removed discovered models (recorded by setModels) stay excluded:
       // a catalog refresh or re-login must not resurrect entries the user
@@ -1966,15 +1972,15 @@ export class CoderOauthService {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);
       return Err(setResult.error);
     }
-    if (inconclusiveFreshCatalog) {
-      // Applied or not, the catalog itself was not written (at most the
-      // authoritative provider list was persisted): surface the failure so
-      // the user knows to refresh again.
-      log.debug(
-        "[Coder OAuth] Catalog left unknown: prior catalog unknown and a provider failed transiently"
-      );
+    if (catalogInconclusive || everyFetchFailed) {
+      // The catalog itself was not conclusively refreshed (at most provider
+      // metadata and carried-forward entries were persisted): surface the
+      // failure so the user knows to refresh again.
+      log.debug("[Coder OAuth] Catalog refresh inconclusive: provider fetches failed transiently");
       return Err(
-        "Model discovery failed for at least one AI Gateway provider; try refreshing again"
+        everyFetchFailed
+          ? "Model discovery failed for every AI Gateway provider"
+          : "Model discovery failed for at least one AI Gateway provider; try refreshing again"
       );
     }
     if (!setResult.data.applied) {
