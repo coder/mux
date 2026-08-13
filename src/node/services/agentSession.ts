@@ -4230,7 +4230,15 @@ export class AgentSession {
         },
       };
 
-      if (!isAnthropic1MEffectivelyEnabled(modelString, nextProviderOptions)) {
+      // Providers config resolves Coder gateway instances (the raw
+      // coder:<instance>/<model> prefix is opaque without instance metadata).
+      if (
+        !isAnthropic1MEffectivelyEnabled(
+          modelString,
+          nextProviderOptions,
+          this.getProvidersConfigSafe()
+        )
+      ) {
         return null;
       }
 
@@ -4247,7 +4255,13 @@ export class AgentSession {
       },
     };
 
-    if (!isAnthropic1MEffectivelyEnabled(modelString, nextProviderOptions)) {
+    if (
+      !isAnthropic1MEffectivelyEnabled(
+        modelString,
+        nextProviderOptions,
+        this.getProvidersConfigSafe()
+      )
+    ) {
       return null;
     }
 

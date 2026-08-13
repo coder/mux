@@ -49,6 +49,7 @@ import {
   resolveCoderGatewayProvider,
   resolveCoderWireCanonicalModel,
 } from "@/common/constants/coderOAuth";
+import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
 import { createDevToolsMiddleware } from "@/node/services/devToolsMiddleware";
@@ -2269,12 +2270,55 @@ export class ProviderModelFactory {
       effectiveModelString = `xai:${variant}`;
     }
 
-    const routeContext = this.resolveModelRoute(canonicalModelString);
-    effectiveModelString = this.resolveGatewayModelString(
-      effectiveModelString,
-      routeContext,
-      explicitGateway
-    );
+    // Coder selections resolve routes in two metadata-aware steps, because
+    // name-based canonicalization misidentifies instances whose name and
+    // type diverge ({name: "openai", type: "anthropic"}):
+    // 1. The explicit gateway restore checks accessibility with the RAW
+    //    instance-name gateway ID — the static toGatewayModelId
+    //    reconstruction cannot restore instance-name prefixes
+    //    (prod-anthropic) and would rebuild cross-typed names under the
+    //    wrong origin.
+    // 2. The FALLBACK identity (coder unavailable, or model excluded by the
+    //    authoritative catalog) is seeded from the instance TYPE via
+    //    provider metadata: an anthropic-typed instance falls back to
+    //    direct Anthropic, not to whatever provider its name resembles.
+    const rawCoderGatewayModelId =
+      rawProviderName === "coder" && !rawPrefixShadowedByCustomProvider
+        ? modelString.slice(modelString.indexOf(":") + 1)
+        : null;
+    const coderMetadataCanonical =
+      rawCoderGatewayModelId != null
+        ? resolveCoderGatewayMetadataModel(modelString, providersConfigForShadowCheck)
+        : null;
+    const routeSeedModelString =
+      coderMetadataCanonical != null &&
+      Object.hasOwn(
+        PROVIDER_REGISTRY,
+        coderMetadataCanonical.slice(0, coderMetadataCanonical.indexOf(":"))
+      )
+        ? coderMetadataCanonical
+        : canonicalModelString;
+
+    const routeContext = this.resolveModelRoute(routeSeedModelString);
+    if (rawCoderGatewayModelId != null) {
+      const appConfig = this.config.loadConfigOrDefault();
+      const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(
+        providersConfigForShadowCheck,
+        this.policyService
+      );
+      const coderSelectionRoutable =
+        this.isProviderAvailableForRouting("coder", providersConfigForShadowCheck, appConfig) &&
+        isGatewayModelAccessible("coder", rawCoderGatewayModelId);
+      effectiveModelString = coderSelectionRoutable
+        ? modelString
+        : this.resolveGatewayModelString(routeSeedModelString, routeContext, undefined);
+    } else {
+      effectiveModelString = this.resolveGatewayModelString(
+        effectiveModelString,
+        routeContext,
+        explicitGateway
+      );
+    }
 
     // Stream result normalization currently only understands Mux gateway responses,
     // so keep this flag mux-gateway-specific until the downstream normalization path
@@ -2310,6 +2354,15 @@ export class ProviderModelFactory {
       );
       if (wire) {
         wireProviderName = wire.origin;
+      }
+    } else if (rawCoderGatewayModelId != null && routeSeedModelString !== canonicalModelString) {
+      // A Coder selection that fell back to its type-derived route: the wire
+      // follows the fallback identity, not the name-based canonical string —
+      // a cross-typed coder:openai/<claude> routed to direct Anthropic must
+      // get Anthropic transforms.
+      const [seedOrigin] = parseModelString(routeSeedModelString);
+      if (seedOrigin) {
+        wireProviderName = seedOrigin;
       }
     }
 

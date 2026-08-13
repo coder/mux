@@ -2309,13 +2309,13 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
-  it("recomputes the wire provider when routing falls back to a direct provider", async () => {
+  it("falls back to the type-derived provider when the catalog excludes the model", async () => {
     await withTempConfig(async (config, factory) => {
       // Cross-typed instance {name: "openai", type: "anthropic"} whose
       // catalog does NOT contain the requested model: the explicit coder
-      // route cannot be restored, routing falls back to direct OpenAI, and
-      // the wire must follow the EFFECTIVE route — Anthropic transforms
-      // against a direct OpenAI request would be invalid.
+      // route cannot be restored, and the fallback identity comes from the
+      // instance TYPE (anthropic) — not from the provider its name
+      // resembles. The wire follows the effective route.
       saveCoderConfig(config, {
         discoveredProviders: [{ name: "openai", type: "anthropic" }],
         models: ["openai/claude-opus-4-5"],
@@ -2323,18 +2323,21 @@ describe("ProviderModelFactory Coder", () => {
       });
       config.saveProvidersConfig({
         ...config.loadProvidersConfig(),
-        openai: { apiKey: "sk-test" },
+        // Both direct providers configured: the NAME-alike (openai) must
+        // not capture the request; the TYPE-derived provider wins.
+        openai: { apiKey: "sk-openai" },
+        anthropic: { apiKey: "sk-anthropic" },
       } as Parameters<Config["saveProvidersConfig"]>[0]);
       factory.coderOauthService = stubCoderOauthService();
 
-      const result = await factory.resolveAndCreateModel("coder:openai/gpt-5.2", "off");
+      const result = await factory.resolveAndCreateModel("coder:openai/claude-sonnet-4-5", "off");
       expect(result.success).toBe(true);
       if (!result.success) {
         return;
       }
-      expect(result.data.effectiveModelString).toBe("openai:gpt-5.2");
-      expect(result.data.routeProvider).toBe("openai");
-      expect(result.data.wireProviderName).toBe("openai");
+      expect(result.data.effectiveModelString).toBe("anthropic:claude-sonnet-4-5");
+      expect(result.data.routeProvider).toBe("anthropic");
+      expect(result.data.wireProviderName).toBe("anthropic");
     });
   });
 
