@@ -1824,6 +1824,75 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // string and resolved the instance's type from providersConfig.
     expect(prepared.data.providerOptions).toHaveProperty("anthropic");
     expect(prepared.data.providerOptions).not.toHaveProperty("openai");
+
+    // Capability lookups saw the raw identity too: the fallback toolset was
+    // built for the instance's Claude upstream, not for canonical "openai:".
+    const fallbackToolConfig = harness.getToolsForModelSpy.mock.calls.at(-1)?.[1] as
+      | { capabilityModelString?: string }
+      | undefined;
+    expect(fallbackToolConfig?.capabilityModelString).toBe("anthropic:claude-opus-4-5");
+  });
+
+  it("derives the main-path capability model from the raw Coder identity", async () => {
+    // aiService's capabilityModelString must resolve from the RAW selection:
+    // canonicalization rewrites coder:openai/x (type anthropic) to openai:x,
+    // which can no longer consult the instance metadata — tool/instruction
+    // decisions would treat a Claude model as OpenAI.
+    using muxHome = new DisposableTempDir("ai-service-main-coder-raw-capability");
+    const workspaceId = "workspace-main-coder-raw";
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const modelString = "coder:openai/claude-opus-4-5";
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+
+    const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in capability test");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: Object.create(null) as LanguageModel,
+        effectiveModelString: modelString,
+        canonicalModelString: "openai:claude-opus-4-5",
+        canonicalProviderName: "openai",
+        canonicalModelId: "claude-opus-4-5",
+        wireProviderName: "anthropic",
+        routedThroughGateway: false,
+        routeProvider: "coder",
+      },
+    });
+    const providerService = Reflect.get(harness.service, "providerService") as
+      | ProviderService
+      | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in capability test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+
+    const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1] as
+      | { capabilityModelString?: string }
+      | undefined;
+    expect(toolConfig?.capabilityModelString).toBe("anthropic:claude-opus-4-5");
   });
 
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {

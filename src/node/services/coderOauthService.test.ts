@@ -4239,12 +4239,15 @@ describe("CoderOauthService", () => {
     it("keeps a fresh catalog unknown when any provider fails transiently", async () => {
       // Fresh login state: discoveredModels absent (catalog unknown, routing
       // fails open). One provider succeeds, the other errors after retries.
-      // Persisting the partial list would read as an authoritative catalog
-      // and block every model of the failed provider until the next refresh;
-      // the catalog write must be skipped so routing stays fail-open. The
-      // authoritative provider LISTING is conclusive independently of the
-      // catalogs, so it is still persisted — custom-named instances must stay
-      // resolvable for manually added models.
+      // Persisting the partial list as discoveredModels would read as an
+      // authoritative catalog and block every model of the failed provider
+      // until the next refresh; the authoritative marker must stay absent so
+      // routing stays fail-open. The healthy provider's fetched entries stay
+      // USER-VISIBLE in models (flagged via staleDiscoveredModels so they
+      // remain classified as catalog data). The authoritative provider
+      // LISTING is conclusive independently of the catalogs, so it is still
+      // persisted — custom-named instances must stay resolvable for manually
+      // added models.
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
       };
@@ -4273,7 +4276,8 @@ describe("CoderOauthService", () => {
 
       const coderSection = deps.providersConfig.coder as Record<string, unknown>;
       expect(coderSection.discoveredModels).toBeUndefined();
-      expect(coderSection.models).toBeUndefined();
+      expect(coderSection.models).toEqual(["prod-anthropic/claude-sonnet-4-5"]);
+      expect(coderSection.staleDiscoveredModels).toEqual(["prod-anthropic/claude-sonnet-4-5"]);
       expect(coderSection.discoveredProviders).toEqual([
         { name: "prod-anthropic", type: "anthropic" },
         { name: "openai", type: "openai" },
@@ -4358,11 +4362,14 @@ describe("CoderOauthService", () => {
       const coderSection = deps.providersConfig.coder as Record<string, unknown>;
       // Catalog unknown: vertex models stay reachable through fail-open routing.
       expect(coderSection.discoveredModels).toBeUndefined();
-      // Manual (user-edited) entries survive; discovered-only entries drop
-      // with the catalog and are rebuilt on the next successful refresh.
+      // Manual (user-edited) entries survive, and the healthy provider's
+      // fresh catalog stays user-visible (flagged stale so disconnect and
+      // future refreshes keep classifying it as discovered data).
       expect(coderSection.models).toEqual([
         { id: "anthropic/claude-old", contextWindowTokens: 100000 },
+        "anthropic/claude-new",
       ]);
+      expect(coderSection.staleDiscoveredModels).toEqual(["anthropic/claude-new"]);
       // The authoritative listing (including the new instance) is persisted.
       expect(coderSection.discoveredProviders).toEqual([
         { name: "anthropic", type: "anthropic" },
@@ -4370,10 +4377,12 @@ describe("CoderOauthService", () => {
       ]);
     });
 
-    it("skips all persistence on an inconclusive fresh probe fallback", async () => {
+    it("persists only probe-fetched models on an inconclusive fresh probe fallback", async () => {
       // Same fresh-unknown state, but the provider listing is forbidden:
       // probe-derived metadata is only the name === type default, which
-      // routing applies without persistence — nothing conclusive to write.
+      // routing applies without persistence — no provider metadata or
+      // authoritative catalog to write. The healthy probe's fetched models
+      // still become user-visible (flagged stale).
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
       };
@@ -4398,7 +4407,37 @@ describe("CoderOauthService", () => {
       const coderSection = deps.providersConfig.coder as Record<string, unknown>;
       expect(coderSection.discoveredModels).toBeUndefined();
       expect(coderSection.discoveredProviders).toBeUndefined();
-      expect(coderSection.models).toBeUndefined();
+      expect(coderSection.models).toEqual(["anthropic/claude-sonnet-4-5"]);
+      expect(coderSection.staleDiscoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+    });
+
+    it("clears stale-flagged catalog entries on disconnect", async () => {
+      // Entries retained through an inconclusive refresh are catalog data,
+      // not user-managed: without the stale marker they would classify as
+      // manual and survive logout.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: ["anthropic/my-manual-model", "anthropic/retained-model"],
+          staleDiscoveredModels: ["anthropic/retained-model"],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/oauth2/revoke`) {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        return Promise.resolve(new Response("unexpected", { status: 500 }));
+      });
+
+      const result = await service.disconnect();
+      expect(result.success).toBe(true);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.models).toEqual(["anthropic/my-manual-model"]);
+      expect(coderSection.staleDiscoveredModels).toBeUndefined();
     });
 
     it("carries a provider's previous models forward through a transient catalog failure", async () => {

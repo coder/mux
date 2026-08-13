@@ -196,10 +196,15 @@ function manualModelEntries(section: Record<string, unknown> | undefined): Provi
   if (!Array.isArray(section?.models)) {
     return [];
   }
+  // Discovered classification unions the authoritative catalog with the
+  // stale marker (entries retained in `models` while the catalog was
+  // inconclusive). Without the marker, an inconclusive refresh would
+  // reclassify retained catalog entries as manual — surviving disconnect and
+  // resurrecting across refreshes as if the user had added them.
   const discovered = new Set(
-    Array.isArray(section.discoveredModels)
-      ? section.discoveredModels.filter((id): id is string => typeof id === "string")
-      : []
+    [section.discoveredModels, section.staleDiscoveredModels].flatMap((value) =>
+      Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []
+    )
   );
   return normalizeProviderModelEntries(section.models).filter((entry) => {
     if (typeof entry !== "string") {
@@ -361,6 +366,7 @@ export class CoderOauthService {
           next.models = manualModelEntries(section);
           next.discoveredModels = [];
           next.discoveredProviders = [];
+          delete next.staleDiscoveredModels;
           return { value: next };
         });
         this.cachedAuth = null;
@@ -1311,6 +1317,7 @@ export class CoderOauthService {
         // them. Deleted, not emptied, so routing fails open until then.
         delete next.discoveredModels;
         delete next.discoveredProviders;
+        delete next.staleDiscoveredModels;
         return { value: next };
       });
       this.cachedAuth = null;
@@ -1927,24 +1934,50 @@ export class CoderOauthService {
       }
 
       const manual = manualModelEntries(section);
+      const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
+      // User-removed discovered models (recorded by setModels) stay excluded:
+      // a catalog refresh or re-login must not resurrect entries the user
+      // deleted from the model list.
+      const removed = new Set(
+        Array.isArray(section?.removedModels)
+          ? section.removedModels.filter((id): id is string => typeof id === "string")
+          : []
+      );
+      // User-visible union: manual entries first, then discovered/carried IDs.
+      const retainedDiscovered = modelIds.filter((id) => !manualIds.has(id) && !removed.has(id));
+      const merged = [...manual, ...retainedDiscovered];
+
       if (catalogInconclusive) {
         // The catalog cannot be written as authoritative. Keep/flip it to
         // UNKNOWN so routing fails open (the failed provider's models stay
         // reachable), losing at worst one refresh's worth of catalog data —
-        // the next successful refresh rebuilds it. The authoritative admin
-        // listing is conclusive independently of the catalog fetches, so it
-        // is still persisted: custom-named instances must stay resolvable
-        // (e.g. for manually added models). Probe-derived metadata is just
-        // the name === type default that resolveCoderGatewayProvider already
+        // the next successful refresh rebuilds it. The healthy providers'
+        // fetched and carried-forward entries STAY user-visible in `models`
+        // (only the authoritative `discoveredModels` marker is dropped):
+        // wiping them would empty Settings and the model selector until a
+        // later fully successful refresh. The authoritative admin listing is
+        // conclusive independently of the catalog fetches, so it is still
+        // persisted: custom-named instances must stay resolvable (e.g. for
+        // manually added models). Probe-derived metadata is just the
+        // name === type default that resolveCoderGatewayProvider already
         // applies without persistence, so the probe path persists nothing
         // new and keeps any previously stored metadata.
         const next = { ...(section ?? {}) };
-        if (manual.length > 0) {
-          next.models = manual;
+        if (merged.length > 0) {
+          next.models = merged;
         } else {
           delete next.models;
         }
         delete next.discoveredModels;
+        // Record which retained entries came from discovery so
+        // manualModelEntries keeps classifying them as catalog data (cleared
+        // by disconnect/login, excluded from manual carry-forward) while the
+        // authoritative marker is absent.
+        if (retainedDiscovered.length > 0) {
+          next.staleDiscoveredModels = retainedDiscovered;
+        } else {
+          delete next.staleDiscoveredModels;
+        }
         if (authoritative) {
           next.discoveredProviders = providers;
         }
@@ -1958,27 +1991,16 @@ export class CoderOauthService {
         nextProviders.length = 0;
         nextProviders.push(...providers);
       }
-      const manualIds = new Set(manual.map((entry) => maybeGetProviderModelEntryId(entry)));
-      // User-removed discovered models (recorded by setModels) stay excluded:
-      // a catalog refresh or re-login must not resurrect entries the user
-      // deleted from the model list.
-      const removed = new Set(
-        Array.isArray(section?.removedModels)
-          ? section.removedModels.filter((id): id is string => typeof id === "string")
-          : []
-      );
-      const merged = [
-        ...manual,
-        ...modelIds.filter((id) => !manualIds.has(id) && !removed.has(id)),
-      ];
-      return {
-        value: {
-          ...(section ?? {}),
-          models: merged,
-          discoveredModels: modelIds,
-          discoveredProviders: nextProviders,
-        },
+      // Conclusive catalog: the stale marker's entries are either re-listed
+      // in discoveredModels or conclusively gone.
+      const conclusive: Record<string, unknown> = {
+        ...(section ?? {}),
+        models: merged,
+        discoveredModels: modelIds,
+        discoveredProviders: nextProviders,
       };
+      delete conclusive.staleDiscoveredModels;
+      return { value: conclusive };
     });
     if (!setResult.success) {
       log.debug(`[Coder OAuth] Failed to persist bridge models: ${setResult.error}`);

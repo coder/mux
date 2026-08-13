@@ -1203,8 +1203,14 @@ export class AIService extends EventEmitter {
         routedThroughGateway,
         routeProvider,
       } = modelResult.data;
+      // Capability lookups must see the RAW coder identity: name-based
+      // canonicalization can rewrite a cross-typed instance (coder:openai/x
+      // with type anthropic) to openai:x, hiding the instance metadata that
+      // resolveModelForMetadata needs to derive the real capability model.
+      // Non-coder strings keep the canonical form (raw gateway strings like
+      // mux-gateway:origin/x would otherwise leak through unresolved).
       const capabilityModelString = resolveModelForMetadata(
-        canonicalModelString,
+        modelString.startsWith("coder:") ? modelString : canonicalModelString,
         this.providerService.getConfig()
       );
 
@@ -2803,8 +2809,12 @@ export class AIService extends EventEmitter {
                   // web tools and MCP schema sanitization are provider-specific
                   // (reusing Anthropic-shaped tools on OpenAI 400s, and vice
                   // versa silently drops web tooling).
+                  // Same raw-identity rule as the main path's capability
+                  // lookup: cross-typed Coder instances need the raw string.
                   const nextCapabilityModelString = resolveModelForMetadata(
-                    next.canonicalModelString,
+                    nextModelString.startsWith("coder:")
+                      ? nextModelString
+                      : next.canonicalModelString,
                     this.providerService.getConfig()
                   );
                   const nextAllTools = await getToolsForModel(
