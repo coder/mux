@@ -4444,6 +4444,58 @@ describe("CoderOauthService", () => {
       ]);
     });
 
+    it("does not carry a provider's models forward when the authoritative type changed", async () => {
+      // The admin re-pointed the "llm" instance from an Anthropic upstream to
+      // an OpenAI-compatible one. Its first /models fetch flakes: carrying the
+      // Anthropic-era IDs forward while persisting the new type would leave
+      // stale entries selectable on the wrong wire, so the catalog must go
+      // inconclusive (unknown) instead — new metadata persisted, old catalog
+      // dropped, routing fails open until a successful refresh.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          discoveredModels: ["llm/claude-sonnet-4-5", "anthropic/claude-opus-4-6"],
+          discoveredProviders: [
+            { name: "llm", type: "anthropic" },
+            { name: "anthropic", type: "anthropic" },
+          ],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([
+              { name: "llm", type: "openai-compat", enabled: true },
+              { name: "anthropic", type: "anthropic", enabled: true },
+            ])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/llm/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-opus-4-6" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      // Inconclusive catalogs report the transient failure to the caller.
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // Catalog stays unknown — no stale llm/* entries survive on the new wire.
+      expect(coderSection.discoveredModels).toBeUndefined();
+      // The authoritative listing is still persisted: the new type must win.
+      expect(coderSection.discoveredProviders).toEqual([
+        { name: "llm", type: "openai-compat" },
+        { name: "anthropic", type: "anthropic" },
+      ]);
+    });
+
     it("falls back to probing default provider names when the listing is member-forbidden", async () => {
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },

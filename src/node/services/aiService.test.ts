@@ -364,6 +364,8 @@ function stubCommonStreamMessageDependencies(args: {
           canonicalProviderName:
             args.canonicalProviderName ?? providerNameFromModelString(canonicalModelString),
           canonicalModelId: args.canonicalModelId ?? modelIdFromModelString(canonicalModelString),
+          wireProviderName:
+            args.canonicalProviderName ?? providerNameFromModelString(canonicalModelString),
           routedThroughGateway: false,
           ...(args.routeProvider != null ? { routeProvider: args.routeProvider } : {}),
         },
@@ -1613,6 +1615,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
             canonicalModelString,
             canonicalProviderName: "openai" as ProviderName,
             canonicalModelId: canonicalModelString.split(":")[1] ?? canonicalModelString,
+            wireProviderName: "openai",
             routedThroughGateway: isGateway,
             routeProvider: (isGateway ? "mux-gateway" : "openai") as ProviderName,
           },
@@ -3426,6 +3429,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
         canonicalModelString: "openai:gpt-5.2",
         canonicalProviderName: "openai",
         canonicalModelId: "gpt-5.2",
+        wireProviderName: "openai",
         routedThroughGateway: false,
         routeProvider: "openrouter",
       },
@@ -3543,6 +3547,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
         canonicalModelString: "openrouter:deepseek/deepseek-r1",
         canonicalProviderName: "openrouter",
         canonicalModelId: "deepseek/deepseek-r1",
+        wireProviderName: "openrouter",
         routedThroughGateway: false,
       },
     });
@@ -3607,6 +3612,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
         canonicalModelString: "openrouter:deepseek/deepseek-r1",
         canonicalProviderName: "openrouter",
         canonicalModelId: "deepseek/deepseek-r1",
+        wireProviderName: "openrouter",
         routedThroughGateway: false,
       },
     });

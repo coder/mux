@@ -1199,6 +1199,7 @@ export class AIService extends EventEmitter {
         effectiveModelString,
         canonicalModelString,
         canonicalProviderName,
+        wireProviderName,
         routedThroughGateway,
         routeProvider,
       } = modelResult.data;
@@ -1212,8 +1213,12 @@ export class AIService extends EventEmitter {
 
       // Context Boundary request slicing happens before empty-assistant filtering so
       // provider-invisible reset rows can still bound the active context window.
+      // Message preparation keys on the WIRE provider (wireProviderName), not
+      // the config identity: a gateway-scoped coder:<instance>/<model> request
+      // sends Anthropic/OpenAI-shaped bytes, so wire-specific transforms must
+      // still run for it.
       const { activeContextMessages, providerRequestMessages, contextBoundarySlicedCount } =
-        prepareProviderRequestMessages(messages, canonicalProviderName, effectiveThinkingLevel);
+        prepareProviderRequestMessages(messages, wireProviderName, effectiveThinkingLevel);
       if (contextBoundarySlicedCount > 0) {
         log.debug("Prepared provider history window", {
           workspaceId,
@@ -1230,7 +1235,7 @@ export class AIService extends EventEmitter {
 
       // OpenAI-specific: Keep reasoning parts in history so each request can
       // carry forward reasoning context without relying on previous_response_id.
-      if (canonicalProviderName === "openai") {
+      if (wireProviderName === "openai") {
         log.debug("Keeping reasoning parts for OpenAI (managed via explicit history)");
       }
       // Add [CONTINUE] sentinel to partial messages (for model context)
@@ -2425,7 +2430,7 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         abortSignal: combinedAbortSignal,
-        providerForMessages: canonicalProviderName,
+        providerForMessages: wireProviderName,
         effectiveThinkingLevel,
         modelString,
         anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
@@ -2555,8 +2560,11 @@ export class AIService extends EventEmitter {
       // Mux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
       // Shared by the initial build and mid-turn thinking-level rebuilds so both
       // produce identically-shaped options.
+      // Namespace key must match what buildProviderOptions computes internally
+      // (wire origin for gateway-scoped Coder models), or extras merge under a
+      // namespace the SDK never reads.
       const providerOptionsNamespaceKey = resolveProviderOptionsNamespaceKey(
-        canonicalProviderName,
+        wireProviderName,
         routeProvider
       );
       const mergeModelParameterExtras = (
@@ -2883,7 +2891,7 @@ export class AIService extends EventEmitter {
                   const { providerRequestMessages: nextProviderRequestMessages } =
                     prepareProviderRequestMessages(
                       fallbackSourceMessages,
-                      next.canonicalProviderName,
+                      next.wireProviderName,
                       nextThinkingLevel
                     );
                   const nextFinalMessages = await prepareMessagesForProvider({
@@ -2897,7 +2905,7 @@ export class AIService extends EventEmitter {
                     runtime,
                     workspacePath,
                     abortSignal: combinedAbortSignal,
-                    providerForMessages: next.canonicalProviderName,
+                    providerForMessages: next.wireProviderName,
                     effectiveThinkingLevel: nextThinkingLevel,
                     modelString: next.canonicalModelString,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
@@ -2942,7 +2950,7 @@ export class AIService extends EventEmitter {
                     next.effectiveModelString
                   );
                   const nextNamespaceKey = resolveProviderOptionsNamespaceKey(
-                    next.canonicalProviderName,
+                    next.wireProviderName,
                     next.routeProvider
                   );
                   // Mirrors mergeModelParameterExtras for the fallback model;

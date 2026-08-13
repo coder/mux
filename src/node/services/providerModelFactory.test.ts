@@ -2182,6 +2182,36 @@ describe("ProviderModelFactory Coder", () => {
       expect(result.data.canonicalModelString).toBe("coder:google/gemini-3-pro");
       expect(result.data.routeProvider).toBe("coder");
       expect((result.data.model as { provider?: unknown }).provider).toBe("openai.chat");
+      // Message preparation and options namespaces key on the wire the
+      // request speaks (google → OpenAI-compatible), not the "coder" prefix.
+      expect(result.data.wireProviderName).toBe("openai");
+    });
+  });
+
+  it("reports the wire provider from instance metadata, not the instance name", async () => {
+    await withTempConfig(async (config, factory) => {
+      // {name: "openai", type: "anthropic"}: the request speaks Anthropic on
+      // the wire, so message preparation (reasoning transforms, PDF-filename
+      // sanitization) must key on anthropic even though the name says openai.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+        models: ["openai/claude-opus-4-5"],
+        discoveredModels: ["openai/claude-opus-4-5"],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:openai/claude-opus-4-5", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      // Name-based canonicalization still applies (the explicit-gateway
+      // restore keeps routing on the gateway), but the WIRE comes from the
+      // instance metadata, and the SDK selection matches it.
+      expect(result.data.canonicalProviderName).toBe("openai");
+      expect(result.data.effectiveModelString).toBe("coder:openai/claude-opus-4-5");
+      expect(result.data.wireProviderName).toBe("anthropic");
+      expect((result.data.model as { provider?: unknown }).provider).toBe("anthropic.messages");
     });
   });
 

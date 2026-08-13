@@ -1889,8 +1889,20 @@ export class CoderOauthService {
       const nextProviders: CoderGatewayProvider[] = [];
       for (const { provider, result } of results) {
         const previous = previousProviders.find((prev) => prev.name === provider.name);
+        // Prior state must also TYPE-match under an authoritative listing:
+        // when the admin changes an instance's type (same name), the old
+        // type's model IDs are not valid carry-forward state — the write
+        // persists the NEW type, so carried entries would stay selectable and
+        // be sent over the new wire protocol until a successful refresh.
+        // A name with no stored metadata previously resolved via the
+        // name === type default, so that default is its effective prior type.
+        // The probe path persists `previous` (not the probe default), so no
+        // type change can occur there and the check is skipped.
+        const previousType = previous?.type ?? provider.name;
+        const typeUnchanged = !authoritative || previousType === provider.type;
         const hasPriorState =
           previousKnown &&
+          typeUnchanged &&
           (previous !== undefined ||
             previousDiscovered.some((id) => id.startsWith(`${provider.name}/`)));
         if (result.kind === "ok") {

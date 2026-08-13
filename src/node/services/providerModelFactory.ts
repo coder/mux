@@ -47,6 +47,7 @@ import {
   coderGatewayWireProtocol,
   parseCoderGatewayProviders,
   resolveCoderGatewayProvider,
+  resolveCoderWireCanonicalModel,
 } from "@/common/constants/coderOAuth";
 import type { DevToolsService } from "@/node/services/devToolsService";
 import { captureAndStripDevToolsHeader } from "@/node/services/devToolsHeaderCapture";
@@ -2198,6 +2199,16 @@ export class ProviderModelFactory {
         canonicalProviderName: string;
         /** Model ID from the canonical model string. */
         canonicalModelId: string;
+        /**
+         * Provider whose WIRE format the request actually speaks. Differs from
+         * canonicalProviderName only for gateway-scoped Coder strings
+         * (coder:<instance>/<model>), where the wire is derived from the
+         * instance's type. Drives message preparation (Anthropic reasoning
+         * transforms, PDF-filename sanitization) and providerOptions namespace
+         * selection; canonicalProviderName remains the config identity for
+         * providers.jsonc lookups.
+         */
+        wireProviderName: string;
         /** Whether the request is being routed through the Mux gateway. */
         routedThroughGateway: boolean;
         /** Route provider chosen by backend routing (direct provider or gateway). */
@@ -2227,6 +2238,28 @@ export class ProviderModelFactory {
       : normalizeToCanonical(modelString);
     let effectiveModelString = canonicalModelString;
     const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
+
+    // Wire-canonical provider for message preparation and options namespaces:
+    // a Coder gateway request sends instance-type-shaped bytes (e.g.
+    // Anthropic messages), so Anthropic-only reasoning transforms, PDF
+    // sanitization, and namespace merging must key on the wire — keying them
+    // on "coder" silently skips them. Resolved from the RAW prefix, not
+    // canonicalProviderName: a cross-typed instance like
+    // {name: "openai", type: "anthropic"} normalizes to openai:<model> by
+    // name while the wire is Anthropic, and metadata must win over the name
+    // convention. Shadowed prefixes keep the custom provider's identity.
+    let wireProviderName = canonicalProviderName;
+    if (rawProviderName === "coder" && !rawPrefixShadowedByCustomProvider) {
+      const wire = resolveCoderWireCanonicalModel(
+        modelString.slice(modelString.indexOf(":") + 1),
+        providersConfigForShadowCheck.coder as
+          | { discoveredProviders?: unknown; additionalProviders?: unknown }
+          | undefined
+      );
+      if (wire) {
+        wireProviderName = wire.origin;
+      }
+    }
 
     // xAI Grok: swap between reasoning and non-reasoning variants based on thinking level.
     // xAI only supports full reasoning (no medium/low).
@@ -2266,6 +2299,7 @@ export class ProviderModelFactory {
       canonicalModelString,
       canonicalProviderName,
       canonicalModelId,
+      wireProviderName,
       routedThroughGateway,
       routeProvider,
     });
