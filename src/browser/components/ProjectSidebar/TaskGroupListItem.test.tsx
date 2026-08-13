@@ -58,6 +58,19 @@ describe("TaskGroupListItem", () => {
     expect(groupRow.textContent).toContain("2 running");
   });
 
+  test("does not paint running groups with the selected background", () => {
+    const running = renderTaskGroup({ runningCount: 1, isRunActive: true });
+    expect(
+      running.getByTestId("task-group-best-of-demo").classList.contains("bg-surface-secondary")
+    ).toBe(false);
+    cleanup();
+
+    const selected = renderTaskGroup({ isSelected: true });
+    expect(
+      selected.getByTestId("task-group-best-of-demo").classList.contains("bg-surface-secondary")
+    ).toBe(true);
+  });
+
   test("keeps queued-only groups pending instead of active", () => {
     const view = renderTaskGroup({ queuedCount: 1 });
 

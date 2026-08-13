@@ -84,7 +84,9 @@ export function TaskGroupListItem(props: TaskGroupListItemProps) {
       className={cn(
         "bg-surface-primary relative flex items-start rounded-l-sm py-2 pr-2 select-none transition-all duration-150 hover:bg-surface-secondary",
         props.sectionId != null ? "ml-2" : "ml-0",
-        hasRunningWork && "bg-surface-secondary",
+        // Running state must not reuse the selected background: it made active
+        // workflow groups look permanently selected. Activity is conveyed by the
+        // status dot, green icon, and status text instead (matches AgentListItem).
         props.isSelected && "bg-surface-secondary"
       )}
       style={{ paddingLeft }}
