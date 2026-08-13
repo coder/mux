@@ -376,6 +376,58 @@ describe("ThinkingContext", () => {
     }
   });
 
+  test("setting thinking preserves an explicit Coder gateway model identity", async () => {
+    // A cross-typed instance ({name: "openai", type: "anthropic"}) makes
+    // coder:openai/<claude> a valid gateway selection. Changing the thinking
+    // level must persist that identity intact — normalizeToCanonical would
+    // rewrite it to openai:<claude> from the name alone and silently reroute
+    // the workspace to direct OpenAI.
+    const workspaceId = "ws-set-thinking-coder-model";
+    const coderModel = "coder:openai/claude-opus-4-5";
+    const updateAgentAISettings = mock<
+      (args: WorkspaceUpdateAgentAISettingsArgs) => Promise<WorkspaceUpdateAgentAISettingsResult>
+    >(() =>
+      Promise.resolve({
+        success: true as const,
+        data: undefined,
+      })
+    );
+    currentClientMock = {
+      workspace: { updateAgentAISettings },
+    };
+
+    setWorkspaceMetadata(
+      createWorkspaceMetadata({
+        id: workspaceId,
+        aiSettings: { model: coderModel, thinkingLevel: "high" },
+      })
+    );
+
+    const view = renderWithWorkspaceMetadata({
+      workspaceId,
+      modelOverride: null,
+      children: (
+        <ThinkingProvider workspaceId={workspaceId}>
+          <ThinkingSetterComponent />
+        </ThinkingProvider>
+      ),
+    });
+
+    const button = await view.findByTestId("set-thinking-medium", undefined, METADATA_WAIT_OPTIONS);
+    act(() => {
+      button.click();
+    });
+
+    const expectedSettings = {
+      model: coderModel,
+      thinkingLevel: "medium" as const,
+      reasoningMode: "standard" as const,
+    };
+    await waitFor(() => {
+      expect(readWorkspaceAISettingsCache(workspaceId).exec).toEqual(expectedSettings);
+    }, METADATA_WAIT_OPTIONS);
+  });
+
   test("self-heals corrupt persisted reasoningMode to standard but keeps valid pro", async () => {
     // Corrupt persisted values (e.g. from a future downgrade) must coerce to
     // "standard" instead of flowing into SendMessageOptionsSchema and bricking sends.

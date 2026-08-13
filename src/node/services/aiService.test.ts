@@ -1923,6 +1923,66 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(harness.getToolsForModelSpy.mock.calls[0]?.[0]).toBe("anthropic:claude-opus-4-5");
   });
 
+  it("normalizes passthrough-gateway fallbacks to the canonical wire identity for tools", async () => {
+    // A coder: selection whose route fell back to mux-gateway (Coder
+    // disconnected / catalog rejection): the passthrough gateway forwards
+    // origin-shaped payloads, so tool assembly must key on the canonical
+    // wire identity — the mux-gateway:* prefix would skip the Anthropic
+    // tool branch entirely.
+    using muxHome = new DisposableTempDir("ai-service-main-coder-passthrough-fallback");
+    const workspaceId = "workspace-main-coder-passthrough";
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const modelString = "coder:prod-anthropic/claude-opus-4-5";
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+
+    const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in passthrough-fallback test");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: Object.create(null) as LanguageModel,
+        effectiveModelString: "mux-gateway:anthropic/claude-opus-4-5",
+        canonicalModelString: "coder:prod-anthropic/claude-opus-4-5",
+        canonicalProviderName: "coder",
+        canonicalModelId: "prod-anthropic/claude-opus-4-5",
+        wireProviderName: "anthropic",
+        routedThroughGateway: true,
+        routeProvider: "mux-gateway",
+      },
+    });
+    const providerService = Reflect.get(harness.service, "providerService") as
+      | ProviderService
+      | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in passthrough-fallback test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "prod-anthropic", type: "anthropic" }],
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+
+    expect(harness.getToolsForModelSpy.mock.calls[0]?.[0]).toBe("anthropic:claude-opus-4-5");
+  });
+
   it("marks openai-chat Coder instances as Chat Completions for tools and options", async () => {
     // coder:openrouter/... is created via provider.chat(...): tool assembly
     // must not add Responses-only native web_search, and providerOptions

@@ -22,7 +22,7 @@ import {
   GLOBAL_SCOPE_ID,
 } from "@/common/constants/storage";
 import { getDefaultModel } from "@/browser/hooks/useModelsFromSettings";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy, getAvailableThinkingLevels } from "@/common/utils/thinking/policy";
 import { useMinThinkingLevels } from "@/browser/hooks/useMinThinkingLevels";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
@@ -69,7 +69,14 @@ function getModelForThinkingUpdate(
 ): string {
   const persistedModel = readPersistedState<string | undefined>(getModelKey(scopeId), undefined);
   // Prefer localStorage, then metadata, then the default model to avoid clobbering startup metadata.
-  return normalizeToCanonical(persistedModel ?? metadataModel ?? fallbackModel);
+  // normalizeSelectedModel (not normalizeToCanonical): this value is persisted
+  // back via persistAgentAiSettings, and explicit gateway identities must
+  // survive — normalizeToCanonical rewrites coder:openai/<claude> (a valid
+  // cross-typed instance) to openai:<claude> from the name alone, so merely
+  // changing the thinking level would silently reroute the workspace to
+  // direct OpenAI. Thinking policy lookups resolve gateway-scoped strings
+  // through resolveModelForMetadata, so capability behavior is unchanged.
+  return normalizeSelectedModel(persistedModel ?? metadataModel ?? fallbackModel);
 }
 
 export const ThinkingProvider: React.FC<ThinkingProviderProps> = (props) => {

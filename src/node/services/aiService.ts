@@ -110,6 +110,7 @@ import {
   coderGatewayWireProtocol,
   resolveCoderWireCanonicalModel,
 } from "@/common/constants/coderOAuth";
+import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
@@ -1246,7 +1247,25 @@ export class AIService extends EventEmitter {
           return { modelString: raw };
         }
         if (!effective.startsWith("coder:")) {
-          return { modelString: effective };
+          // Fallback away from Coder. A PASSTHROUGH gateway fallback
+          // (mux-gateway:anthropic/x) must normalize to the canonical wire
+          // identity: getToolsForModel only runs Anthropic/OpenAI-specific
+          // assembly (native web tools, MCP schema sanitization) for direct
+          // provider prefixes, and passthrough gateways forward origin-shaped
+          // payloads. Transforming gateways (openrouter) keep their own
+          // identity, same as a direct selection of that gateway.
+          const separator = effective.indexOf(":");
+          const effectiveProvider = separator > 0 ? effective.slice(0, separator) : "";
+          const definition = Object.hasOwn(PROVIDER_DEFINITIONS, effectiveProvider)
+            ? PROVIDER_DEFINITIONS[effectiveProvider as ProviderName]
+            : undefined;
+          const passthroughGateway =
+            definition?.kind === "gateway" &&
+            "passthrough" in definition &&
+            definition.passthrough === true;
+          return {
+            modelString: passthroughGateway ? normalizeToCanonical(effective) : effective,
+          };
         }
         const wire = resolveCoderWireCanonicalModel(effective.slice("coder:".length), coderSection);
         if (!wire) {
