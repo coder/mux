@@ -82,7 +82,7 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
 import { stripWorkflowRunRecordsFromModelMessages } from "@/node/utils/messages/stripWorkflowRunRecordsFromModelMessages";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeToCanonical, normalizeUsageModelKey } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import { withSequentialExecution } from "@/node/services/tools/withSequentialExecution";
@@ -1583,7 +1583,9 @@ export class StreamManager extends EventEmitter {
     try {
       await this.sessionUsageService.recordUsage(
         workspaceId as string,
-        normalizeToCanonical(model),
+        // Raw Coder identities stay: canonical keys would reprice cross-typed
+        // instances against the wrong provider family (see normalizeUsageModelKey).
+        normalizeUsageModelKey(model),
         messageUsage
       );
     } catch (error) {

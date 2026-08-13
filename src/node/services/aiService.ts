@@ -74,7 +74,7 @@ import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeToCanonical, normalizeUsageModelKey } from "@/common/utils/ai/models";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
 import {
@@ -2229,7 +2229,10 @@ export class AIService extends EventEmitter {
                 if (!displayUsage) {
                   return;
                 }
-                const canonicalModel = normalizeToCanonical(eventModel);
+                // Ledger keys keep raw Coder identities (normalizeUsageModelKey):
+                // canonical keys would reprice cross-typed instances against
+                // the wrong provider family.
+                const canonicalModel = normalizeUsageModelKey(eventModel);
                 await this.sessionUsageService.recordUsage(
                   workspaceId,
                   canonicalModel,

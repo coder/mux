@@ -31,6 +31,22 @@ export function isValidModelFormat(model: string): boolean {
 }
 
 /**
+ * Usage-ledger key for a model string. Same as normalizeToCanonical, except
+ * raw Coder gateway identities are preserved: name-based canonicalization
+ * rewrites a cross-typed instance (coder:openai/<claude>, type anthropic) to
+ * openai:<claude>, and repricing (resolveModelForMetadata over the persisted
+ * key) would then price the recorded Anthropic usage against the wrong
+ * provider family — stripping the costs as unknown OpenAI-model costs.
+ * resolveModelForMetadata resolves raw coder:<instance>/<model> keys through
+ * instance metadata, so the raw identity is the durable, reprice-safe key.
+ * (A custom provider shadowing the "coder" prefix also keeps its raw key,
+ * which is that provider's real config identity.)
+ */
+export function normalizeUsageModelKey(modelString: string): string {
+  return modelString.startsWith("coder:") ? modelString : normalizeToCanonical(modelString);
+}
+
+/**
  * Normalize gateway model strings to canonical provider:model format when possible.
  * For gateway-only vendor/model IDs, keep the original gateway-scoped identity.
  */

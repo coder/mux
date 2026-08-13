@@ -17,7 +17,7 @@ import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
 import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeUsageModelKey } from "@/common/utils/ai/models";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { log } from "./log";
@@ -162,7 +162,8 @@ export class SessionUsageService {
   /**
    * Record usage from a completed stream. Accumulates with existing usage
    * AND updates lastRequest in a single atomic write.
-   * Model should already be normalized via normalizeToCanonical().
+   * Model should already be normalized via normalizeUsageModelKey() (raw
+   * Coder identities are preserved so repricing resolves instance metadata).
    */
   async recordUsage(
     workspaceId: string,
@@ -234,7 +235,7 @@ export class SessionUsageService {
       // callers that already normalized.
       providerMetadata = withCacheWriteMetadata(providerMetadata, usage);
       usage = normalizeUsage(usage);
-      const canonicalModel = normalizeToCanonical(modelString);
+      const canonicalModel = normalizeUsageModelKey(modelString);
       // Resolve mappedToModel aliases for pricing (mirrors StreamManager's
       // resolveMetadataModel): custom provider models would otherwise price
       // against the raw custom ID (unknown → $0).
@@ -581,7 +582,7 @@ export class SessionUsageService {
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
     const mergeUsageForModel = (rawModel: string, usage: ChatUsageDisplay): void => {
-      const model = normalizeToCanonical(rawModel);
+      const model = normalizeUsageModelKey(rawModel);
       const existing = result.byModel[model];
       result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
     };
@@ -642,7 +643,7 @@ export class SessionUsageService {
 
           if (usage) {
             mergeUsageForModel(rawModel, usage);
-            lastAssistantUsage = { model: normalizeToCanonical(rawModel), usage };
+            lastAssistantUsage = { model: normalizeUsageModelKey(rawModel), usage };
           }
         }
 

@@ -73,7 +73,7 @@ import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeUsageModelKey } from "@/common/utils/ai/models";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
@@ -917,7 +917,10 @@ export class WorkspaceStore {
           this.resolveMetadataModel(model)
         );
         if (usage) {
-          const normalizedModel = normalizeToCanonical(model);
+          // Must match the backend's ledger keys (normalizeUsageModelKey):
+          // raw Coder identities are preserved for reprice-safe metadata
+          // resolution, so the live delta must accumulate under the same key.
+          const normalizedModel = normalizeUsageModelKey(model);
           const current = this.sessionUsage.get(workspaceId) ?? {
             byModel: {},
             version: 1 as const,

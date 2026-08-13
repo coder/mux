@@ -3,6 +3,7 @@ import {
   getExplicitGatewayPrefix,
   normalizeSelectedModel,
   normalizeToCanonical,
+  normalizeUsageModelKey,
   getModelName,
   getAnthropic1MContextMode,
   hasNative1MContext,
@@ -80,6 +81,30 @@ describe("normalizeToCanonical", () => {
 
   it("returns malformed gateway strings unchanged", () => {
     expect(normalizeToCanonical("mux-gateway:no-slash-here")).toBe("mux-gateway:no-slash-here");
+  });
+});
+
+describe("normalizeUsageModelKey", () => {
+  it("preserves raw Coder gateway identities for usage-ledger keys", () => {
+    // A cross-typed instance ({name: "openai", type: "anthropic"}) would
+    // canonicalize to openai:<claude> by NAME; repricing that persisted key
+    // resolves the wrong provider family, stripping the recorded costs.
+    expect(normalizeUsageModelKey("coder:openai/claude-opus-4-5")).toBe(
+      "coder:openai/claude-opus-4-5"
+    );
+    expect(normalizeUsageModelKey("coder:anthropic/claude-opus-4-5")).toBe(
+      "coder:anthropic/claude-opus-4-5"
+    );
+    expect(normalizeUsageModelKey("coder:prod-anthropic/claude-opus-4-5")).toBe(
+      "coder:prod-anthropic/claude-opus-4-5"
+    );
+  });
+
+  it("canonicalizes non-Coder gateway strings like normalizeToCanonical", () => {
+    expect(normalizeUsageModelKey("mux-gateway:anthropic/claude-opus-4-5")).toBe(
+      "anthropic:claude-opus-4-5"
+    );
+    expect(normalizeUsageModelKey("anthropic:claude-opus-4-5")).toBe("anthropic:claude-opus-4-5");
   });
 });
 
