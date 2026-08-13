@@ -218,6 +218,12 @@ function manualModelEntries(section: Record<string, unknown> | undefined): Provi
 export class CoderOauthService {
   private readonly desktopFlows = new OAuthFlowManager();
   private readonly refreshMutex = new AsyncMutex();
+  // Serializes whole catalog refresh runs (fetch + locked commit). Automatic
+  // post-login discovery and the Settings/command-palette refresh are
+  // independently concurrent entry points, and the locked write predicate
+  // only verifies the credential — a slower, older run could otherwise
+  // commit last and overwrite newer provider/model results.
+  private readonly catalogRefreshMutex = new AsyncMutex();
   // Serializes desktop-login persist -> commit/rollback critical sections
   // across overlapping flows (see commitDesktopLogin for the invariant).
   private readonly loginCommitMutex = new AsyncMutex();
@@ -1799,6 +1805,14 @@ export class CoderOauthService {
   }
 
   private async refreshBridgeModels(auth: CoderOauthAuth): Promise<Result<void, string>> {
+    await using _lock = await this.catalogRefreshMutex.acquire();
+    // `return await` is load-bearing: a bare `return` would run the lock
+    // disposal before the returned promise settles, releasing the mutex
+    // while the refresh is still in flight.
+    return await this.refreshBridgeModelsSerialized(auth);
+  }
+
+  private async refreshBridgeModelsSerialized(auth: CoderOauthAuth): Promise<Result<void, string>> {
     // The deployment's configured provider instances decide which gateway
     // routes exist (each is mounted at /<name>/...), so list them first.
     const listing = await this.retryTransient(() => this.fetchGatewayProviders(auth));

@@ -4190,6 +4190,48 @@ describe("CoderOauthService", () => {
       }
     });
 
+    it("serializes concurrent refresh runs so a slower run cannot commit stale results", async () => {
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      // The first run's provider listing stalls until released; a concurrent
+      // second run must queue behind the catalogRefreshMutex instead of
+      // fetching (and later committing) in parallel.
+      let releaseFirstListing!: () => void;
+      const firstListingGate = new Promise<void>((resolve) => {
+        releaseFirstListing = resolve;
+      });
+      let listingRequests = 0;
+      mockFetch(async (input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          listingRequests++;
+          if (listingRequests === 1) {
+            await firstListingGate;
+          }
+          return jsonResponse([{ name: "prod-anthropic", type: "anthropic", enabled: true }]);
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/prod-anthropic/v1/models`) {
+          return jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] });
+        }
+        return new Response(`unexpected url: ${url}`, { status: 500 });
+      });
+
+      const first = service.refreshModels();
+      const second = service.refreshModels();
+      // Let both entry points resolve auth and reach the refresh body.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(listingRequests).toBe(1);
+
+      releaseFirstListing();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.success).toBe(true);
+      expect(secondResult.success).toBe(true);
+      // The queued run re-fetched after the first committed.
+      expect(listingRequests).toBe(2);
+    });
+
     it("discovers custom-named provider instances from the authoritative listing", async () => {
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
