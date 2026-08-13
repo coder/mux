@@ -1755,6 +1755,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    // Model parameter overrides must resolve from the instance TYPE
+    // (anthropic), not the name-canonicalized provider (openai): the OpenAI
+    // wildcard here must NOT leak into the Anthropic-wire request.
+    harness.config.saveProvidersConfig({
+      anthropic: { modelParameters: { "claude-opus-4-5": { anthropicKnob: "yes" } } },
+      openai: { modelParameters: { "*": { openaiKnob: "no" } } },
+    });
 
     const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
       | ProviderModelFactory
@@ -1824,6 +1831,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // string and resolved the instance's type from providersConfig.
     expect(prepared.data.providerOptions).toHaveProperty("anthropic");
     expect(prepared.data.providerOptions).not.toHaveProperty("openai");
+
+    // Override identity followed the instance type: the anthropic block's
+    // model entry applied; the OpenAI wildcard did not leak in.
+    const preparedAnthropicNamespace = (
+      prepared.data.providerOptions as Record<string, Record<string, unknown>>
+    ).anthropic;
+    expect(preparedAnthropicNamespace.anthropicKnob).toBe("yes");
+    expect(preparedAnthropicNamespace).not.toHaveProperty("openaiKnob");
 
     // The returned request keeps the RAW identity: StreamManager keys
     // system/tool cache-control and metadata resolution on this string, and

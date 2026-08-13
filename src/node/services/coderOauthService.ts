@@ -1877,7 +1877,16 @@ export class CoderOauthService {
     let catalogInconclusive = false;
     const setResult = await this.providerService.updateProviderSection("coder", (section) => {
       const stored = parseCoderOauthAuth(section?.coderOauth);
-      if (!stored || stored.access !== auth.access || stored.deploymentUrl !== auth.deploymentUrl) {
+      // Compare the stable login-session lineage, not the access token:
+      // ordinary requests rotate the token while catalogs are fetched
+      // (rotations preserve sessionId — see refreshTokens), and rejecting a
+      // same-session rotation would silently discard the fetched catalog.
+      // A new login mints a fresh sessionId, so stale discoveries still lose.
+      if (
+        !stored ||
+        stored.sessionId !== auth.sessionId ||
+        stored.deploymentUrl !== auth.deploymentUrl
+      ) {
         return null;
       }
       // Prior catalog state must be read INSIDE the locked mutation (a
@@ -2071,7 +2080,11 @@ export class CoderOauthService {
       );
     }
     if (!setResult.data.applied) {
+      // Nothing was persisted — report failure so Settings/palette callers
+      // don't claim models were refreshed when the fetched catalog was
+      // discarded (login superseded or disconnected mid-refresh).
       log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
+      return Err("Model refresh superseded by a newer login; try again");
     }
     return Ok(undefined);
   }

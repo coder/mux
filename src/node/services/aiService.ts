@@ -105,6 +105,7 @@ import {
   resolveProviderOptionsNamespaceKey,
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
+import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
 import { getProjects, isMultiProject } from "@/common/utils/multiProject";
@@ -2554,10 +2555,36 @@ export class AIService extends EventEmitter {
 
       // --- Model parameter overrides from providers.jsonc ---
       const providersConfig = this.config.loadProvidersConfig();
+      // Override config identity follows the Coder instance TYPE, not the
+      // name-canonicalized provider: a cross-typed instance ({name: "openai",
+      // type: "anthropic"}) canonicalizes to openai:<model>, which would apply
+      // the OpenAI block's wildcard/model settings to an Anthropic-wire
+      // request and ignore the intended anthropic block. Unmappable instances
+      // (openai-compat) and shadowed prefixes keep the canonical identity.
+      const resolveOverridesIdentity = (
+        rawModelString: string,
+        canonical: string,
+        canonicalProvider: string
+      ): { providerName: string; modelString: string } => {
+        const metadataCanonical = rawModelString.startsWith("coder:")
+          ? resolveCoderGatewayMetadataModel(rawModelString, this.providerService.getConfig())
+          : null;
+        const identity = metadataCanonical ?? canonical;
+        const separator = identity.indexOf(":");
+        return {
+          providerName: separator > 0 ? identity.slice(0, separator) : canonicalProvider,
+          modelString: identity,
+        };
+      };
+      const overridesIdentity = resolveOverridesIdentity(
+        modelString,
+        canonicalModelString,
+        canonicalProviderName
+      );
       const resolvedOverrides = resolveModelParameterOverrides(
         providersConfig,
-        canonicalProviderName,
-        canonicalModelString,
+        overridesIdentity.providerName,
+        overridesIdentity.modelString,
         effectiveModelString
       );
 
@@ -2967,10 +2994,18 @@ export class AIService extends EventEmitter {
                     };
                   }
 
+                  // Same type-derived override identity as the main path:
+                  // cross-typed Coder fallbacks must not read the name-alike
+                  // provider's override block.
+                  const nextOverridesIdentity = resolveOverridesIdentity(
+                    nextModelString,
+                    next.canonicalModelString,
+                    next.canonicalProviderName
+                  );
                   const nextOverrides = resolveModelParameterOverrides(
                     this.config.loadProvidersConfig(),
-                    next.canonicalProviderName,
-                    next.canonicalModelString,
+                    nextOverridesIdentity.providerName,
+                    nextOverridesIdentity.modelString,
                     next.effectiveModelString
                   );
                   const nextNamespaceKey = resolveProviderOptionsNamespaceKey(

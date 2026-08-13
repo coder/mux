@@ -4232,6 +4232,70 @@ describe("CoderOauthService", () => {
       expect(listingRequests).toBe(2);
     });
 
+    it("commits the catalog when the token rotates in the same session mid-refresh", async () => {
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          // An ordinary request refreshed the OAuth token while catalogs were
+          // being fetched: rotations preserve sessionId (same login).
+          (deps.providersConfig.coder as Record<string, unknown>).coderOauth = validAuth({
+            access: "at_rotated",
+            refresh: "rt_rotated",
+          });
+          return Promise.resolve(
+            jsonResponse([{ name: "anthropic", type: "anthropic", enabled: true }])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+    });
+
+    it("reports failure when a newer login supersedes the refresh mid-fetch", async () => {
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          // A NEW login (fresh sessionId) replaced the credential: this
+          // refresh's catalog must not commit, and the caller must not be
+          // told models were refreshed.
+          (deps.providersConfig.coder as Record<string, unknown>).coderOauth = validAuth({
+            sessionId: "session_newer_login",
+            access: "at_newer",
+          });
+          return Promise.resolve(
+            jsonResponse([{ name: "anthropic", type: "anthropic", enabled: true }])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("superseded");
+      }
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toBeUndefined();
+    });
+
     it("discovers custom-named provider instances from the authoritative listing", async () => {
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
