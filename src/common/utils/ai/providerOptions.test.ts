@@ -445,6 +445,91 @@ describe("Coder gateway-scoped models (wire-canonical option building)", () => {
     );
     expect(headers).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
+
+  // Discovered metadata must win over the instance NAME: a valid instance can
+  // use a canonical route name with a different type, and normalizing the name
+  // before consulting metadata would emit options for the wrong wire.
+  describe("canonical-named instance with a different type", () => {
+    const crossTypedConfig: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [
+          { name: "openai", type: "anthropic" },
+          { name: "anthropic", type: "openai-compat" },
+        ],
+      },
+    };
+
+    test("anthropic-typed instance named openai gets Anthropic options", () => {
+      const options = buildProviderOptions(
+        "coder:openai/claude-opus-4-5",
+        "high",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        crossTypedConfig,
+        "coder"
+      );
+      expect(options).toHaveProperty("anthropic");
+      expect(options).not.toHaveProperty("openai");
+    });
+
+    test("anthropic-typed instance named openai gets the 1M beta header", () => {
+      const headers = buildRequestHeaders(
+        "coder:openai/claude-sonnet-4-5",
+        { anthropic: { use1MContext: true } },
+        undefined,
+        crossTypedConfig,
+        "coder"
+      );
+      expect(headers).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
+    });
+
+    test("openai-compat-typed instance named anthropic gets OpenAI options", () => {
+      const options = buildProviderOptions(
+        "coder:anthropic/gpt-5",
+        "medium",
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        crossTypedConfig,
+        "coder"
+      );
+      expect(options).toHaveProperty("openai");
+      expect(options).not.toHaveProperty("anthropic");
+    });
+  });
+
+  test("custom OpenAI-compatible provider named coder shadows gateway wire treatment", () => {
+    const options = buildProviderOptions(
+      "coder:anthropic/claude-opus-4-5",
+      "high",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        coder: {
+          apiKeySet: true,
+          isEnabled: true,
+          isConfigured: true,
+          providerType: "openai-compatible",
+          baseUrl: "https://proxy.example.com/v1",
+        },
+      },
+      "coder"
+    );
+    // The string is the custom provider's identity; it must not be rewritten
+    // to anthropic:<model> by name convention or gateway metadata.
+    expect(options).not.toHaveProperty("anthropic");
+  });
 });
 
 describe("isAnthropic1MEffectivelyEnabled", () => {

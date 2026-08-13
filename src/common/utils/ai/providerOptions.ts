@@ -43,6 +43,7 @@ import {
   supports1MContext,
 } from "./models";
 import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 
 // Re-export for existing consumers (aiService, providerModelFactory, tests):
 // the implementations moved to browser-safe modules because this module
@@ -52,30 +53,41 @@ export { openaiProModeAvailable } from "./proMode";
 
 /**
  * Canonical model string for OPTION/HEADER building. Same as
- * normalizeToCanonical, except gateway-scoped Coder strings
- * (coder:<instance>/<model>, i.e. custom-named instances or instances whose
- * name is not a canonical coder route) are translated to the WIRE origin
- * derived from the instance's type. The request bytes for
- * coder:prod-anthropic/<model> are Anthropic-shaped, so thinking, cache, and
- * beta-header decisions must run against anthropic:<model> — keying them on
- * the "coder" prefix silently drops them, diverging from the identical model
- * on a default-named instance. Routing identity is NOT affected: only the
- * builders in this module use this translation.
+ * normalizeToCanonical, except Coder gateway strings
+ * (coder:<instance>/<model>) are translated to the WIRE origin derived from
+ * the instance's type. The request bytes for coder:prod-anthropic/<model> are
+ * Anthropic-shaped, so thinking, cache, and beta-header decisions must run
+ * against anthropic:<model> — keying them on the "coder" prefix silently
+ * drops them, diverging from the identical model on a default-named instance.
+ * Routing identity is NOT affected: only the builders in this module use this
+ * translation.
+ *
+ * The RAW Coder identity is inspected BEFORE generic normalization: a valid
+ * instance can use a canonical route name with a different type (e.g.
+ * {name: "openai", type: "anthropic"}), and normalizeToCanonical would
+ * rewrite coder:openai/<model> to openai:<model> from the name alone —
+ * emitting OpenAI options for an Anthropic-wire request. Metadata-aware wire
+ * resolution must win over the name convention (which it still falls back to
+ * for unknown instances). Mirrors resolveAndCreateModel's raw-prefix shadow
+ * check: a custom OpenAI-compatible provider named "coder" owns the prefix,
+ * and its model IDs must not get gateway wire treatment.
  */
 function resolveOptionsCanonicalModel(
   modelString: string,
   providersConfig?: ProvidersConfigMap | null
 ): string {
-  const normalized = normalizeToCanonical(modelString);
-  const colonIndex = normalized.indexOf(":");
-  if (colonIndex === -1 || normalized.slice(0, colonIndex) !== "coder") {
-    return normalized;
+  const colonIndex = modelString.indexOf(":");
+  if (colonIndex === -1 || modelString.slice(0, colonIndex) !== "coder") {
+    return normalizeToCanonical(modelString);
+  }
+  if (isCustomOpenAICompatibleProviderConfig(providersConfig?.coder)) {
+    return modelString; // custom-provider shadowing wins; already canonical
   }
   const wire = resolveCoderWireCanonicalModel(
-    normalized.slice(colonIndex + 1),
+    modelString.slice(colonIndex + 1),
     providersConfig?.coder
   );
-  return wire ? `${wire.origin}:${wire.modelId}` : normalized;
+  return wire ? `${wire.origin}:${wire.modelId}` : normalizeToCanonical(modelString);
 }
 
 /**
