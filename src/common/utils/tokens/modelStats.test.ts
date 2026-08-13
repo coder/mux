@@ -107,7 +107,7 @@ describe("getModelStats", () => {
     expect(stats.tiered_pricing_threshold_tokens).toBeUndefined();
   });
 
-  test("resolves Gemini 3.6 Flash with published standard pricing and limits", () => {
+  test("resolves Gemini 3.7 Flash with published standard pricing and limits", () => {
     const stats = expectStats(KNOWN_MODELS.GEMINI_FLASH.id);
     expect(stats.max_input_tokens).toBe(1048576);
     expect(stats.max_output_tokens).toBe(65536);

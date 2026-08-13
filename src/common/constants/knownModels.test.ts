@@ -32,8 +32,8 @@ describe("Known Models Integration", () => {
     }
   });
 
-  test("gemini-flash resolves to the stable Gemini 3.6 Flash model", () => {
-    expect(MODEL_ABBREVIATIONS["gemini-flash"]).toBe("google:gemini-3.6-flash");
+  test("gemini-flash resolves to the stable Gemini 3.7 Flash model", () => {
+    expect(MODEL_ABBREVIATIONS["gemini-flash"]).toBe("google:gemini-3.7-flash");
   });
 
   test("gpt alias tracks the GPT-5.6 flagship tier alongside the tier aliases", () => {

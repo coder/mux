@@ -617,6 +617,16 @@ describe("getThinkingPolicyForModel", () => {
     }
   });
 
+  test("returns off/low/medium/high for stable Gemini 3.7 Flash", () => {
+    for (const model of [
+      "google:gemini-3.7-flash",
+      "mux-gateway:google/gemini-3.7-flash",
+      "google:gemini-3.7-flash-001",
+    ]) {
+      expect(getThinkingPolicyForModel(model)).toEqual(["off", "low", "medium", "high"]);
+    }
+  });
+
   test("returns off/low/medium/high for stable Gemini 3.5 Flash behind OpenRouter", () => {
     expect(getThinkingPolicyForModel("openrouter:google/gemini-3.5-flash")).toEqual([
       "off",
@@ -683,6 +693,7 @@ describe("isGeminiFlashThinkingLevelModelName", () => {
     expect(isGeminiFlashThinkingLevelModelName("gemini-3-flash-lite")).toBe(false);
     expect(isGeminiFlashThinkingLevelModelName("gemini-3.5-flash-lite")).toBe(false);
     expect(isGeminiFlashThinkingLevelModelName("gemini-3.6-flash-lite")).toBe(false);
+    expect(isGeminiFlashThinkingLevelModelName("gemini-3.7-flash-lite")).toBe(false);
   });
 });
 

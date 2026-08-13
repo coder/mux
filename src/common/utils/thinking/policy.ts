@@ -47,7 +47,9 @@ export function isGeminiFlashThinkingLevelModelName(modelName: string): boolean 
       !normalized.startsWith("gemini-3-flash-lite")) ||
     (normalized.startsWith("gemini-3.5-flash") &&
       !normalized.startsWith("gemini-3.5-flash-lite")) ||
-    (normalized.startsWith("gemini-3.6-flash") && !normalized.startsWith("gemini-3.6-flash-lite"))
+    (normalized.startsWith("gemini-3.6-flash") &&
+      !normalized.startsWith("gemini-3.6-flash-lite")) ||
+    (normalized.startsWith("gemini-3.7-flash") && !normalized.startsWith("gemini-3.7-flash-lite"))
   );
 }
 
