@@ -1,27 +1,12 @@
 import { uniqueSuffix } from "@/common/utils/hasher";
+import { buildMcpPromptBaseKey, normalizeMcpToolNamePart } from "./mcpPromptCommandKey";
 
-const DEFAULT_MCP_TOOL_NAME_PART = "unknown";
+export { buildMcpPromptBaseKey, normalizeMcpToolNamePart };
 
 // Be conservative: some providers have strict tool-name validation and limits.
 export const MAX_MCP_TOOL_NAME_CHARS = 64;
 
 const MCP_TOOL_NAME_PATTERN = /^[a-z0-9_]+$/;
-
-/** Normalize a component for generated MCP tool names and prompt command keys. */
-export function normalizeMcpToolNamePart(input: string): string {
-  const normalized = input
-    .normalize("NFKD")
-    .toLowerCase()
-    // Replace whitespace and any non-[a-z0-9_] characters with underscores.
-    // (Treat '-' as '_' too for maximum provider compatibility.)
-    .replace(/[^a-z0-9_]+/g, "_")
-    // Collapse consecutive underscores.
-    .replace(/_+/g, "_")
-    // Trim leading/trailing underscores.
-    .replace(/^_+|_+$/g, "");
-
-  return normalized.length > 0 ? normalized : DEFAULT_MCP_TOOL_NAME_PART;
-}
 
 export interface BuildMcpPromptCommandKeyOptions {
   serverName: string;
@@ -34,11 +19,6 @@ export interface BuildMcpPromptCommandKeyOptions {
    * colliding sibling is listed first.
    */
   forceSuffix?: boolean;
-}
-
-/** Normalized command key before collision/truncation suffixing. */
-export function buildMcpPromptBaseKey(serverName: string, promptName: string): string {
-  return `mcp__${normalizeMcpToolNamePart(serverName)}__${normalizeMcpToolNamePart(promptName)}`;
 }
 
 export interface BuildMcpToolNameOptions {

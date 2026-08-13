@@ -108,6 +108,32 @@ describe("parseCommandWithSkillInvocation", () => {
     expect(result.mcpPromptInvocation?.arguments).toEqual({ path: "src" });
   });
 
+  test("blocks an unsuffixed key orphaned by a new collision with the current keys", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [
+        {
+          ...promptDescriptor(),
+          commandKey: "mcp__coder__review_11111111",
+        },
+        {
+          ...promptDescriptor(),
+          commandKey: "mcp__coder__review_22222222",
+          stableKey: "mcp__coder__review_22222222",
+          serverName: "Coder",
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation).toBeNull();
+    expect(result.error).toBe(
+      "'/mcp__coder__review' no longer matches an MCP prompt key; did you mean /mcp__coder__review_11111111 or /mcp__coder__review_22222222?"
+    );
+  });
+
   test("reports a missing required MCP prompt argument before send", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/mcp__coder__review",

@@ -9,7 +9,10 @@ import {
 import { resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
-import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpPromptCommandKey";
+import {
+  buildMcpPromptBaseKey,
+  isMcpPromptCommandKey,
+} from "@/common/utils/tools/mcpPromptCommandKey";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
   buildAgentSkillMetadata,
@@ -144,7 +147,22 @@ async function resolveMcpPromptInvocation(options: {
     commandKeys: [command],
   });
   const descriptor = descriptors?.find((candidate) => matchesPromptCommandKey(candidate, command));
-  if (!descriptor) return { invocation: null };
+  if (!descriptor) {
+    // A prompt that once owned this unsuffixed key gains a hash suffix when a
+    // colliding sibling appears, so an old draft's key stops matching. Block
+    // the send with the current keys instead of silently sending plain text.
+    const baseMatches = (descriptors ?? []).filter(
+      (candidate) => buildMcpPromptBaseKey(candidate.serverName, candidate.promptName) === command
+    );
+    if (baseMatches.length > 0) {
+      const candidates = baseMatches.map((candidate) => `/${candidate.commandKey}`).join(" or ");
+      return {
+        invocation: null,
+        error: `'/${command}' no longer matches an MCP prompt key; did you mean ${candidates}?`,
+      };
+    }
+    return { invocation: null };
+  }
 
   const mapped = mapPromptArguments(descriptor, afterPrefix.trim());
   if (mapped.missingRequired) {
