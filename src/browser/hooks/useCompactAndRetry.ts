@@ -21,6 +21,7 @@ import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   buildAgentSkillMetadata,
+  withMcpPromptRefs,
   type CompactionFollowUpInput,
   type DisplayedMessage,
 } from "@/common/types/message";
@@ -54,18 +55,22 @@ function findTriggerUserMessage(
 function buildFollowUpFromSource(
   source: Extract<DisplayedMessage, { type: "user" }>
 ): CompactionFollowUpInput {
-  return {
-    text: source.content,
-    fileParts: source.fileParts,
-    reviews: source.reviews,
-    muxMetadata: source.agentSkill
+  const slashMcpPromptRef = source.mcpPromptRefs?.find((ref) => ref.source === "slash");
+  const skillMetadata =
+    source.agentSkill && source.agentSkill.skillName !== slashMcpPromptRef?.commandKey
       ? buildAgentSkillMetadata({
           rawCommand: source.content,
           skillName: source.agentSkill.skillName,
           scope: source.agentSkill.scope,
           arguments: source.agentSkill.arguments,
         })
-      : undefined,
+      : undefined;
+
+  return {
+    text: source.content,
+    fileParts: source.fileParts,
+    reviews: source.reviews,
+    muxMetadata: withMcpPromptRefs(skillMetadata, source.mcpPromptRefs ?? []),
   };
 }
 

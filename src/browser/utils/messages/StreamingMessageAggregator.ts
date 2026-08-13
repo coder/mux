@@ -7,7 +7,11 @@ import type {
   AgentSkillReference,
   MCPPromptReference,
 } from "@/common/types/message";
-import { createMuxMessage, isCompactionSummaryMetadata } from "@/common/types/message";
+import {
+  createMuxMessage,
+  getMcpPromptReferenceKey,
+  isCompactionSummaryMetadata,
+} from "@/common/types/message";
 
 import {
   copyStreamLifecycleSnapshot,
@@ -348,17 +352,13 @@ interface MCPPromptSnapshotContent {
   body: string;
 }
 
-function getMcpPromptSnapshotKey(serverName: string, promptName: string): string {
-  return `${serverName}\u0000${promptName}`;
-}
-
 function maybeCollectMcpPromptSnapshot(
   message: MuxMessage,
   snapshots: Map<string, MCPPromptSnapshotContent>
 ): void {
   const metadata = message.metadata?.mcpPromptSnapshot;
   if (!metadata) return;
-  snapshots.set(getMcpPromptSnapshotKey(metadata.serverName, metadata.promptName), {
+  snapshots.set(getMcpPromptReferenceKey(metadata.serverName, metadata.promptName), {
     ...metadata,
     body: getTextPartContent(message.parts),
   });
@@ -453,7 +453,7 @@ function deriveInlineSkillSnapshotDisplayState(
     for (const ref of mcpRefs) {
       if (ref.source !== "inline") continue;
       const snapshot = latestMcpPromptSnapshotByKey.get(
-        getMcpPromptSnapshotKey(ref.serverName, ref.promptName)
+        getMcpPromptReferenceKey(ref.serverName, ref.promptName)
       );
       if (!snapshot) continue;
       snapshotsBySkillName[ref.commandKey] = {
@@ -3544,8 +3544,7 @@ export class StreamingMessageAggregator {
         ((message.metadata?.synthetic === true && message.metadata?.uiVisible !== true) ||
           isWorkflowResultMessage(message));
 
-      // Synthetic skill and MCP prompt snapshots stay hidden unless debugLlmRequest is enabled.
-      // Their resolved content is attached to the user messages that reference them.
+      // Retain hidden snapshots so referenced user messages can display their resolved content.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
       const latestMcpPromptSnapshotByKey = new Map<string, MCPPromptSnapshotContent>();
 
@@ -3581,7 +3580,7 @@ export class StreamingMessageAggregator {
             : undefined;
         const mcpPromptSnapshot = slashMcpPromptRef
           ? latestMcpPromptSnapshotByKey.get(
-              getMcpPromptSnapshotKey(slashMcpPromptRef.serverName, slashMcpPromptRef.promptName)
+              getMcpPromptReferenceKey(slashMcpPromptRef.serverName, slashMcpPromptRef.promptName)
             )
           : undefined;
 

@@ -259,9 +259,8 @@ function buildUserDisplayedMessages(options: {
     }));
 
   let rawCommand = getRawCommand(muxMeta);
-  const slashMcpPromptRef = Array.isArray(muxMeta?.mcpPromptRefs)
-    ? muxMeta.mcpPromptRefs.find((ref) => ref.source === "slash")
-    : undefined;
+  const mcpPromptRefs = Array.isArray(muxMeta?.mcpPromptRefs) ? muxMeta.mcpPromptRefs : undefined;
+  const slashMcpPromptRef = mcpPromptRefs?.find((ref) => ref.source === "slash");
   const agentSkill =
     muxMeta?.type === "agent-skill"
       ? {
@@ -315,6 +314,7 @@ function buildUserDisplayedMessages(options: {
       isBudgetLimitWrapup: message.metadata?.kind === GOAL_BUDGET_LIMIT_KIND ? true : undefined,
       timestamp: baseTimestamp,
       agentSkill,
+      mcpPromptRefs,
       inlineSkillSnapshots,
       compactionRequest,
       reviews: muxMeta?.reviews,

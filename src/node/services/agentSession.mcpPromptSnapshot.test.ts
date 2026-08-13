@@ -57,6 +57,61 @@ describe("AgentSession MCP prompt snapshots", () => {
     }
   });
 
+  test("materializes independent prompt refs concurrently while preserving order", async () => {
+    let resolveFirst: ((value: { text: string }) => void) | undefined;
+    const getPrompt = mock((_workspaceId: string, _serverName: string, promptName: string) => {
+      if (promptName === "first") {
+        return new Promise<{ text: string }>((resolve) => {
+          resolveFirst = resolve;
+        });
+      }
+      resolveFirst?.({ text: "First prompt" });
+      return Promise.resolve({ text: "Second prompt" });
+    });
+    const harness = await createAgentSessionHarness({
+      workspaceId: "workspace",
+      mcpServerManager: { getPrompt } as unknown as MCPServerManager,
+    });
+
+    try {
+      const result = await harness.session.sendMessage("Use both prompts", {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+        muxMetadata: {
+          type: "normal",
+          mcpPromptRefs: [
+            {
+              serverName: "coder",
+              promptName: "first",
+              commandKey: "mcp__coder__first",
+              source: "inline",
+            },
+            {
+              serverName: "coder",
+              promptName: "second",
+              commandKey: "mcp__coder__second",
+              source: "inline",
+            },
+          ],
+        },
+      });
+      expect(result.success).toBe(true);
+      expect(getPrompt).toHaveBeenCalledTimes(2);
+
+      const history = await harness.historyService.getLastMessages("workspace", 10);
+      expect(history.success).toBe(true);
+      if (!history.success) throw new Error(history.error);
+      expect(
+        history.data
+          .filter((message) => message.metadata?.mcpPromptSnapshot)
+          .map((message) => message.metadata?.mcpPromptSnapshot?.promptName)
+      ).toEqual(["first", "second"]);
+    } finally {
+      harness.session.dispose();
+      await harness.cleanup();
+    }
+  });
+
   test("drops failed prompt refs without blocking the user message", async () => {
     const harness = await createAgentSessionHarness({
       workspaceId: "workspace",

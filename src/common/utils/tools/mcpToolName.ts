@@ -7,11 +7,7 @@ export const MAX_MCP_TOOL_NAME_CHARS = 64;
 
 const MCP_TOOL_NAME_PATTERN = /^[a-z0-9_]+$/;
 
-/**
- * Normalize a single component used to build an MCP tool name.
- *
- * Note: This is NOT user-facing. It's purely to ensure provider-safe tool keys.
- */
+/** Normalize a component for generated MCP tool names and prompt command keys. */
 export function normalizeMcpToolNamePart(input: string): string {
   const normalized = input
     .normalize("NFKD")
@@ -25,6 +21,10 @@ export function normalizeMcpToolNamePart(input: string): string {
     .replace(/^_+|_+$/g, "");
 
   return normalized.length > 0 ? normalized : DEFAULT_MCP_TOOL_NAME_PART;
+}
+
+export function isMcpPromptCommandKey(value: string): boolean {
+  return /^mcp__[a-z0-9_]+$/.test(value);
 }
 
 export interface BuildMcpPromptCommandKeyOptions {
@@ -42,7 +42,7 @@ export interface BuildMcpToolNameOptions {
 export interface BuildMcpToolNameResult {
   toolName: string;
   /**
-   * The normalized tool name without any collision/truncation suffix.
+   * The normalized identifier without any collision or truncation suffix.
    * Useful for debugging/logging.
    */
   baseName: string;

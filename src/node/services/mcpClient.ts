@@ -20,9 +20,8 @@ import assert from "@/common/utils/assert";
  * plain legacy `initialize` handshake, byte-identical to the previous wire
  * behavior, so existing user-configured servers see no change.
  *
- * This module intentionally mirrors the small surface mcpServerManager
- * consumed from @ai-sdk/mcp (createMCPClient -> { tools(), close() }) so the
- * manager's instance-cache/lease/recycle machinery stays unchanged.
+ * This module keeps transport and request details behind the small handle consumed by
+ * mcpServerManager, preserving its instance-cache, lease, and recycle machinery.
  */
 
 /** Client identity sent to servers (initialize request / clientInfo _meta). */
@@ -209,7 +208,7 @@ function mcpToModelOutput({
 }
 
 /**
- * Connect to an MCP server and return a handle exposing AI SDK tools.
+ * Connect to an MCP server and return a handle for tools and prompts.
  *
  * Version negotiation is per connection (and therefore per configured
  * server): connect() probes with `server/discover` and conservatively falls

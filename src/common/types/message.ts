@@ -296,10 +296,14 @@ export interface MCPPromptReference {
   arguments?: Record<string, string>;
 }
 
+export function getMcpPromptReferenceKey(serverName: string, promptName: string): string {
+  return `${serverName}\u0000${promptName}`;
+}
+
 export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
   const deduped = new Map<string, MCPPromptReference>();
   for (const ref of refs) {
-    const key = `${ref.serverName}\u0000${ref.promptName}`;
+    const key = getMcpPromptReferenceKey(ref.serverName, ref.promptName);
     const existing = deduped.get(key);
     if (!existing || (existing.source === "inline" && ref.source === "slash")) {
       deduped.set(key, ref);
@@ -312,9 +316,12 @@ export function withMcpPromptRefs(
   metadata: MuxMessageMetadata | undefined,
   refs: MCPPromptReference[]
 ): MuxMessageMetadata | undefined {
-  const existing = Array.isArray(metadata?.mcpPromptRefs) ? metadata.mcpPromptRefs : [];
-  if (existing.length === 0 && refs.length === 0) return metadata;
-  const mcpPromptRefs = dedupeMcpPromptRefs([...existing, ...refs]);
+  const existingRefs = Array.isArray(metadata?.mcpPromptRefs) ? metadata.mcpPromptRefs : [];
+  if (existingRefs.length === 0 && refs.length === 0) {
+    return metadata;
+  }
+
+  const mcpPromptRefs = dedupeMcpPromptRefs([...existingRefs, ...refs]);
   return metadata ? { ...metadata, mcpPromptRefs } : { type: "normal", mcpPromptRefs };
 }
 
@@ -766,7 +773,7 @@ export type DisplayedMessage =
       isBudgetLimitWrapup?: boolean;
       /** True when this row is loaded above the latest Context Boundary and must not mutate active context. */
       isBeforeLatestContextBoundary?: boolean;
-      /** Present when this message invoked an agent skill via /{skill-name} */
+      /** Present when this message invoked an agent skill or MCP prompt via slash command. */
       agentSkill?: {
         skillName: string;
         scope: AgentSkillScope;
@@ -781,8 +788,10 @@ export type DisplayedMessage =
           body?: string;
         };
       };
+      /** Preserved so compaction retry can rematerialize MCP prompt invocations. */
+      mcpPromptRefs?: MCPPromptReference[];
       /**
-       * Inline skill snapshots are derived display state from prior synthetic snapshot messages.
+       * Inline skill and MCP prompt snapshots are derived from prior synthetic messages.
        * They are not persisted on the user message itself.
        */
       inlineSkillSnapshots?: InlineSkillSnapshotMap;

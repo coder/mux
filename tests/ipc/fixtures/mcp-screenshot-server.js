@@ -1,10 +1,10 @@
 // Minimal MCP server used by integration tests.
 //
-// Intentionally tiny + dependency-free: it speaks JSON-RPC over stdio
-// (newline-delimited JSON) and exposes a single screenshot tool.
+// Intentionally tiny and dependency-free: it speaks JSON-RPC over stdio
+// (newline-delimited JSON) and exposes a screenshot tool plus deterministic prompts.
 //
-// This lets us test the MCP → AI SDK image transformation without relying on
-// launching a real browser in CI.
+// This lets integration tests cover MCP image conversion and prompt invocation without
+// launching a real browser or external MCP service.
 
 const readline = require("readline");
 

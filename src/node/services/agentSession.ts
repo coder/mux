@@ -3031,7 +3031,6 @@ export class AgentSession {
     // On on-send compaction paths, snapshots are deferred with the follow-up turn.
     const shouldPersistTurnSnapshots = autoCompactionMessage === null;
 
-    // Deferral preserves send-time resolution for dynamic snapshot sources.
     let skillSnapshotMessages: MuxMessage[] = [];
     let mcpPromptSnapshotMessages: MuxMessage[] = [];
     if (shouldPersistTurnSnapshots) {
@@ -3089,7 +3088,9 @@ export class AgentSession {
           return Err(createUnknownSendMessageError(appendResult.error));
         }
         persistedCancelableMessageIds.push(snapshotMessage.id);
-        if (await cancelBeforeAcceptance()) return Ok(undefined);
+        if (await cancelBeforeAcceptance()) {
+          return Ok(undefined);
+        }
       }
     }
 
@@ -6187,20 +6188,20 @@ export class AgentSession {
   private async materializeMcpPromptSnapshots(
     muxMetadata: MuxMessageMetadata | undefined
   ): Promise<MuxMessage[]> {
-    if (!this.mcpServerManager || !Array.isArray(muxMetadata?.mcpPromptRefs)) return [];
+    const mcpServerManager = this.mcpServerManager;
+    if (!mcpServerManager || !Array.isArray(muxMetadata?.mcpPromptRefs)) return [];
 
     const refs = dedupeMcpPromptRefs(muxMetadata.mcpPromptRefs);
-    const snapshots: MuxMessage[] = [];
-    for (const ref of refs) {
-      try {
-        const prompt = await this.mcpServerManager.getPrompt(
-          this.workspaceId,
-          ref.serverName,
-          ref.promptName,
-          ref.arguments ?? {}
-        );
-        snapshots.push(
-          createMuxMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
+    const snapshots = await Promise.all(
+      refs.map(async (ref): Promise<MuxMessage | null> => {
+        try {
+          const prompt = await mcpServerManager.getPrompt(
+            this.workspaceId,
+            ref.serverName,
+            ref.promptName,
+            ref.arguments ?? {}
+          );
+          return createMuxMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
             timestamp: Date.now(),
             synthetic: true,
             mcpPromptSnapshot: {
@@ -6209,18 +6210,19 @@ export class AgentSession {
               commandKey: ref.commandKey,
               ...(prompt.description !== undefined ? { description: prompt.description } : {}),
             },
-          })
-        );
-      } catch (error) {
-        log.debug("Failed to materialize MCP prompt reference", {
-          workspaceId: this.workspaceId,
-          serverName: ref.serverName,
-          promptName: ref.promptName,
-          error: getErrorMessage(error),
-        });
-      }
-    }
-    return snapshots;
+          });
+        } catch (error) {
+          log.debug("Failed to materialize MCP prompt reference", {
+            workspaceId: this.workspaceId,
+            serverName: ref.serverName,
+            promptName: ref.promptName,
+            error: getErrorMessage(error),
+          });
+          return null;
+        }
+      })
+    );
+    return snapshots.filter((snapshot): snapshot is MuxMessage => snapshot !== null);
   }
 
   private async materializeAgentSkillSnapshots(

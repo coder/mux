@@ -5,6 +5,7 @@ import { uniqueSuffix } from "@/common/utils/hasher";
 import {
   buildMcpPromptCommandKey,
   buildMcpToolName,
+  isMcpPromptCommandKey,
   normalizeMcpToolNamePart,
 } from "./mcpToolName";
 
@@ -72,6 +73,12 @@ describe("mcpToolName", () => {
       expect(result!.toolName).toMatch(/^[a-z0-9_]+$/);
     });
   });
+  test("recognizes generated MCP prompt command keys", () => {
+    expect(isMcpPromptCommandKey("mcp__coder__review")).toBe(true);
+    expect(isMcpPromptCommandKey("coder_review")).toBe(false);
+    expect(isMcpPromptCommandKey("mcp__Coder__review")).toBe(false);
+  });
+
   test("builds namespaced prompt command keys and hashes normalized collisions", () => {
     const usedNames = new Set<string>();
     expect(

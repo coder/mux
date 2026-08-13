@@ -928,9 +928,7 @@ export class MCPServerManager {
     );
   }
 
-  private async refreshModernInstancePrompts(
-    instances: Map<string, MCPServerInstance>
-  ): Promise<void> {
+  private async refreshInstancePrompts(instances: Map<string, MCPServerInstance>): Promise<void> {
     await Promise.all(
       [...instances.values()].map(async (instance) => {
         if (instance.isClosed || !instance.refreshPrompts) return;
@@ -1605,7 +1603,7 @@ export class MCPServerManager {
     const entry = this.workspaceServers.get(options.workspaceId);
     if (!entry) return [];
 
-    await this.refreshModernInstancePrompts(entry.instances);
+    await this.refreshInstancePrompts(entry.instances);
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
     const instances = [...entry.instances.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -2270,15 +2268,6 @@ export class MCPServerManager {
         }
 
         const rawTools = await client.tools();
-        let prompts: MCPPrompt[] = [];
-        try {
-          prompts = await client.prompts();
-        } catch (error) {
-          log.debug("[MCP] Prompt list unavailable during startup", {
-            name,
-            error: getErrorMessage(error),
-          });
-        }
         if (signal.aborted) {
           await cleanupStartupResources();
           return null;
@@ -2313,17 +2302,17 @@ export class MCPServerManager {
           resolvedTransport: "stdio",
           autoFallbackUsed: false,
           tools,
-          prompts,
+          prompts: [],
           getPrompt: (promptName, args) => readyClient.getPrompt(promptName, args),
+          refreshPrompts: async () => {
+            instance.prompts = await readyClient.prompts();
+          },
           isClosed: transportClosed,
           ...(isModernEra(negotiatedPrior)
             ? {
                 refreshTools: async () => {
                   const raw = await readyClient.tools();
                   instance.tools = wrapRawTools(raw);
-                },
-                refreshPrompts: async () => {
-                  instance.prompts = await readyClient.prompts();
                 },
               }
             : {}),
@@ -2533,15 +2522,6 @@ export class MCPServerManager {
       }
 
       const rawTools = await activeClient.tools();
-      let prompts: MCPPrompt[] = [];
-      try {
-        prompts = await activeClient.prompts();
-      } catch (error) {
-        log.debug("[MCP] Prompt list unavailable during startup", {
-          name,
-          error: getErrorMessage(error),
-        });
-      }
       if (signal.aborted) {
         await cleanupStartupClient();
         return null;
@@ -2574,17 +2554,17 @@ export class MCPServerManager {
         resolvedTransport,
         autoFallbackUsed,
         tools,
-        prompts,
+        prompts: [],
         getPrompt: (promptName, args) => activeClient.getPrompt(promptName, args),
+        refreshPrompts: async () => {
+          instance.prompts = await activeClient.prompts();
+        },
         isClosed: transportErrored || clientClosed,
         ...(isModernEra(negotiatedPrior)
           ? {
               refreshTools: async () => {
                 const raw = await activeClient.tools();
                 instance.tools = wrapRawTools(raw);
-              },
-              refreshPrompts: async () => {
-                instance.prompts = await activeClient.prompts();
               },
             }
           : {}),

@@ -576,6 +576,8 @@ describe("Agent skill snapshot association", () => {
       throw new Error("Expected displayed user messages");
     }
     expect(slashMessage.agentSkill?.snapshot?.body).toBe("Expanded prompt body");
+    expect(slashMessage.mcpPromptRefs).toEqual(slash.metadata?.muxMetadata?.mcpPromptRefs);
+    expect(inlineMessage.mcpPromptRefs).toEqual(inline.metadata?.muxMetadata?.mcpPromptRefs);
     expect(inlineMessage.inlineSkillSnapshots?.mcp__coder__review?.snapshot.body).toBe(
       "Expanded prompt body"
     );

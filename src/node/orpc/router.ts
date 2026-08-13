@@ -5566,14 +5566,11 @@ export const router = (authToken?: string) => {
               if (!metadataResult.success) throw new Error(metadataResult.error);
               const metadata = metadataResult.data;
               const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-              const overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
-                input.workspaceId
-              );
-              const agentPlugins = await resolveWorkspaceAgentPluginsMcpContext(
-                context,
-                input.workspaceId,
-                metadata.projectPath
-              );
+              const [overrides, projectSecrets] = await Promise.all([
+                context.workspaceMcpOverridesService.getOverridesForWorkspace(input.workspaceId),
+                secretsToRecord(context.config.getEffectiveSecrets(metadata.projectPath)),
+              ]);
+              const agentPlugins = resolveAgentPluginsMcpContext(metadata, workspacePath);
               return context.mcpServerManager.getPromptsForWorkspace({
                 workspaceId: input.workspaceId,
                 projectPath: metadata.projectPath,
@@ -5581,9 +5578,7 @@ export const router = (authToken?: string) => {
                 workspacePath,
                 trusted: isWorkspaceProjectTrusted(context.config, metadata),
                 overrides,
-                projectSecrets: await secretsToRecord(
-                  context.config.getEffectiveSecrets(metadata.projectPath)
-                ),
+                projectSecrets,
                 agentPlugins,
               });
             }),

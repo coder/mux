@@ -85,7 +85,10 @@ import { Button } from "@/browser/components/Button/Button";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { findAtMentionAtCursor } from "@/common/utils/atMentions";
-import { findInlineSkillReferenceAtCursor } from "@/browser/utils/agentSkills/inlineSkillReferences";
+import {
+  extractInlineSkillReferenceCandidates,
+  findInlineSkillReferenceAtCursor,
+} from "@/browser/utils/agentSkills/inlineSkillReferences";
 import {
   convertSymbolCommandAtCursor,
   convertTerminatedSymbolCommand,
@@ -439,6 +442,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const projectedWorkflowRunCardKeysRef = useRef(new Set<string>());
   const workflowsRequestIdRef = useRef(0);
   const agentSkillsRequestIdRef = useRef(0);
+  const mcpPromptsRequestIdRef = useRef(0);
   const mcpPromptsRequestRef = useRef<Promise<void> | null>(null);
   const mcpPromptsLoadedAtRef = useRef(0);
   const mcpPromptsWorkspaceRef = useRef<string | null>(null);
@@ -1577,6 +1581,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       if (mcpPromptsWorkspaceRef.current !== null) {
         mcpPromptsWorkspaceRef.current = null;
         mcpPromptsLoadedAtRef.current = 0;
+        mcpPromptsRequestIdRef.current++;
         mcpPromptsRequestRef.current = null;
         setMcpPromptDescriptors([]);
       }
@@ -1586,6 +1591,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (mcpPromptsWorkspaceRef.current !== workspaceId) {
       mcpPromptsWorkspaceRef.current = workspaceId;
       mcpPromptsLoadedAtRef.current = 0;
+      mcpPromptsRequestIdRef.current++;
       mcpPromptsRequestRef.current = null;
       setMcpPromptDescriptors([]);
     }
@@ -1596,15 +1602,24 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (!opensPromptSurface || Date.now() - mcpPromptsLoadedAtRef.current < 30_000) return;
     if (mcpPromptsRequestRef.current) return;
 
+    const requestId = ++mcpPromptsRequestIdRef.current;
     const request = api.workspace.mcp.prompts
       .list({ workspaceId })
       .then((prompts) => {
-        if (mcpPromptsWorkspaceRef.current !== workspaceId) return;
+        if (
+          mcpPromptsWorkspaceRef.current !== workspaceId ||
+          mcpPromptsRequestIdRef.current !== requestId
+        ) {
+          return;
+        }
         setMcpPromptDescriptors(prompts);
         mcpPromptsLoadedAtRef.current = Date.now();
       })
       .catch(() => {
-        if (mcpPromptsWorkspaceRef.current === workspaceId) {
+        if (
+          mcpPromptsWorkspaceRef.current === workspaceId &&
+          mcpPromptsRequestIdRef.current === requestId
+        ) {
           mcpPromptsLoadedAtRef.current = Date.now();
         }
       })
@@ -1638,8 +1653,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
 
-    // Avoid recomputing on caret movement within the same partial, but refresh when
-    // skill or MCP prompt discovery finishes for already-typed `$partial` input.
     if (
       !shouldRefreshInlineSkillSuggestions({
         inputChanged,
@@ -2616,20 +2629,25 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       pushToast({ type: "error", message: invocationError });
       return;
     }
-    const combinedSkillRefs = await resolveInlineSkillRefsForSend({
-      messageText,
-      slashInvocation: skillInvocation,
-      agentSkillDescriptors,
-      api,
-      discovery: skillDiscovery,
-    });
-    const combinedMcpPromptRefs = await resolveMcpPromptRefsForSend({
-      messageText,
-      slashInvocation: mcpPromptInvocation,
-      descriptors: mcpPromptDescriptors,
-      api,
-      discovery: skillDiscovery,
-    });
+    const inlineReferenceCandidates = extractInlineSkillReferenceCandidates(messageText);
+    const [combinedSkillRefs, combinedMcpPromptRefs] = await Promise.all([
+      resolveInlineSkillRefsForSend({
+        messageText,
+        slashInvocation: skillInvocation,
+        agentSkillDescriptors,
+        api,
+        discovery: skillDiscovery,
+        candidates: inlineReferenceCandidates,
+      }),
+      resolveMcpPromptRefsForSend({
+        messageText,
+        slashInvocation: mcpPromptInvocation,
+        descriptors: mcpPromptDescriptors,
+        api,
+        discovery: skillDiscovery,
+        candidates: inlineReferenceCandidates,
+      }),
+    ]);
 
     // Route to creation handler for creation variant
     if (variant === "creation") {

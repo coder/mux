@@ -1,13 +1,15 @@
 import type { ParsedCommand } from "@/browser/utils/slashCommands/types";
-import { parseCommand } from "@/browser/utils/slashCommands/parser";
+import { parseCommand, tokenizeSlashCommandArguments } from "@/browser/utils/slashCommands/parser";
 import type { APIClient } from "@/browser/contexts/API";
 import {
   extractInlineSkillReferenceCandidates,
   resolveInlineSkillReferences,
+  type InlineSkillCandidate,
 } from "@/browser/utils/agentSkills/inlineSkillReferences";
 import { resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
+import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpToolName";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
   buildAgentSkillMetadata,
@@ -40,22 +42,14 @@ export interface MCPPromptInvocation {
   arguments: Record<string, string>;
 }
 
-function tokenizePromptArguments(input: string): string[] {
-  return (input.match(/(?:[^\s"]+|"[^"]*")+/g) ?? []).map((token) =>
-    token.replace(/^"(.*)"$/, "$1")
-  );
-}
-
 function mapPromptArguments(
   descriptor: MCPPromptDescriptor,
   input: string
 ): { arguments: Record<string, string>; missingRequired?: string } {
   const definitions = descriptor.arguments ?? [];
-  const tokens = tokenizePromptArguments(input);
+  const tokens = tokenizeSlashCommandArguments(input);
   const values: Record<string, string> = {};
-  for (let index = 0; index < definitions.length; index++) {
-    const definition = definitions[index];
-    if (!definition) continue;
+  for (const [index, definition] of definitions.entries()) {
     const value =
       index === definitions.length - 1 ? tokens.slice(index).join(" ") : (tokens[index] ?? "");
     if (!value) {
@@ -99,6 +93,28 @@ function formatSkillInvocationText(skillName: string, userMessage: string): stri
   return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
 }
 
+async function loadMcpPromptDescriptors(options: {
+  descriptors: MCPPromptDescriptor[];
+  api: APIClient | null;
+  discovery: SkillResolutionTarget | null;
+  commandKeys: string[];
+}): Promise<MCPPromptDescriptor[] | null> {
+  const hasAllDescriptors = options.commandKeys.every((commandKey) =>
+    options.descriptors.some((descriptor) => descriptor.commandKey === commandKey)
+  );
+  if (hasAllDescriptors || !options.api || options.discovery?.kind !== "workspace") {
+    return options.descriptors;
+  }
+
+  try {
+    return await options.api.workspace.mcp.prompts.list({
+      workspaceId: options.discovery.workspaceId,
+    });
+  } catch {
+    return null;
+  }
+}
+
 async function resolveMcpPromptInvocation(options: {
   messageText: string;
   parsed: ParsedCommand;
@@ -106,7 +122,7 @@ async function resolveMcpPromptInvocation(options: {
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
 }): Promise<{ invocation: MCPPromptInvocation | null; error?: string }> {
-  if (!isUnknownSlashCommand(options.parsed) || !options.parsed.command.startsWith("mcp__")) {
+  if (!isUnknownSlashCommand(options.parsed) || !isMcpPromptCommandKey(options.parsed.command)) {
     return { invocation: null };
   }
 
@@ -115,18 +131,13 @@ async function resolveMcpPromptInvocation(options: {
   const afterPrefix = options.messageText.slice(prefix.length);
   if (afterPrefix.length > 0 && !/^\s/.test(afterPrefix)) return { invocation: null };
 
-  let descriptors = options.descriptors;
-  let descriptor = descriptors.find((candidate) => candidate.commandKey === command);
-  if (!descriptor && options.api && options.discovery?.kind === "workspace") {
-    try {
-      descriptors = await options.api.workspace.mcp.prompts.list({
-        workspaceId: options.discovery.workspaceId,
-      });
-      descriptor = descriptors.find((candidate) => candidate.commandKey === command);
-    } catch {
-      return { invocation: null };
-    }
-  }
+  const descriptors = await loadMcpPromptDescriptors({
+    descriptors: options.descriptors,
+    api: options.api,
+    discovery: options.discovery,
+    commandKeys: [command],
+  });
+  const descriptor = descriptors?.find((candidate) => candidate.commandKey === command);
   if (!descriptor) return { invocation: null };
 
   const mapped = mapPromptArguments(descriptor, afterPrefix.trim());
@@ -272,6 +283,7 @@ export async function resolveInlineSkillRefsForSend(options: {
   agentSkillDescriptors: AgentSkillDescriptor[];
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
+  candidates?: InlineSkillCandidate[];
 }): Promise<AgentSkillReference[]> {
   const refs: AgentSkillReference[] = [];
 
@@ -280,9 +292,9 @@ export async function resolveInlineSkillRefsForSend(options: {
     refs.push({ skillName: descriptor.name, scope: descriptor.scope, source: "slash" });
   }
 
-  const candidates = extractInlineSkillReferenceCandidates(options.messageText).filter(
-    (candidate) => !candidate.skillName.startsWith("mcp__")
-  );
+  const candidates = (
+    options.candidates ?? extractInlineSkillReferenceCandidates(options.messageText)
+  ).filter((candidate) => !isMcpPromptCommandKey(candidate.skillName));
   if (candidates.length > 0) {
     const inlineRefs = await resolveInlineSkillReferences({
       candidates,
@@ -302,6 +314,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   descriptors: MCPPromptDescriptor[];
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
+  candidates?: InlineSkillCandidate[];
 }): Promise<MCPPromptReference[]> {
   const refs: MCPPromptReference[] = [];
   if (options.slashInvocation) {
@@ -315,26 +328,18 @@ export async function resolveMcpPromptRefsForSend(options: {
     });
   }
 
-  const candidates = extractInlineSkillReferenceCandidates(options.messageText).filter(
-    (candidate) => candidate.skillName.startsWith("mcp__")
-  );
+  const candidates = (
+    options.candidates ?? extractInlineSkillReferenceCandidates(options.messageText)
+  ).filter((candidate) => isMcpPromptCommandKey(candidate.skillName));
   if (candidates.length === 0) return refs;
 
-  let descriptors = options.descriptors;
-  if (options.api && options.discovery?.kind === "workspace") {
-    const unresolved = candidates.some(
-      (candidate) => !descriptors.some((prompt) => prompt.commandKey === candidate.skillName)
-    );
-    if (unresolved) {
-      try {
-        descriptors = await options.api.workspace.mcp.prompts.list({
-          workspaceId: options.discovery.workspaceId,
-        });
-      } catch {
-        return refs;
-      }
-    }
-  }
+  const descriptors = await loadMcpPromptDescriptors({
+    descriptors: options.descriptors,
+    api: options.api,
+    discovery: options.discovery,
+    commandKeys: candidates.map((candidate) => candidate.skillName),
+  });
+  if (!descriptors) return refs;
 
   for (const candidate of candidates) {
     const prompt = descriptors.find(
