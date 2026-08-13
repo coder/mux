@@ -378,13 +378,15 @@ export interface WorkspaceSubAgentsSummary {
   runningSubAgentCount: number;
   /** Queued user-owned descendants. */
   queuedSubAgentCount: number;
-  /** Distinct workflow runs with a running or queued descendant worker. */
-  activeWorkflowRunCount: number;
+  /** Distinct workflow runs with at least one running descendant worker. */
+  runningWorkflowRunCount: number;
+  /** Distinct workflow runs whose descendant workers are all queued. */
+  queuedWorkflowRunCount: number;
   /** Running workflow-owned descendant workers across runs. */
   runningWorkflowAgentCount: number;
   /** Queued workflow-owned descendant workers across runs. */
   queuedWorkflowAgentCount: number;
-  /** First available name from a running or queued workflow worker. */
+  /** Name of the first running workflow run, or first queued run when none run. */
   workflowName?: string;
 }
 
@@ -412,14 +414,18 @@ export function computeSubAgentsSummaryByWorkspaceId(
     childrenByParentId.set(parentId, children);
   }
 
+  interface WorkflowRunRollup {
+    hasRunning: boolean;
+    name?: string;
+  }
+
   interface MutableSummary {
     subAgentCount: number;
     runningSubAgentCount: number;
     queuedSubAgentCount: number;
     runningWorkflowAgentCount: number;
     queuedWorkflowAgentCount: number;
-    activeWorkflowRunIds: Set<string>;
-    workflowName?: string;
+    workflowRunsById: Map<string, WorkflowRunRollup>;
   }
 
   const result = new Map<string, WorkspaceSubAgentsSummary>();
@@ -437,7 +443,14 @@ export function computeSubAgentsSummaryByWorkspaceId(
       queuedSubAgentCount: 0,
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
-      activeWorkflowRunIds: new Set(),
+      workflowRunsById: new Map(),
+    };
+
+    const mergeWorkflowRun = (runId: string, rollup: WorkflowRunRollup): void => {
+      const run = summary.workflowRunsById.get(runId) ?? { hasRunning: false };
+      run.hasRunning ||= rollup.hasRunning;
+      run.name ??= rollup.name;
+      summary.workflowRunsById.set(runId, run);
     };
 
     for (const child of childrenByParentId.get(workspace.id) ?? []) {
@@ -460,8 +473,10 @@ export function computeSubAgentsSummaryByWorkspaceId(
         } else {
           summary.queuedWorkflowAgentCount += 1;
         }
-        summary.activeWorkflowRunIds.add(childWorkflowRunId);
-        summary.workflowName ??= child.workflowTask?.workflowName;
+        mergeWorkflowRun(childWorkflowRunId, {
+          hasRunning: isRunning,
+          name: child.workflowTask?.workflowName,
+        });
       }
 
       const childSummary = traverse(child, childWorkflowRunId);
@@ -470,21 +485,36 @@ export function computeSubAgentsSummaryByWorkspaceId(
       summary.queuedSubAgentCount += childSummary.queuedSubAgentCount;
       summary.runningWorkflowAgentCount += childSummary.runningWorkflowAgentCount;
       summary.queuedWorkflowAgentCount += childSummary.queuedWorkflowAgentCount;
-      for (const runId of childSummary.activeWorkflowRunIds) {
-        summary.activeWorkflowRunIds.add(runId);
+      for (const [runId, rollup] of childSummary.workflowRunsById) {
+        mergeWorkflowRun(runId, rollup);
       }
-      summary.workflowName ??= childSummary.workflowName;
     }
 
-    if (summary.subAgentCount > 0 || summary.activeWorkflowRunIds.size > 0) {
+    if (summary.subAgentCount > 0 || summary.workflowRunsById.size > 0) {
+      let runningWorkflowRunCount = 0;
+      let queuedWorkflowRunCount = 0;
+      let runningWorkflowName: string | undefined;
+      let queuedWorkflowName: string | undefined;
+      for (const run of summary.workflowRunsById.values()) {
+        if (run.hasRunning) {
+          runningWorkflowRunCount += 1;
+          runningWorkflowName ??= run.name;
+        } else {
+          queuedWorkflowRunCount += 1;
+          queuedWorkflowName ??= run.name;
+        }
+      }
+
       result.set(workspace.id, {
         subAgentCount: summary.subAgentCount,
         runningSubAgentCount: summary.runningSubAgentCount,
         queuedSubAgentCount: summary.queuedSubAgentCount,
-        activeWorkflowRunCount: summary.activeWorkflowRunIds.size,
+        runningWorkflowRunCount,
+        queuedWorkflowRunCount,
         runningWorkflowAgentCount: summary.runningWorkflowAgentCount,
         queuedWorkflowAgentCount: summary.queuedWorkflowAgentCount,
-        workflowName: summary.workflowName,
+        // A queued-only run must never lend its name to the running label.
+        workflowName: runningWorkflowRunCount > 0 ? runningWorkflowName : queuedWorkflowName,
       });
     }
     return summary;

@@ -247,18 +247,27 @@ function formatHiddenSubAgentsPresentation(
   summary: WorkspaceSubAgentsSummary,
   ownActiveWorkflowRunCount: number
 ): { icon: LucideIcon; text: string } | null {
-  if (summary.activeWorkflowRunCount > 0) {
-    const running = summary.runningWorkflowAgentCount;
-    const queued = summary.queuedWorkflowAgentCount;
+  if (summary.runningWorkflowRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
     // Queued-only runs must not read as running (parallelism limits can park
-    // every worker), mirroring the delegated-status running/queued split.
-    const verb = running > 0 ? "running" : "queued";
+    // every worker), mirroring the delegated-status running/queued split. The
+    // label counts only runs in the leading state; queued workers of other
+    // runs surface through the queued suffix.
+    const hasRunningRun = summary.runningWorkflowRunCount > 0;
+    const verb = hasRunningRun ? "running" : "queued";
+    const runCount = hasRunningRun
+      ? summary.runningWorkflowRunCount
+      : summary.queuedWorkflowRunCount;
     const base =
-      summary.activeWorkflowRunCount === 1
+      runCount === 1
         ? `${summary.workflowName ?? "Workflow"} ${verb}`
-        : `${summary.activeWorkflowRunCount} workflows ${verb}`;
-    const agentCount = running > 0 ? running : queued;
-    const queuedSuffix = running > 0 && queued > 0 ? ` · ${queued} queued` : "";
+        : `${runCount} workflows ${verb}`;
+    const agentCount = hasRunningRun
+      ? summary.runningWorkflowAgentCount
+      : summary.queuedWorkflowAgentCount;
+    const queuedSuffix =
+      hasRunningRun && summary.queuedWorkflowAgentCount > 0
+        ? ` · ${summary.queuedWorkflowAgentCount} queued`
+        : "";
     return {
       icon: Workflow,
       text: `${base} (${agentCount} agent${agentCount === 1 ? "" : "s"})${queuedSuffix}`,

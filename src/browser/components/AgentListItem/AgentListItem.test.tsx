@@ -562,7 +562,8 @@ describe("AgentListItem", () => {
         subAgentCount: 3,
         runningSubAgentCount: 1,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 0,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 0,
       },
@@ -584,7 +585,8 @@ describe("AgentListItem", () => {
         subAgentCount: 0,
         runningSubAgentCount: 0,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 1,
+        runningWorkflowRunCount: 1,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 5,
         queuedWorkflowAgentCount: 0,
         workflowName: "Deep Research",
@@ -606,7 +608,8 @@ describe("AgentListItem", () => {
         subAgentCount: 2,
         runningSubAgentCount: 2,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 0,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 0,
       },
@@ -623,7 +626,8 @@ describe("AgentListItem", () => {
         subAgentCount: 3,
         runningSubAgentCount: 1,
         queuedSubAgentCount: 2,
-        activeWorkflowRunCount: 0,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 0,
       },
@@ -640,7 +644,8 @@ describe("AgentListItem", () => {
         subAgentCount: 0,
         runningSubAgentCount: 0,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 1,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 1,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 2,
         workflowName: "Deep Research",
@@ -658,7 +663,29 @@ describe("AgentListItem", () => {
         subAgentCount: 0,
         runningSubAgentCount: 0,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 1,
+        runningWorkflowRunCount: 1,
+        queuedWorkflowRunCount: 0,
+        runningWorkflowAgentCount: 2,
+        queuedWorkflowAgentCount: 1,
+        workflowName: "Deep Research",
+      },
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("Deep Research running (2 agents) · 1 queued");
+  });
+
+  test("does not count queued-only runs in the running workflow label", () => {
+    // One run has a running worker, a second run is entirely queued: the
+    // label must claim only the running run.
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
+        runningWorkflowRunCount: 1,
+        queuedWorkflowRunCount: 1,
         runningWorkflowAgentCount: 2,
         queuedWorkflowAgentCount: 1,
         workflowName: "Deep Research",
@@ -680,7 +707,8 @@ describe("AgentListItem", () => {
         subAgentCount: 0,
         runningSubAgentCount: 0,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 0,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 0,
       },
@@ -698,7 +726,8 @@ describe("AgentListItem", () => {
         subAgentCount: 3,
         runningSubAgentCount: 0,
         queuedSubAgentCount: 0,
-        activeWorkflowRunCount: 0,
+        runningWorkflowRunCount: 0,
+        queuedWorkflowRunCount: 0,
         runningWorkflowAgentCount: 0,
         queuedWorkflowAgentCount: 0,
       },
