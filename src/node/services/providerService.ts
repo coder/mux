@@ -38,7 +38,10 @@ import {
   resolveProviderCredentials,
 } from "@/node/utils/providerRequirements";
 import { parseCodexOauthAuth } from "@/node/utils/codexOauthAuth";
-import { normalizeCoderDeploymentUrl } from "@/common/constants/coderOAuth";
+import {
+  normalizeCoderDeploymentUrl,
+  parseCoderGatewayProviders,
+} from "@/common/constants/coderOAuth";
 import { parseCoderOauthAuth } from "@/node/utils/coderOauthAuth";
 import type { PolicyService } from "@/node/services/policyService";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -332,6 +335,10 @@ export class ProviderService {
         discoveredModels?: unknown;
         /** Coder-only: model IDs the user explicitly removed. */
         removedModels?: unknown;
+        /** Coder-only: discovered AI Gateway provider instances ({name, type}). */
+        discoveredProviders?: unknown;
+        /** Coder-only: user-declared AI Gateway provider instances ({name, type}). */
+        additionalProviders?: unknown;
       };
 
       const forcedBaseUrl = this.policyService?.isEnforced()
@@ -486,6 +493,18 @@ export class ProviderService {
           providerInfo.discoveredModels = Array.isArray(allowedModels)
             ? discovered.filter((id) => allowedModels.includes(id))
             : discovered;
+        }
+        // Gateway provider instance metadata ({name, type}): option/header
+        // builders and the frontend derive the wire protocol for
+        // gateway-scoped coder:<name>/<model> strings from these. Not policy
+        // filtered — instance metadata is routing plumbing, not model access.
+        const discoveredProviders = parseCoderGatewayProviders(config.discoveredProviders);
+        if (discoveredProviders.length > 0) {
+          providerInfo.discoveredProviders = discoveredProviders;
+        }
+        const additionalProviders = parseCoderGatewayProviders(config.additionalProviders);
+        if (additionalProviders.length > 0) {
+          providerInfo.additionalProviders = additionalProviders;
         }
         // Durable user removals gate accessibility even while the discovered
         // catalog is unknown (see gatewayModelCatalog.ts); the frontend needs

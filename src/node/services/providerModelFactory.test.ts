@@ -2154,6 +2154,37 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("keeps instances named after other direct providers routed through Coder", async () => {
+    await withTempConfig(async (config, factory) => {
+      // A default-named google instance: canonicalization must NOT rewrite
+      // coder:google/x to google:x (which would route to the direct Google
+      // provider, bypassing the gateway the user selected — or fail without
+      // direct Google credentials). The string stays gateway-scoped and the
+      // instance type (google → OpenAI-compatible wire) picks the SDK.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "google", type: "google" }],
+        models: ["google/gemini-3-pro"],
+        discoveredModels: ["google/gemini-3-pro"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        // Direct Google credentials exist: they must NOT capture the request.
+        google: { apiKey: "g-key" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:google/gemini-3-pro", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(result.data.effectiveModelString).toBe("coder:google/gemini-3-pro");
+      expect(result.data.canonicalModelString).toBe("coder:google/gemini-3-pro");
+      expect(result.data.routeProvider).toBe("coder");
+      expect((result.data.model as { provider?: unknown }).provider).toBe("openai.chat");
+    });
+  });
+
   it("rejects unknown provider names with an actionable error", async () => {
     await withTempConfig(async (config, factory) => {
       saveCoderConfig(config);

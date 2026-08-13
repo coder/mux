@@ -125,6 +125,42 @@ export function parseCoderGatewayProviders(value: unknown): CoderGatewayProvider
 }
 
 /**
+ * Wire-canonical identity for a Coder gateway model ID that stayed
+ * gateway-scoped (custom-named instance, or an instance whose name is not a
+ * canonical coder route): the origin whose payload/options/header format the
+ * request will actually speak, plus the instance-stripped model ID.
+ * Thinking/cache/beta-header builders must target the WIRE, not the "coder"
+ * gateway prefix — otherwise a coder:prod-anthropic/<model> request silently
+ * drops the thinking and context options a coder:anthropic/<model> request
+ * would carry. Returns null when the instance is unknown or unsupported.
+ */
+export function resolveCoderWireCanonicalModel(
+  gatewayModelId: string,
+  metadata?: { discoveredProviders?: unknown; additionalProviders?: unknown }
+): { origin: "anthropic" | "openai"; modelId: string } | null {
+  const separatorIndex = gatewayModelId.indexOf("/");
+  if (separatorIndex <= 0 || separatorIndex === gatewayModelId.length - 1) {
+    return null;
+  }
+  const provider = resolveCoderGatewayProvider(
+    gatewayModelId.slice(0, separatorIndex),
+    parseCoderGatewayProviders(metadata?.discoveredProviders),
+    parseCoderGatewayProviders(metadata?.additionalProviders)
+  );
+  if (!provider) {
+    return null;
+  }
+  const wire = coderGatewayWireProtocol(provider.type);
+  if (!wire) {
+    return null;
+  }
+  return {
+    origin: wire === "anthropic" ? "anthropic" : "openai",
+    modelId: gatewayModelId.slice(separatorIndex + 1),
+  };
+}
+
+/**
  * Resolve a model-ID prefix to the gateway provider it addresses:
  * user-configured entries win (escape hatch for custom-named providers on
  * deployments where the member cannot list providers), then the discovered

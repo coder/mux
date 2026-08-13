@@ -51,6 +51,27 @@ describe("normalizeToCanonical", () => {
     expect(normalizeToCanonical("github-copilot:gpt-5.5")).toBe("github-copilot:gpt-5.5");
   });
 
+  it("normalizes only default-named canonical-route coder instances", () => {
+    // Default-named instances of the canonical routes carry canonical identity.
+    expect(normalizeToCanonical("coder:anthropic/claude-sonnet-4-5")).toBe(
+      "anthropic:claude-sonnet-4-5"
+    );
+    expect(normalizeToCanonical("coder:openai/gpt-5")).toBe("openai:gpt-5");
+  });
+
+  it("keeps non-canonical coder instance names gateway-scoped", () => {
+    // Rewriting coder:google/x to google:x would route the request to the
+    // DIRECT provider, bypassing the gateway the user explicitly selected —
+    // the static route table cannot restore instance-name prefixes.
+    expect(normalizeToCanonical("coder:google/gemini-3-pro")).toBe("coder:google/gemini-3-pro");
+    expect(normalizeToCanonical("coder:openai-compat/llama-3.3-70b")).toBe(
+      "coder:openai-compat/llama-3.3-70b"
+    );
+    expect(normalizeToCanonical("coder:prod-anthropic/claude-sonnet-4-5")).toBe(
+      "coder:prod-anthropic/claude-sonnet-4-5"
+    );
+  });
+
   it("leaves direct provider model IDs unchanged", () => {
     expect(normalizeToCanonical("anthropic:claude-sonnet-4-5")).toBe("anthropic:claude-sonnet-4-5");
     expect(normalizeToCanonical("openai:gpt-5")).toBe("openai:gpt-5");

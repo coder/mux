@@ -67,6 +67,27 @@ const fromSlashSeparatedGatewayModelId = (
   };
 };
 
+// Coder gateway route origins that carry canonical identity: only these
+// DEFAULT-NAMED instances canonicalize (coder:anthropic/x ≙ anthropic:x).
+// Every other instance name — custom names (prod-anthropic), non-canonical
+// types (openai-compat), and instances named after other direct providers
+// (google) — must stay gateway-scoped: rewriting coder:google/x to google:x
+// would route the request to the DIRECT provider, silently bypassing the
+// gateway the user explicitly selected (or failing without direct
+// credentials), because this static route table cannot restore
+// instance-name prefixes.
+const CODER_CANONICAL_GATEWAY_ROUTES: ProviderName[] = ["anthropic", "openai"];
+
+const fromCoderGatewayModelId = (
+  gatewayModelId: string
+): { origin: string; modelId: string } | null => {
+  const parsed = fromSlashSeparatedGatewayModelId(gatewayModelId);
+  return parsed != null &&
+    (CODER_CANONICAL_GATEWAY_ROUTES as readonly string[]).includes(parsed.origin)
+    ? parsed
+    : null;
+};
+
 const fromDotSeparatedGatewayModelId = (
   gatewayModelId: string
 ): { origin: string; modelId: string } | null => {
@@ -163,18 +184,19 @@ export const PROVIDER_DEFINITIONS = {
   },
   coder: {
     displayName: "Coder",
-    // Nominal import only: the model factory branches per origin (anthropic/openai)
-    // because Coder's AI Bridge exposes per-origin endpoints.
+    // Nominal import only: the model factory branches per provider instance
+    // (wire protocol derived from the instance's type) because Coder's AI
+    // Gateway exposes per-instance endpoints.
     import: () => import("@ai-sdk/openai"),
     factoryName: "createOpenAI",
     requiresApiKey: false, // Uses "Login with Coder" OAuth tokens
     kind: "gateway",
-    routes: ["anthropic", "openai"],
-    // The AI Bridge is a transparent proxy to the configured upstreams, so
+    routes: CODER_CANONICAL_GATEWAY_ROUTES,
+    // The AI Gateway is a transparent proxy to the configured upstreams, so
     // canonical model identity (and providerOptions namespaces) are preserved.
     passthrough: true,
     toGatewayModelId: toSlashSeparatedGatewayModelId,
-    fromGatewayModelId: fromSlashSeparatedGatewayModelId,
+    fromGatewayModelId: fromCoderGatewayModelId,
   },
   bedrock: {
     displayName: "Bedrock",

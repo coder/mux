@@ -42,12 +42,41 @@ import {
   resolveProviderOptionsNamespaceKey,
   supports1MContext,
 } from "./models";
+import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
 
 // Re-export for existing consumers (aiService, providerModelFactory, tests):
 // the implementations moved to browser-safe modules because this module
 // imports node-only logging.
 export { resolveProviderOptionsNamespaceKey } from "./models";
 export { openaiProModeAvailable } from "./proMode";
+
+/**
+ * Canonical model string for OPTION/HEADER building. Same as
+ * normalizeToCanonical, except gateway-scoped Coder strings
+ * (coder:<instance>/<model>, i.e. custom-named instances or instances whose
+ * name is not a canonical coder route) are translated to the WIRE origin
+ * derived from the instance's type. The request bytes for
+ * coder:prod-anthropic/<model> are Anthropic-shaped, so thinking, cache, and
+ * beta-header decisions must run against anthropic:<model> — keying them on
+ * the "coder" prefix silently drops them, diverging from the identical model
+ * on a default-named instance. Routing identity is NOT affected: only the
+ * builders in this module use this translation.
+ */
+function resolveOptionsCanonicalModel(
+  modelString: string,
+  providersConfig?: ProvidersConfigMap | null
+): string {
+  const normalized = normalizeToCanonical(modelString);
+  const colonIndex = normalized.indexOf(":");
+  if (colonIndex === -1 || normalized.slice(0, colonIndex) !== "coder") {
+    return normalized;
+  }
+  const wire = resolveCoderWireCanonicalModel(
+    normalized.slice(colonIndex + 1),
+    providersConfig?.coder
+  );
+  return wire ? `${wire.origin}:${wire.modelId}` : normalized;
+}
 
 /**
  * OpenRouter reasoning options
@@ -245,7 +274,7 @@ export function buildProviderOptions(
   // agentSession.ts is the canonical enforcement point.
   const effectiveThinking = thinkingLevel;
   // Parse origin from normalized model string
-  const normalizedModel = normalizeToCanonical(modelString);
+  const normalizedModel = resolveOptionsCanonicalModel(modelString, providersConfig);
   const [origin, modelName] = normalizedModel.split(":", 2);
 
   if (!origin || !modelName) {
@@ -691,7 +720,7 @@ export function buildRequestHeaders(
     headers[MUX_WORKSPACE_ID_HEADER] = toWorkspaceHeaderValue(workspaceId);
   }
 
-  const normalized = normalizeToCanonical(modelString);
+  const normalized = resolveOptionsCanonicalModel(modelString, providersConfig);
   const [origin] = normalized.split(":", 2);
 
   // 1M context header — only when origin supports it AND route is passthrough (or direct)
@@ -701,7 +730,10 @@ export function buildRequestHeaders(
   if (
     origin === "anthropic" &&
     routePassesHeaders &&
-    isAnthropic1MEffectivelyEnabled(modelString, muxProviderOptions, providersConfig)
+    // The wire-canonical string, not the raw one: an Anthropic-wire model on a
+    // custom-named Coder instance must match the same 1M-capability rules as
+    // its default-named twin.
+    isAnthropic1MEffectivelyEnabled(normalized, muxProviderOptions, providersConfig)
   ) {
     headers["anthropic-beta"] = ANTHROPIC_1M_CONTEXT_HEADER;
   }

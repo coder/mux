@@ -274,6 +274,14 @@ export const ProviderConfigInfoSchema = z.object({
   // stored credential stays revocable after the URL is edited or cleared.
   coderOauthCredentialStored: z.boolean().optional(),
   /**
+   * Coder-only: AI Gateway provider instance metadata ({name, type}) —
+   * discovered from the deployment and user-declared respectively. Option
+   * and header builders need these to derive the wire protocol for
+   * gateway-scoped coder:<name>/<model> strings.
+   */
+  discoveredProviders: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
+  additionalProviders: z.array(z.object({ name: z.string(), type: z.string() })).optional(),
+  /**
    * Coder-only: model IDs discovered from the deployment's AI Bridge
    * catalogs. Authoritative for gateway routing when present; `models` is the
    * user-visible union of these and manually added entries.
