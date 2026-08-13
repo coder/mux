@@ -2263,6 +2263,81 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("merges the OpenAI ZDR store setting for custom-named openai-typed instances", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Type "openai" = the real OpenAI Responses upstream, where the ZDR
+      // store flag applies. Name-based classification (modelId startsWith
+      // "openai/") misses custom names entirely.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "prod-openai", type: "openai" }],
+        models: ["prod-openai/gpt-5.2"],
+        discoveredModels: ["prod-openai/gpt-5.2"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        openai: { store: false },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const muxOptions: MuxProviderOptions = {};
+      const result = await factory.createModel("coder:prod-openai/gpt-5.2", muxOptions);
+      expect(result.success).toBe(true);
+      expect(muxOptions.openai?.store).toBe(false);
+    });
+  });
+
+  it("does not merge the OpenAI store setting for cross-typed openai-named instances", async () => {
+    await withTempConfig(async (config, factory) => {
+      // {name: "openai", type: "openai-compat"}: the model ID starts with
+      // "openai/" but the upstream is NOT the real OpenAI — the ZDR store
+      // flag must not leak onto arbitrary compat upstreams.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "openai", type: "openai-compat" }],
+        models: ["openai/gpt-5"],
+        discoveredModels: ["openai/gpt-5"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        openai: { store: false },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const muxOptions: MuxProviderOptions = {};
+      const result = await factory.createModel("coder:openai/gpt-5", muxOptions);
+      expect(result.success).toBe(true);
+      expect(muxOptions.openai).toBeUndefined();
+    });
+  });
+
+  it("recomputes the wire provider when routing falls back to a direct provider", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Cross-typed instance {name: "openai", type: "anthropic"} whose
+      // catalog does NOT contain the requested model: the explicit coder
+      // route cannot be restored, routing falls back to direct OpenAI, and
+      // the wire must follow the EFFECTIVE route — Anthropic transforms
+      // against a direct OpenAI request would be invalid.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+        models: ["openai/claude-opus-4-5"],
+        discoveredModels: ["openai/claude-opus-4-5"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        openai: { apiKey: "sk-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:openai/gpt-5.2", "off");
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(result.data.effectiveModelString).toBe("openai:gpt-5.2");
+      expect(result.data.routeProvider).toBe("openai");
+      expect(result.data.wireProviderName).toBe("openai");
+    });
+  });
+
   it("rejects unknown provider names with an actionable error", async () => {
     await withTempConfig(async (config, factory) => {
       saveCoderConfig(config);

@@ -1129,13 +1129,16 @@ export class ProviderModelFactory {
       // (coder:anthropic/x fronting an OpenAI-compatible upstream) must not.
       const isCoderGatewayModel =
         providerName === "coder" && !isCustomOpenAICompatibleProviderConfig(providersConfig.coder);
-      const isAnthropicRoutedModel = isCoderGatewayModel
+      const coderWire = isCoderGatewayModel
         ? resolveCoderWireCanonicalModel(
             modelId,
             providersConfig.coder as
               | { discoveredProviders?: unknown; additionalProviders?: unknown }
               | undefined
-          )?.origin === "anthropic"
+          )
+        : null;
+      const isAnthropicRoutedModel = isCoderGatewayModel
+        ? coderWire?.origin === "anthropic"
         : providerName === "anthropic" || modelId.startsWith("anthropic/");
 
       // Anthropic-specific: merge global disableBetaFeatures into muxProviderOptions.
@@ -1158,7 +1161,13 @@ export class ProviderModelFactory {
         muxProviderOptions?.anthropic?.cacheTtl ?? configAnthropicCacheTtl;
 
       // OpenAI-specific: merge global store setting into muxProviderOptions.
-      const isOpenAIRoutedModel = providerName === "openai" || modelId.startsWith("openai/");
+      // Coder instances classify by the instance's exact TYPE ("openai" =
+      // the real OpenAI Responses upstream, where ZDR store applies): a
+      // custom-named openai instance must honor providers.openai.store,
+      // while a cross-typed openai-named instance must not.
+      const isOpenAIRoutedModel = isCoderGatewayModel
+        ? coderWire?.providerType === "openai"
+        : providerName === "openai" || modelId.startsWith("openai/");
       const configOpenAIStore = providersConfig.openai?.store;
       if (isOpenAIRoutedModel && typeof configOpenAIStore === "boolean") {
         muxProviderOptions ??= {};
@@ -2252,28 +2261,6 @@ export class ProviderModelFactory {
     let effectiveModelString = canonicalModelString;
     const [canonicalProviderName, canonicalModelId] = parseModelString(canonicalModelString);
 
-    // Wire-canonical provider for message preparation and options namespaces:
-    // a Coder gateway request sends instance-type-shaped bytes (e.g.
-    // Anthropic messages), so Anthropic-only reasoning transforms, PDF
-    // sanitization, and namespace merging must key on the wire — keying them
-    // on "coder" silently skips them. Resolved from the RAW prefix, not
-    // canonicalProviderName: a cross-typed instance like
-    // {name: "openai", type: "anthropic"} normalizes to openai:<model> by
-    // name while the wire is Anthropic, and metadata must win over the name
-    // convention. Shadowed prefixes keep the custom provider's identity.
-    let wireProviderName = canonicalProviderName;
-    if (rawProviderName === "coder" && !rawPrefixShadowedByCustomProvider) {
-      const wire = resolveCoderWireCanonicalModel(
-        modelString.slice(modelString.indexOf(":") + 1),
-        providersConfigForShadowCheck.coder as
-          | { discoveredProviders?: unknown; additionalProviders?: unknown }
-          | undefined
-      );
-      if (wire) {
-        wireProviderName = wire.origin;
-      }
-    }
-
     // xAI Grok: swap between reasoning and non-reasoning variants based on thinking level.
     // xAI only supports full reasoning (no medium/low).
     if (canonicalProviderName === "xai" && canonicalModelId === "grok-4-1-fast") {
@@ -2297,6 +2284,34 @@ export class ProviderModelFactory {
     const routeProvider = Object.hasOwn(PROVIDER_REGISTRY, effectiveRouteProvider)
       ? (effectiveRouteProvider as ProviderName)
       : routeContext.routeProvider;
+
+    // Wire-canonical provider for message preparation and options namespaces:
+    // a Coder gateway request sends instance-type-shaped bytes (e.g.
+    // Anthropic messages), so Anthropic-only reasoning transforms, PDF
+    // sanitization, and namespace merging must key on the wire — keying them
+    // on "coder" silently skips them. Derived from the EFFECTIVE route, not
+    // the raw selection: instance metadata applies only when the request
+    // actually goes through the Coder gateway. A cross-typed canonical name
+    // (coder:openai/<model>, type anthropic) resolves to the Anthropic wire
+    // while routed through Coder, but when the catalog gate rejects the
+    // instance and routing falls back to direct OpenAI, the wire must be
+    // OpenAI — Anthropic transforms against a direct OpenAI request would be
+    // invalid. Shadowed prefixes keep the custom provider's identity.
+    let wireProviderName = canonicalProviderName;
+    if (
+      effectiveRouteProvider === "coder" &&
+      !isCustomOpenAICompatibleProviderConfig(providersConfigForShadowCheck.coder)
+    ) {
+      const wire = resolveCoderWireCanonicalModel(
+        effectiveModelString.slice(effectiveModelString.indexOf(":") + 1),
+        providersConfigForShadowCheck.coder as
+          | { discoveredProviders?: unknown; additionalProviders?: unknown }
+          | undefined
+      );
+      if (wire) {
+        wireProviderName = wire.origin;
+      }
+    }
 
     const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, {
       ...opts,

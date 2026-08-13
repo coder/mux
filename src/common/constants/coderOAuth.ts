@@ -137,7 +137,7 @@ export function parseCoderGatewayProviders(value: unknown): CoderGatewayProvider
 export function resolveCoderWireCanonicalModel(
   gatewayModelId: string,
   metadata?: { discoveredProviders?: unknown; additionalProviders?: unknown }
-): { origin: "anthropic" | "openai"; modelId: string } | null {
+): { origin: "anthropic" | "openai"; modelId: string; providerType: string } | null {
   const separatorIndex = gatewayModelId.indexOf("/");
   if (separatorIndex <= 0 || separatorIndex === gatewayModelId.length - 1) {
     return null;
@@ -157,6 +157,10 @@ export function resolveCoderWireCanonicalModel(
   return {
     origin: wire === "anthropic" ? "anthropic" : "openai",
     modelId: gatewayModelId.slice(separatorIndex + 1),
+    // The instance's exact type: origin collapses every OpenAI-shaped wire
+    // to "openai", but some config is upstream-specific (e.g. the OpenAI ZDR
+    // store flag applies to the real OpenAI Responses upstream only).
+    providerType: provider.type,
   };
 }
 
