@@ -38,7 +38,11 @@ import {
 import { createRuntime } from "@/node/runtime/runtimeFactory";
 import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
-import { buildMcpPromptCommandKey, buildMcpToolName } from "@/common/utils/tools/mcpToolName";
+import {
+  buildMcpPromptBaseKey,
+  buildMcpPromptCommandKey,
+  buildMcpToolName,
+} from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
 
 const TEST_TIMEOUT_MS = 10_000;
@@ -1612,6 +1616,17 @@ export class MCPServerManager {
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
     const instances = [...entry.instances.values()].sort((a, b) => a.name.localeCompare(b.name));
+
+    // Suffix every member of a normalized collision group so a prompt's key
+    // never depends on catalog order or which colliding sibling is enabled.
+    const baseKeyCounts = new Map<string, number>();
+    for (const instance of instances) {
+      for (const prompt of instance.prompts) {
+        const baseKey = buildMcpPromptBaseKey(instance.name, prompt.name);
+        baseKeyCounts.set(baseKey, (baseKeyCounts.get(baseKey) ?? 0) + 1);
+      }
+    }
+
     for (const instance of instances) {
       const prompts = [...instance.prompts].sort((a, b) => a.name.localeCompare(b.name));
       for (const prompt of prompts) {
@@ -1619,6 +1634,8 @@ export class MCPServerManager {
           serverName: instance.name,
           promptName: prompt.name,
           usedNames,
+          forceSuffix:
+            (baseKeyCounts.get(buildMcpPromptBaseKey(instance.name, prompt.name)) ?? 0) > 1,
         });
         if (!command) continue;
         descriptors.push({

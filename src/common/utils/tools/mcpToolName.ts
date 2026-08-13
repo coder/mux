@@ -27,6 +27,18 @@ export interface BuildMcpPromptCommandKeyOptions {
   serverName: string;
   promptName: string;
   usedNames: Set<string>;
+  /**
+   * Force the identity hash suffix. Callers set this for every member of a
+   * normalized collision group so key assignment does not depend on catalog
+   * order: each member gets base + hash(own identity) regardless of which
+   * colliding sibling is listed first.
+   */
+  forceSuffix?: boolean;
+}
+
+/** Normalized command key before collision/truncation suffixing. */
+export function buildMcpPromptBaseKey(serverName: string, promptName: string): string {
+  return `mcp__${normalizeMcpToolNamePart(serverName)}__${normalizeMcpToolNamePart(promptName)}`;
 }
 
 export interface BuildMcpToolNameOptions {
@@ -64,12 +76,17 @@ function buildMcpName(options: {
   baseName: string;
   identityParts: string[];
   usedNames: Set<string>;
+  forceSuffix?: boolean;
 }): BuildMcpToolNameResult | null {
   if (!MCP_TOOL_NAME_PATTERN.test(options.baseName)) return null;
 
   let toolName = options.baseName;
   let wasSuffixed = false;
-  if (toolName.length > MAX_MCP_TOOL_NAME_CHARS || options.usedNames.has(toolName)) {
+  if (
+    options.forceSuffix === true ||
+    toolName.length > MAX_MCP_TOOL_NAME_CHARS ||
+    options.usedNames.has(toolName)
+  ) {
     wasSuffixed = true;
     toolName = buildMcpToolNameWithSuffix(options.baseName, uniqueSuffix(options.identityParts));
     if (options.usedNames.has(toolName)) {
@@ -112,8 +129,9 @@ export function buildMcpPromptCommandKey(
   options: BuildMcpPromptCommandKeyOptions
 ): BuildMcpToolNameResult | null {
   return buildMcpName({
-    baseName: `mcp__${normalizeMcpToolNamePart(options.serverName)}__${normalizeMcpToolNamePart(options.promptName)}`,
+    baseName: buildMcpPromptBaseKey(options.serverName, options.promptName),
     identityParts: [options.serverName, options.promptName],
     usedNames: options.usedNames,
+    ...(options.forceSuffix !== undefined ? { forceSuffix: options.forceSuffix } : {}),
   });
 }

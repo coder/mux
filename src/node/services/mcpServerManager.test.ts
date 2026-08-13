@@ -1200,6 +1200,34 @@ describe("MCPServerManager", () => {
     expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" });
   });
 
+  test("suffixes every member of a colliding prompt key group, independent of order", async () => {
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+      tools: {},
+      stats: cachedStats(),
+    });
+    const collectKeys = async (promptNames: string[]) => {
+      access.workspaceServers.set("workspace", {
+        instances: new Map([
+          ["coder", testInstance("coder", { prompts: promptNames.map((name) => ({ name })) })],
+        ]),
+      });
+      const descriptors = await manager.getPromptsForWorkspace(workspaceRequest("workspace"));
+      return new Map(descriptors.map((d) => [d.promptName, d.commandKey]));
+    };
+
+    // "Code-Review" and "code_review" normalize to the same base key.
+    const keys = await collectKeys(["Code-Review", "code_review", "status"]);
+    const reversedKeys = await collectKeys(["code_review", "Code-Review", "status"]);
+
+    expect(keys.get("Code-Review")).toMatch(/^mcp__coder__code_review_[0-9a-f]{8}$/);
+    expect(keys.get("code_review")).toMatch(/^mcp__coder__code_review_[0-9a-f]{8}$/);
+    expect(keys.get("Code-Review")).not.toBe(keys.get("code_review"));
+    // Keys derive from each prompt's own identity, so ordering cannot swap them.
+    expect(reversedKeys).toEqual(keys);
+    expect(keys.get("status")).toBe("mcp__coder__status");
+    getToolsSpy.mockRestore();
+  });
+
   test("getPrompt revives reaped servers from the last workspace request options", async () => {
     const getPrompt = mock(() =>
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
