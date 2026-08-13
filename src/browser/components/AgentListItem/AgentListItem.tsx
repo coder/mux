@@ -244,7 +244,8 @@ function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): stri
  * specific signal.
  */
 function formatHiddenSubAgentsPresentation(
-  summary: WorkspaceSubAgentsSummary
+  summary: WorkspaceSubAgentsSummary,
+  ownActiveWorkflowRunCount: number
 ): { icon: LucideIcon; text: string } | null {
   if (summary.activeWorkflowRunCount > 0) {
     const label =
@@ -256,6 +257,12 @@ function formatHiddenSubAgentsPresentation(
       icon: Workflow,
       text: `${label} (${agentCount} agent${agentCount === 1 ? "" : "s"})`,
     };
+  }
+  // Between sequential workflow steps no worker task exists, but the run is
+  // still active on this workspace; keep the workflow line up so an active
+  // workflow never looks finished while its rows are hidden.
+  if (ownActiveWorkflowRunCount > 0) {
+    return { icon: Workflow, text: formatWorkflowRunCount(ownActiveWorkflowRunCount) };
   }
   if (summary.activeSubAgentCount > 0) {
     const text = `${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"} · ${summary.activeSubAgentCount} active`;
@@ -708,7 +715,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     shouldShowBashMonitorStatus;
   const shouldShowDelegatedStatus = hasDelegatedStatusText && !hasOwnLiveStatusText && !hasError;
   const hiddenSubAgentsPresentation = hiddenSubAgentsSummary
-    ? formatHiddenSubAgentsPresentation(hiddenSubAgentsSummary)
+    ? formatHiddenSubAgentsPresentation(hiddenSubAgentsSummary, activeWorkflowRunCount)
     : null;
   // The summary supersedes the plain delegated/workflow lines; questions,
   // streaming, deletion, an armed bash monitor, and errors still win.

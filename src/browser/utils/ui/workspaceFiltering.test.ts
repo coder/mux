@@ -939,6 +939,23 @@ describe("excludeSubAgentRows", () => {
       "orphan",
     ]);
   });
+
+  it("keeps members of malformed parent cycles visible", () => {
+    const workspaces = [
+      createWorkspace("root"),
+      createWorkspace("hidden-child", { parentWorkspaceId: "root", taskStatus: "running" }),
+      createWorkspace("cycle-a", { parentWorkspaceId: "cycle-b" }),
+      createWorkspace("cycle-b", { parentWorkspaceId: "cycle-a" }),
+      createWorkspace("cycle-descendant", { parentWorkspaceId: "cycle-a" }),
+    ];
+
+    expect(excludeSubAgentRows(workspaces).map((workspace) => workspace.id)).toEqual([
+      "root",
+      "cycle-a",
+      "cycle-b",
+      "cycle-descendant",
+    ]);
+  });
 });
 
 describe("hidden sub-agents summary roll-up", () => {

@@ -611,6 +611,26 @@ describe("AgentListItem", () => {
     expect(rowView.queryByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`)).toBeNull();
   });
 
+  test("keeps a workflow line through step gaps when only the run itself is active", () => {
+    // Between sequential steps no worker task exists, so the summary carries
+    // no active counts; the row's own active run keeps the line up.
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeWorkflowRunCount: 1 });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 0,
+        activeSubAgentCount: 0,
+        activeWorkflowRunCount: 0,
+        activeWorkflowAgentCount: 0,
+      },
+    });
+    const rowView = within(row);
+
+    const indicator = rowView.getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`);
+    expect(indicator.textContent).toBe("Workflow running");
+    expect(indicator.querySelector("svg")).toBeTruthy();
+  });
+
   test("falls back to the normal status line when hidden sub-agents are all inactive", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: {

@@ -327,17 +327,43 @@ export function computeDelegatedActivityByWorkspaceId(
 }
 
 /**
- * Drop rows whose parent is present in the list (the opt-in "hide sub-agents
- * in sidebar" setting). Orphans keep rendering as promoted roots.
+ * Drop rows whose ancestry reaches a root in the list (the opt-in "hide
+ * sub-agents in sidebar" setting). Orphans keep rendering as promoted roots,
+ * and members of malformed parent cycles stay visible so corrupted metadata
+ * cannot make workspaces inaccessible.
  */
 export function excludeSubAgentRows(
   workspaces: FrontendWorkspaceMetadata[]
 ): FrontendWorkspaceMetadata[] {
-  const idsInList = new Set(workspaces.map((workspace) => workspace.id));
-  return workspaces.filter(
-    (workspace) =>
-      workspace.parentWorkspaceId == null || !idsInList.has(workspace.parentWorkspaceId)
-  );
+  const byId = new Map(workspaces.map((workspace) => [workspace.id, workspace] as const));
+  const reachesRootById = new Map<string, boolean>();
+
+  const reachesRoot = (workspace: FrontendWorkspaceMetadata, path: Set<string>): boolean => {
+    const cached = reachesRootById.get(workspace.id);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (path.has(workspace.id)) {
+      return false;
+    }
+
+    path.add(workspace.id);
+    const parentId = workspace.parentWorkspaceId;
+    const parent = parentId != null ? byId.get(parentId) : undefined;
+    const result = parent == null ? true : reachesRoot(parent, path);
+    path.delete(workspace.id);
+
+    reachesRootById.set(workspace.id, result);
+    return result;
+  };
+
+  return workspaces.filter((workspace) => {
+    const parentId = workspace.parentWorkspaceId;
+    if (parentId == null || !byId.has(parentId)) {
+      return true;
+    }
+    return !reachesRoot(workspace, new Set());
+  });
 }
 
 /**

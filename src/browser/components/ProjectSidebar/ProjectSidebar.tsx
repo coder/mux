@@ -57,6 +57,7 @@ import {
   computeSubAgentsSummaryByWorkspaceId,
   excludeSubAgentRows,
   filterVisibleAgentRows,
+  type WorkspaceSubAgentsSummary,
   computeAgentRowRenderMeta,
   findNextNonEmptyTier,
   getTierKey,
@@ -161,6 +162,15 @@ function getPinnedReorderGroup(projectPath: string, sectionId: string | undefine
 }
 const SCRATCH_PINNED_REORDER_GROUP = "\u0000scratch";
 const MULTI_PROJECT_PINNED_REORDER_GROUP = "\u0000multi-project";
+
+// Stable reference so hide-mode rows without descendants don't get a fresh
+// object per render.
+const EMPTY_HIDDEN_SUBAGENTS_SUMMARY: WorkspaceSubAgentsSummary = {
+  subAgentCount: 0,
+  activeSubAgentCount: 0,
+  activeWorkflowRunCount: 0,
+  activeWorkflowAgentCount: 0,
+};
 
 // Re-export WorkspaceSelection for backwards compatibility
 export type { WorkspaceSelection } from "../AgentListItem/AgentListItem";
@@ -1662,6 +1672,13 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const subAgentsSummaryByWorkspaceId = hideSubAgentRows
     ? computeSubAgentsSummaryByWorkspaceId(allSidebarWorkspaces, { isWorkspaceLiveActive })
     : null;
+  // In hide mode every row gets at least the empty summary: rows without
+  // counted descendants still show a workflow line for their own active runs
+  // (step gaps between transient workers leave no countable descendants).
+  const getHiddenSubAgentsSummary = (workspaceId: string): WorkspaceSubAgentsSummary | undefined =>
+    subAgentsSummaryByWorkspaceId
+      ? (subAgentsSummaryByWorkspaceId.get(workspaceId) ?? EMPTY_HIDDEN_SUBAGENTS_SUMMARY)
+      : undefined;
 
   const singleProjectWorkspacesByProject = new Map<string, FrontendWorkspaceMetadata[]>();
   const scratchWorkspacesById = new Map<string, FrontendWorkspaceMetadata>();
@@ -2009,7 +2026,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             rowRenderMeta={rowRenderMeta}
                             isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                             delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
-                            hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(metadata.id)}
+                            hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
                             completedChildrenExpanded={expandedCompletedParentIds.has(metadata.id)}
                             onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                           />
@@ -2091,9 +2108,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               rowRenderMeta={rowRenderMeta}
                               isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                               delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
-                              hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(
-                                metadata.id
-                              )}
+                              hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
                                 metadata.id
                               )}
@@ -2486,9 +2501,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                     delegatedActivity={delegatedActivityByWorkspaceId.get(
                                       metadata.id
                                     )}
-                                    hiddenSubAgentsSummary={subAgentsSummaryByWorkspaceId?.get(
-                                      metadata.id
-                                    )}
+                                    hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
                                     completedChildrenExpanded={expandedCompletedParentIds.has(
                                       metadata.id
                                     )}
