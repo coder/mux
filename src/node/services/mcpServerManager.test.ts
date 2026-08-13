@@ -1141,6 +1141,7 @@ describe("MCPServerManager", () => {
       stats: cachedStats(),
     });
     access.workspaceServers.set("workspace", {
+      enabledServerNames: new Set(["Coder Server"]),
       instances: new Map([
         [
           "Coder Server",
@@ -1190,6 +1191,7 @@ describe("MCPServerManager", () => {
       })
     );
     access.workspaceServers.set("workspace", {
+      enabledServerNames: new Set(["coder"]),
       instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
     });
 
@@ -1207,6 +1209,7 @@ describe("MCPServerManager", () => {
     });
     const collectKeys = async (promptNames: string[]) => {
       access.workspaceServers.set("workspace", {
+        enabledServerNames: new Set(["coder"]),
         instances: new Map([
           ["coder", testInstance("coder", { prompts: promptNames.map((name) => ({ name })) })],
         ]),
@@ -1228,6 +1231,26 @@ describe("MCPServerManager", () => {
     getToolsSpy.mockRestore();
   });
 
+  test("excludes disabled servers from prompt discovery and getPrompt", async () => {
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+      tools: {},
+      stats: cachedStats(),
+    });
+    // Leased deferred restart: the disabled server's stale client is still cached.
+    access.workspaceServers.set("workspace", {
+      enabledServerNames: new Set(["enabled"]),
+      instances: new Map([
+        ["enabled", testInstance("enabled", { prompts: [{ name: "status" }] })],
+        ["disabled", testInstance("disabled", { prompts: [{ name: "review" }] })],
+      ]),
+    });
+
+    const descriptors = await manager.getPromptsForWorkspace(workspaceRequest("workspace"));
+    expect(descriptors.map((d) => d.commandKey)).toEqual(["mcp__enabled__status"]);
+    expect(manager.getPrompt("workspace", "disabled", "review", {})).rejects.toThrow("disabled");
+    getToolsSpy.mockRestore();
+  });
+
   test("getPrompt revives reaped servers from the last workspace request options", async () => {
     const getPrompt = mock(() =>
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
@@ -1235,6 +1258,7 @@ describe("MCPServerManager", () => {
     const request = workspaceRequest("workspace");
     const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(() => {
       access.workspaceServers.set("workspace", {
+        enabledServerNames: new Set(["coder"]),
         instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
       });
       return Promise.resolve({ tools: {}, stats: cachedStats() });

@@ -836,6 +836,12 @@ interface MCPToolsForWorkspaceResult {
 interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
+  /**
+   * Currently enabled server names. Under a lease, disabling a server defers its
+   * restart and leaves the stale client in `instances`; prompt surfaces filter
+   * on this set so they never expose or invoke a disabled server.
+   */
+  enabledServerNames: Set<string>;
   stats: MCPWorkspaceStats;
   timedOutServerNames: string[];
   /** Prevent concurrent cached retries from stacking startup attempts for the same server. */
@@ -1549,6 +1555,7 @@ export class MCPServerManager {
         failedServerNames
       );
       existing.stats = leasedStats;
+      existing.enabledServerNames = enabledServerNames;
 
       // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
       await this.refreshModernInstanceTools(instancesForTools);
@@ -1571,7 +1578,9 @@ export class MCPServerManager {
       log.info("[MCP] Restarting servers due to closed client", { workspaceId });
     }
 
-    await this.stopServers(workspaceId);
+    // Internal restart: retain the recorded request options so getPrompt can
+    // still revive servers reaped later; only workspace removal forgets them.
+    await this.stopServers(workspaceId, { retainRestartOptions: true });
 
     const {
       instances,
@@ -1593,6 +1602,7 @@ export class MCPServerManager {
     this.workspaceServers.set(workspaceId, {
       configSignature: signature,
       instances,
+      enabledServerNames,
       stats,
       timedOutServerNames: startTimedOutNames,
       retryingTimedOutServerNames: new Set(),
@@ -1612,10 +1622,15 @@ export class MCPServerManager {
     const entry = this.workspaceServers.get(options.workspaceId);
     if (!entry) return [];
 
-    await this.refreshInstancePrompts(entry.instances);
+    // Mirror the leased tools path: a disabled server's stale client may still
+    // sit in entry.instances until its deferred restart.
+    const enabledInstances = new Map(
+      [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
+    );
+    await this.refreshInstancePrompts(enabledInstances);
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
-    const instances = [...entry.instances.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const instances = [...enabledInstances.values()].sort((a, b) => a.name.localeCompare(b.name));
 
     // Suffix every member of a normalized collision group so a prompt's key
     // never depends on catalog order or which colliding sibling is enabled.
@@ -1656,7 +1671,11 @@ export class MCPServerManager {
     promptName: string,
     args: Record<string, string>
   ): Promise<{ text: string; description?: string }> {
-    let instance = this.workspaceServers.get(workspaceId)?.instances.get(serverName);
+    const currentEntry = this.workspaceServers.get(workspaceId);
+    if (currentEntry && !currentEntry.enabledServerNames.has(serverName)) {
+      throw new Error(`MCP server '${serverName}' is disabled`);
+    }
+    let instance = currentEntry?.instances.get(serverName);
     if (!instance || instance.isClosed) {
       // Idle cleanup may have reaped the client between composing the reference
       // and sending; revive so the explicitly selected prompt is not dropped.
