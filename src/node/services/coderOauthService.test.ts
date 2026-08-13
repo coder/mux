@@ -4236,6 +4236,39 @@ describe("CoderOauthService", () => {
       ]);
     });
 
+    it("keeps a fresh catalog unknown when any provider fails transiently", async () => {
+      // Fresh login state: discoveredModels absent (catalog unknown, routing
+      // fails open). One provider succeeds, the other errors after retries.
+      // Persisting the partial list would read as an authoritative catalog
+      // and block every model of the failed provider until the next refresh;
+      // the write must be skipped so routing stays fail-open.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(aiProvidersResponse());
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toBeUndefined();
+      expect(coderSection.discoveredProviders).toBeUndefined();
+      expect(coderSection.models).toBeUndefined();
+    });
+
     it("carries a provider's previous models forward through a transient catalog failure", async () => {
       // Per-provider conclusiveness: one provider's flake (or an upstream
       // without a real /models route, like Bedrock) must not wipe its

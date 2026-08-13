@@ -1859,9 +1859,26 @@ export class CoderOauthService {
     // `models` stays the user-visible union: manually added entries (those
     // not recorded in discoveredModels) are carried forward ahead of the
     // fresh catalog, so discovery never clobbers user-managed data.
+    let inconclusiveFreshCatalog = false;
     const setResult = await this.providerService.updateProviderSection("coder", (section) => {
       const stored = parseCoderOauthAuth(section?.coderOauth);
       if (!stored || stored.access !== auth.access || stored.deploymentUrl !== auth.deploymentUrl) {
+        return null;
+      }
+      // Prior catalog state must be read INSIDE the locked mutation (a
+      // concurrent login/refresh may have changed it since discovery began).
+      const previousKnown = Array.isArray(section?.discoveredModels);
+      // When the prior catalog is UNKNOWN (fresh login cleared it, or
+      // discovery never succeeded), a transiently-failed provider has no
+      // previous entries to carry forward — persisting the other providers'
+      // lists would flip routing from fail-open (unknown catalog) to an
+      // authoritative partial catalog that blocks the failed provider's
+      // models until the next successful refresh. Keep the catalog unknown
+      // instead; a KNOWN prior catalog is safe because carry-forward
+      // preserves the failed provider's previous state (including a
+      // legitimate "no entries").
+      if (!previousKnown && results.some(({ result }) => result.kind === "error")) {
+        inconclusiveFreshCatalog = true;
         return null;
       }
       const previousDiscovered = Array.isArray(section?.discoveredModels)
@@ -1940,6 +1957,14 @@ export class CoderOauthService {
       return Err(setResult.error);
     }
     if (!setResult.data.applied) {
+      if (inconclusiveFreshCatalog) {
+        log.debug(
+          "[Coder OAuth] Skipping catalog write: prior catalog unknown and a provider failed transiently"
+        );
+        return Err(
+          "Model discovery failed for at least one AI Gateway provider; try refreshing again"
+        );
+      }
       log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
     }
     return Ok(undefined);
