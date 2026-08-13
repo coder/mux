@@ -1872,6 +1872,13 @@ export class CoderOauthService {
       const previousDiscovered = Array.isArray(section?.discoveredModels)
         ? section.discoveredModels.filter((id): id is string => typeof id === "string")
         : [];
+      // Display state retained through an earlier inconclusive refresh (the
+      // authoritative catalog was deleted then; this marker is all that
+      // remains of it). Never authoritative prior state — it only keeps
+      // entries user-visible across consecutive failed refreshes.
+      const staleDiscovered = Array.isArray(section?.staleDiscoveredModels)
+        ? section.staleDiscoveredModels.filter((id): id is string => typeof id === "string")
+        : [];
       const previousProviders = parseCoderGatewayProviders(section?.discoveredProviders);
 
       // Per-provider conclusiveness: "ok" replaces the provider's entries,
@@ -1923,6 +1930,17 @@ export class CoderOauthService {
         } else if (result.kind === "error") {
           if (!hasPriorState) {
             catalogInconclusive = true;
+            // Consecutive failed refreshes: after an inconclusive refresh the
+            // authoritative catalog is gone (previousKnown false), so a
+            // transiently failing provider has no carry-forward state — but
+            // its stale display entries must stay user-visible instead of
+            // vanishing from Settings/the selector. The catalog stays
+            // inconclusive, so these IDs land back in models +
+            // staleDiscoveredModels, never in discoveredModels. Type-gated
+            // like authoritative carry-forward.
+            if (typeUnchanged) {
+              modelIds.push(...staleDiscovered.filter((id) => id.startsWith(`${provider.name}/`)));
+            }
             continue;
           }
           modelIds.push(...previousDiscovered.filter((id) => id.startsWith(`${provider.name}/`)));

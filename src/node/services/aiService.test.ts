@@ -1825,6 +1825,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(prepared.data.providerOptions).toHaveProperty("anthropic");
     expect(prepared.data.providerOptions).not.toHaveProperty("openai");
 
+    // The returned request keeps the RAW identity: StreamManager keys
+    // system/tool cache-control and metadata resolution on this string, and
+    // the canonical openai:* form would drop Anthropic cache markers.
+    expect(prepared.data.modelString).toBe(fallbackModel);
+
     // Capability lookups saw the raw identity too: the fallback toolset was
     // built for the instance's Claude upstream, not for canonical "openai:".
     const fallbackToolConfig = harness.getToolsForModelSpy.mock.calls.at(-1)?.[1] as

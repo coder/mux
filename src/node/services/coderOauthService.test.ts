@@ -4411,6 +4411,58 @@ describe("CoderOauthService", () => {
       expect(coderSection.staleDiscoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
     });
 
+    it("retains stale display entries across consecutive inconclusive refreshes", async () => {
+      // After an inconclusive refresh the authoritative catalog is gone and
+      // only staleDiscoveredModels remains. A second refresh where the same
+      // provider flakes again must keep those entries user-visible (Settings
+      // and the selector) instead of dropping them: the stale marker is the
+      // carry-forward source, while the catalog stays fail-open.
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          models: ["prod-anthropic/claude-sonnet-4-5", "openai/gpt-5"],
+          staleDiscoveredModels: ["prod-anthropic/claude-sonnet-4-5", "openai/gpt-5"],
+          discoveredProviders: [
+            { name: "prod-anthropic", type: "anthropic" },
+            { name: "openai", type: "openai" },
+          ],
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([
+              { name: "prod-anthropic", type: "anthropic", enabled: true },
+              { name: "openai", type: "openai", enabled: true },
+            ])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/prod-anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-opus-4-6" }] }));
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/openai/v1/models`) {
+          return Promise.resolve(new Response("gateway overloaded", { status: 500 }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      // Catalog still unknown (fail-open), but the healthy provider's fresh
+      // list and the flaky provider's stale entries stay user-visible.
+      expect(coderSection.discoveredModels).toBeUndefined();
+      expect(coderSection.models).toEqual(["prod-anthropic/claude-opus-4-6", "openai/gpt-5"]);
+      expect(coderSection.staleDiscoveredModels).toEqual([
+        "prod-anthropic/claude-opus-4-6",
+        "openai/gpt-5",
+      ]);
+    });
+
     it("clears stale-flagged catalog entries on disconnect", async () => {
       // Entries retained through an inconclusive refresh are catalog data,
       // not user-managed: without the stale marker they would classify as

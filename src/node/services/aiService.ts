@@ -3043,7 +3043,12 @@ export class AIService extends EventEmitter {
 
                   return Ok({
                     model: next.model,
-                    modelString: next.canonicalModelString,
+                    // RAW identity (matching the main path's raw modelString):
+                    // StreamManager keys createCachedSystemMessage /
+                    // applyCacheControlToTools / metadata resolution on this,
+                    // and the canonical string hides cross-typed Coder
+                    // instance metadata from those lookups.
+                    modelString: nextModelString,
                     messages: nextFinalMessages,
                     system: nextSystem,
                     tools: nextTools,
