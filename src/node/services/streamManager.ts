@@ -2532,9 +2532,15 @@ export class StreamManager extends EventEmitter {
     const fallbackState = streamInfo.modelFallback;
     const preserveParts = options?.preserveParts === true;
     const refusedModel = normalizeToCanonical(streamInfo.model);
+    // Usage attribution keeps the RAW identity: canonicalization rewrites a
+    // cross-typed Coder instance (coder:openai/<claude>, type anthropic) to
+    // openai:<claude>, and recordSessionUsage / ledger rebuilds could then no
+    // longer recover the instance type for pricing. The canonical string is
+    // only for the display list / chain bookkeeping below.
+    const refusedModelForUsage = streamInfo.model;
 
     if (!fallbackState) {
-      await this.recordTerminalRefusalUsage(workspaceId, streamInfo, refusedModel);
+      await this.recordTerminalRefusalUsage(workspaceId, streamInfo, refusedModelForUsage);
       return { kind: "terminal" };
     }
 
@@ -2548,7 +2554,7 @@ export class StreamManager extends EventEmitter {
     };
 
     if (streamInfo.abortController.signal.aborted || streamInfo.softInterrupt.pending) {
-      await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModel);
+      await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModelForUsage);
       return { kind: "terminal" };
     }
 
@@ -2556,7 +2562,7 @@ export class StreamManager extends EventEmitter {
     // chain outcome (swap, exhaustion, unstartable fallback) before any state
     // reset. Chains that end in a terminal failure must not drop the final
     // hop's tokens from session usage / cost accounting.
-    await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModel);
+    await this.recordRefusedAttemptUsage(workspaceId, streamInfo, refusedModelForUsage);
 
     const nextModelString = fallbackState.options.chain[fallbackState.refusedModels.length - 1];
     if (nextModelString === undefined) {

@@ -652,6 +652,60 @@ describe("StreamManager - stopWhen configuration", () => {
     });
   }
 });
+describe("StreamManager - refusal usage attribution", () => {
+  test("terminal refusal records the raw Coder identity, not the name-canonical form", async () => {
+    // Cross-typed instance {name: "openai", type: "anthropic"}: the refusal
+    // path must hand the RAW coder string to usage recording so
+    // normalizeUsageModelKey can resolve the instance type — the canonical
+    // openai:<claude> form would attribute Anthropic tokens to OpenAI.
+    const rawModel = "coder:openai/claude-opus-4-5";
+    const providersConfig = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+      },
+    };
+    const recordedKeys: string[] = [];
+    const sessionUsageService = {
+      recordUsage: (_workspaceId: string, model: string) => {
+        recordedKeys.push(model);
+        return Promise.resolve();
+      },
+    } as unknown as SessionUsageService;
+
+    const streamManager = new StreamManager(
+      historyService,
+      sessionUsageService,
+      () => providersConfig
+    );
+    const tryFallback = Reflect.get(streamManager, "tryModelFallbackAfterRefusal") as (
+      workspaceId: string,
+      streamInfo: Record<string, unknown>,
+      refusalFinishReason: string
+    ) => Promise<{ kind: string }>;
+    expect(typeof tryFallback).toBe("function");
+
+    const streamInfo = {
+      model: rawModel,
+      metadataModel: "anthropic:claude-opus-4-5",
+      cumulativeUsage: { inputTokens: 1200, outputTokens: 30, totalTokens: 1230 },
+      cumulativeProviderMetadata: undefined,
+      initialMetadata: undefined,
+      parts: [],
+      toolModelUsages: [],
+      // No fallback chain: the terminal-refusal recording path runs.
+      modelFallback: undefined,
+    };
+
+    const outcome = await tryFallback.call(streamManager, "ws-refusal-raw", streamInfo, "refusal");
+    expect(outcome.kind).toBe("terminal");
+    // The ledger key resolved through instance metadata (type anthropic).
+    expect(recordedKeys).toEqual(["anthropic:claude-opus-4-5"]);
+  });
+});
+
 describe("StreamManager - Anthropic cache TTL overrides", () => {
   interface StreamRequestConfigForTests {
     messages: ModelMessage[];
