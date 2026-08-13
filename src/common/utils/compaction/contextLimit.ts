@@ -63,8 +63,9 @@ export function getEffectiveContextLimit(
   }
 
   // Anthropic's optional 1M beta is a runtime capability, so it must be gated on the
-  // runtime model, not the mapped metadata model. Native 1M models already expose their
-  // larger window through model stats above.
-  if (supports1MContext(model) && use1M) return 1_000_000;
+  // runtime model, not the mapped metadata model (Coder gateway instances resolve
+  // through their instance type inside the gate). Native 1M models already expose
+  // their larger window through model stats above.
+  if (supports1MContext(model, providersConfig) && use1M) return 1_000_000;
   return baseLimit;
 }

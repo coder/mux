@@ -1,4 +1,4 @@
-import { describe, it, expect } from "bun:test";
+import { describe, it, expect, test } from "bun:test";
 import {
   getExplicitGatewayPrefix,
   normalizeSelectedModel,
@@ -183,6 +183,41 @@ describe("Anthropic 1M context classification", () => {
     expect(supports1MContext("openai:gpt-5.5")).toBe(false);
     expect(supports1MContext("anthropic:claude-haiku-4-5")).toBe(false);
     expect(hasNative1MContext("openai:gpt-5.5")).toBe(false);
+  });
+});
+
+describe("supports1MContext for Coder gateway instances", () => {
+  const coderConfig = {
+    coder: {
+      discoveredProviders: [
+        { name: "prod-anthropic", type: "anthropic" },
+        { name: "anthropic", type: "openai-compat" },
+      ],
+    },
+  };
+
+  test("custom-named anthropic instances inherit the upstream's 1M beta capability", () => {
+    expect(supports1MContext("coder:prod-anthropic/claude-sonnet-4-5", coderConfig)).toBe(true);
+  });
+
+  test("cross-typed anthropic-named instances do not get the 1M beta", () => {
+    // The name says anthropic but the upstream is an OpenAI-compat proxy;
+    // metadata must win over the name convention.
+    expect(supports1MContext("coder:anthropic/claude-sonnet-4-5", coderConfig)).toBe(false);
+  });
+
+  test("without a config the name === type default applies", () => {
+    expect(supports1MContext("coder:anthropic/claude-sonnet-4-5")).toBe(true);
+    expect(supports1MContext("coder:prod-anthropic/claude-sonnet-4-5")).toBe(false);
+  });
+
+  test("treat-as mappings still do not confer the 1M beta", () => {
+    // mappedToModel overrides are metadata-only; a custom model cannot
+    // accept the Anthropic beta header just because it is "treated as" one.
+    const config = {
+      ollama: { models: [{ id: "custom", mappedToModel: "anthropic:claude-sonnet-4-5" }] },
+    };
+    expect(supports1MContext("ollama:custom", config)).toBe(false);
   });
 });
 

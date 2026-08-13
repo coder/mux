@@ -202,8 +202,11 @@ export function isAnthropic1MEffectivelyEnabled(
     return false;
   }
 
+  // providersConfig also flows into the gate itself: an unmappable Coder
+  // instance keeps its gateway-scoped string, and only the config-aware gate
+  // rejects it conclusively instead of name-normalizing it to anthropic:*.
   const { capabilityModel } = resolveAnthropic1MCapabilityModel(modelString, providersConfig);
-  if (!supports1MContext(capabilityModel)) {
+  if (!supports1MContext(capabilityModel, providersConfig)) {
     return false;
   }
 
@@ -234,7 +237,7 @@ export function preserveAnthropic1MContextForFollowUp(
   }
 
   const { capabilityModel } = resolveAnthropic1MCapabilityModel(targetModelString, providersConfig);
-  if (!supports1MContext(capabilityModel)) {
+  if (!supports1MContext(capabilityModel, providersConfig)) {
     return muxProviderOptions;
   }
 

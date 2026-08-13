@@ -5,6 +5,7 @@
 import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownModels";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { formatCompactModelDisplayName, formatModelDisplayName } from "./modelDisplay";
+import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -185,8 +186,29 @@ function matchesAnthropicPattern(modelName: string, patterns: readonly RegExp[])
  * - `beta`: 1M requires Anthropic's opt-in beta header.
  * - `none`: model does not offer 1M context.
  */
-export function getAnthropic1MContextMode(modelString: string): Anthropic1MContextMode {
-  const normalized = normalizeToCanonical(modelString);
+export function getAnthropic1MContextMode(
+  modelString: string,
+  providersConfig?: Record<string, unknown> | null
+): Anthropic1MContextMode {
+  // Coder gateway instances inherit the upstream's runtime capabilities (the
+  // gateway is a transparent proxy), so map coder:<instance>/<model> through
+  // the instance's provider type before pattern-matching. This deliberately
+  // does NOT apply mappedToModel ("Treat as") overrides: treat-as targets
+  // must not confer the 1M beta onto models that cannot accept the header.
+  // With metadata available the mapping is CONCLUSIVE: an unmappable
+  // instance (cross-typed compat upstream, shadowed prefix) has no known
+  // Anthropic upstream, and falling back to name-based normalization would
+  // grant the beta to coder:anthropic/<claude> fronting a non-Anthropic
+  // upstream.
+  let capabilityModel = modelString;
+  if (providersConfig != null && modelString.startsWith("coder:")) {
+    const mapped = resolveCoderGatewayMetadataModel(modelString, providersConfig);
+    if (mapped == null) {
+      return "none";
+    }
+    capabilityModel = mapped;
+  }
+  const normalized = normalizeToCanonical(capabilityModel);
   const [provider, modelName] = normalized.split(":", 2);
   const normalizedModelName = modelName?.toLowerCase() ?? "";
 
@@ -211,10 +233,16 @@ export function getAnthropic1MContextMode(modelString: string): Anthropic1MConte
  * Native long-context models like Claude Opus 4.6, Claude Sonnet 4.6, and GPT-5.5 expose
  * their larger window directly through model metadata and should not appear behind this toggle.
  */
-export function supports1MContext(modelString: string): boolean {
-  return getAnthropic1MContextMode(modelString) === "beta";
+export function supports1MContext(
+  modelString: string,
+  providersConfig?: Record<string, unknown> | null
+): boolean {
+  return getAnthropic1MContextMode(modelString, providersConfig) === "beta";
 }
 
-export function hasNative1MContext(modelString: string): boolean {
-  return getAnthropic1MContextMode(modelString) === "native";
+export function hasNative1MContext(
+  modelString: string,
+  providersConfig?: Record<string, unknown> | null
+): boolean {
+  return getAnthropic1MContextMode(modelString, providersConfig) === "native";
 }

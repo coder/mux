@@ -4210,7 +4210,7 @@ export class AgentSession {
   }
 
   private supports1MContextRetry(modelString: string): boolean {
-    return supports1MContext(modelString);
+    return supports1MContext(modelString, this.getProvidersConfigSafe());
   }
 
   private withAnthropic1MContext(
