@@ -973,9 +973,11 @@ describe("hidden sub-agents summary roll-up", () => {
 
     expect(computeSubAgentsSummaryByWorkspaceId(workspaces).get("parent")).toEqual({
       subAgentCount: 4,
-      activeSubAgentCount: 2,
+      runningSubAgentCount: 1,
+      queuedSubAgentCount: 1,
       activeWorkflowRunCount: 0,
-      activeWorkflowAgentCount: 0,
+      runningWorkflowAgentCount: 0,
+      queuedWorkflowAgentCount: 0,
       workflowName: undefined,
     });
   });
@@ -1008,9 +1010,11 @@ describe("hidden sub-agents summary roll-up", () => {
 
     expect(computeSubAgentsSummaryByWorkspaceId(workspaces).get("parent")).toEqual({
       subAgentCount: 1,
-      activeSubAgentCount: 1,
+      runningSubAgentCount: 1,
+      queuedSubAgentCount: 0,
       activeWorkflowRunCount: 2,
-      activeWorkflowAgentCount: 3,
+      runningWorkflowAgentCount: 2,
+      queuedWorkflowAgentCount: 1,
       workflowName: "Deep Research",
     });
   });
@@ -1028,9 +1032,11 @@ describe("hidden sub-agents summary roll-up", () => {
 
     expect(computeSubAgentsSummaryByWorkspaceId(workspaces).get("parent")).toEqual({
       subAgentCount: 0,
-      activeSubAgentCount: 0,
+      runningSubAgentCount: 0,
+      queuedSubAgentCount: 0,
       activeWorkflowRunCount: 1,
-      activeWorkflowAgentCount: 2,
+      runningWorkflowAgentCount: 2,
+      queuedWorkflowAgentCount: 0,
       workflowName: undefined,
     });
   });
@@ -1049,9 +1055,11 @@ describe("hidden sub-agents summary roll-up", () => {
     expect(summaryByWorkspaceId.has("leaf")).toBe(false);
     expect(summaryByWorkspaceId.get("parent")).toEqual({
       subAgentCount: 1,
-      activeSubAgentCount: 1,
+      runningSubAgentCount: 1,
+      queuedSubAgentCount: 0,
       activeWorkflowRunCount: 0,
-      activeWorkflowAgentCount: 0,
+      runningWorkflowAgentCount: 0,
+      queuedWorkflowAgentCount: 0,
       workflowName: undefined,
     });
   });

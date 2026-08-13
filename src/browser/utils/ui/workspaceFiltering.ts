@@ -374,13 +374,17 @@ export function excludeSubAgentRows(
 export interface WorkspaceSubAgentsSummary {
   /** All user-owned (non-workflow) descendants, active or not. */
   subAgentCount: number;
-  /** Active or queued user-owned descendants. */
-  activeSubAgentCount: number;
-  /** Distinct workflow runs with an active or queued descendant worker. */
+  /** Running user-owned descendants. */
+  runningSubAgentCount: number;
+  /** Queued user-owned descendants. */
+  queuedSubAgentCount: number;
+  /** Distinct workflow runs with a running or queued descendant worker. */
   activeWorkflowRunCount: number;
-  /** Active or queued workflow-owned descendant workers across runs. */
-  activeWorkflowAgentCount: number;
-  /** First available name from an active or queued workflow worker. */
+  /** Running workflow-owned descendant workers across runs. */
+  runningWorkflowAgentCount: number;
+  /** Queued workflow-owned descendant workers across runs. */
+  queuedWorkflowAgentCount: number;
+  /** First available name from a running or queued workflow worker. */
   workflowName?: string;
 }
 
@@ -410,8 +414,10 @@ export function computeSubAgentsSummaryByWorkspaceId(
 
   interface MutableSummary {
     subAgentCount: number;
-    activeSubAgentCount: number;
-    activeWorkflowAgentCount: number;
+    runningSubAgentCount: number;
+    queuedSubAgentCount: number;
+    runningWorkflowAgentCount: number;
+    queuedWorkflowAgentCount: number;
     activeWorkflowRunIds: Set<string>;
     workflowName?: string;
   }
@@ -427,8 +433,10 @@ export function computeSubAgentsSummaryByWorkspaceId(
   ): MutableSummary => {
     const summary: MutableSummary = {
       subAgentCount: 0,
-      activeSubAgentCount: 0,
-      activeWorkflowAgentCount: 0,
+      runningSubAgentCount: 0,
+      queuedSubAgentCount: 0,
+      runningWorkflowAgentCount: 0,
+      queuedWorkflowAgentCount: 0,
       activeWorkflowRunIds: new Set(),
     };
 
@@ -436,37 +444,46 @@ export function computeSubAgentsSummaryByWorkspaceId(
       // Descendants of a workflow worker stay workflow-owned, matching the
       // delegated-activity rollup.
       const childWorkflowRunId = child.workflowTask?.runId ?? ancestorWorkflowRunId;
-      const isActiveOrQueued =
-        isWorkspaceDelegatedActivityActive(child, options) ||
-        isWorkspaceDelegatedActivityQueued(child);
+      const isRunning = isWorkspaceDelegatedActivityActive(child, options);
+      const isQueued = !isRunning && isWorkspaceDelegatedActivityQueued(child);
 
       if (childWorkflowRunId == null) {
         summary.subAgentCount += 1;
-        if (isActiveOrQueued) {
-          summary.activeSubAgentCount += 1;
+        if (isRunning) {
+          summary.runningSubAgentCount += 1;
+        } else if (isQueued) {
+          summary.queuedSubAgentCount += 1;
         }
-      } else if (isActiveOrQueued) {
-        summary.activeWorkflowAgentCount += 1;
+      } else if (isRunning || isQueued) {
+        if (isRunning) {
+          summary.runningWorkflowAgentCount += 1;
+        } else {
+          summary.queuedWorkflowAgentCount += 1;
+        }
         summary.activeWorkflowRunIds.add(childWorkflowRunId);
         summary.workflowName ??= child.workflowTask?.workflowName;
       }
 
       const childSummary = traverse(child, childWorkflowRunId);
       summary.subAgentCount += childSummary.subAgentCount;
-      summary.activeSubAgentCount += childSummary.activeSubAgentCount;
-      summary.activeWorkflowAgentCount += childSummary.activeWorkflowAgentCount;
+      summary.runningSubAgentCount += childSummary.runningSubAgentCount;
+      summary.queuedSubAgentCount += childSummary.queuedSubAgentCount;
+      summary.runningWorkflowAgentCount += childSummary.runningWorkflowAgentCount;
+      summary.queuedWorkflowAgentCount += childSummary.queuedWorkflowAgentCount;
       for (const runId of childSummary.activeWorkflowRunIds) {
         summary.activeWorkflowRunIds.add(runId);
       }
       summary.workflowName ??= childSummary.workflowName;
     }
 
-    if (summary.subAgentCount > 0 || summary.activeWorkflowAgentCount > 0) {
+    if (summary.subAgentCount > 0 || summary.activeWorkflowRunIds.size > 0) {
       result.set(workspace.id, {
         subAgentCount: summary.subAgentCount,
-        activeSubAgentCount: summary.activeSubAgentCount,
+        runningSubAgentCount: summary.runningSubAgentCount,
+        queuedSubAgentCount: summary.queuedSubAgentCount,
         activeWorkflowRunCount: summary.activeWorkflowRunIds.size,
-        activeWorkflowAgentCount: summary.activeWorkflowAgentCount,
+        runningWorkflowAgentCount: summary.runningWorkflowAgentCount,
+        queuedWorkflowAgentCount: summary.queuedWorkflowAgentCount,
         workflowName: summary.workflowName,
       });
     }

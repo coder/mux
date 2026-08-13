@@ -560,9 +560,11 @@ describe("AgentListItem", () => {
       },
       hiddenSubAgentsSummary: {
         subAgentCount: 3,
-        activeSubAgentCount: 1,
+        runningSubAgentCount: 1,
+        queuedSubAgentCount: 0,
         activeWorkflowRunCount: 0,
-        activeWorkflowAgentCount: 0,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 0,
       },
     });
     const rowView = within(row);
@@ -580,9 +582,11 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: {
         subAgentCount: 0,
-        activeSubAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
         activeWorkflowRunCount: 1,
-        activeWorkflowAgentCount: 5,
+        runningWorkflowAgentCount: 5,
+        queuedWorkflowAgentCount: 0,
         workflowName: "Deep Research",
       },
     });
@@ -600,15 +604,70 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: {
         subAgentCount: 2,
-        activeSubAgentCount: 2,
+        runningSubAgentCount: 2,
+        queuedSubAgentCount: 0,
         activeWorkflowRunCount: 0,
-        activeWorkflowAgentCount: 0,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 0,
       },
     });
     const rowView = within(row);
 
     expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
     expect(rowView.queryByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`)).toBeNull();
+  });
+
+  test("distinguishes queued from running hidden sub-agents", () => {
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 3,
+        runningSubAgentCount: 1,
+        queuedSubAgentCount: 2,
+        activeWorkflowRunCount: 0,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 0,
+      },
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("3 sub-agents · 1 active · 2 queued");
+  });
+
+  test("labels a workflow with only queued workers as queued, not running", () => {
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
+        activeWorkflowRunCount: 1,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 2,
+        workflowName: "Deep Research",
+      },
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("Deep Research queued (2 agents)");
+  });
+
+  test("appends queued workflow workers after the running count", () => {
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: {
+        subAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
+        activeWorkflowRunCount: 1,
+        runningWorkflowAgentCount: 2,
+        queuedWorkflowAgentCount: 1,
+        workflowName: "Deep Research",
+      },
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("Deep Research running (2 agents) · 1 queued");
   });
 
   test("keeps a workflow line through step gaps when only the run itself is active", () => {
@@ -619,9 +678,11 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: {
         subAgentCount: 0,
-        activeSubAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
         activeWorkflowRunCount: 0,
-        activeWorkflowAgentCount: 0,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 0,
       },
     });
     const rowView = within(row);
@@ -635,9 +696,11 @@ describe("AgentListItem", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: {
         subAgentCount: 3,
-        activeSubAgentCount: 0,
+        runningSubAgentCount: 0,
+        queuedSubAgentCount: 0,
         activeWorkflowRunCount: 0,
-        activeWorkflowAgentCount: 0,
+        runningWorkflowAgentCount: 0,
+        queuedWorkflowAgentCount: 0,
       },
     });
     const rowView = within(row);

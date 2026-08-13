@@ -940,9 +940,11 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
     expect(view.queryByTestId(agentItemTestId("reported-child"))).toBeNull();
     expect(JSON.parse(parentRow.dataset.hiddenSubagents ?? "null")).toEqual({
       subAgentCount: 2,
-      activeSubAgentCount: 1,
+      runningSubAgentCount: 1,
+      queuedSubAgentCount: 0,
       activeWorkflowRunCount: 0,
-      activeWorkflowAgentCount: 0,
+      runningWorkflowAgentCount: 0,
+      queuedWorkflowAgentCount: 0,
     });
     // The delegated activity still reaches the parent row for its live dot.
     expect(parentRow.dataset.delegatedActive).toBe("1");
@@ -1005,9 +1007,11 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       JSON.parse(view.getByTestId(agentItemTestId("parent")).dataset.hiddenSubagents ?? "null")
     ).toEqual({
       subAgentCount: 0,
-      activeSubAgentCount: 0,
+      runningSubAgentCount: 0,
+      queuedSubAgentCount: 0,
       activeWorkflowRunCount: 1,
-      activeWorkflowAgentCount: 2,
+      runningWorkflowAgentCount: 1,
+      queuedWorkflowAgentCount: 1,
       workflowName: "review-pipeline",
     });
   });

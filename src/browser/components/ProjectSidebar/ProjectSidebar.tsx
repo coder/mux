@@ -167,9 +167,11 @@ const MULTI_PROJECT_PINNED_REORDER_GROUP = "\u0000multi-project";
 // object per render.
 const EMPTY_HIDDEN_SUBAGENTS_SUMMARY: WorkspaceSubAgentsSummary = {
   subAgentCount: 0,
-  activeSubAgentCount: 0,
+  runningSubAgentCount: 0,
+  queuedSubAgentCount: 0,
   activeWorkflowRunCount: 0,
-  activeWorkflowAgentCount: 0,
+  runningWorkflowAgentCount: 0,
+  queuedWorkflowAgentCount: 0,
 };
 
 // Re-export WorkspaceSelection for backwards compatibility

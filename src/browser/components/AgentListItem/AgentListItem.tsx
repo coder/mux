@@ -248,14 +248,20 @@ function formatHiddenSubAgentsPresentation(
   ownActiveWorkflowRunCount: number
 ): { icon: LucideIcon; text: string } | null {
   if (summary.activeWorkflowRunCount > 0) {
-    const label =
-      summary.activeWorkflowRunCount === 1 && summary.workflowName != null
-        ? `${summary.workflowName} running`
-        : formatWorkflowRunCount(summary.activeWorkflowRunCount);
-    const agentCount = summary.activeWorkflowAgentCount;
+    const running = summary.runningWorkflowAgentCount;
+    const queued = summary.queuedWorkflowAgentCount;
+    // Queued-only runs must not read as running (parallelism limits can park
+    // every worker), mirroring the delegated-status running/queued split.
+    const verb = running > 0 ? "running" : "queued";
+    const base =
+      summary.activeWorkflowRunCount === 1
+        ? `${summary.workflowName ?? "Workflow"} ${verb}`
+        : `${summary.activeWorkflowRunCount} workflows ${verb}`;
+    const agentCount = running > 0 ? running : queued;
+    const queuedSuffix = running > 0 && queued > 0 ? ` · ${queued} queued` : "";
     return {
       icon: Workflow,
-      text: `${label} (${agentCount} agent${agentCount === 1 ? "" : "s"})`,
+      text: `${base} (${agentCount} agent${agentCount === 1 ? "" : "s"})${queuedSuffix}`,
     };
   }
   // Between sequential workflow steps no worker task exists, but the run is
@@ -264,9 +270,15 @@ function formatHiddenSubAgentsPresentation(
   if (ownActiveWorkflowRunCount > 0) {
     return { icon: Workflow, text: formatWorkflowRunCount(ownActiveWorkflowRunCount) };
   }
-  if (summary.activeSubAgentCount > 0) {
-    const text = `${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"} · ${summary.activeSubAgentCount} active`;
-    return { icon: Bot, text };
+  if (summary.runningSubAgentCount > 0 || summary.queuedSubAgentCount > 0) {
+    const parts = [`${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"}`];
+    if (summary.runningSubAgentCount > 0) {
+      parts.push(`${summary.runningSubAgentCount} active`);
+    }
+    if (summary.queuedSubAgentCount > 0) {
+      parts.push(`${summary.queuedSubAgentCount} queued`);
+    }
+    return { icon: Bot, text: parts.join(" · ") };
   }
   return null;
 }
