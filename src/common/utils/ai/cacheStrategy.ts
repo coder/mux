@@ -4,6 +4,8 @@ import { isGpt56FamilyModel } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { wouldRouteOpenAIThroughCodexOauth } from "@/common/utils/providers/codexOauthRouting";
+import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
 import { getExplicitGatewayPrefix, normalizeToCanonical } from "./models";
 
@@ -17,8 +19,30 @@ export type AnthropicCacheTtl = "5m" | "1h";
 
 /**
  * Check if a model supports Anthropic cache control.
+ *
+ * Coder gateway strings resolve their wire from instance metadata FIRST (raw
+ * identity, before name-based normalization): a custom-named Anthropic
+ * instance (coder:prod-anthropic/<model>) stays gateway-scoped yet speaks
+ * Anthropic on the wire, so cache markers must apply; conversely a canonical
+ * name with a non-Anthropic type must not get them. Without a providersConfig
+ * the name convention (normalizeToCanonical) is the only signal available.
  */
-export function supportsAnthropicCache(modelString: string): boolean {
+export function supportsAnthropicCache(
+  modelString: string,
+  providersConfig?: ProvidersConfigMap | null
+): boolean {
+  if (
+    modelString.startsWith("coder:") &&
+    !isCustomOpenAICompatibleProviderConfig(providersConfig?.coder)
+  ) {
+    const wire = resolveCoderWireCanonicalModel(
+      modelString.slice("coder:".length),
+      providersConfig?.coder
+    );
+    if (wire) {
+      return wire.origin === "anthropic";
+    }
+  }
   const normalized = normalizeToCanonical(modelString);
   // After normalizeToCanonical, all gateway Anthropic models normalize to "anthropic:..."
   // so we only need to check for the "anthropic:" prefix.
@@ -96,10 +120,11 @@ function addCacheControlToLastContentPart(
 export function applyCacheControl(
   messages: ModelMessage[],
   modelString: string,
-  cacheTtl?: AnthropicCacheTtl | null
+  cacheTtl?: AnthropicCacheTtl | null,
+  providersConfig?: ProvidersConfigMap | null
 ): ModelMessage[] {
   // Only apply cache control for Anthropic models
-  if (!supportsAnthropicCache(modelString)) {
+  if (!supportsAnthropicCache(modelString, providersConfig)) {
     return messages;
   }
 
@@ -126,9 +151,10 @@ export function applyCacheControl(
 export function createCachedSystemMessage(
   systemContent: string,
   modelString: string,
-  cacheTtl?: AnthropicCacheTtl | null
+  cacheTtl?: AnthropicCacheTtl | null,
+  providersConfig?: ProvidersConfigMap | null
 ): ModelMessage | null {
-  if (!systemContent || !supportsAnthropicCache(modelString)) {
+  if (!systemContent || !supportsAnthropicCache(modelString, providersConfig)) {
     return null;
   }
 
@@ -291,10 +317,15 @@ export function createOpenAICachedSystemMessage(
 export function applyCacheControlToTools<T extends Record<string, Tool>>(
   tools: T,
   modelString: string,
-  cacheTtl?: AnthropicCacheTtl | null
+  cacheTtl?: AnthropicCacheTtl | null,
+  providersConfig?: ProvidersConfigMap | null
 ): T {
   // Only apply cache control for Anthropic models
-  if (!supportsAnthropicCache(modelString) || !tools || Object.keys(tools).length === 0) {
+  if (
+    !supportsAnthropicCache(modelString, providersConfig) ||
+    !tools ||
+    Object.keys(tools).length === 0
+  ) {
     return tools;
   }
 

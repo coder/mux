@@ -18,6 +18,7 @@ import { convertDataUriFilePartsForSdk } from "@/node/utils/messages/convertData
 import type { MuxMessage } from "@/common/types/message";
 import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
+import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { injectFileAtMentions } from "./fileAtMentions";
@@ -60,6 +61,13 @@ export interface PrepareMessagesOptions {
   effectiveThinkingLevel: ThinkingLevel;
   /** Full model string (used for cache control). */
   modelString: string;
+  /**
+   * Providers config for cache-control eligibility: gateway-scoped Coder
+   * strings (coder:<instance>/<model>) resolve their wire protocol from
+   * instance metadata, so Anthropic cache markers apply to custom-named
+   * Anthropic instances too.
+   */
+  providersConfig?: ProvidersConfigMap | null;
   /** Optional Anthropic cache TTL override for prompt caching. */
   anthropicCacheTtl?: AnthropicCacheTtl | null;
   /** Workspace ID (used only for debug logging). */
@@ -103,6 +111,7 @@ export async function prepareMessagesForProvider(
     providerForMessages,
     effectiveThinkingLevel,
     modelString,
+    providersConfig,
     anthropicCacheTtl,
     workspaceId,
   } = opts;
@@ -197,7 +206,12 @@ export async function prepareMessagesForProvider(
   });
 
   // Apply cache control for Anthropic models AFTER transformation
-  const finalMessages = applyCacheControl(transformedMessages, modelString, anthropicCacheTtl);
+  const finalMessages = applyCacheControl(
+    transformedMessages,
+    modelString,
+    anthropicCacheTtl,
+    providersConfig
+  );
 
   log.debug_obj(`${workspaceId}/3_final_messages.json`, finalMessages);
 

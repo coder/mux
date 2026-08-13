@@ -2433,6 +2433,7 @@ export class AIService extends EventEmitter {
         providerForMessages: wireProviderName,
         effectiveThinkingLevel,
         modelString,
+        providersConfig: this.providerService.getConfig(),
         anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
@@ -2908,6 +2909,7 @@ export class AIService extends EventEmitter {
                     providerForMessages: next.wireProviderName,
                     effectiveThinkingLevel: nextThinkingLevel,
                     modelString: next.canonicalModelString,
+                    providersConfig: this.providerService.getConfig(),
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
                     workspaceId,
                   });

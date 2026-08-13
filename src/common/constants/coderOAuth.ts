@@ -161,6 +161,59 @@ export function resolveCoderWireCanonicalModel(
 }
 
 /**
+ * Capability/metadata identity for a Coder gateway model ID: the canonical
+ * model whose pricing, context-window, and capability data describe the
+ * instance's upstream. Distinct from the WIRE identity above — a google-typed
+ * instance speaks OpenAI-chat on the wire, but its models are priced and
+ * sized as google:<model>. Keying stats on the gateway-scoped string instead
+ * leaves the model unpriced (budgeted goals reject it) and without context
+ * limits (no limit-driven compaction). Returns null when the upstream's
+ * catalog identity cannot be known (openai-compat fronts arbitrary
+ * upstreams), so callers keep the gateway-scoped string.
+ */
+export function resolveCoderMetadataCanonicalModel(
+  gatewayModelId: string,
+  metadata?: { discoveredProviders?: unknown; additionalProviders?: unknown }
+): string | null {
+  const separatorIndex = gatewayModelId.indexOf("/");
+  if (separatorIndex <= 0 || separatorIndex === gatewayModelId.length - 1) {
+    return null;
+  }
+  const provider = resolveCoderGatewayProvider(
+    gatewayModelId.slice(0, separatorIndex),
+    parseCoderGatewayProviders(metadata?.discoveredProviders),
+    parseCoderGatewayProviders(metadata?.additionalProviders)
+  );
+  if (!provider) {
+    return null;
+  }
+  const modelId = gatewayModelId.slice(separatorIndex + 1);
+  switch (provider.type) {
+    case "anthropic":
+    case "openai":
+    case "google":
+    case "azure":
+    case "bedrock":
+    case "openrouter":
+      // Azure/Bedrock/OpenRouter model IDs match the pricing catalogs under
+      // their own provider prefixes (bedrock's anthropic.<model> IDs also
+      // canonicalize to anthropic:<model> through the bedrock gateway rules).
+      return `${provider.type}:${modelId}`;
+    // Vercel AI Gateway model IDs are vendor/model; the vendor is the
+    // catalog identity when it is a known provider.
+    case "vercel": {
+      const vendorSeparator = modelId.indexOf("/");
+      return vendorSeparator > 0 && vendorSeparator < modelId.length - 1
+        ? `${modelId.slice(0, vendorSeparator)}:${modelId.slice(vendorSeparator + 1)}`
+        : null;
+    }
+    default:
+      // openai-compat fronts arbitrary upstreams; copilot is unsupported.
+      return null;
+  }
+}
+
+/**
  * Resolve a model-ID prefix to the gateway provider it addresses:
  * user-configured entries win (escape hatch for custom-named providers on
  * deployments where the member cannot list providers), then the discovered

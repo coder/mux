@@ -219,4 +219,26 @@ describe("getModelStatsResolved", () => {
   test("returns null for unmapped unknown models", () => {
     expect(getModelStatsResolved("ollama:custom", null)).toBeNull();
   });
+
+  // Gateway-scoped Coder models must price/size as their upstream: otherwise
+  // budgeted goals reject them as unpriced and context limits stay unknown.
+  test("resolves gateway-scoped Coder models through the instance type", () => {
+    const sonnetModelId = KNOWN_MODELS.SONNET.id.split(":")[1];
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "prod-anthropic", type: "anthropic" }],
+      },
+    };
+
+    expect(getModelStatsResolved(`coder:prod-anthropic/${sonnetModelId}`, config)).toEqual(
+      expectStats(KNOWN_MODELS.SONNET.id)
+    );
+    // Without instance metadata the name === type default still applies.
+    expect(getModelStatsResolved(`coder:anthropic/${sonnetModelId}`, config)).toEqual(
+      expectStats(KNOWN_MODELS.SONNET.id)
+    );
+  });
 });

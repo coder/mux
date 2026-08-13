@@ -46,6 +46,71 @@ describe("resolveModelForMetadata", () => {
   });
 });
 
+describe("resolveModelForMetadata for Coder gateway-scoped models", () => {
+  // Gateway-scoped strings carry no catalog identity: pricing/context/cache
+  // lookups must target the instance's upstream, derived from its type.
+  const coderConfig: ProvidersConfigMap = {
+    coder: {
+      apiKeySet: false,
+      isEnabled: true,
+      isConfigured: true,
+      discoveredProviders: [
+        { name: "prod-anthropic", type: "anthropic" },
+        { name: "google", type: "google" },
+        { name: "llm-proxy", type: "openai-compat" },
+      ],
+    },
+  };
+
+  test("custom-named anthropic instance resolves to the anthropic catalog", () => {
+    expect(resolveModelForMetadata("coder:prod-anthropic/claude-sonnet-4-5", coderConfig)).toBe(
+      "anthropic:claude-sonnet-4-5"
+    );
+  });
+
+  test("default-named instance of another direct provider resolves to its catalog", () => {
+    expect(resolveModelForMetadata("coder:google/gemini-3-pro", coderConfig)).toBe(
+      "google:gemini-3-pro"
+    );
+  });
+
+  test("openai-compat instances stay gateway-scoped (unknowable upstream)", () => {
+    expect(resolveModelForMetadata("coder:llm-proxy/some-model", coderConfig)).toBe(
+      "coder:llm-proxy/some-model"
+    );
+  });
+
+  test("explicit mappedToModel override wins over type derivation", () => {
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "prod-anthropic", type: "anthropic" }],
+        models: [{ id: "prod-anthropic/tuned-claude", mappedToModel: "anthropic:claude-opus-4-5" }],
+      },
+    };
+    expect(resolveModelForMetadata("coder:prod-anthropic/tuned-claude", config)).toBe(
+      "anthropic:claude-opus-4-5"
+    );
+  });
+
+  test("custom OpenAI-compatible provider named coder keeps its own identity", () => {
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        providerType: "openai-compatible",
+        baseUrl: "https://proxy.example.com/v1",
+      },
+    };
+    expect(resolveModelForMetadata("coder:anthropic/claude-opus-4-5", config)).toBe(
+      "coder:anthropic/claude-opus-4-5"
+    );
+  });
+});
+
 describe("gateway-scoped provider model entry lookup", () => {
   test("getModelContextWindowOverride honors gateway-scoped contextWindowTokens", () => {
     const config: ProvidersConfigMap = {

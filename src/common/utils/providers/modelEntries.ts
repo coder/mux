@@ -1,5 +1,7 @@
 import type { ProviderModelEntry } from "@/common/orpc/types";
+import { resolveCoderMetadataCanonicalModel } from "@/common/constants/coderOAuth";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 
 export type ProviderModelsConfig = Record<string, { models?: ProviderModelEntry[] } | undefined>;
 
@@ -127,7 +129,39 @@ export function resolveModelForMetadata(
   providersConfig: ProviderModelsConfig | null
 ): string {
   const entry = findProviderModelEntryScoped(fullModelId, providersConfig);
-  return (entry ? getProviderModelEntryMappedTo(entry) : null) ?? fullModelId;
+  const mapped = entry ? getProviderModelEntryMappedTo(entry) : null;
+  if (mapped != null) {
+    // Explicit user override always wins.
+    return mapped;
+  }
+  return resolveCoderGatewayMetadataModel(fullModelId, providersConfig) ?? fullModelId;
+}
+
+/**
+ * Gateway-scoped Coder strings (coder:<instance>/<model>) carry no catalog
+ * identity of their own: pricing, context-window, and tokenizer lookups must
+ * target the instance's upstream, derived from its provider type. Without
+ * this, auto-discovered gateway models are unpriced (budgeted goals reject
+ * them) and have unknown context limits (no limit-driven compaction).
+ * Routing identity is unaffected — only metadata consumers see this mapping.
+ */
+function resolveCoderGatewayMetadataModel(
+  fullModelId: string,
+  providersConfig: ProviderModelsConfig | null
+): string | null {
+  if (!fullModelId.startsWith("coder:")) {
+    return null;
+  }
+  const coderSection = providersConfig?.coder;
+  // A custom OpenAI-compatible provider named "coder" owns the prefix; its
+  // model IDs are their own identity (no gateway metadata applies).
+  if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
+    return null;
+  }
+  return resolveCoderMetadataCanonicalModel(
+    fullModelId.slice("coder:".length),
+    coderSection as { discoveredProviders?: unknown; additionalProviders?: unknown } | undefined
+  );
 }
 
 function parseModelId(rawValue: unknown): string | null {

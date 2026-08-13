@@ -51,6 +51,28 @@ describe("cacheStrategy", () => {
       expect(supportsAnthropicCache("openrouter:meta-llama/llama-3.1")).toBe(false);
       expect(supportsAnthropicCache("mux-gateway:openai/gpt-5.2")).toBe(false);
     });
+
+    // Coder gateway instances: the wire comes from instance metadata, not the
+    // instance name. Custom-named Anthropic instances must get cache markers;
+    // cross-typed canonical names must not.
+    it("resolves Coder gateway instances through their metadata type", () => {
+      const config = {
+        coder: {
+          apiKeySet: false,
+          isEnabled: true,
+          isConfigured: true,
+          discoveredProviders: [
+            { name: "prod-anthropic", type: "anthropic" },
+            { name: "anthropic", type: "openai-compat" },
+          ],
+        },
+      };
+      expect(supportsAnthropicCache("coder:prod-anthropic/claude-opus-4-5", config)).toBe(true);
+      expect(supportsAnthropicCache("coder:anthropic/gpt-5", config)).toBe(false);
+      // Without metadata, the name === type default applies.
+      expect(supportsAnthropicCache("coder:anthropic/claude-opus-4-5")).toBe(true);
+      expect(supportsAnthropicCache("coder:unknown-instance/model", config)).toBe(false);
+    });
   });
 
   describe("applyCacheControl", () => {
