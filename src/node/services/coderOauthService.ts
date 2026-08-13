@@ -10,6 +10,7 @@ import {
   CODER_AI_PROVIDERS_PATH,
   CODER_BUILDINFO_PATH,
   CODER_GATEWAY_DEFAULT_PROVIDER_NAMES,
+  coderGatewayWireProtocol,
   parseCoderGatewayProviders,
   CODER_OAUTH_CALLBACK_PATH,
   CODER_OAUTH_DISCOVERY_PATH,
@@ -1706,16 +1707,24 @@ export class CoderOauthService {
    */
   private async fetchProviderCatalog(
     auth: CoderOauthAuth,
-    providerName: string
+    provider: CoderGatewayProvider
   ): Promise<{ kind: "ok"; ids: string[] } | { kind: "unavailable" } | { kind: "error" }> {
+    const providerName = provider.name;
     try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${auth.access}`,
+        Accept: "application/json",
+      };
+      // /v1/models is a passthrough: Anthropic-wire upstreams reject requests
+      // without the required anthropic-version header with a conclusive 400,
+      // which would read as "no models" and hide every Anthropic model.
+      if (coderGatewayWireProtocol(provider.type) === "anthropic") {
+        headers["anthropic-version"] = "2023-06-01";
+      }
       const response = await fetch(
         `${coderAibridgeBaseUrl(auth.deploymentUrl, providerName)}/models`,
         {
-          headers: {
-            Authorization: `Bearer ${auth.access}`,
-            Accept: "application/json",
-          },
+          headers,
           signal: AbortSignal.timeout(CATALOG_FETCH_TIMEOUT_MS),
         }
       );
@@ -1826,7 +1835,7 @@ export class CoderOauthService {
     const results = await Promise.all(
       providers.map(async (provider) => ({
         provider,
-        result: await this.retryTransient(() => this.fetchProviderCatalog(auth, provider.name)),
+        result: await this.retryTransient(() => this.fetchProviderCatalog(auth, provider)),
       }))
     );
 

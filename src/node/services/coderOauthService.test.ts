@@ -4313,6 +4313,42 @@ describe("CoderOauthService", () => {
       expect(coderSection.discoveredProviders).toEqual([{ name: "anthropic", type: "anthropic" }]);
     });
 
+    it("sends the required anthropic-version header to Anthropic-wire providers only", async () => {
+      // The gateway passes /v1/models straight through; Anthropic rejects the
+      // request with a conclusive 400 without this header, which would read
+      // as an authoritatively empty catalog and hide every Anthropic model.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      const versionHeaders = new Map<string, string | null>();
+      mockFetch((input, init) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([
+              { name: "anthropic", type: "anthropic", enabled: true },
+              { name: "aws", type: "bedrock", enabled: true },
+              { name: "openai", type: "openai", enabled: true },
+            ])
+          );
+        }
+        const match = /\/api\/v2\/aibridge\/([^/]+)\/v1\/models$/.exec(url);
+        if (match) {
+          versionHeaders.set(match[1], new Headers(init?.headers).get("anthropic-version"));
+          return Promise.resolve(jsonResponse({ data: [{ id: "m" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+
+      expect(versionHeaders.get("anthropic")).toBe("2023-06-01");
+      expect(versionHeaders.get("aws")).toBe("2023-06-01");
+      expect(versionHeaders.get("openai")).toBeNull();
+    });
+
     it("probes user-declared additionalProviders when the listing is unavailable", async () => {
       deps.providersConfig = {
         coder: {
