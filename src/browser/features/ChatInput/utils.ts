@@ -9,7 +9,7 @@ import {
 import { resolveSkillUserInvocable } from "@/common/orpc/schemas/agentSkill";
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
-import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpToolName";
+import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpPromptCommandKey";
 import type { ParsedRuntime } from "@/common/types/runtime";
 import {
   buildAgentSkillMetadata,

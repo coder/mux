@@ -23,10 +23,6 @@ export function normalizeMcpToolNamePart(input: string): string {
   return normalized.length > 0 ? normalized : DEFAULT_MCP_TOOL_NAME_PART;
 }
 
-export function isMcpPromptCommandKey(value: string): boolean {
-  return /^mcp__[a-z0-9_]+$/.test(value);
-}
-
 export interface BuildMcpPromptCommandKeyOptions {
   serverName: string;
   promptName: string;

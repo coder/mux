@@ -4,7 +4,7 @@ import { SkillNameSchema, resolveSkillUserInvocable } from "@/common/orpc/schema
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { AgentSkillReference } from "@/common/types/message";
 import { dedupeAgentSkillRefs } from "@/common/types/message";
-import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpToolName";
+import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpPromptCommandKey";
 import {
   collectCodeRanges,
   isCursorInsideCodeRange,

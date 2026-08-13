@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 import { uniqueSuffix } from "@/common/utils/hasher";
 
+import { isMcpPromptCommandKey } from "./mcpPromptCommandKey";
 import {
   buildMcpPromptCommandKey,
   buildMcpToolName,
-  isMcpPromptCommandKey,
   normalizeMcpToolNamePart,
 } from "./mcpToolName";
 
