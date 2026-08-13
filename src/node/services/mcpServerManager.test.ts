@@ -1292,6 +1292,69 @@ describe("MCPServerManager", () => {
     expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("not connected");
   });
 
+  test("serializes cold-start server startup across concurrent workspace requests", async () => {
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const startServersMock = mock(async () => {
+      await startGate;
+      return startResult([["coder"]]);
+    });
+    access.startServers = startServersMock;
+
+    const first = manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    const second = manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    releaseStart();
+    await Promise.all([first, second]);
+
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("getPrompt re-evaluates current config before invoking a cached prompt", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock((servers: unknown) => {
+      const names = Object.keys(servers as Record<string, unknown>);
+      return Promise.resolve(
+        startResult(
+          names.map((name) => [name, { getPrompt }] as [string, { getPrompt: typeof getPrompt }])
+        )
+      );
+    });
+
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({ text: "Status" });
+
+    // Settings removes the server after the prompt reference was composed.
+    configService.listServers = mock(() => Promise.resolve({}));
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("disabled");
+    expect(getPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("getPrompt rejects promptly when aborted during refresh startup", async () => {
+    access.lastWorkspaceRequestOptions.set("workspace", workspaceRequest("workspace"));
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
+      () => new Promise<never>(() => undefined)
+    );
+    const controller = new AbortController();
+    const promptPromise = manager.getPrompt(
+      "workspace",
+      "coder",
+      "status",
+      {},
+      { signal: controller.signal }
+    );
+    controller.abort();
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(promptPromise).rejects.toThrow("was aborted");
+    getToolsSpy.mockRestore();
+  });
+
   test("flattens audio and binary resources as omission markers", () => {
     expect(
       flattenMcpPrompt({

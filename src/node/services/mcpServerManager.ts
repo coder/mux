@@ -45,6 +45,8 @@ import {
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
+import { MutexMap } from "@/node/utils/concurrency/mutexMap";
+import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -862,6 +864,7 @@ export class MCPServerManager {
   // Survives idle cleanup so an explicit prompt invocation can revive reaped
   // servers at send time; forgotten only on workspace removal.
   private readonly lastWorkspaceRequestOptions = new Map<string, MCPWorkspaceRequestOptions>();
+  private readonly workspaceColdStartLocks = new MutexMap<string>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
    * Cached per-server protocol era verdicts, keyed by server config
@@ -1232,6 +1235,22 @@ export class MCPServerManager {
   }
 
   async getToolsForWorkspace(
+    options: MCPWorkspaceRequestOptions
+  ): Promise<MCPToolsForWorkspaceResult> {
+    // Cold start can race: composer prompt discovery and stream tool startup
+    // may both observe no cached entry, start duplicate servers, and the
+    // loser's entry would be overwritten without closing its instances.
+    // Serialize only that case; entry-present flows keep their existing
+    // concurrency semantics (leased deferred restarts, mid-retry replacement).
+    if (!this.workspaceServers.has(options.workspaceId)) {
+      return this.workspaceColdStartLocks.withLock(options.workspaceId, () =>
+        this.getToolsForWorkspaceImpl(options)
+      );
+    }
+    return this.getToolsForWorkspaceImpl(options);
+  }
+
+  private async getToolsForWorkspaceImpl(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPToolsForWorkspaceResult> {
     const {
@@ -1706,20 +1725,28 @@ export class MCPServerManager {
     args: Record<string, string>,
     options?: { signal?: AbortSignal }
   ): Promise<{ text: string; description?: string }> {
-    const currentEntry = this.workspaceServers.get(workspaceId);
-    if (currentEntry && !currentEntry.enabledServerNames.has(serverName)) {
-      throw new Error(`MCP server '${serverName}' is disabled`);
-    }
-    let instance = currentEntry?.instances.get(serverName);
-    if (!instance || instance.isClosed) {
-      // Idle cleanup may have reaped the client between composing the reference
-      // and sending; revive so the explicitly selected prompt is not dropped.
-      const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
-      if (lastOptions) {
-        await this.getToolsForWorkspace(lastOptions);
-        instance = this.workspaceServers.get(workspaceId)?.instances.get(serverName);
+    // Re-evaluate current config before invoking: Settings mutations (global or
+    // project add/remove/disable/edit) persist without touching this cache, so
+    // a cached instance could otherwise serve a disabled or stale server. The
+    // refresh recomputes enablement, restarts servers whose config changed, and
+    // revives instances reaped by idle cleanup. Racing the caller's signal
+    // keeps an interrupted send from blocking on sequential server startup; a
+    // startup that loses the race still completes into the cache, so its
+    // instances stay tracked for idle cleanup rather than leaking.
+    const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
+    if (lastOptions) {
+      const refreshed = await raceWithAbortAndTimeout(this.getToolsForWorkspace(lastOptions), {
+        ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+      });
+      if (refreshed.kind === "aborted") {
+        throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
       }
     }
+    const entry = this.workspaceServers.get(workspaceId);
+    if (entry && !entry.enabledServerNames.has(serverName)) {
+      throw new Error(`MCP server '${serverName}' is disabled`);
+    }
+    const instance = entry?.instances.get(serverName);
     if (!instance || instance.isClosed) {
       throw new Error(`MCP server '${serverName}' is not connected`);
     }
