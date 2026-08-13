@@ -3656,6 +3656,77 @@ describe("AIService.streamMessage model parameter overrides", () => {
     });
   });
 
+  it("keeps type-derived standard settings but drops wire-mismatched extras for Coder instances", async () => {
+    // coder:google/<model> resolves overrides from the google block (instance
+    // TYPE), but the request speaks OpenAI-chat on the wire: standard call
+    // settings are SDK-agnostic and must apply, while Google-SDK-shaped
+    // extras must NOT merge into the OpenAI namespace.
+    using muxHome = new DisposableTempDir("ai-service-model-overrides-coder-wire-mismatch");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-model-overrides-coder-wire-mismatch";
+    const modelString = "coder:google/gemini-3-pro";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { routeProvider: "coder" });
+
+    const providerModelFactory = Reflect.get(
+      harness.service,
+      "providerModelFactory"
+    ) as ProviderModelFactory;
+    const fakeModel = Object.create(null) as LanguageModel;
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: fakeModel,
+        effectiveModelString: modelString,
+        canonicalModelString: modelString,
+        canonicalProviderName: "coder",
+        canonicalModelId: "google/gemini-3-pro",
+        wireProviderName: "openai",
+        routedThroughGateway: false,
+        routeProvider: "coder",
+      },
+    });
+
+    const providersConfig = {
+      google: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        modelParameters: {
+          "*": {
+            max_output_tokens: 2048,
+            googleRoutingHint: { region: "us" },
+          },
+        },
+      },
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "google", type: "google" }],
+      },
+    };
+    spyOn(harness.config, "loadProvidersConfig").mockReturnValue(providersConfig);
+    const providerService = Reflect.get(harness.service, "providerService") as ProviderService;
+    spyOn(providerService, "getConfig").mockReturnValue(providersConfig);
+
+    spyOn(providerOptionsModule, "buildProviderOptions").mockReturnValue({
+      openai: { reasoningEffort: "low" },
+    });
+
+    const startStreamArgs = await streamAndGetStartStreamArgs(harness, workspaceId, modelString);
+    // Standard settings from the google block still apply (SDK-agnostic).
+    expect(callSettingsOverridesFromStartStreamCall(startStreamArgs)).toEqual({
+      maxOutputTokens: 2048,
+    });
+    // The Google-shaped extra did not leak into the OpenAI wire namespace.
+    expect(providerOptionsFromStartStreamCall(startStreamArgs)).toEqual({
+      openai: { reasoningEffort: "low" },
+    });
+  });
+
   it("passes empty call settings overrides when providers config is empty", async () => {
     using muxHome = new DisposableTempDir("ai-service-model-overrides-empty");
     const projectPath = path.join(muxHome.path, "project");

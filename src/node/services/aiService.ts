@@ -2565,7 +2565,7 @@ export class AIService extends EventEmitter {
         rawModelString: string,
         canonical: string,
         canonicalProvider: string
-      ): { providerName: string; modelString: string } => {
+      ): { providerName: string; modelString: string; coderDerived: boolean } => {
         const metadataCanonical = rawModelString.startsWith("coder:")
           ? resolveCoderGatewayMetadataModel(rawModelString, this.providerService.getConfig())
           : null;
@@ -2574,6 +2574,7 @@ export class AIService extends EventEmitter {
         return {
           providerName: separator > 0 ? identity.slice(0, separator) : canonicalProvider,
           modelString: identity,
+          coderDerived: metadataCanonical != null,
         };
       };
       const overridesIdentity = resolveOverridesIdentity(
@@ -2601,10 +2602,22 @@ export class AIService extends EventEmitter {
         wireProviderName,
         routeProvider
       );
+      // Wire-compat gate for provider extras: standard call settings
+      // (temperature, maxOutputTokens, ...) are SDK-agnostic, but extras are
+      // shaped for the override block's own SDK namespace. A type-derived
+      // Coder identity whose native provider differs from the wire SDK
+      // (coder:openrouter/... or coder:google/... speak OpenAI-chat on the
+      // wire) must not merge OpenRouter/Google-shaped extras into the OpenAI
+      // namespace, where the SDK would reject or silently drop them.
+      // Anthropic/openai-typed instances match their wire and keep extras;
+      // non-Coder identities keep existing behavior.
+      const extrasWireCompatible =
+        !overridesIdentity.coderDerived ||
+        overridesIdentity.providerName === providerOptionsNamespaceKey;
       const mergeModelParameterExtras = (
         builtOptions: Record<string, unknown>
       ): Record<string, unknown> => {
-        if (!resolvedOverrides.providerExtras) {
+        if (!resolvedOverrides.providerExtras || !extrasWireCompatible) {
           return builtOptions;
         }
         const muxProviderNamespace = builtOptions[providerOptionsNamespaceKey];
@@ -3012,12 +3025,18 @@ export class AIService extends EventEmitter {
                     next.wireProviderName,
                     next.routeProvider
                   );
+                  // Same wire-compat gate as the main path: type-derived
+                  // extras only merge when the override block's SDK matches
+                  // the wire namespace.
+                  const nextExtrasWireCompatible =
+                    !nextOverridesIdentity.coderDerived ||
+                    nextOverridesIdentity.providerName === nextNamespaceKey;
                   // Mirrors mergeModelParameterExtras for the fallback model;
                   // shared by this baseline build and mid-turn rebuilds below.
                   const mergeNextModelParameterExtras = (
                     builtOptions: Record<string, unknown>
                   ): Record<string, unknown> => {
-                    if (!nextOverrides.providerExtras) {
+                    if (!nextOverrides.providerExtras || !nextExtrasWireCompatible) {
                       return builtOptions;
                     }
                     const nextMuxNamespace = builtOptions[nextNamespaceKey];
