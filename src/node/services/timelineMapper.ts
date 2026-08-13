@@ -123,7 +123,11 @@ function isUnloggedMachineTurn(
   if (metadata?.synthetic !== true) {
     return false;
   }
-  if (metadata.agentSkillSnapshot != null || metadata.fileAtMentionSnapshot != null) {
+  if (
+    metadata.agentSkillSnapshot != null ||
+    metadata.fileAtMentionSnapshot != null ||
+    metadata.mcpPromptSnapshot != null
+  ) {
     return true;
   }
   if (metadata.kind === GOAL_CONTINUATION_KIND || metadata.kind === GOAL_BUDGET_LIMIT_KIND) {

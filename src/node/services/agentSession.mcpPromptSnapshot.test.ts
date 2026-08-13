@@ -1,4 +1,5 @@
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { createMuxMessage } from "@/common/types/message";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createAgentSessionHarness } from "@/node/services/agentSession.testHarness";
 
@@ -133,6 +134,48 @@ describe("AgentSession MCP prompt snapshots", () => {
       if (!history.success) throw new Error(history.error);
       expect(history.data).toHaveLength(1);
       expect(history.data[0]?.metadata?.mcpPromptSnapshot).toBeUndefined();
+    } finally {
+      harness.session.dispose();
+      await harness.cleanup();
+    }
+  });
+
+  test("truncates edits starting from the preceding prompt snapshot", async () => {
+    const harness = await createAgentSessionHarness({ workspaceId: "workspace" });
+
+    try {
+      const snapshotId = "mcp-prompt-snapshot-0";
+      const userMessageId = "user-0";
+      await harness.historyService.appendToHistory(
+        "workspace",
+        createMuxMessage(snapshotId, "user", "Expanded prompt", {
+          historySequence: 0,
+          synthetic: true,
+          mcpPromptSnapshot: {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+          },
+        })
+      );
+      await harness.historyService.appendToHistory(
+        "workspace",
+        createMuxMessage(userMessageId, "user", "Using MCP prompt coder/review: src", {
+          historySequence: 1,
+          muxMetadata: promptMetadata(),
+        })
+      );
+
+      const truncateAfterMessage = spyOn(harness.historyService, "truncateAfterMessage");
+      const result = await harness.session.sendMessage("edited", {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+        editMessageId: userMessageId,
+      });
+
+      expect(result.success).toBe(true);
+      expect(truncateAfterMessage.mock.calls).toHaveLength(1);
+      expect(truncateAfterMessage.mock.calls[0][1]).toBe(snapshotId);
     } finally {
       harness.session.dispose();
       await harness.cleanup();

@@ -71,6 +71,7 @@ import {
   pickStartupRetrySendOptions,
   prepareUserMessageForSend,
   type AgentSkillReference,
+  isSyntheticSnapshotUserMessage,
   type CompactionFollowUpRequest,
   type MuxMessageMetadata,
   type MuxFilePart,
@@ -1309,15 +1310,6 @@ export class AgentSession {
     );
   }
 
-  private isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
-    return (
-      message.role === "user" &&
-      message.metadata?.synthetic === true &&
-      (message.metadata.fileAtMentionSnapshot !== undefined ||
-        message.metadata.agentSkillSnapshot !== undefined)
-    );
-  }
-
   private isSyntheticGoalPauseBoundaryMessage(message: MuxMessage): boolean {
     return (
       message.role === "user" &&
@@ -1338,7 +1330,7 @@ export class AgentSession {
     let truncateTargetId = editMessageId;
     for (let i = editIndex - 1; i >= 0; i -= 1) {
       const message = messages[i];
-      if (!this.isSyntheticSnapshotUserMessage(message)) {
+      if (!isSyntheticSnapshotUserMessage(message)) {
         break;
       }
       truncateTargetId = message.id;
@@ -1383,7 +1375,7 @@ export class AgentSession {
       if (this.isSyntheticGoalPauseBoundaryMessage(candidate)) {
         continue;
       }
-      if (this.isSyntheticSnapshotUserMessage(candidate)) {
+      if (isSyntheticSnapshotUserMessage(candidate)) {
         continue;
       }
       return candidate;
@@ -1508,7 +1500,7 @@ export class AgentSession {
     if (this.isSyntheticGoalPauseBoundaryMessage(message)) {
       return false;
     }
-    if (this.isSyntheticSnapshotUserMessage(message)) {
+    if (isSyntheticSnapshotUserMessage(message)) {
       return false;
     }
 

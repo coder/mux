@@ -19,6 +19,10 @@ function send(message) {
 
 const SERVER_INFO = { name: "mux-test-screenshot-mcp", version: "0.0.0" };
 
+// Simulates a conforming prompt-only server: advertises no tools capability and
+// rejects tools/list outright.
+const PROMPTS_ONLY = process.argv.includes("--prompts-only");
+
 const TOOLS = [
   {
     name: "take_screenshot",
@@ -83,7 +87,7 @@ rl.on("line", (line) => {
           id,
           result: {
             protocolVersion,
-            capabilities: { tools: {}, prompts: {} },
+            capabilities: PROMPTS_ONLY ? { prompts: {} } : { tools: {}, prompts: {} },
             serverInfo: SERVER_INFO,
           },
         });
@@ -91,12 +95,29 @@ rl.on("line", (line) => {
       }
 
       case "tools/list": {
+        if (PROMPTS_ONLY) {
+          send({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32601, message: "Method not found: tools/list" },
+          });
+          return;
+        }
         send({ jsonrpc: "2.0", id, result: { tools: TOOLS } });
         return;
       }
 
       case "prompts/list": {
-        send({ jsonrpc: "2.0", id, result: { prompts: PROMPTS } });
+        // One prompt per page so integration tests pin whole-catalog pagination.
+        const cursor = message.params?.cursor;
+        const index = cursor === undefined ? 0 : Number.parseInt(cursor, 10);
+        const prompts = PROMPTS.slice(index, index + 1);
+        const nextCursor = index + 1 < PROMPTS.length ? String(index + 1) : undefined;
+        send({
+          jsonrpc: "2.0",
+          id,
+          result: { prompts, ...(nextCursor !== undefined ? { nextCursor } : {}) },
+        });
         return;
       }
 

@@ -21,6 +21,7 @@ import type { Tool } from "ai";
 
 interface MCPServerManagerTestAccess {
   workspaceServers: Map<string, unknown>;
+  lastWorkspaceRequestOptions: Map<string, unknown>;
   cleanupIdleServers: () => void;
   startServers: (...args: unknown[]) => Promise<{
     instances: Map<string, unknown>;
@@ -1197,6 +1198,30 @@ describe("MCPServerManager", () => {
       text: "Review src\n\n[assistant]\nUse the guide\n\n[assistant]\n[Image content omitted]",
     });
     expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" });
+  });
+
+  test("getPrompt revives reaped servers from the last workspace request options", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
+    );
+    const request = workspaceRequest("workspace");
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(() => {
+      access.workspaceServers.set("workspace", {
+        instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+      });
+      return Promise.resolve({ tools: {}, stats: cachedStats() });
+    });
+    access.lastWorkspaceRequestOptions.set("workspace", request);
+
+    expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({
+      text: "Status",
+    });
+    expect(getToolsSpy).toHaveBeenCalledWith(request);
+    getToolsSpy.mockRestore();
+  });
+
+  test("getPrompt fails when the server is gone and no restart options are cached", () => {
+    expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("not connected");
   });
 
   test("flattens audio and binary resources as omission markers", () => {

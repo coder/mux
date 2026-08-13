@@ -24,8 +24,8 @@ import {
 import type { GoalBoardEntry, GoalBoardSnapshot, GoalBoardV1 } from "@/common/types/goal";
 import {
   createMuxMessage,
+  isSyntheticSnapshotUserMessage,
   pickStartupRetrySendOptions,
-  type MuxMessage,
 } from "@/common/types/message";
 import type { ProvidersConfigMap, SendMessageOptions } from "@/common/orpc/types";
 import { isWorkspaceArchived } from "@/common/utils/archive";
@@ -475,15 +475,6 @@ export class WorkspaceGoalService {
     this.streamInterrupter = interrupter;
   }
 
-  private isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
-    return (
-      message.role === "user" &&
-      message.metadata?.synthetic === true &&
-      (message.metadata.fileAtMentionSnapshot !== undefined ||
-        message.metadata.agentSkillSnapshot !== undefined)
-    );
-  }
-
   private async readChatTailGoalMode(workspaceId: string): Promise<ChatTailGoalModeResult> {
     const historyResult = await this.historyService.getLastMessages(workspaceId, 100);
     if (!historyResult.success) {
@@ -500,7 +491,7 @@ export class WorkspaceGoalService {
 
     for (let index = historyResult.data.length - 1; index >= 0; index -= 1) {
       const message = historyResult.data[index];
-      if (message.role !== "user" || this.isSyntheticSnapshotUserMessage(message)) {
+      if (message.role !== "user" || isSyntheticSnapshotUserMessage(message)) {
         continue;
       }
 

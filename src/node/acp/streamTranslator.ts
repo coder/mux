@@ -344,9 +344,9 @@ export class StreamTranslator {
     event: Extract<WorkspaceChatMessage, { type: "message" }>,
     isReplayPhase: boolean
   ): UserMessageForwarding {
-    // Agent skill snapshots are synthetic context injections (<agent-skill ...>)
+    // Agent skill and MCP prompt snapshots are synthetic context injections
     // and should never be surfaced to ACP clients as user-visible text.
-    if (event.metadata?.agentSkillSnapshot != null) {
+    if (event.metadata?.agentSkillSnapshot != null || event.metadata?.mcpPromptSnapshot != null) {
       return { kind: "suppress" };
     }
 

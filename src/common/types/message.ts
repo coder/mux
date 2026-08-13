@@ -956,6 +956,21 @@ export interface QueuedMessage {
   hasCompactionRequest?: boolean;
 }
 
+/**
+ * Synthetic snapshot rows (file @-mention, agent skill, MCP prompt) that precede
+ * a user message. Edit truncation and history scans must treat them as part of
+ * the user message they annotate, so every snapshot kind must be listed here.
+ */
+export function isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
+  return (
+    message.role === "user" &&
+    message.metadata?.synthetic === true &&
+    (message.metadata.fileAtMentionSnapshot !== undefined ||
+      message.metadata.agentSkillSnapshot !== undefined ||
+      message.metadata.mcpPromptSnapshot !== undefined)
+  );
+}
+
 // Helper to create a simple text message
 export function createMuxMessage(
   id: string,

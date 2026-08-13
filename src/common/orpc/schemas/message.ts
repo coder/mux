@@ -192,6 +192,14 @@ export const MuxMessageSchema = z.object({
           frontmatterYaml: z.string().optional(),
         })
         .optional(),
+      mcpPromptSnapshot: z
+        .object({
+          serverName: z.string(),
+          promptName: z.string(),
+          commandKey: z.string(),
+          description: z.string().optional(),
+        })
+        .optional(),
       // Marks the hidden @file snapshot turn, which the timeline skips as context plumbing.
       fileAtMentionSnapshot: z.array(z.string()).optional(),
       error: z.string().optional(),

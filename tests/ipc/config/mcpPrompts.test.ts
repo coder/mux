@@ -29,6 +29,14 @@ describeIntegration("MCP prompts", () => {
           { name: "focus", description: "Optional review focus", required: false },
         ],
       });
+      // The fixture serves prompts/list one prompt per page; status lives on
+      // page two, so its presence pins whole-catalog pagination.
+      expect(prompts).toContainEqual({
+        commandKey: "mcp__prompt_server__status",
+        serverName: "prompt server",
+        promptName: "status",
+        description: "Build a no-argument status prompt for tests.",
+      });
 
       const sendResult = await sendMessageWithModel(
         env,
@@ -63,6 +71,28 @@ describeIntegration("MCP prompts", () => {
       expect(snapshot?.parts.find((part) => part.type === "text")?.text).toBe(
         "Review src with focus on security"
       );
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("lists prompts from a server without the tools capability", async () => {
+    const { env, workspaceId, cleanup } = await setupWorkspaceWithoutProvider("mcp-prompts-only");
+    env.services.aiService.enableMockMode();
+    const client = resolveOrpcClient(env);
+
+    try {
+      const addResult = await client.mcp.add({
+        name: "prompt only",
+        command: `${MCP_SERVER_COMMAND} --prompts-only`,
+      });
+      expect(addResult.success).toBe(true);
+
+      const prompts = await client.workspace.mcp.prompts.list({ workspaceId });
+      expect(prompts.map((prompt) => prompt.commandKey)).toEqual([
+        "mcp__prompt_only__review",
+        "mcp__prompt_only__status",
+      ]);
     } finally {
       await cleanup();
     }

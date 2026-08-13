@@ -848,6 +848,9 @@ export interface MCPServerManagerOptions {
 
 export class MCPServerManager {
   private readonly workspaceServers = new Map<string, WorkspaceServers>();
+  // Survives idle cleanup so an explicit prompt invocation can revive reaped
+  // servers at send time; forgotten only on workspace removal.
+  private readonly lastWorkspaceRequestOptions = new Map<string, MCPWorkspaceRequestOptions>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
    * Cached per-server protocol era verdicts, keyed by server config
@@ -999,7 +1002,7 @@ export class MCPServerManager {
           workspaceId,
           idleMinutes: Math.round(idleMs / 60_000),
         });
-        void this.stopServers(workspaceId);
+        void this.stopServers(workspaceId, { retainRestartOptions: true });
       }
     }
   }
@@ -1230,6 +1233,8 @@ export class MCPServerManager {
       projectSecrets,
       agentPlugins,
     } = options;
+
+    this.lastWorkspaceRequestOptions.set(workspaceId, options);
 
     // Fetch full server info for project-level allowlists and server filtering
     const allServers = await this.getAllServers(projectPath, trusted, agentPlugins);
@@ -1634,8 +1639,16 @@ export class MCPServerManager {
     promptName: string,
     args: Record<string, string>
   ): Promise<{ text: string; description?: string }> {
-    const entry = this.workspaceServers.get(workspaceId);
-    const instance = entry?.instances.get(serverName);
+    let instance = this.workspaceServers.get(workspaceId)?.instances.get(serverName);
+    if (!instance || instance.isClosed) {
+      // Idle cleanup may have reaped the client between composing the reference
+      // and sending; revive so the explicitly selected prompt is not dropped.
+      const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
+      if (lastOptions) {
+        await this.getToolsForWorkspace(lastOptions);
+        instance = this.workspaceServers.get(workspaceId)?.instances.get(serverName);
+      }
+    }
     if (!instance || instance.isClosed) {
       throw new Error(`MCP server '${serverName}' is not connected`);
     }
@@ -1647,7 +1660,13 @@ export class MCPServerManager {
     };
   }
 
-  async stopServers(workspaceId: string): Promise<void> {
+  async stopServers(
+    workspaceId: string,
+    options?: { retainRestartOptions?: boolean }
+  ): Promise<void> {
+    if (options?.retainRestartOptions !== true) {
+      this.lastWorkspaceRequestOptions.delete(workspaceId);
+    }
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry) return;
 
