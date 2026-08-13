@@ -241,8 +241,9 @@ function formatDelegatedActivityText(activity: WorkspaceDelegatedActivity): stri
 const EMPTY_WORKFLOW_RUN_IDS: readonly string[] = [];
 /**
  * Status line for a parent whose sub-agent rows are hidden, styled after the
- * transcript's sub-agent decoration. An active workflow wins as the more
- * specific signal.
+ * transcript's sub-agent decoration. Workflow and user-owned segments are both
+ * rendered when both have activity, since the hidden rows leave no other
+ * surface for either; the running family leads.
  */
 function formatHiddenSubAgentsPresentation(
   summary: WorkspaceSubAgentsSummary,
@@ -256,6 +257,8 @@ function formatHiddenSubAgentsPresentation(
     (runId) => !summary.workflowRunIds.has(runId)
   ).length;
   const runningRunCount = summary.runningWorkflowRunCount + gapRunCount;
+
+  let workflowText: string | null = null;
   if (runningRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
     // Queued-only runs must not read as running (parallelism limits can park
     // every worker), mirroring the delegated-status running/queued split. The
@@ -280,8 +283,10 @@ function formatHiddenSubAgentsPresentation(
       hasRunningRun && summary.queuedWorkflowAgentCount > 0
         ? ` · ${summary.queuedWorkflowAgentCount} queued`
         : "";
-    return { icon: Workflow, text: `${base}${agentSuffix}${queuedSuffix}` };
+    workflowText = `${base}${agentSuffix}${queuedSuffix}`;
   }
+
+  let subAgentText: string | null = null;
   if (summary.runningSubAgentCount > 0 || summary.queuedSubAgentCount > 0) {
     const parts = [`${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"}`];
     if (summary.runningSubAgentCount > 0) {
@@ -290,7 +295,22 @@ function formatHiddenSubAgentsPresentation(
     if (summary.queuedSubAgentCount > 0) {
       parts.push(`${summary.queuedSubAgentCount} queued`);
     }
-    return { icon: Bot, text: parts.join(" · ") };
+    subAgentText = parts.join(" · ");
+  }
+
+  if (workflowText != null && subAgentText != null) {
+    // Running activity must not hide behind a queued-only family; ties keep
+    // the workflow first as the more specific signal.
+    const subAgentsLead = summary.runningSubAgentCount > 0 && runningRunCount === 0;
+    return subAgentsLead
+      ? { icon: Bot, text: `${subAgentText} · ${workflowText}` }
+      : { icon: Workflow, text: `${workflowText} · ${subAgentText}` };
+  }
+  if (workflowText != null) {
+    return { icon: Workflow, text: workflowText };
+  }
+  if (subAgentText != null) {
+    return { icon: Bot, text: subAgentText };
   }
   return null;
 }

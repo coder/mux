@@ -745,6 +745,47 @@ describe("AgentListItem", () => {
     ).toBe("Workflow running · 2 queued");
   });
 
+  test("shows running sub-agents ahead of a queued-only workflow", () => {
+    // A queued-only workflow must not hide the only running activity; the
+    // running family leads the combined line.
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: makeHiddenSummary({
+        subAgentCount: 2,
+        runningSubAgentCount: 1,
+        queuedWorkflowRunCount: 1,
+        queuedWorkflowAgentCount: 2,
+        workflowRunIds: new Set(["run-1"]),
+        workflowName: "Deep Research",
+      }),
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("2 sub-agents · 1 active · Deep Research queued (2 agents)");
+  });
+
+  test("keeps a running workflow ahead of running sub-agents in the combined line", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      activeWorkflowRunIds: ["run-1"],
+      activeWorkflowRunCount: 1,
+    });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: makeHiddenSummary({
+        subAgentCount: 2,
+        runningSubAgentCount: 1,
+        runningWorkflowRunCount: 1,
+        runningWorkflowAgentCount: 3,
+        workflowRunIds: new Set(["run-1"]),
+        workflowName: "Deep Research",
+      }),
+    });
+
+    expect(
+      within(row).getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent
+    ).toBe("Deep Research running (3 agents) · 2 sub-agents · 1 active");
+  });
+
   test("falls back to the normal status line when hidden sub-agents are all inactive", () => {
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 3 }),
