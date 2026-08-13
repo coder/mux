@@ -106,7 +106,10 @@ import {
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
 import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
-import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
+import {
+  coderGatewayWireProtocol,
+  resolveCoderWireCanonicalModel,
+} from "@/common/constants/coderOAuth";
 import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import { isPlainObject } from "@/common/utils/isPlainObject";
 import { sliceMessagesForProviderFromLatestContextBoundary } from "@/common/utils/messages/compactionBoundary";
@@ -1216,26 +1219,66 @@ export class AIService extends EventEmitter {
         modelString.startsWith("coder:") ? modelString : canonicalModelString,
         this.providerService.getConfig()
       );
-      // Provider-specific tool assembly keys on the WIRE identity: raw
-      // coder:<instance>/<model> strings parse as provider "coder" inside
-      // getToolsForModel, which skips the Anthropic branch (native web tools)
-      // and the OpenAI branch (MCP schema sanitization for Responses). The
-      // capability identity above stays raw-derived; only the branch-selecting
-      // model string is wire-translated. A custom provider shadowing the
-      // "coder" prefix keeps its raw identity; unknown instances fall back to
-      // the name-canonical form.
-      const resolveToolsModelString = (raw: string, canonical: string): string => {
+      // Provider-specific tool assembly keys on the WIRE identity of the
+      // EFFECTIVE route: raw coder:<instance>/<model> strings parse as
+      // provider "coder" inside getToolsForModel, which skips the Anthropic
+      // branch (native web tools) and the OpenAI branch (MCP schema
+      // sanitization). The wire variant matters too: openai-chat instance
+      // types (openrouter/google/azure/openai-compat/vercel) are created via
+      // provider.chat(...), so Responses-only assembly (native web_search)
+      // and Responses-only providerOptions must be suppressed via the
+      // existing wireFormat knob. When routing fell away from Coder, the
+      // effective route IS the identity (a coder:openrouter selection that
+      // fell back to direct OpenRouter must not be treated as OpenAI-wire).
+      // The capability identity above stays raw-derived. A custom provider
+      // shadowing the "coder" prefix keeps its raw identity; unknown
+      // instances fall back to the name-canonical form.
+      const resolveToolsIdentity = (
+        raw: string,
+        effective: string,
+        canonical: string
+      ): { modelString: string; openaiWireFormat?: "chatCompletions" } => {
         if (!raw.startsWith("coder:")) {
-          return raw;
+          return { modelString: raw };
         }
         const coderSection = this.providerService.getConfig()?.coder;
         if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
-          return raw;
+          return { modelString: raw };
         }
-        const wire = resolveCoderWireCanonicalModel(raw.slice("coder:".length), coderSection);
-        return wire ? `${wire.origin}:${wire.modelId}` : canonical;
+        if (!effective.startsWith("coder:")) {
+          return { modelString: effective };
+        }
+        const wire = resolveCoderWireCanonicalModel(effective.slice("coder:".length), coderSection);
+        if (!wire) {
+          return { modelString: canonical };
+        }
+        return {
+          modelString: `${wire.origin}:${wire.modelId}`,
+          ...(coderGatewayWireProtocol(wire.providerType) === "openai-chat"
+            ? { openaiWireFormat: "chatCompletions" as const }
+            : {}),
+        };
       };
-      const toolsModelString = resolveToolsModelString(modelString, canonicalModelString);
+      const toolsIdentity = resolveToolsIdentity(
+        modelString,
+        effectiveModelString,
+        canonicalModelString
+      );
+      const toolsModelString = toolsIdentity.modelString;
+      // The user's own wireFormat, captured BEFORE wire injection: the
+      // refusal-fallback prepare() must reset to it when swapping to a model
+      // whose route is not an openai-chat Coder instance.
+      const userOpenAIWireFormat = effectiveMuxProviderOptions.openai?.wireFormat;
+      if (toolsIdentity.openaiWireFormat != null) {
+        // Deliberate in-place update: every downstream consumer
+        // (buildProviderOptions, toolsForModelConfig.openaiWireFormat, header
+        // building, mid-turn thinking rebuilds) reads this object, and the
+        // actual request bytes go over Chat Completions.
+        effectiveMuxProviderOptions.openai = {
+          ...(effectiveMuxProviderOptions.openai ?? {}),
+          wireFormat: toolsIdentity.openaiWireFormat,
+        };
+      }
 
       // Dump original messages for debugging
       log.debug_obj(`${workspaceId}/1_original_messages.json`, messages);
@@ -2860,6 +2903,17 @@ export class AIService extends EventEmitter {
                   this.providerService.getConfig()
                 );
 
+                // Reset the primary model's injected chat-wire format before
+                // resolving the fallback: the fallback's wire is decided by
+                // ITS effective route, and the factory's direct-OpenAI branch
+                // reads this knob for model selection.
+                if (effectiveMuxProviderOptions.openai?.wireFormat !== userOpenAIWireFormat) {
+                  effectiveMuxProviderOptions.openai = {
+                    ...(effectiveMuxProviderOptions.openai ?? {}),
+                    wireFormat: userOpenAIWireFormat,
+                  };
+                }
+
                 const nextModelResult = await this.providerModelFactory.resolveAndCreateModel(
                   nextModelString,
                   nextThinkingLevel,
@@ -2870,6 +2924,21 @@ export class AIService extends EventEmitter {
                   return Err(formatSendMessageError(nextModelResult.error).message);
                 }
                 const next = nextModelResult.data;
+                const nextToolsIdentity = resolveToolsIdentity(
+                  nextModelString,
+                  next.effectiveModelString,
+                  next.canonicalModelString
+                );
+                if (nextToolsIdentity.openaiWireFormat != null) {
+                  // Same in-place injection as the main path: the primary
+                  // stream is dead once a refusal fallback runs, so every
+                  // consumer (option/header rebuilds, mid-turn thinking
+                  // rebuild closures) must see the fallback's wire.
+                  effectiveMuxProviderOptions.openai = {
+                    ...(effectiveMuxProviderOptions.openai ?? {}),
+                    wireFormat: nextToolsIdentity.openaiWireFormat,
+                  };
+                }
 
                 try {
                   // Rebuild the toolset for the fallback model: provider-native
@@ -2889,10 +2958,13 @@ export class AIService extends EventEmitter {
                     // tool branches (Anthropic native web tools, OpenAI MCP
                     // schema sanitization) must key on the wire, not on the
                     // "coder" prefix or the name-canonical form.
-                    resolveToolsModelString(nextModelString, next.canonicalModelString),
+                    nextToolsIdentity.modelString,
                     {
                       ...toolsForModelConfig,
                       capabilityModelString: nextCapabilityModelString,
+                      // Snapshot from the main path is stale here: the
+                      // fallback's wire decides Responses-only tool assembly.
+                      openaiWireFormat: effectiveMuxProviderOptions.openai?.wireFormat,
                       xaiNativeToolsEnabled: next.routeProvider === "xai",
                     },
                     workspaceId,

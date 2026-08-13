@@ -1923,6 +1923,69 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(harness.getToolsForModelSpy.mock.calls[0]?.[0]).toBe("anthropic:claude-opus-4-5");
   });
 
+  it("marks openai-chat Coder instances as Chat Completions for tools and options", async () => {
+    // coder:openrouter/... is created via provider.chat(...): tool assembly
+    // must not add Responses-only native web_search, and providerOptions
+    // must build for the Chat Completions wire (via the wireFormat knob).
+    using muxHome = new DisposableTempDir("ai-service-main-coder-chat-wire");
+    const workspaceId = "workspace-main-coder-chat-wire";
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const modelString = "coder:openrouter/openai/gpt-5.2";
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+
+    const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in chat-wire test");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: Object.create(null) as LanguageModel,
+        effectiveModelString: modelString,
+        canonicalModelString: modelString,
+        canonicalProviderName: "coder",
+        canonicalModelId: "openrouter/openai/gpt-5.2",
+        wireProviderName: "openai",
+        routedThroughGateway: false,
+        routeProvider: "coder",
+      },
+    });
+    const providerService = Reflect.get(harness.service, "providerService") as
+      | ProviderService
+      | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in chat-wire test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openrouter", type: "openrouter" }],
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+
+    // Tools got the wire identity plus the Chat Completions marker.
+    expect(harness.getToolsForModelSpy.mock.calls[0]?.[0]).toBe("openai:openai/gpt-5.2");
+    const toolConfig = harness.getToolsForModelSpy.mock.calls[0]?.[1] as
+      | { openaiWireFormat?: string }
+      | undefined;
+    expect(toolConfig?.openaiWireFormat).toBe("chatCompletions");
+  });
+
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
     const continuationAssistant: MuxMessage = {
       id: "assistant-reasoning-only",
