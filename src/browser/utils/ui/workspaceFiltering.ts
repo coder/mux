@@ -396,10 +396,19 @@ export interface WorkspaceSubAgentsSummary {
   workflowName?: string;
 }
 
+interface SubAgentsSummaryOptions extends DelegatedActivityOptions {
+  /**
+   * Active workflow run IDs owned by a workspace, from live sidebar state.
+   * Lets the rollup keep a hidden descendant's run visible while it is
+   * between sequential steps and has no countable workers.
+   */
+  getActiveWorkflowRunIds?: (workspaceId: string) => readonly string[];
+}
+
 /** Roll a hidden-descendant census up to each ancestor workspace. */
 export function computeSubAgentsSummaryByWorkspaceId(
   workspaces: readonly FrontendWorkspaceMetadata[],
-  options: DelegatedActivityOptions = {}
+  options: SubAgentsSummaryOptions = {}
 ): Map<string, WorkspaceSubAgentsSummary> {
   const workspaceById = new Map<string, FrontendWorkspaceMetadata>();
   for (const workspace of workspaces) {
@@ -493,6 +502,16 @@ export function computeSubAgentsSummaryByWorkspaceId(
       summary.queuedWorkflowAgentCount += childSummary.queuedWorkflowAgentCount;
       for (const [runId, rollup] of childSummary.workflowRunsById) {
         mergeWorkflowRun(runId, rollup);
+      }
+
+      // A run the child owns that has no tracked worker (between sequential
+      // steps) is still in progress and must count as running; runs already
+      // tracked by workers keep their worker-derived state, mirroring the
+      // displayed row's own-run reconciliation.
+      for (const runId of options.getActiveWorkflowRunIds?.(child.id) ?? []) {
+        if (!summary.workflowRunsById.has(runId)) {
+          summary.workflowRunsById.set(runId, { hasRunning: true });
+        }
       }
     }
 

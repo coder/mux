@@ -1657,24 +1657,25 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     const signal = getWorkspaceAttentionSignal(workspaceStore, workspaceId);
     return signal?.isWorking === true;
   };
-  const isWorkflowRunActive = (workspaceId: string, runId: string): boolean => {
+  const getActiveWorkflowRunIds = (workspaceId: string): readonly string[] => {
     try {
-      return (
-        workspaceStore
-          .getWorkspaceSidebarState(workspaceId)
-          .activeWorkflowRunIds?.includes(runId) === true
-      );
+      return workspaceStore.getWorkspaceSidebarState(workspaceId).activeWorkflowRunIds ?? [];
     } catch {
-      return false;
+      return [];
     }
   };
+  const isWorkflowRunActive = (workspaceId: string, runId: string): boolean =>
+    getActiveWorkflowRunIds(workspaceId).includes(runId);
   const allSidebarWorkspaces = Array.from(sortedWorkspacesByProject.values()).flat();
   const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
     allSidebarWorkspaces,
     { isWorkspaceLiveActive }
   );
   const subAgentsSummaryByWorkspaceId = hideSubAgentRows
-    ? computeSubAgentsSummaryByWorkspaceId(allSidebarWorkspaces, { isWorkspaceLiveActive })
+    ? computeSubAgentsSummaryByWorkspaceId(allSidebarWorkspaces, {
+        isWorkspaceLiveActive,
+        getActiveWorkflowRunIds,
+      })
     : null;
   // In hide mode every row gets at least the empty summary: rows without
   // counted descendants still show a workflow line for their own active runs

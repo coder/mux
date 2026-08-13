@@ -1071,6 +1071,43 @@ describe("hidden sub-agents summary roll-up", () => {
       workflowName: undefined,
     });
   });
+
+  it("counts a hidden owner's workerless active run as running", () => {
+    // The child's workflow run is between sequential steps, so no worker
+    // task exists; only the owner's live run list knows about it.
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("owner-child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+    ];
+
+    const summary = computeSubAgentsSummaryByWorkspaceId(workspaces, {
+      getActiveWorkflowRunIds: (workspaceId) => (workspaceId === "owner-child" ? ["run-gap"] : []),
+    }).get("parent");
+
+    expect(summary?.runningWorkflowRunCount).toBe(1);
+    expect(summary?.runningWorkflowAgentCount).toBe(0);
+    expect(summary?.workflowRunIds).toEqual(new Set(["run-gap"]));
+  });
+
+  it("keeps a queued-worker run queued even when its owner lists it as active", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("owner-child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("queued-worker", {
+        parentWorkspaceId: "owner-child",
+        taskStatus: "queued",
+        workflowTask: { runId: "run-1", stepId: "step-1" },
+      }),
+    ];
+
+    const summary = computeSubAgentsSummaryByWorkspaceId(workspaces, {
+      getActiveWorkflowRunIds: (workspaceId) => (workspaceId === "owner-child" ? ["run-1"] : []),
+    }).get("parent");
+
+    expect(summary?.runningWorkflowRunCount).toBe(0);
+    expect(summary?.queuedWorkflowRunCount).toBe(1);
+    expect(summary?.queuedWorkflowAgentCount).toBe(1);
+  });
 });
 
 describe("sub-agent row render metadata", () => {
