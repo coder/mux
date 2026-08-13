@@ -45,6 +45,7 @@ export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
  * always wins the race, while the SDK still cleans up abandoned requests.
  */
 const SDK_TOOL_CALL_TIMEOUT_MS = MCP_TOOL_CALL_TIMEOUT_MS + 5_000;
+const PROMPT_GET_TIMEOUT_MS = 30_000;
 
 export interface MCPHttpTransportConfig {
   type: "http" | "sse";
@@ -88,7 +89,11 @@ export interface MCPClientHandle {
   /** Fetch tools/list and build AI SDK tools whose execute calls tools/call. */
   tools(): Promise<Record<string, Tool>>;
   prompts(): Promise<MCPPrompt[]>;
-  getPrompt(name: string, args: Record<string, string>): Promise<MCPGetPromptResult>;
+  getPrompt(
+    name: string,
+    args: Record<string, string>,
+    options?: { signal?: AbortSignal }
+  ): Promise<MCPGetPromptResult>;
   /**
    * The MCP protocol revision negotiated at connect ("2026-07-28" once the
    * server/discover probe finds a modern server; "2025-11-25" or earlier on
@@ -280,11 +285,15 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
       assert(Array.isArray(result.prompts), "MCP prompts/list result must carry a prompts array");
       return result.prompts;
     },
-    getPrompt: (name, args) =>
+    getPrompt: (name, args, options) =>
       client.getPrompt(
         { name, arguments: args },
         {
-          timeout: SDK_TOOL_CALL_TIMEOUT_MS,
+          // Prompt expansion blocks send preparation, so it gets a much
+          // tighter deadline than tool calls and honors the send's cancel
+          // signal for prompt recovery of the composer.
+          timeout: PROMPT_GET_TIMEOUT_MS,
+          ...(options?.signal !== undefined ? { signal: options.signal } : {}),
         }
       ),
     negotiatedProtocolVersion: () => client.getNegotiatedProtocolVersion(),

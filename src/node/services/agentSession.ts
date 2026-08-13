@@ -3031,7 +3031,10 @@ export class AgentSession {
           typedMuxMetadata,
           options?.disableWorkspaceAgents
         );
-        mcpPromptSnapshotMessages = await this.materializeMcpPromptSnapshots(typedMuxMetadata);
+        mcpPromptSnapshotMessages = await this.materializeMcpPromptSnapshots(
+          typedMuxMetadata,
+          cancelSignal
+        );
       } catch (error) {
         return Err(createUnknownSendMessageError(getErrorMessage(error)));
       }
@@ -6178,7 +6181,8 @@ export class AgentSession {
   }
 
   private async materializeMcpPromptSnapshots(
-    muxMetadata: MuxMessageMetadata | undefined
+    muxMetadata: MuxMessageMetadata | undefined,
+    cancelSignal: AbortSignal | undefined
   ): Promise<MuxMessage[]> {
     const mcpServerManager = this.mcpServerManager;
     if (!mcpServerManager || !Array.isArray(muxMetadata?.mcpPromptRefs)) return [];
@@ -6191,7 +6195,8 @@ export class AgentSession {
             this.workspaceId,
             ref.serverName,
             ref.promptName,
-            ref.arguments ?? {}
+            ref.arguments ?? {},
+            cancelSignal !== undefined ? { signal: cancelSignal } : undefined
           );
           return createMuxMessage(createMcpPromptSnapshotMessageId(), "user", prompt.text, {
             timestamp: Date.now(),

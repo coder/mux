@@ -5592,6 +5592,12 @@ export const router = (authToken?: string) => {
                 input.workspaceId,
                 input.overrides
               );
+              // Prompt invocation can hit cached servers before the next stream
+              // recomputes enablement, so sync the manager's view immediately.
+              await context.mcpServerManager.applyWorkspaceOverrides(
+                input.workspaceId,
+                input.overrides
+              );
               return { success: true, data: undefined };
             } catch (error) {
               const message = getErrorMessage(error);

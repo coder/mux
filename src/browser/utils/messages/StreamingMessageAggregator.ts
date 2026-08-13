@@ -3546,7 +3546,16 @@ export class StreamingMessageAggregator {
 
       // Retain hidden snapshots so referenced user messages can display their resolved content.
       const latestAgentSkillSnapshotByKey = new Map<string, AgentSkillSnapshotContent>();
-      const latestMcpPromptSnapshotByKey = new Map<string, MCPPromptSnapshotContent>();
+      // MCP prompt snapshots are re-materialized per turn and may fail, so a user
+      // row only sees the contiguous snapshot block directly before it; a
+      // history-wide map would falsely attach an older turn's expansion.
+      const blockMcpPromptSnapshotByKey = new Map<string, MCPPromptSnapshotContent>();
+      const isSyntheticSnapshotRow = (message: MuxMessage): boolean =>
+        message.metadata?.synthetic === true &&
+        (message.metadata.mcpPromptSnapshot !== undefined ||
+          message.metadata.agentSkillSnapshot !== undefined ||
+          message.metadata.fileAtMentionSnapshot !== undefined);
+      let previousWasSnapshotRow = true;
 
       // Pair completed subagent cards with the assistant response to their prior progress turn.
       // Persisted anchors improve within-response precision, but historical correctness must not
@@ -3557,8 +3566,10 @@ export class StreamingMessageAggregator {
       );
 
       for (const message of allMessages) {
+        if (!previousWasSnapshotRow) blockMcpPromptSnapshotByKey.clear();
+        previousWasSnapshotRow = isSyntheticSnapshotRow(message);
         maybeCollectAgentSkillSnapshot(message, latestAgentSkillSnapshotByKey);
-        maybeCollectMcpPromptSnapshot(message, latestMcpPromptSnapshotByKey);
+        maybeCollectMcpPromptSnapshot(message, blockMcpPromptSnapshotByKey);
         // Synthetic messages are typically for model context only.
         // Show them only in debug mode, or when explicitly marked as UI-visible.
         if (shouldHideMessageFromTranscript(message)) {
@@ -3579,7 +3590,7 @@ export class StreamingMessageAggregator {
             ? muxMeta.mcpPromptRefs.find((ref) => ref.source === "slash")
             : undefined;
         const mcpPromptSnapshot = slashMcpPromptRef
-          ? latestMcpPromptSnapshotByKey.get(
+          ? blockMcpPromptSnapshotByKey.get(
               getMcpPromptReferenceKey(slashMcpPromptRef.serverName, slashMcpPromptRef.promptName)
             )
           : undefined;
@@ -3600,7 +3611,7 @@ export class StreamingMessageAggregator {
                 muxMeta?.agentSkillRefs,
                 latestAgentSkillSnapshotByKey,
                 muxMeta?.mcpPromptRefs,
-                latestMcpPromptSnapshotByKey
+                blockMcpPromptSnapshotByKey
               )
             : undefined;
         const inlineSkillSnapshotsCacheKey = inlineSkillSnapshotState?.cacheKey;

@@ -1201,7 +1201,7 @@ describe("MCPServerManager", () => {
       description: "Expanded review",
       text: "Review src\n\n[assistant]\nUse the guide\n\n[assistant]\n[Image content omitted]",
     });
-    expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" });
+    expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" }, undefined);
   });
 
   test("suffixes every member of a colliding prompt key group, independent of order", async () => {

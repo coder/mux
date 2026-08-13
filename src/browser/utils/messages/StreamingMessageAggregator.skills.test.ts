@@ -551,8 +551,19 @@ describe("Agent skill snapshot association", () => {
         ],
       },
     });
-    const inline = createMuxMessage("prompt-inline", "user", "Use $mcp__coder__review", {
+    // Each send persists its own snapshot row directly before its user row.
+    const inlineSnapshot = createMuxMessage("prompt-snapshot-2", "user", "Expanded prompt body", {
       historySequence: 3,
+      timestamp: 0,
+      synthetic: true,
+      mcpPromptSnapshot: {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+      },
+    });
+    const inline = createMuxMessage("prompt-inline", "user", "Use $mcp__coder__review", {
+      historySequence: 4,
       timestamp: 0,
       muxMetadata: {
         type: "normal",
@@ -567,7 +578,7 @@ describe("Agent skill snapshot association", () => {
       },
     });
 
-    aggregator.loadHistoricalMessages([snapshot, slash, inline]);
+    aggregator.loadHistoricalMessages([snapshot, slash, inlineSnapshot, inline]);
     const displayed = aggregator.getDisplayedMessages();
     expect(displayed).toHaveLength(2);
     const slashMessage = displayed[0];
@@ -581,6 +592,57 @@ describe("Agent skill snapshot association", () => {
     expect(inlineMessage.inlineSkillSnapshots?.mcp__coder__review?.snapshot.body).toBe(
       "Expanded prompt body"
     );
+  });
+
+  it("does not attach an older turn's prompt snapshot when materialization failed", () => {
+    const aggregator = createAggregator();
+    const promptRef = {
+      serverName: "coder",
+      promptName: "review",
+      commandKey: "mcp__coder__review",
+      source: "slash" as const,
+    };
+    const snapshot = createMuxMessage("prompt-snapshot", "user", "Expanded prompt body", {
+      historySequence: 1,
+      timestamp: 0,
+      synthetic: true,
+      mcpPromptSnapshot: {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+      },
+    });
+    const first = createMuxMessage("prompt-first", "user", "Using MCP prompt coder/review", {
+      historySequence: 2,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        rawCommand: "/mcp__coder__review",
+        commandPrefix: "/mcp__coder__review",
+        mcpPromptRefs: [promptRef],
+      },
+    });
+    // Second invocation whose materialization failed: no snapshot row precedes it.
+    const second = createMuxMessage("prompt-second", "user", "Using MCP prompt coder/review", {
+      historySequence: 3,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        rawCommand: "/mcp__coder__review",
+        commandPrefix: "/mcp__coder__review",
+        mcpPromptRefs: [promptRef],
+      },
+    });
+
+    aggregator.loadHistoricalMessages([snapshot, first, second]);
+    const displayed = aggregator.getDisplayedMessages();
+    const firstMessage = displayed[0];
+    const secondMessage = displayed[1];
+    if (firstMessage?.type !== "user" || secondMessage?.type !== "user") {
+      throw new Error("Expected displayed user messages");
+    }
+    expect(firstMessage.agentSkill?.snapshot?.body).toBe("Expanded prompt body");
+    expect(secondMessage.agentSkill?.snapshot).toBeUndefined();
   });
 
   it("uses the latest snapshot available at each invocation turn", () => {

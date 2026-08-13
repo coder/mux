@@ -51,7 +51,13 @@ describe("AgentSession MCP prompt snapshots", () => {
       expect(history.data[0]?.parts.find((part) => part.type === "text")?.text).toBe(
         "Expanded prompt"
       );
-      expect(getPrompt).toHaveBeenCalledWith("workspace", "coder", "review", { path: "src" });
+      expect(getPrompt).toHaveBeenCalledWith(
+        "workspace",
+        "coder",
+        "review",
+        { path: "src" },
+        undefined
+      );
     } finally {
       harness.session.dispose();
       await harness.cleanup();

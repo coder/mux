@@ -1668,11 +1668,43 @@ export class MCPServerManager {
     return descriptors;
   }
 
+  /**
+   * Sync a workspace's saved MCP overrides into cached state. Stream-time tool
+   * discovery recomputes enablement anyway; this keeps getPrompt (which can run
+   * before any stream) from trusting a stale enabledServerNames set.
+   */
+  async applyWorkspaceOverrides(
+    workspaceId: string,
+    overrides: WorkspaceMCPOverrides | undefined
+  ): Promise<void> {
+    const recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
+    if (recorded) {
+      this.lastWorkspaceRequestOptions.set(workspaceId, { ...recorded, overrides });
+    }
+    const entry = this.workspaceServers.get(workspaceId);
+    if (!entry || !recorded) return;
+    try {
+      const enabled = await this.listServers(
+        recorded.projectPath,
+        overrides,
+        recorded.trusted ?? false,
+        recorded.agentPlugins
+      );
+      entry.enabledServerNames = new Set(Object.keys(enabled));
+    } catch (error) {
+      log.debug("[MCP] Failed to sync workspace overrides into cached state", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
   async getPrompt(
     workspaceId: string,
     serverName: string,
     promptName: string,
-    args: Record<string, string>
+    args: Record<string, string>,
+    options?: { signal?: AbortSignal }
   ): Promise<{ text: string; description?: string }> {
     const currentEntry = this.workspaceServers.get(workspaceId);
     if (currentEntry && !currentEntry.enabledServerNames.has(serverName)) {
@@ -1692,7 +1724,7 @@ export class MCPServerManager {
       throw new Error(`MCP server '${serverName}' is not connected`);
     }
     this.markActivity(workspaceId);
-    const result = await instance.getPrompt(promptName, args);
+    const result = await instance.getPrompt(promptName, args, options);
     return {
       text: flattenMcpPrompt(result),
       ...(result.description !== undefined ? { description: result.description } : {}),
