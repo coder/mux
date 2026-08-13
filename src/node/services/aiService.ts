@@ -2908,14 +2908,19 @@ export class AIService extends EventEmitter {
                     abortSignal: combinedAbortSignal,
                     providerForMessages: next.wireProviderName,
                     effectiveThinkingLevel: nextThinkingLevel,
-                    modelString: next.canonicalModelString,
+                    // RAW fallback identity, matching the main path's raw
+                    // modelString: canonicalization can rewrite cross-typed
+                    // Coder instances (coder:openai/x, type anthropic) to a
+                    // direct-provider string, hiding the instance metadata
+                    // from cache/option/header builders.
+                    modelString: nextModelString,
                     providersConfig: this.providerService.getConfig(),
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
                     workspaceId,
                   });
 
                   const nextProviderOptions = buildProviderOptions(
-                    next.canonicalModelString,
+                    nextModelString,
                     nextThinkingLevel,
                     nextProviderRequestMessages,
                     (id) => this.streamManager.isResponseIdLost(id),
@@ -2931,7 +2936,7 @@ export class AIService extends EventEmitter {
                   // buildProviderOptions re-gates pro mode for each fallback model,
                   // so the native option never leaks onto unsupported fallbacks.
                   let nextHeaders = buildRequestHeaders(
-                    next.canonicalModelString,
+                    nextModelString,
                     effectiveMuxProviderOptions,
                     workspaceId,
                     this.providerService.getConfig(),
@@ -2984,13 +2989,13 @@ export class AIService extends EventEmitter {
                   const rebuildNextProviderOptionsForThinkingLevel: RebuildProviderOptionsForThinkingLevel =
                     (level) => {
                       const clamped = enforceThinkingPolicy(
-                        next.canonicalModelString,
+                        nextModelString,
                         level,
                         nextMinThinkingLevel,
                         this.providerService.getConfig()
                       );
                       const effective = resolveEffectiveThinkingLevel(
-                        next.canonicalModelString,
+                        nextModelString,
                         clamped,
                         this.providerService.getConfig()
                       );
@@ -3007,7 +3012,7 @@ export class AIService extends EventEmitter {
                         return null;
                       }
                       const rebuilt = buildProviderOptions(
-                        next.canonicalModelString,
+                        nextModelString,
                         effective,
                         nextProviderRequestMessages,
                         (id) => this.streamManager.isResponseIdLost(id),

@@ -1736,6 +1736,96 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(preparedMetadataPatch.routedThroughGateway).toBe(false);
   });
 
+  it("keeps the raw Coder identity when rebuilding fallback provider options", async () => {
+    // A cross-typed canonical-name instance ({name: "openai", type:
+    // "anthropic"}) canonicalizes coder:openai/x to openai:x by NAME while the
+    // wire is Anthropic. The fallback rebuild must hand the RAW coder string
+    // to option/header/cache builders (like the main path does) so they can
+    // recover the instance metadata — the canonical string would emit OpenAI
+    // options for an Anthropic-wire request.
+    using muxHome = new DisposableTempDir("ai-service-fallback-coder-raw-identity");
+    const workspaceId = "workspace-fallback-coder-raw";
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const sourceModel = "openai:gpt-5.2";
+    const fallbackModel = "coder:openai/claude-opus-4-5";
+    await writeMainConfig(muxHome.path, {
+      modelFallbacks: { [sourceModel]: { models: [fallbackModel] } },
+    });
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+
+    const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in fallback test");
+    }
+    // Mirror the real factory: name-based canonicalization rewrites the coder
+    // string, while the wire comes from instance metadata.
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockImplementation(
+      (requestedModelString) => {
+        const isCoder = requestedModelString.startsWith("coder:");
+        return Promise.resolve({
+          success: true,
+          data: {
+            model: Object.create(null) as LanguageModel,
+            effectiveModelString: requestedModelString,
+            canonicalModelString: isCoder ? "openai:claude-opus-4-5" : requestedModelString,
+            canonicalProviderName: "openai",
+            canonicalModelId: isCoder
+              ? "claude-opus-4-5"
+              : (requestedModelString.split(":")[1] ?? requestedModelString),
+            wireProviderName: isCoder ? "anthropic" : "openai",
+            routedThroughGateway: false,
+            ...(isCoder ? { routeProvider: "coder" as ProviderName } : {}),
+          },
+        });
+      }
+    );
+    const providerService = Reflect.get(harness.service, "providerService") as
+      | ProviderService
+      | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in fallback test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString: sourceModel,
+      thinkingLevel: "high",
+    });
+    expect(result.success).toBe(true);
+
+    const modelFallback = harness.startStreamCalls[0]?.[START_STREAM_MODEL_FALLBACK_INDEX] as
+      | ModelFallbackOptions
+      | undefined;
+    if (!modelFallback) {
+      throw new Error("Expected modelFallback options on startStream");
+    }
+    const prepared = await modelFallback.prepare(fallbackModel);
+    expect(prepared.success).toBe(true);
+    if (!prepared.success) {
+      throw new Error(prepared.error);
+    }
+
+    // Anthropic-wire options, not OpenAI: the builders saw the raw coder
+    // string and resolved the instance's type from providersConfig.
+    expect(prepared.data.providerOptions).toHaveProperty("anthropic");
+    expect(prepared.data.providerOptions).not.toHaveProperty("openai");
+  });
+
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
     const continuationAssistant: MuxMessage = {
       id: "assistant-reasoning-only",

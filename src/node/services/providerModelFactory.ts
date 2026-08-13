@@ -1122,8 +1122,21 @@ export class ProviderModelFactory {
       // openrouter:anthropic/*). We still allow request-level values when config
       // is unset for backward compatibility with older clients.
       const configAnthropicCacheTtl = parseAnthropicCacheTtl(providersConfig.anthropic?.cacheTtl);
-      const isAnthropicRoutedModel =
-        providerName === "anthropic" || modelId.startsWith("anthropic/");
+      // Coder gateway instances classify by their resolved WIRE type, not the
+      // route name: a custom-named Anthropic instance (coder:prod-anthropic/x)
+      // is an Anthropic request that must honor the backend's authoritative
+      // disableBetaFeatures/cacheTtl, while a cross-typed canonical name
+      // (coder:anthropic/x fronting an OpenAI-compatible upstream) must not.
+      const isCoderGatewayModel =
+        providerName === "coder" && !isCustomOpenAICompatibleProviderConfig(providersConfig.coder);
+      const isAnthropicRoutedModel = isCoderGatewayModel
+        ? resolveCoderWireCanonicalModel(
+            modelId,
+            providersConfig.coder as
+              | { discoveredProviders?: unknown; additionalProviders?: unknown }
+              | undefined
+          )?.origin === "anthropic"
+        : providerName === "anthropic" || modelId.startsWith("anthropic/");
 
       // Anthropic-specific: merge global disableBetaFeatures into muxProviderOptions.
       const configDisableBeta = providersConfig.anthropic?.disableBetaFeatures;

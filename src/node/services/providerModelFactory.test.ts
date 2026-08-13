@@ -6,6 +6,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Config } from "@/node/config";
+import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
@@ -2212,6 +2213,53 @@ describe("ProviderModelFactory Coder", () => {
       expect(result.data.effectiveModelString).toBe("coder:openai/claude-opus-4-5");
       expect(result.data.wireProviderName).toBe("anthropic");
       expect((result.data.model as { provider?: unknown }).provider).toBe("anthropic.messages");
+    });
+  });
+
+  it("merges backend disableBetaFeatures for custom-named Anthropic-wire instances", async () => {
+    await withTempConfig(async (config, factory) => {
+      // The wire (instance type), not the route name, classifies the request
+      // as Anthropic: without wire-based classification the authoritative
+      // providers.anthropic.disableBetaFeatures never merges and cache_control
+      // is injected despite the user disabling beta features.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "prod-anthropic", type: "anthropic" }],
+        models: ["prod-anthropic/claude-opus-4-5"],
+        discoveredModels: ["prod-anthropic/claude-opus-4-5"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        anthropic: { disableBetaFeatures: true },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const muxOptions: MuxProviderOptions = {};
+      const result = await factory.createModel("coder:prod-anthropic/claude-opus-4-5", muxOptions);
+      expect(result.success).toBe(true);
+      expect(muxOptions.anthropic?.disableBetaFeatures).toBe(true);
+    });
+  });
+
+  it("does not merge Anthropic beta config for cross-typed anthropic-named instances", async () => {
+    await withTempConfig(async (config, factory) => {
+      // {name: "anthropic", type: "openai-compat"}: the model ID starts with
+      // "anthropic/" but the wire is NOT Anthropic — name-based classification
+      // would wrongly merge Anthropic-only config into the request options.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "anthropic", type: "openai-compat" }],
+        models: ["anthropic/gpt-5"],
+        discoveredModels: ["anthropic/gpt-5"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        anthropic: { disableBetaFeatures: true },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const muxOptions: MuxProviderOptions = {};
+      const result = await factory.createModel("coder:anthropic/gpt-5", muxOptions);
+      expect(result.success).toBe(true);
+      expect(muxOptions.anthropic).toBeUndefined();
     });
   });
 
