@@ -310,7 +310,8 @@ function SidebarActivityIndicator(props: { text: string; testId: string; icon?: 
       data-testid={props.testId}
     >
       {Icon != null && <Icon className="h-3 w-3 shrink-0" strokeWidth={1.8} aria-hidden="true" />}
-      <span className="min-w-0 truncate">{props.text}</span>
+      {/* Activity texts embed live counts; tabular figures stop width jitter. */}
+      <span className="counter-nums min-w-0 truncate">{props.text}</span>
     </div>
   );
 }
