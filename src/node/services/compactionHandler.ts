@@ -1010,6 +1010,8 @@ export class CompactionHandler {
     summary: string,
     metadata: {
       model: string;
+      /** Request-pinned pricing identity from the compaction stream. */
+      metadataModel?: string;
       usage?: LanguageModelV2Usage;
       contextUsage?: LanguageModelV2Usage;
       duration?: number;
@@ -1111,6 +1113,11 @@ export class CompactionHandler {
         compactionEpoch: nextCompactionEpoch,
         compactionBoundary: true,
         model: metadata.model,
+        // Preserve the stream's request-pinned pricing identity: session
+        // usage rebuilds (missing/corrupt session-usage.json) key coder:
+        // rows on the persisted metadataModel, and dropping it here would
+        // reprice the compaction request from mutable current metadata.
+        ...(metadata.metadataModel != null && { metadataModel: metadata.metadataModel }),
         usage: metadata.usage,
         duration: metadata.duration,
         systemMessageTokens: metadata.systemMessageTokens,

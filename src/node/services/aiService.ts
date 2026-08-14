@@ -3096,23 +3096,24 @@ export class AIService extends EventEmitter {
                     )
                   : messages;
 
-                // Re-clamp thinking for the fallback model: the source model's
-                // clamped level may violate the next model's policy/floor (the
-                // providerOptions builders require a policy-valid level, e.g. an
-                // "off" source level on a fixed-effort model like gpt-5-pro).
-                // A mid-turn thinking override folded in by StreamManager wins
-                // over the send-time level.
-                const nextMinThinkingLevel = resolveMinimumThinkingLevel(
+                // Preliminary thinking clamp for the factory call only (xAI
+                // variant swap; never Coder-metadata-dependent — same split
+                // as the main path). The FINAL level is recomputed below from
+                // the pinned nextProvidersConfig so a concurrent instance
+                // retag cannot leave the level derived from older metadata
+                // than the created SDK model.
+                const requestedNextThinkingLevel =
+                  prepareOptions?.thinkingLevelOverride ?? effectiveThinkingLevel;
+                const preliminaryNextThinkingLevel = enforceThinkingPolicy(
                   nextModelString,
-                  this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
-                    normalizeToCanonical(nextModelString)
-                  ],
-                  this.providerService.getConfig()
-                );
-                const nextThinkingLevel = enforceThinkingPolicy(
-                  nextModelString,
-                  prepareOptions?.thinkingLevelOverride ?? effectiveThinkingLevel,
-                  nextMinThinkingLevel,
+                  requestedNextThinkingLevel,
+                  resolveMinimumThinkingLevel(
+                    nextModelString,
+                    this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
+                      normalizeToCanonical(nextModelString)
+                    ],
+                    this.providerService.getConfig()
+                  ),
                   this.providerService.getConfig()
                 );
 
@@ -3129,7 +3130,7 @@ export class AIService extends EventEmitter {
 
                 const nextModelResult = await this.providerModelFactory.resolveAndCreateModel(
                   nextModelString,
-                  nextThinkingLevel,
+                  preliminaryNextThinkingLevel,
                   effectiveMuxProviderOptions,
                   { agentInitiated, workspaceId }
                 );
@@ -3143,6 +3144,25 @@ export class AIService extends EventEmitter {
                   this.providerService.getConfig(),
                   nextModelString,
                   next.coderSelectedInstance
+                );
+                // FINAL thinking clamp from the pinned snapshot: the message
+                // and option builders below must agree with the wire the
+                // factory created the fallback SDK model for. Re-clamps the
+                // source level against the fallback model's policy/floor (a
+                // mid-turn thinking override folded in by StreamManager wins
+                // over the send-time level).
+                const nextMinThinkingLevel = resolveMinimumThinkingLevel(
+                  nextModelString,
+                  this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
+                    normalizeToCanonical(nextModelString)
+                  ],
+                  nextProvidersConfig
+                );
+                const nextThinkingLevel = enforceThinkingPolicy(
+                  nextModelString,
+                  requestedNextThinkingLevel,
+                  nextMinThinkingLevel,
+                  nextProvidersConfig
                 );
                 const nextToolsIdentity = resolveToolsIdentity(
                   nextModelString,
