@@ -359,6 +359,35 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("startServers overlaps slow startups instead of stacking them serially", async () => {
+    let active = 0;
+    let maxActive = 0;
+    access.startSingleServer = mock(async (name: unknown) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      active -= 1;
+      return testInstance(String(name));
+    });
+
+    const result = await access.startServers(
+      {
+        a: stdioConfig("cmd-a"),
+        b: stdioConfig("cmd-b"),
+        c: stdioConfig("cmd-c"),
+      },
+      TEST_RUNTIME,
+      PROJECT_PATH,
+      WORKSPACE_PATH,
+      undefined,
+      () => undefined
+    );
+
+    expect(maxActive).toBeGreaterThan(1);
+    // Concurrent completion order must not perturb the deterministic Map order.
+    expect([...result.instances.keys()]).toEqual(["a", "b", "c"]);
+  });
+
   test("startServers only marks startup timeouts as retryable", async () => {
     const never = Promise.withResolvers<unknown>();
     access.startSingleServerImpl = mock((name: unknown) => {
@@ -394,7 +423,8 @@ describe("MCPServerManager", () => {
         () => undefined
       );
 
-      expect(result.failedServerNames).toEqual(["slow-server", "broken-server"]);
+      // Concurrent startups finish in nondeterministic order.
+      expect(result.failedServerNames.sort()).toEqual(["broken-server", "slow-server"]);
       expect(result.timedOutServerNames).toEqual(["slow-server"]);
     } finally {
       setTimeoutSpy.mockRestore();

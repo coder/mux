@@ -45,6 +45,7 @@ import {
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
+import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
 import { stripTrailingSlashes } from "@/node/utils/pathUtils";
@@ -63,6 +64,9 @@ const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 const LEGACY_ERA_VERDICT_TTL_MS = 24 * 60 * 60 * 1000;
 const IDLE_CHECK_INTERVAL_MS = 60 * 1000; // Check every minute
 const MCP_STARTUP_TIMEOUT_MS = 60_000; // 60s — generous for npx package downloads
+// Bounded so a burst of stdio spawns (npx downloads) cannot thrash the host,
+// while several unhealthy servers' startup deadlines overlap instead of stacking.
+const MCP_STARTUP_CONCURRENCY = 4;
 const MCP_STARTUP_CLEANUP_WAIT_TIMEOUT_MS = 5_000; // fail-safe so timeout error cannot hang forever
 
 /** Detect errors from the MCP SDK indicating the client/transport is closed.
@@ -2242,28 +2246,42 @@ export class MCPServerManager {
     const timedOutServerNames: string[] = [];
     const entries = Object.entries(servers);
 
-    for (const [name, info] of entries) {
-      try {
-        const instance = await this.startSingleServer(
-          name,
-          info,
-          runtime,
-          projectPath,
-          workspacePath,
-          projectSecrets,
-          onActivity,
-          workspaceId
-        );
-        if (instance) {
-          instances.set(name, instance);
+    // Bounded concurrency so one unresponsive server's 60s startup deadline
+    // cannot stack serially and stall tool/prompt availability for minutes.
+    const semaphore = new AsyncSemaphore(MCP_STARTUP_CONCURRENCY);
+    const results = await Promise.all(
+      entries.map(async ([name, info]): Promise<MCPServerInstance | null> => {
+        const slot = await semaphore.acquire();
+        try {
+          return await this.startSingleServer(
+            name,
+            info,
+            runtime,
+            projectPath,
+            workspacePath,
+            projectSecrets,
+            onActivity,
+            workspaceId
+          );
+        } catch (error) {
+          const message = getErrorMessage(error);
+          log.error("Failed to start MCP server", { name, error: message });
+          failedServerNames.push(name);
+          if (isMCPStartupTimeoutError(error)) {
+            timedOutServerNames.push(name);
+          }
+          return null;
+        } finally {
+          slot.release();
         }
-      } catch (error) {
-        const message = getErrorMessage(error);
-        log.error("Failed to start MCP server", { name, error: message });
-        failedServerNames.push(name);
-        if (isMCPStartupTimeoutError(error)) {
-          timedOutServerNames.push(name);
-        }
+      })
+    );
+    // Insert in the caller's (sorted) entry order so Map iteration stays
+    // deterministic regardless of which startups finish first.
+    for (const [index, [name]] of entries.entries()) {
+      const instance = results[index];
+      if (instance) {
+        instances.set(name, instance);
       }
     }
 
