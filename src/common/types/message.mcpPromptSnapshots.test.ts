@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { createMuxMessage, filterOrphanedMcpPromptSnapshots } from "./message";
+import {
+  createMuxMessage,
+  filterOrphanedMcpPromptSnapshots,
+  sanitizeMcpPromptRefs,
+} from "./message";
 import type { MuxMessage } from "./message";
 
 function snapshot(id: string, invokingMessageId?: string, promptName = "review"): MuxMessage {
@@ -82,5 +86,28 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
       invokingUser("user-1", ["review", "status"]),
     ];
     expect(filterOrphanedMcpPromptSnapshots(messages)).toEqual(messages);
+  });
+});
+
+describe("sanitizeMcpPromptRefs arguments", () => {
+  const baseRef = {
+    serverName: "coder",
+    promptName: "review",
+    commandKey: "mcp__coder__review",
+    source: "slash" as const,
+  };
+
+  test("keeps a valid string-record arguments field", () => {
+    const refs = sanitizeMcpPromptRefs([{ ...baseRef, arguments: { path: "src" } }]);
+    expect(refs).toEqual([{ ...baseRef, arguments: { path: "src" } }]);
+  });
+
+  test("drops malformed arguments but keeps the reference identity", () => {
+    const malformedArgumentsValues: unknown[] = ["path", { path: 1 }, [1], 42, null];
+
+    for (const malformed of malformedArgumentsValues) {
+      const refs = sanitizeMcpPromptRefs([{ ...baseRef, arguments: malformed }]);
+      expect(refs).toEqual([baseRef]);
+    }
   });
 });

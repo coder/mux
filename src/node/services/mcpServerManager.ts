@@ -851,6 +851,11 @@ interface WorkspaceServers {
   timedOutServerNames: string[];
   /** Prevent concurrent cached retries from stacking startup attempts for the same server. */
   retryingTimedOutServerNames: Set<string>;
+  /**
+   * Servers whose config changed while a lease deferred their restart. Prompt
+   * invocation must not reach these stale endpoints or credentials.
+   */
+  stalePromptServerNames?: Set<string>;
   lastActivity: number;
 }
 
@@ -1348,6 +1353,8 @@ export class MCPServerManager {
 
     if (existing?.configSignature === signature && !hasClosedInstance) {
       existing.lastActivity = Date.now();
+      // A reverted config change means cached instances match again.
+      delete existing.stalePromptServerNames;
 
       const timedOutServerNamesToRetry = this.getTimedOutServerNamesToRetry(
         existing,
@@ -1568,6 +1575,25 @@ export class MCPServerManager {
       existing.stats = leasedStats;
       existing.enabledServerNames = enabledServerNames;
 
+      // The deferred restart retains same-named instances with the old config,
+      // so record which servers changed to block prompt invocation on them.
+      if (signature === existing.configSignature) {
+        delete existing.stalePromptServerNames;
+      } else {
+        let previousEntries: Record<string, unknown> = {};
+        try {
+          previousEntries = JSON.parse(existing.configSignature) as Record<string, unknown>;
+        } catch {
+          // Unparseable prior signature: treat every server as changed.
+        }
+        existing.stalePromptServerNames = new Set(
+          Object.keys(signatureEntries).filter(
+            (name) =>
+              JSON.stringify(signatureEntries[name]) !== JSON.stringify(previousEntries[name])
+          )
+        );
+      }
+
       // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
       await this.refreshModernInstanceTools(instancesForTools);
 
@@ -1773,6 +1799,11 @@ export class MCPServerManager {
     const entry = this.workspaceServers.get(workspaceId);
     if (entry && !entry.enabledServerNames.has(serverName)) {
       throw new Error(`MCP server '${serverName}' is disabled`);
+    }
+    if (entry?.stalePromptServerNames?.has(serverName)) {
+      throw new Error(
+        `MCP server '${serverName}' was reconfigured while a stream is active; retry after the stream finishes`
+      );
     }
     const instance = entry?.instances.get(serverName);
     if (!instance || instance.isClosed) {

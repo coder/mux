@@ -320,9 +320,21 @@ export function isMcpPromptReference(value: unknown): value is MCPPromptReferenc
   );
 }
 
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  return Object.values(value).every((entry) => typeof entry === "string");
+}
+
 /** muxMetadata persists as z.any(), so corrupted references require read-time filtering. */
 export function sanitizeMcpPromptRefs(value: unknown): MCPPromptReference[] {
-  return Array.isArray(value) ? value.filter(isMcpPromptReference) : [];
+  if (!Array.isArray(value)) return [];
+  return value.filter(isMcpPromptReference).map((ref) => {
+    if (ref.arguments === undefined || isStringRecord(ref.arguments)) return ref;
+    // Malformed persisted arguments would make every prompts/get retry fail,
+    // so drop just that field and keep the reference identity.
+    const { arguments: _malformed, ...rest } = ref;
+    return rest;
+  });
 }
 
 export function isAgentSkillReference(value: unknown): value is AgentSkillReference {

@@ -929,6 +929,47 @@ describe("MCPServerManager", () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  test("blocks prompt invocation on servers reconfigured while leased", async () => {
+    const workspaceId = "ws-stale-prompt";
+    let command = "cmd-1";
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        server: { transport: "stdio", command, disabled: false },
+        stable: stdioConfig("cmd-stable"),
+      })
+    );
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { getPrompt }],
+          ["stable", { getPrompt }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    manager.acquireLease(workspaceId);
+    command = "cmd-2";
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+      await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
+        "was reconfigured while a stream is active"
+      );
+      // Unchanged sibling servers stay invocable.
+      expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({
+        text: "hi",
+      });
+    } finally {
+      manager.releaseLease(workspaceId);
+    }
+  });
+
   test("getToolsForWorkspace restarts when cached instances are marked closed", async () => {
     const workspaceId = "ws-closed";
     configService.listServers = mock(() =>
