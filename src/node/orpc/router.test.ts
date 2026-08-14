@@ -802,6 +802,30 @@ describe("router config.saveConfig", () => {
     expect(setConfigEnabledMock).not.toHaveBeenCalled();
   });
 
+  test("updateTelemetryEnabled fails when persistence cannot be verified", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    // Materialize config.json, then make it unreadable AND the dir unwritable:
+    // the disable write is swallowed and the verification read fails. A read
+    // failure must fail the RPC — it must not masquerade as a confirmed
+    // opt-out (the fail-closed enablement read would report disabled here).
+    await client.config.updateChatTranscriptFullWidth({ enabled: true });
+    const configFile = path.join(tempDir, "config.json");
+    fs.chmodSync(configFile, 0o000);
+    fs.chmodSync(tempDir, 0o500);
+    try {
+      await expect(client.config.updateTelemetryEnabled({ enabled: false })).rejects.toThrow(
+        /telemetry preference/
+      );
+    } finally {
+      fs.chmodSync(tempDir, 0o700);
+      fs.chmodSync(configFile, 0o600);
+    }
+
+    expect(config.loadConfigOrDefault().telemetryEnabled).toBeUndefined();
+    expect(setConfigEnabledMock).not.toHaveBeenCalled();
+  });
+
   test("getConfig and saveConfig round trip user preferences", async () => {
     const client = createRouterClient(router(), { context: createContext() });
 

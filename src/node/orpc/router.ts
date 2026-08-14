@@ -1547,8 +1547,20 @@ export const router = (authToken?: string) => {
           // saveConfig swallows write errors (a full disk still resolves), but a
           // privacy opt-out must not report success while the persisted state says
           // "enabled" — the choice would silently un-apply on next launch. Re-read
-          // the disk and fail loudly on mismatch, before touching the live client.
-          const persistedDisabled = context.config.isTelemetryDisabledByConfig();
+          // the disk STRICTLY and fail loudly, before touching the live client.
+          // isTelemetryDisabledByConfig() is deliberately not used here: its
+          // fail-closed read (unreadable ⇒ disabled) is right for enablement
+          // checks but would let a failed write + failed read masquerade as a
+          // confirmed opt-out.
+          let persistedDisabled: boolean;
+          try {
+            persistedDisabled =
+              context.config.loadConfigOrDefault({ throwOnError: true }).telemetryEnabled === false;
+          } catch {
+            throw new Error(
+              "Could not verify the telemetry preference was persisted to config.json; the setting was not changed."
+            );
+          }
           if (persistedDisabled !== !input.enabled) {
             throw new Error(
               "Failed to persist the telemetry preference to config.json; the setting was not changed."
