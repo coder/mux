@@ -123,8 +123,7 @@ if [[ "$SKIP_SHRINKWRAP" == "1" ]]; then
   log_info "Repacked tarball without shrinkwrap: $PACKAGE_TARBALL"
 fi
 
-# Install the package. Registry publication skew (e.g. AWS SDK waves) can make
-# fresh resolution transiently fail; retry before failing.
+# Publish waves (e.g. AWS SDK) can transiently request sibling versions not yet visible on the registry.
 log_info "Installing package..."
 if ! "$SCRIPT_DIR/retry.sh" 5 60 npm install --no-save "$PACKAGE_TARBALL"; then
   log_error "Failed to install package"
