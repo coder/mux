@@ -1304,53 +1304,7 @@ export class MCPServerManager {
 
     // Signature is based on *start config* only (not tool allowlists), so changing allowlists
     // does not force a server restart.
-    const signatureEntries: Record<string, unknown> = {};
-    for (const [name, info] of enabledEntries) {
-      if (info.transport === "stdio") {
-        // args/env/cwd participate so plugin mcp.json edits recycle servers.
-        signatureEntries[name] = {
-          transport: "stdio",
-          command: info.command,
-          args: info.args ?? null,
-          env: info.env ?? null,
-          cwd: info.cwd ?? null,
-        };
-        continue;
-      }
-
-      // OAuth status affects whether we can attach authProvider during server start.
-      // Include this (redacted) information in the signature so we retry starting
-      // remote servers after a user logs in/out.
-      let hasOauthTokens = false;
-      if (this.mcpOauthService) {
-        try {
-          hasOauthTokens = await this.mcpOauthService.hasAuthTokens({
-            serverUrl: info.url,
-          });
-        } catch (error) {
-          log.debug("[MCP] Failed to resolve MCP OAuth status", { name, error });
-        }
-      }
-
-      try {
-        const { headers } = resolveHeaders(info.headers, projectSecrets);
-        signatureEntries[name] = {
-          transport: info.transport,
-          url: info.url,
-          headers,
-          hasOauthTokens,
-        };
-      } catch {
-        // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
-        signatureEntries[name] = {
-          transport: info.transport,
-          url: info.url,
-          headers: null,
-          hasOauthTokens,
-        };
-      }
-    }
-
+    const signatureEntries = await this.computeSignatureEntries(enabledEntries, projectSecrets);
     const signature = JSON.stringify(signatureEntries);
 
     const existing = this.workspaceServers.get(workspaceId);
@@ -1599,12 +1553,6 @@ export class MCPServerManager {
       );
       existing.stats = leasedStats;
       existing.enabledServerNames = enabledServerNames;
-      await this.repairEnablementAfterConcurrentMutation(
-        workspaceId,
-        options,
-        existing,
-        configGenerationUsed
-      );
 
       // The deferred restart retains same-named instances with the old config,
       // so record which servers changed to block prompt invocation on them.
@@ -1620,6 +1568,15 @@ export class MCPServerManager {
           )
         );
       }
+
+      // Runs after the staleness recompute so the delete above cannot clobber
+      // staleness detected from a mutation newer than this call's config read.
+      await this.repairEnablementAfterConcurrentMutation(
+        workspaceId,
+        options,
+        existing,
+        configGenerationUsed
+      );
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
@@ -1768,10 +1725,65 @@ export class MCPServerManager {
     return descriptors;
   }
 
+  private async computeSignatureEntries(
+    enabledEntries: Array<[string, MCPServerInfo]>,
+    projectSecrets: Record<string, string> | undefined
+  ): Promise<Record<string, unknown>> {
+    const signatureEntries: Record<string, unknown> = {};
+    for (const [name, info] of enabledEntries) {
+      if (info.transport === "stdio") {
+        // args/env/cwd participate so plugin mcp.json edits recycle servers.
+        signatureEntries[name] = {
+          transport: "stdio",
+          command: info.command,
+          args: info.args ?? null,
+          env: info.env ?? null,
+          cwd: info.cwd ?? null,
+        };
+        continue;
+      }
+
+      // OAuth status affects whether we can attach authProvider during server start.
+      // Include this (redacted) information in the signature so we retry starting
+      // remote servers after a user logs in/out.
+      let hasOauthTokens = false;
+      if (this.mcpOauthService) {
+        try {
+          hasOauthTokens = await this.mcpOauthService.hasAuthTokens({
+            serverUrl: info.url,
+          });
+        } catch (error) {
+          log.debug("[MCP] Failed to resolve MCP OAuth status", { name, error });
+        }
+      }
+
+      try {
+        const { headers } = resolveHeaders(info.headers, projectSecrets);
+        signatureEntries[name] = {
+          transport: info.transport,
+          url: info.url,
+          headers,
+          hasOauthTokens,
+        };
+      } catch {
+        // Missing secrets or invalid header config. Keep signature stable but avoid leaking details.
+        signatureEntries[name] = {
+          transport: info.transport,
+          url: info.url,
+          headers: null,
+          hasOauthTokens,
+        };
+      }
+    }
+    return signatureEntries;
+  }
+
   /**
    * Settings mutations sync only an existing cache entry, so one landing while
-   * servers start would be lost and could leave a disabled or trust-revoked
-   * server invocable. Re-derive enablement from the latest recorded options.
+   * servers start would be lost: a disabled or trust-revoked server could stay
+   * invocable, and an edited server would keep serving its pre-edit instance.
+   * Re-derive enablement from the latest recorded options and block prompt
+   * invocation on servers whose start config changed until the next restart.
    */
   private async repairEnablementAfterConcurrentMutation(
     workspaceId: string,
@@ -1794,9 +1806,24 @@ export class MCPServerManager {
           recorded.trusted ?? false,
           recorded.agentPlugins
         );
+        const signatureEntries = await this.computeSignatureEntries(
+          Object.entries(enabled).sort(([a], [b]) => a.localeCompare(b)),
+          recorded.projectSecrets
+        );
         const latest = this.lastWorkspaceRequestOptions.get(workspaceId);
         if (latest === recorded && this.configService.configGeneration === generationRead) {
           entry.enabledServerNames = new Set(Object.keys(enabled));
+          // configSignature is always in-process JSON.stringify output, so parsing cannot fail.
+          const previousEntries = JSON.parse(entry.configSignature) as Record<string, unknown>;
+          const reconfigured = Object.keys(signatureEntries).filter(
+            (name) =>
+              JSON.stringify(signatureEntries[name]) !== JSON.stringify(previousEntries[name])
+          );
+          if (reconfigured.length > 0) {
+            const stale = entry.stalePromptServerNames ?? new Set<string>();
+            for (const name of reconfigured) stale.add(name);
+            entry.stalePromptServerNames = stale;
+          }
           return;
         }
         // Another mutation landed while we derived enablement; recompute.
@@ -1896,7 +1923,7 @@ export class MCPServerManager {
     }
     if (entry?.stalePromptServerNames?.has(serverName)) {
       throw new Error(
-        `MCP server '${serverName}' was reconfigured while a stream is active; retry after the stream finishes`
+        `MCP server '${serverName}' was reconfigured while this request was being prepared; retry`
       );
     }
     const instance = entry?.instances.get(serverName);

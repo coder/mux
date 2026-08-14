@@ -966,7 +966,7 @@ describe("MCPServerManager", () => {
     try {
       // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
       await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
-        "was reconfigured while a stream is active"
+        "was reconfigured"
       );
       expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({
         text: "hi",
@@ -1150,6 +1150,46 @@ describe("MCPServerManager", () => {
     await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
       "is disabled"
     );
+    expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
+  });
+
+  test("blocks prompt invocation when a server's config is edited during cold startup", async () => {
+    const workspaceId = "ws-mid-startup-config-edit";
+    let command = "cmd-1";
+    configService.listServers = mock(() =>
+      Promise.resolve({ server: stdioConfig(command), stable: stdioConfig("cmd-stable") })
+    );
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    let startCount = 0;
+    access.startServers = mock(() => {
+      startCount += 1;
+      if (startCount === 2) {
+        // Settings edits the server command while the revival startup is in
+        // flight: the enabled set is unchanged, so only the start-config
+        // signature reveals that the just-started instance is stale.
+        command = "cmd-2";
+        configService.configGeneration += 1;
+      }
+      return Promise.resolve(
+        startResult([
+          ["server", { getPrompt }],
+          ["stable", { getPrompt }],
+        ])
+      );
+    });
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Simulate an idle reap that retains recorded request options.
+    access.workspaceServers.delete(workspaceId);
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
+      "was reconfigured"
+    );
+    // The untouched sibling server keeps serving prompts.
     expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
   });
 
