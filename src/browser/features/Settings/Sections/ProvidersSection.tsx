@@ -2348,7 +2348,16 @@ export function ProvidersSection() {
                                     variant="secondary"
                                     size="sm"
                                     onClick={() => {
-                                      void refreshCoderModels();
+                                      // Not fire-and-forget: failures stay observable by
+                                      // settling into coderModelRefreshState. The body
+                                      // handles its own errors; this catch surfaces any
+                                      // unexpected rejection in the same error state.
+                                      refreshCoderModels().catch((err: unknown) => {
+                                        setCoderModelRefreshState({
+                                          kind: "error",
+                                          message: getErrorMessage(err),
+                                        });
+                                      });
                                     }}
                                     disabled={
                                       !api ||
