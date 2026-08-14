@@ -204,6 +204,35 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
     session.dispose();
   });
 
+  it("re-resolves a numeric one-shot thinking index against the routed model", async () => {
+    const workspacePath = await createWorkspaceWithSkill({
+      skillName: "done",
+      metadataYaml: "metadata:\n  model-class: small\n",
+    });
+    const { session, streamed } = await createRoutingHarness({
+      workspacePath,
+      configValues: { modelClasses: { small: "haiku" } },
+    });
+
+    // "/+0 /done" typed on a workspace model whose lowest allowed level is
+    // "medium": the frontend resolves thinkingLevel against the WORKSPACE
+    // ladder and passes the raw index alongside. The routed model's ladder
+    // differs (haiku's index 0 is "off"), so the re-resolved index — not the
+    // pre-resolved level — must win.
+    const result = await session.sendMessage(
+      "Use skill done",
+      skillSendOptions({
+        skipAiSettingsPersistence: true,
+        thinkingLevel: "medium",
+        oneShotThinkingIndex: 0,
+      })
+    );
+    expect(result.success).toBe(true);
+    expect(streamed[0].modelString).toBe(KNOWN_MODELS.HAIKU.id);
+    expect(streamed[0].thinkingLevel).toBe("off");
+    session.dispose();
+  });
+
   it("leaves frontmatter bindings to an undefined class inert (streams the caller's model)", async () => {
     const workspacePath = await createWorkspaceWithSkill({
       skillName: "done",

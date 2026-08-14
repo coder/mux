@@ -52,6 +52,20 @@ export interface CompactionFollowUpInput extends UserMessageContent {
   model?: string;
   /** Rides with `model`: an explicit one-shot must keep bypassing class routing on re-dispatch. */
   skipSkillModelRouting?: boolean;
+  /**
+   * Explicit one-shot thinking reconstructed from the original send
+   * ("/haiku+0 /skill", "/+high /skill"). Resolved against `model` when
+   * present, else against the workspace model at rebuild time.
+   */
+  thinkingLevel?: ThinkingLevel;
+  /**
+   * Raw numeric one-shot thinking index ("/+2 /skill"). Model-relative: the
+   * re-dispatched send re-resolves it against the routed class model when
+   * skill routing applies (see SendMessageOptions.oneShotThinkingIndex).
+   */
+  oneShotThinkingIndex?: number;
+  /** One-shot overrides carried through compaction must not persist as new workspace defaults. */
+  skipAiSettingsPersistence?: boolean;
 }
 
 /**
@@ -69,6 +83,8 @@ type PreservedSendOptions = Pick<
   | "disableWorkspaceAgents"
   | "allowAgentSetGoal"
   | "skipAiSettingsPersistence"
+  | "skipSkillModelRouting"
+  | "oneShotThinkingIndex"
 >;
 
 /**
@@ -85,6 +101,10 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     allowAgentSetGoal: options.allowAgentSetGoal,
     skipAiSettingsPersistence: options.skipAiSettingsPersistence,
+    // A one-shot's routing bypass and raw thinking index must survive into a
+    // compaction follow-up, or the re-dispatch re-routes/re-ladders the send.
+    skipSkillModelRouting: options.skipSkillModelRouting,
+    oneShotThinkingIndex: options.oneShotThinkingIndex,
   };
 }
 

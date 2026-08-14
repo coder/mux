@@ -16,6 +16,7 @@ import {
 } from "@/browser/utils/compaction/suggestion";
 import { executeCompaction } from "@/browser/utils/chatCommands";
 import { parseCommand } from "@/browser/utils/slashCommands/parser";
+import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
@@ -56,19 +57,40 @@ function findTriggerUserMessage(
  * Build follow-up content from a user message source.
  * Preserves skill metadata if the original message was a skill invocation.
  */
-export function buildFollowUpFromSource(
-  source: Extract<DisplayedMessage, { type: "user" }>
+function buildFollowUpFromSource(
+  source: Extract<DisplayedMessage, { type: "user" }>,
+  ctx: { providersConfig: ProvidersConfigMap | null; currentModel: string | null }
 ): CompactionFollowUpInput {
   const slashMcpPromptRef = source.mcpPromptRefs?.find((ref) => ref.source === "slash");
   // A composed one-shot skill send ("/haiku+0 /done args") stores the full
   // typed text as content; re-parse it so the rebuilt follow-up keeps the
-  // explicit model override instead of falling back to class routing.
-  // (The one-shot thinking level is not carried: it re-resolves from the
-  // preserved workspace settings on dispatch.)
+  // explicit model AND thinking overrides instead of falling back to class
+  // routing / ambient workspace thinking.
   const parsedOneShot =
     source.agentSkill && source.content.startsWith("/") ? parseCommand(source.content) : null;
-  const oneShotModel =
-    parsedOneShot?.type === "model-oneshot" ? parsedOneShot.modelString : undefined;
+  const oneShot = parsedOneShot?.type === "model-oneshot" ? parsedOneShot : null;
+  const oneShotModel = oneShot?.modelString;
+  const rawThinking = oneShot?.thinkingLevel;
+
+  // Numeric thinking is model-relative. With an explicit model it resolves
+  // right here; without one the send may get class-routed, so the raw index
+  // rides along for the backend to resolve against whatever model streams
+  // (the resolved fallback below applies only if routing doesn't happen).
+  let thinkingLevel: CompactionFollowUpInput["thinkingLevel"];
+  let oneShotThinkingIndex: number | undefined;
+  if (rawThinking != null) {
+    if (typeof rawThinking !== "number") {
+      thinkingLevel = rawThinking;
+    } else if (oneShotModel != null) {
+      thinkingLevel = resolveThinkingInput(rawThinking, oneShotModel, ctx.providersConfig);
+    } else {
+      oneShotThinkingIndex = rawThinking;
+      thinkingLevel = ctx.currentModel
+        ? resolveThinkingInput(rawThinking, ctx.currentModel, ctx.providersConfig)
+        : undefined;
+    }
+  }
+  const carriesOneShot = oneShotModel != null || rawThinking != null;
 
   const skillMetadata =
     source.agentSkill && source.agentSkill.skillName !== slashMcpPromptRef?.commandKey
@@ -108,6 +130,11 @@ export function buildFollowUpFromSource(
     fileParts: source.fileParts,
     reviews: source.reviews,
     ...(oneShotModel != null ? { model: oneShotModel, skipSkillModelRouting: true } : {}),
+    ...(thinkingLevel != null ? { thinkingLevel } : {}),
+    ...(oneShotThinkingIndex != null ? { oneShotThinkingIndex } : {}),
+    // The original one-shot send never persisted its overrides as workspace
+    // defaults; the re-dispatch must not either.
+    ...(carriesOneShot ? { skipAiSettingsPersistence: true } : {}),
     // Inline skill refs must survive alongside prompt refs; withAgentSkillRefs
     // dedupes against the slash ref that buildAgentSkillMetadata already added.
     muxMetadata: withAgentSkillRefs(
@@ -322,7 +349,10 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
       }
 
       // For normal messages (not /compact), build follow-up content directly.
-      const followUpContent = buildFollowUpFromSource(source);
+      const followUpContent = buildFollowUpFromSource(source, {
+        providersConfig,
+        currentModel: workspaceState?.currentModel ?? null,
+      });
       const result = await executeCompaction({
         api,
         workspaceId: props.workspaceId,
@@ -344,7 +374,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         setIsRetryingWithCompaction(false);
       }
     }
-  }, [api, compactionSuggestion, props.workspaceId, triggerUserMessage]);
+  }, [
+    api,
+    compactionSuggestion,
+    props.workspaceId,
+    triggerUserMessage,
+    providersConfig,
+    workspaceState?.currentModel,
+  ]);
 
   /**
    * Auto-compact on context_exceeded. Runs silently - never touches chat input.
@@ -361,7 +398,10 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
 
     try {
       const sendMessageOptions = getSendOptionsFromStorage(props.workspaceId);
-      const followUpContent = buildFollowUpFromSource(triggerUserMessage);
+      const followUpContent = buildFollowUpFromSource(triggerUserMessage, {
+        providersConfig,
+        currentModel: workspaceState?.currentModel ?? null,
+      });
 
       const result = await executeCompaction({
         api,
@@ -384,7 +424,14 @@ export function useCompactAndRetry(props: { workspaceId: string }): CompactAndRe
         setIsRetryingWithCompaction(false);
       }
     }
-  }, [api, compactionSuggestion?.modelId, props.workspaceId, triggerUserMessage]);
+  }, [
+    api,
+    compactionSuggestion?.modelId,
+    props.workspaceId,
+    triggerUserMessage,
+    providersConfig,
+    workspaceState?.currentModel,
+  ]);
 
   // Auto-trigger compaction on context_exceeded for seamless recovery.
   // Only auto-compact if we have a compaction suggestion; otherwise show manual UI.

@@ -64,6 +64,7 @@ import {
   enforceThinkingPolicy,
   lookupMinThinkingLevelOverride,
   resolveMinimumThinkingLevel,
+  resolveThinkingInput,
 } from "@/common/utils/thinking/policy";
 import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverride";
 import {
@@ -2976,19 +2977,43 @@ export class AgentSession {
     // compact on that small model — the compaction model has to fit the full
     // uncompacted history.
     const preRoutingOptions = optionsForStream;
+    let muxMetadataForMessage = typedMuxMetadata;
     if (skillModelOverride != null) {
       modelForStream = skillModelOverride.model;
+      // Numeric one-shot thinking is model-relative: the frontend resolved
+      // options.thinkingLevel against the workspace model before routing was
+      // known, so "/+0 /skill" must be re-resolved here to mean the ROUTED
+      // model's lowest level, not the workspace model's.
+      const reroutedOneShotThinking =
+        options.oneShotThinkingIndex != null
+          ? resolveThinkingInput(
+              options.oneShotThinkingIndex,
+              skillModelOverride.model,
+              this.getProvidersConfigSafe()
+            )
+          : undefined;
       optionsForStream = {
         ...optionsForStream,
         model: skillModelOverride.model,
-        // The class's thinking level yields to an explicit per-send override:
-        // skipAiSettingsPersistence marks one-shot sends, so "/+2 /skill"
-        // routes to the class model at the user's thinking level, not the
-        // class default.
-        ...(skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
-          ? { thinkingLevel: skillModelOverride.thinkingLevel }
-          : {}),
+        // Precedence: explicit numeric one-shot (re-resolved above) > class
+        // thinking > ambient options. skipAiSettingsPersistence marks one-shot
+        // sends, so a named "/+high /skill" keeps the user's level rather than
+        // the class default.
+        ...(reroutedOneShotThinking != null
+          ? { thinkingLevel: reroutedOneShotThinking }
+          : skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
+            ? { thinkingLevel: skillModelOverride.thinkingLevel }
+            : {}),
       };
+      // The persisted request metadata must advertise the model that will
+      // actually stream: the pending-turn label and downstream consumers read
+      // requestedModel from the user message.
+      if (muxMetadataForMessage != null) {
+        muxMetadataForMessage = {
+          ...muxMetadataForMessage,
+          requestedModel: skillModelOverride.model,
+        };
+      }
     }
 
     const userMessage = createMuxMessage(
@@ -3000,7 +3025,7 @@ export class AgentSession {
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
         retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
-        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        muxMetadata: muxMetadataForMessage, // Frontend metadata; requestedModel re-stamped when routing applied
         ...(acpPromptId != null ? { acpPromptId } : {}),
         ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
@@ -6110,6 +6135,9 @@ export class AgentSession {
       skipAiSettingsPersistence: followUp.skipAiSettingsPersistence,
       // An explicit one-shot carried through compaction keeps bypassing class routing.
       skipSkillModelRouting: followUp.skipSkillModelRouting,
+      // A raw numeric thinking index re-resolves against the routed model if
+      // this re-dispatched send gets class-routed.
+      oneShotThinkingIndex: followUp.oneShotThinkingIndex,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {

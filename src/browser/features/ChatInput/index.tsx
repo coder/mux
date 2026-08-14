@@ -3104,6 +3104,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           // Only a model-carrying one-shot bypasses class routing; a
           // thinking-only override (/+2 /skill) layers on top of routing.
           ...(modelOverride ? { skipSkillModelRouting: true } : {}),
+          // Numeric thinking is model-relative and thinkingOverride above was
+          // resolved against the workspace model. A routable skill send may
+          // stream on a different (class) model, so pass the raw index for the
+          // backend to re-resolve against whatever model actually streams.
+          ...(skillInvocation && !modelOverride && typeof rawThinkingOverride === "number"
+            ? { oneShotThinkingIndex: rawThinkingOverride }
+            : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
