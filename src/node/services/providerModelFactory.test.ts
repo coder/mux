@@ -2338,6 +2338,9 @@ describe("ProviderModelFactory Coder", () => {
       expect(result.data.effectiveModelString).toBe("anthropic:claude-sonnet-4-5");
       expect(result.data.routeProvider).toBe("anthropic");
       expect(result.data.wireProviderName).toBe("anthropic");
+      // Fallback-away requests still report the selected instance so callers
+      // can pin its type into the request's providers-config snapshot.
+      expect(result.data.coderSelectedInstance).toEqual({ name: "openai", type: "anthropic" });
     });
   });
 
@@ -2475,6 +2478,34 @@ describe("ProviderModelFactory Coder", () => {
         provider: "coder",
         modelId: "anthropic/excluded-model",
       });
+    });
+  });
+
+  it("rejects disconnected unmappable canonical-named instances instead of name-canonicalizing", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Coder disconnected (no coderOauth) + {name: "anthropic",
+      // type: "openai-compat"} + direct Anthropic credentials: the seed has
+      // no canonical fallback identity, so the request must fail on the
+      // coder route's own credentials — not name-canonicalize to direct
+      // Anthropic.
+      saveCoderConfig(config, {
+        coderOauth: undefined,
+        discoveredProviders: [{ name: "anthropic", type: "openai-compat" }],
+        models: ["anthropic/some-model"],
+        discoveredModels: ["anthropic/some-model"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:anthropic/some-model", "off");
+      expect(result.success).toBe(false);
+      if (result.success) {
+        return;
+      }
+      expect(result.error.type).toBe("api_key_not_found");
     });
   });
 

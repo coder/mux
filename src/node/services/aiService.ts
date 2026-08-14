@@ -430,28 +430,28 @@ function resolveMuxToolScope(
  * already-created SDK model. additionalProviders is the highest-precedence
  * metadata source (resolveCoderGatewayProvider consults it first), so the
  * pinned entry wins over any concurrently rewritten discovered metadata.
- * Only the SELECTED instance is pinned; requests that did not route through
- * the Coder gateway (no coderWire) keep the view untouched.
+ * Pinning keys on the RAW selection's instance (coderSelectedInstance), not
+ * on the effective route: a coder: selection that FELL BACK to a direct
+ * provider still has builders resolving the raw model string (capability
+ * lookups, override identity, option/header rebuilds), and a concurrent
+ * retag between the factory's read and this capture would otherwise hand
+ * the already-created fallback model another type's options. Non-coder
+ * selections, shadowed prefixes, and unknown instances have no snapshot and
+ * keep the view untouched.
  */
-function pinCoderWireProvidersConfig(
+function pinCoderInstanceProvidersConfig(
   view: ProvidersConfigMap,
-  effectiveModelString: string,
-  coderWire: { origin: "anthropic" | "openai"; modelId: string; providerType: string } | undefined
+  rawModelString: string,
+  instance: { name: string; type: string } | undefined
 ): ProvidersConfigMap {
-  if (!coderWire || !effectiveModelString.startsWith("coder:")) {
+  if (!instance || !rawModelString.startsWith("coder:")) {
     return view;
   }
-  const gatewayModelId = effectiveModelString.slice("coder:".length);
-  const separator = gatewayModelId.indexOf("/");
-  if (separator <= 0) {
-    return view;
-  }
-  const instanceName = gatewayModelId.slice(0, separator);
   return {
     ...view,
     coder: {
       ...(view.coder ?? { apiKeySet: false, isEnabled: true, isConfigured: true }),
-      additionalProviders: [{ name: instanceName, type: coderWire.providerType }],
+      additionalProviders: [{ name: instance.name, type: instance.type }],
     },
   };
 }
@@ -1259,10 +1259,10 @@ export class AIService extends EventEmitter {
       // factory-resolved instance type is PINNED into the snapshot so every
       // coder-wire resolution matches the created model even when the change
       // lands between the factory's read and this capture.
-      const requestProvidersConfig = pinCoderWireProvidersConfig(
+      const requestProvidersConfig = pinCoderInstanceProvidersConfig(
         this.providerService.getConfig(),
-        effectiveModelString,
-        modelResult.data.coderWire
+        modelString,
+        modelResult.data.coderSelectedInstance
       );
       // Capability lookups must see the RAW coder identity: name-based
       // canonicalization can rewrite a cross-typed instance (coder:openai/x
@@ -3049,11 +3049,11 @@ export class AIService extends EventEmitter {
                 }
                 const next = nextModelResult.data;
                 // Same single-snapshot rule as the main path, pinned to the
-                // FALLBACK model's factory-resolved wire.
-                const nextProvidersConfig = pinCoderWireProvidersConfig(
+                // fallback selection's factory-resolved instance.
+                const nextProvidersConfig = pinCoderInstanceProvidersConfig(
                   this.providerService.getConfig(),
-                  next.effectiveModelString,
-                  next.coderWire
+                  nextModelString,
+                  next.coderSelectedInstance
                 );
                 const nextToolsIdentity = resolveToolsIdentity(
                   nextModelString,

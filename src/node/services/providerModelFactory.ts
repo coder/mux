@@ -2261,6 +2261,15 @@ export class ProviderModelFactory {
          * another wire's tools/options for the already-created SDK model.
          */
         coderWire?: { origin: "anthropic" | "openai"; modelId: string; providerType: string };
+        /**
+         * The Coder instance addressed by a raw coder: selection, resolved
+         * from the SAME providers-config read — present even when routing
+         * fell away from the gateway (unlike coderWire). Callers that pin a
+         * request providers-config snapshot must pin THIS identity so
+         * builders resolving the raw model string cannot see a concurrently
+         * retagged instance type diverging from the created fallback model.
+         */
+        coderSelectedInstance?: { name: string; type: string };
         /** Whether the request is being routed through the Mux gateway. */
         routedThroughGateway: boolean;
         /** Route provider chosen by backend routing (direct provider or gateway). */
@@ -2369,23 +2378,36 @@ export class ProviderModelFactory {
       const coderModelAccessible = isGatewayModelAccessible("coder", rawCoderGatewayModelId);
       if (coderProviderRoutable && coderModelAccessible) {
         effectiveModelString = modelString;
-      } else if (
-        coderProviderRoutable &&
-        !coderModelAccessible &&
-        routeSeedModelString.startsWith("coder:")
-      ) {
-        // The authoritative catalog / removedModels tombstone / policy
-        // conclusively rejected this gateway model, and the instance type has
-        // no distinct canonical fallback identity (openai-compat and copilot
-        // front arbitrary upstreams; vendor-less vercel IDs are unmappable).
-        // Feeding the rejected coder: identity back into route resolution
-        // would land on the last-resort direct Coder route and send the
-        // request through the gateway anyway, bypassing the rejection.
-        return Err({
-          type: "model_not_available",
-          provider: "coder",
-          modelId: rawCoderGatewayModelId,
-        });
+      } else if (routeSeedModelString.startsWith("coder:")) {
+        // The instance type has no distinct canonical fallback identity
+        // (openai-compat and copilot front arbitrary upstreams; vendor-less
+        // vercel IDs are unmappable), so falling away from the gateway is
+        // never valid for this selection.
+        if (coderProviderRoutable) {
+          // The authoritative catalog / removedModels tombstone / policy
+          // conclusively rejected this gateway model. Feeding the rejected
+          // coder: identity back into route resolution would land on the
+          // last-resort direct Coder route and send the request through the
+          // gateway anyway, bypassing the rejection.
+          return Err({
+            type: "model_not_available",
+            provider: "coder",
+            modelId: rawCoderGatewayModelId,
+          });
+        }
+        // Coder disconnected/disabled: surface the coder route's own
+        // unavailability directly. Letting routing continue would
+        // name-canonicalize the selection (createModel re-resolves the
+        // gateway string) and silently send e.g. {name: "anthropic",
+        // type: "openai-compat"} to direct Anthropic when direct
+        // credentials exist.
+        return Err(
+          isProviderDisabledInConfig(
+            (providersConfigForShadowCheck.coder ?? {}) as { enabled?: unknown }
+          )
+            ? { type: "provider_disabled", provider: "coder" }
+            : { type: "api_key_not_found", provider: "coder" }
+        );
       } else {
         effectiveModelString = this.resolveGatewayModelString(
           routeSeedModelString,
@@ -2479,6 +2501,29 @@ export class ProviderModelFactory {
       return Err(modelResult.error);
     }
 
+    // Selected-instance snapshot for raw coder: selections, resolved from
+    // the same config read as routing — independent of the effective route,
+    // so fallback-away requests can also pin the instance type.
+    const coderSelectedInstance = (() => {
+      if (rawCoderGatewayModelId == null) {
+        return undefined;
+      }
+      const separator = rawCoderGatewayModelId.indexOf("/");
+      if (separator <= 0) {
+        return undefined;
+      }
+      const coderSection = providersConfigForShadowCheck.coder as
+        | { discoveredProviders?: unknown; additionalProviders?: unknown }
+        | undefined;
+      return (
+        resolveCoderGatewayProvider(
+          rawCoderGatewayModelId.slice(0, separator),
+          parseCoderGatewayProviders(coderSection?.discoveredProviders),
+          parseCoderGatewayProviders(coderSection?.additionalProviders)
+        ) ?? undefined
+      );
+    })();
+
     return Ok({
       model: modelResult.data,
       effectiveModelString,
@@ -2487,6 +2532,7 @@ export class ProviderModelFactory {
       canonicalModelId,
       wireProviderName,
       coderWire,
+      coderSelectedInstance,
       routedThroughGateway,
       routeProvider,
     });
