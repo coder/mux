@@ -87,11 +87,19 @@ export interface TelemetryEnablementContext {
   env: NodeJS.ProcessEnv;
   isElectron: boolean;
   isPackaged: boolean | null;
+  /** User opt-out persisted in config.json (Settings → General). */
+  disabledByConfig?: boolean;
 }
 
 export function shouldEnableTelemetry(context: TelemetryEnablementContext): boolean {
   // Telemetry is disabled by explicit env vars, CI, or test environments
   if (isTelemetryDisabledByEnv(context.env)) {
+    return false;
+  }
+
+  // User opt-out via config.json (telemetryEnabled: false). The env var and
+  // config switch are both hard-off; absence of both means enabled.
+  if (context.disabledByConfig === true) {
     return false;
   }
 
@@ -133,6 +141,7 @@ export class TelemetryService {
   private distinctId: string | null = null;
   private featureFlagVariants: Record<string, string | boolean> = {};
   private readonly muxHome: string;
+  private readonly isDisabledByConfig?: () => boolean;
 
   /**
    * Check if telemetry is enabled.
@@ -179,8 +188,22 @@ export class TelemetryService {
 
     this.featureFlagVariants[key] = variant;
   }
-  constructor(muxHome?: string) {
+  constructor(muxHome?: string, isDisabledByConfig?: () => boolean) {
     this.muxHome = muxHome ?? getMuxHome();
+    this.isDisabledByConfig = isDisabledByConfig;
+  }
+
+  /**
+   * Apply the Settings → General telemetry toggle at runtime: disabling shuts
+   * the PostHog client down (capture() no-ops on a null client), enabling
+   * re-runs initialize(), which re-checks every enablement gate.
+   */
+  async setConfigEnabled(enabled: boolean): Promise<void> {
+    if (!enabled) {
+      await this.shutdown();
+      return;
+    }
+    await this.initialize();
   }
 
   /**
@@ -201,8 +224,9 @@ export class TelemetryService {
 
     const isElectron = typeof process.versions.electron === "string";
     const isPackaged = await getElectronIsPackaged(isElectron);
+    const disabledByConfig = this.isDisabledByConfig?.() === true;
 
-    if (!shouldEnableTelemetry({ env, isElectron, isPackaged })) {
+    if (!shouldEnableTelemetry({ env, isElectron, isPackaged, disabledByConfig })) {
       return;
     }
 

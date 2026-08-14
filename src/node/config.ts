@@ -1379,6 +1379,7 @@ export class Config {
           chatTranscriptFullWidth: parseOptionalBoolean(parsed.chatTranscriptFullWidth),
           muxGatewayEnabled,
           llmDebugLogs: parseOptionalBoolean(parsed.llmDebugLogs),
+          telemetryEnabled: parseOptionalBoolean(parsed.telemetryEnabled),
           heartbeatDefaultPrompt: parseOptionalNonEmptyString(parsed.heartbeatDefaultPrompt),
           heartbeatDefaultIntervalMs: parseOptionalHeartbeatIntervalMs(
             parsed.heartbeatDefaultIntervalMs
@@ -1500,6 +1501,11 @@ export class Config {
       const llmDebugLogs = parseOptionalBoolean(config.llmDebugLogs);
       if (llmDebugLogs !== undefined) {
         data.llmDebugLogs = llmDebugLogs;
+      }
+
+      const telemetryEnabled = parseOptionalBoolean(config.telemetryEnabled);
+      if (telemetryEnabled !== undefined) {
+        data.telemetryEnabled = telemetryEnabled;
       }
 
       const heartbeatDefaultPrompt = parseOptionalNonEmptyString(config.heartbeatDefaultPrompt);
@@ -1803,6 +1809,11 @@ export class Config {
 
   getLlmDebugLogsEnabled(): boolean {
     return this.loadConfigOrDefault().llmDebugLogs === true;
+  }
+
+  /** Settings → General telemetry opt-out; absent means enabled. */
+  isTelemetryDisabledByConfig(): boolean {
+    return this.loadConfigOrDefault().telemetryEnabled === false;
   }
 
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {

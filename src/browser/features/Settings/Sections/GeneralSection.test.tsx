@@ -19,6 +19,7 @@ interface MockConfig {
   worktreeArchiveBehavior: WorktreeArchiveBehavior;
   chatTranscriptFullWidth: boolean;
   llmDebugLogs: boolean;
+  telemetryEnabled: boolean;
 }
 
 interface MockAPIClient {
@@ -30,6 +31,7 @@ interface MockAPIClient {
     }) => Promise<void>;
     updateChatTranscriptFullWidth: (input: { enabled: boolean }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
+    updateTelemetryEnabled: (input: { enabled: boolean }) => Promise<void>;
   };
   server: {
     getSshHost: () => Promise<string | null>;
@@ -171,6 +173,7 @@ interface RenderGeneralSectionOptions {
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
   chatTranscriptFullWidth?: boolean;
+  telemetryEnabled?: boolean;
 }
 
 interface MockAPISetup {
@@ -187,6 +190,9 @@ interface MockAPISetup {
   updateChatTranscriptFullWidthMock: ReturnType<
     typeof mock<(input: { enabled: boolean }) => Promise<void>>
   >;
+  updateTelemetryEnabledMock: ReturnType<
+    typeof mock<(input: { enabled: boolean }) => Promise<void>>
+  >;
 }
 
 function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup {
@@ -195,6 +201,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
     chatTranscriptFullWidth: false,
     llmDebugLogs: false,
+    telemetryEnabled: true,
     ...configOverrides,
   };
 
@@ -217,6 +224,12 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     return Promise.resolve();
   });
 
+  const updateTelemetryEnabledMock = mock(({ enabled }: { enabled: boolean }) => {
+    config.telemetryEnabled = enabled;
+
+    return Promise.resolve();
+  });
+
   return {
     api: {
       config: {
@@ -228,6 +241,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
 
           return Promise.resolve();
         }),
+        updateTelemetryEnabled: updateTelemetryEnabledMock,
       },
       server: {
         getSshHost: mock(() => Promise.resolve(null)),
@@ -241,6 +255,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     getConfigMock,
     updateCoderPrefsMock,
     updateChatTranscriptFullWidthMock,
+    updateTelemetryEnabledMock,
   };
 }
 
@@ -263,10 +278,18 @@ describe("GeneralSection", () => {
   });
 
   function renderGeneralSection(options: RenderGeneralSectionOptions = {}) {
-    const { api, updateCoderPrefsMock, updateChatTranscriptFullWidthMock } = createMockAPI({
+    const {
+      api,
+      updateCoderPrefsMock,
+      updateChatTranscriptFullWidthMock,
+      updateTelemetryEnabledMock,
+    } = createMockAPI({
       chatTranscriptFullWidth: options.chatTranscriptFullWidth,
       coderWorkspaceArchiveBehavior: options.coderWorkspaceArchiveBehavior,
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
+      ...(options.telemetryEnabled !== undefined
+        ? { telemetryEnabled: options.telemetryEnabled }
+        : {}),
     });
     mockApi = api;
 
@@ -276,7 +299,12 @@ describe("GeneralSection", () => {
       </ThemeProvider>
     );
 
-    return { updateCoderPrefsMock, updateChatTranscriptFullWidthMock, view };
+    return {
+      updateCoderPrefsMock,
+      updateChatTranscriptFullWidthMock,
+      updateTelemetryEnabledMock,
+      view,
+    };
   }
 
   function getSelectTrigger(view: ReturnType<typeof render>, label: string): HTMLElement {
@@ -350,6 +378,25 @@ describe("GeneralSection", () => {
     await waitFor(() => {
       expect(toggle.getAttribute("aria-checked")).toBe("false");
       expect(updateChatTranscriptFullWidthMock).toHaveBeenCalledWith({ enabled: false });
+    });
+  });
+
+  test("loads the telemetry opt-out and persists re-enabling it", async () => {
+    const { updateTelemetryEnabledMock, view } = renderGeneralSection({
+      telemetryEnabled: false,
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    // A persisted opt-out must render unchecked (default is enabled).
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    });
+
+    fireEvent.click(toggle);
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: true });
     });
   });
 

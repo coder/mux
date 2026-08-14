@@ -150,7 +150,9 @@ export class ServiceContainer {
     // Cross-cutting services: created first so they can be passed to core
     // services via constructor params (no setter injection needed).
     this.policyService = new PolicyService(config);
-    this.telemetryService = new TelemetryService(config.rootDir);
+    this.telemetryService = new TelemetryService(config.rootDir, () =>
+      config.isTelemetryDisabledByConfig()
+    );
     this.experimentsService = new ExperimentsService({
       telemetryService: this.telemetryService,
       muxHome: config.rootDir,

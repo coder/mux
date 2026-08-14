@@ -7,6 +7,7 @@ function createContext(overrides: Partial<TelemetryEnablementContext>): Telemetr
     env: overrides.env ?? {},
     isElectron: overrides.isElectron ?? false,
     isPackaged: overrides.isPackaged ?? null,
+    disabledByConfig: overrides.disabledByConfig,
   };
 }
 
@@ -82,6 +83,32 @@ describe("TelemetryService enablement", () => {
     );
 
     expect(enabled).toBe(true);
+  });
+
+  test("disables telemetry when the config opt-out is set", () => {
+    const enabled = shouldEnableTelemetry(
+      createContext({
+        env: {},
+        isElectron: true,
+        isPackaged: true,
+        disabledByConfig: true,
+      })
+    );
+
+    expect(enabled).toBe(false);
+  });
+
+  test("the env var hard-off wins even when config says enabled", () => {
+    const enabled = shouldEnableTelemetry(
+      createContext({
+        env: { MUX_DISABLE_TELEMETRY: "1" },
+        isElectron: true,
+        isPackaged: true,
+        disabledByConfig: false,
+      })
+    );
+
+    expect(enabled).toBe(false);
   });
 
   test("enables telemetry in NODE_ENV=development by default", () => {

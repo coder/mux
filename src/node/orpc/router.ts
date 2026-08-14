@@ -1086,6 +1086,7 @@ export const router = (authToken?: string) => {
             muxGovernorEnrolled,
             chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
             llmDebugLogs: config.llmDebugLogs === true,
+            telemetryEnabled: config.telemetryEnabled !== false,
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
             goalDefaults: normalizeGoalDefaults(config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS),
@@ -1528,6 +1529,23 @@ export const router = (authToken?: string) => {
             config.llmDebugLogs = input.enabled;
             return config;
           });
+        }),
+      updateTelemetryEnabled: t
+        .input(schemas.config.updateTelemetryEnabled.input)
+        .output(schemas.config.updateTelemetryEnabled.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            // Keep the stored config sparse: enabled is the default.
+            if (input.enabled) {
+              delete config.telemetryEnabled;
+            } else {
+              config.telemetryEnabled = false;
+            }
+            return config;
+          });
+          // Apply immediately: disabling shuts the client down mid-session,
+          // enabling re-runs the full enablement check (env vars still win).
+          await context.telemetryService.setConfigEnabled(input.enabled);
         }),
       updateHeartbeatDefaultPrompt: t
         .input(schemas.config.updateHeartbeatDefaultPrompt.input)

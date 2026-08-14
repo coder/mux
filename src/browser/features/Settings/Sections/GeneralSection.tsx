@@ -207,6 +207,8 @@ export function GeneralSection() {
   const [archiveSettingsLoaded, setArchiveSettingsLoaded] = useState(false);
   const [chatTranscriptFullWidth, setChatTranscriptFullWidth] = useState(false);
   const [llmDebugLogs, setLlmDebugLogs] = useState(false);
+  // Optimistic default: telemetry is on unless config says otherwise.
+  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const archiveBehaviorLoadNonceRef = useRef(0);
   const archiveBehaviorRef = useRef<CoderWorkspaceArchiveBehavior>(DEFAULT_CODER_ARCHIVE_BEHAVIOR);
   const worktreeArchiveBehaviorRef = useRef<WorktreeArchiveBehavior>(
@@ -215,12 +217,14 @@ export function GeneralSection() {
 
   const chatTranscriptFullWidthLoadNonceRef = useRef(0);
   const llmDebugLogsLoadNonceRef = useRef(0);
+  const telemetryEnabledLoadNonceRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
   const archiveBehaviorUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const chatTranscriptFullWidthUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const llmDebugLogsUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
+  const telemetryEnabledUpdateChainRef = useRef<Promise<void>>(Promise.resolve());
   const archiveBehaviorPendingUpdateRef = useRef<CoderWorkspaceArchiveBehavior | undefined>(
     undefined
   );
@@ -237,6 +241,7 @@ export function GeneralSection() {
     const archiveBehaviorNonce = ++archiveBehaviorLoadNonceRef.current;
     const chatTranscriptFullWidthNonce = ++chatTranscriptFullWidthLoadNonceRef.current;
     const llmDebugLogsNonce = ++llmDebugLogsLoadNonceRef.current;
+    const telemetryEnabledNonce = ++telemetryEnabledLoadNonceRef.current;
 
     void api.config
       .getConfig()
@@ -271,6 +276,10 @@ export function GeneralSection() {
 
         if (llmDebugLogsNonce === llmDebugLogsLoadNonceRef.current) {
           setLlmDebugLogs(cfg.llmDebugLogs === true);
+        }
+
+        if (telemetryEnabledNonce === telemetryEnabledLoadNonceRef.current) {
+          setTelemetryEnabled(cfg.telemetryEnabled !== false);
         }
       })
       .catch(() => {
@@ -398,6 +407,29 @@ export function GeneralSection() {
         // Best-effort only.
       })
       .then(() => api.config.updateLlmDebugLogs({ enabled: checked }))
+      .then(() => {
+        // Coerce the chain back to Promise<void>.
+      })
+      .catch(() => {
+        // Best-effort persistence.
+      });
+  };
+
+  const handleTelemetryEnabledChange = (checked: boolean) => {
+    // Invalidate any in-flight config load so it doesn't overwrite the user's selection.
+    telemetryEnabledLoadNonceRef.current++;
+    setTelemetryEnabled(checked);
+
+    if (!api?.config?.updateTelemetryEnabled) {
+      return;
+    }
+
+    // Serialize writes so rapid toggles always persist the last user choice.
+    telemetryEnabledUpdateChainRef.current = telemetryEnabledUpdateChainRef.current
+      .catch(() => {
+        // Best-effort only.
+      })
+      .then(() => api.config.updateTelemetryEnabled({ enabled: checked }))
       .then(() => {
         // Coerce the chain back to Promise<void>.
       })
@@ -692,6 +724,27 @@ export function GeneralSection() {
               checked={llmDebugLogs}
               onCheckedChange={handleLlmDebugLogsChange}
               aria-label="Toggle API Debug Logs"
+            />
+          </div>
+          <div className="flex items-center justify-between py-3">
+            <div className="flex-1 pr-4">
+              <div className="text-foreground text-sm">Usage Telemetry</div>
+              <div className="text-muted mt-0.5 text-xs">
+                Send anonymous usage events to help improve mux — no code, paths, or prompts.{" "}
+                <a
+                  href="https://mux.coder.com/reference/telemetry"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent hover:underline"
+                >
+                  What is collected
+                </a>
+              </div>
+            </div>
+            <Switch
+              checked={telemetryEnabled}
+              onCheckedChange={handleTelemetryEnabledChange}
+              aria-label="Toggle Usage Telemetry"
             />
           </div>
         </div>
