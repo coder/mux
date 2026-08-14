@@ -532,6 +532,7 @@ export function ModelsSection() {
                           ? () => toggle1MContext(model.fullId)
                           : undefined
                       }
+                      providersConfig={config}
                     />
                   );
                 })}
@@ -581,6 +582,7 @@ export function ModelsSection() {
                       ? () => toggle1MContext(model.fullId)
                       : undefined
                   }
+                  providersConfig={config}
                 />
               ))}
             </tbody>

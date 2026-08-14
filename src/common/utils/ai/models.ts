@@ -105,6 +105,22 @@ export function resolveProviderOptionsNamespaceKey(
 }
 
 /**
+ * Equality key for UI selection tracking (explicit-change origin recording,
+ * same-model warning suppression).
+ *
+ * Collapses passthrough gateway aliases to canonical identity — a persisted
+ * rewrite like mux-gateway:openai/x must still match an explicit openai:x
+ * switch — but keeps raw coder:<instance>/<model> identities distinct: the
+ * instance's TYPE (not its name) decides the upstream, so name-only
+ * canonicalization would equate a cross-typed gateway selection with an
+ * unrelated direct model and drop the switch/warning.
+ */
+export function modelSelectionEqualityKey(modelString: string): string {
+  const trimmed = modelString.trim();
+  return trimmed.startsWith("coder:") ? trimmed : normalizeToCanonical(trimmed);
+}
+
+/**
  * Normalize a selected model while preserving explicit gateway routing choices.
  * User-selected gateway identities like openrouter:openai/gpt-5 should stay intact.
  */
