@@ -28,6 +28,7 @@ import { createMediatedAskpassSession } from "@/node/runtime/openSshPromptMediat
 import {
   classifySshCloneFailure,
   summarizeCloneStderr,
+  withCloneReadAccessHint,
   type CloneErrorCode,
 } from "./sshCloneFailure";
 import type { BranchListResult } from "@/common/orpc/types";
@@ -241,7 +242,10 @@ function hasLikelySshCredentials(): boolean {
  * Expands "owner/repo" shorthand to either SSH or HTTPS based on likely local credentials.
  * All other inputs (HTTPS URLs, SSH URLs, SCP-style, etc.) pass through unchanged.
  */
-function normalizeRepoUrlForClone(repoUrl: string): string {
+function normalizeRepoUrlForClone(repoUrl: string): {
+  cloneUrl: string;
+  fallbackCloneUrl?: string;
+} {
   const trimmedRepoUrl = repoUrl.trim();
   const shorthandCandidate = trimmedRepoUrl.replace(/[\\/]+$/, "");
 
@@ -254,23 +258,26 @@ function normalizeRepoUrlForClone(repoUrl: string): string {
   if (GITHUB_SHORTHAND_PATTERN.test(shorthandCandidate)) {
     // Strip existing .git suffix before appending to avoid double .git (e.g. owner/repo.git → owner/repo.git.git)
     const withoutGitSuffix = shorthandCandidate.replace(/\.git$/i, "");
+    const httpsUrl = `https://github.com/${withoutGitSuffix}.git`;
 
     // Prefer SSH for shorthand only when the current session has an active SSH agent.
     // This avoids assuming GitHub access from unrelated key files on disk.
     if (hasLikelySshCredentials()) {
-      return `git@github.com:${withoutGitSuffix}.git`;
+      // GitHub SSH requires a recognized key even for public repositories, and an agent
+      // socket does not prove one is available. Keep HTTPS as a fallback for readable repos.
+      return { cloneUrl: `git@github.com:${withoutGitSuffix}.git`, fallbackCloneUrl: httpsUrl };
     }
 
-    return `https://github.com/${withoutGitSuffix}.git`;
+    return { cloneUrl: httpsUrl };
   }
 
   // Strip query strings and fragments only from URL-like inputs (protocol:// or git@),
   // not from local paths where # and ? may be valid filename characters.
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmedRepoUrl) || trimmedRepoUrl.startsWith("git@")) {
-    return trimmedRepoUrl.replace(/[?#].*$/, "");
+    return { cloneUrl: trimmedRepoUrl.replace(/[?#].*$/, "") };
   }
 
-  return trimmedRepoUrl;
+  return { cloneUrl: trimmedRepoUrl };
 }
 
 function parseScpStyleSshUrl(url: string): { host: string } | undefined {
@@ -656,9 +663,12 @@ export class ProjectService {
     }));
   }
 
-  private validateAndPrepareClone(
-    input: CloneProjectParams
-  ): Result<{ cloneUrl: string; normalizedPath: string; cloneParentDir: string }> {
+  private validateAndPrepareClone(input: CloneProjectParams): Result<{
+    cloneUrl: string;
+    fallbackCloneUrl?: string;
+    normalizedPath: string;
+    cloneParentDir: string;
+  }> {
     try {
       const repoUrl = input.repoUrl.trim();
       if (!repoUrl) {
@@ -683,7 +693,7 @@ export class ProjectService {
       }
 
       return Ok({
-        cloneUrl: normalizeRepoUrlForClone(repoUrl),
+        ...normalizeRepoUrlForClone(repoUrl),
         normalizedPath,
         cloneParentDir,
       });
@@ -703,12 +713,9 @@ export class ProjectService {
       return;
     }
 
-    const { cloneUrl, normalizedPath, cloneParentDir } = prepared.data;
+    const { cloneUrl, fallbackCloneUrl, normalizedPath, cloneParentDir } = prepared.data;
     const cloneWorkPath = `${normalizedPath}.mux-clone-${randomBytes(6).toString("hex")}`;
     let cloneSucceeded = false;
-    // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
-    let collectedStderr = "";
-    let askpass: Awaited<ReturnType<typeof createMediatedAskpassSession>> | undefined;
 
     const cleanupPartialClone = async () => {
       if (cloneSucceeded) {
@@ -779,21 +786,164 @@ export class ProjectService {
 
       await fsPromises.mkdir(cloneParentDir, { recursive: true });
 
-      // Set up SSH askpass mediation for SSH clone URLs.
-      // This allows clone to surface host-key and credential prompts through the
-      // same in-app dialog used by SSH runtime probes.
-      askpass =
-        isSshCloneUrl(cloneUrl) && this.sshPromptService
-          ? await createMediatedAskpassSession({
-              sshPromptService: this.sshPromptService,
-              promptPolicy: { allowHostKey: true, allowCredential: true },
-              // Deduplicate host-key prompts by SSH endpoint identity (host:port),
-              // not by full repo path, so concurrent clones to the same host coalesce.
-              dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
-              getStderrContext: () => collectedStderr,
-            })
-          : undefined;
+      const attemptUrls = fallbackCloneUrl != null ? [cloneUrl, fallbackCloneUrl] : [cloneUrl];
 
+      for (const [attemptIndex, attemptUrl] of attemptUrls.entries()) {
+        const outcome = yield* this.runGitCloneAttempt(attemptUrl, cloneWorkPath, signal);
+        if (outcome.kind === "success") {
+          break;
+        }
+
+        await cleanupPartialClone();
+
+        if (outcome.kind === "cancelled") {
+          yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+          return;
+        }
+
+        // Do not bypass a rejected host key or cancelled credential by retrying over HTTPS.
+        const nextUrl = attemptUrls[attemptIndex + 1];
+        if (nextUrl != null && outcome.code === "clone_failed") {
+          yield {
+            type: "progress",
+            line: `\nClone from ${attemptUrl} failed; retrying with ${nextUrl}...\n`,
+          };
+          continue;
+        }
+
+        yield { type: "error", code: outcome.code, error: outcome.error };
+        return;
+      }
+
+      if (signal?.aborted) {
+        await cleanupPartialClone();
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      try {
+        await fsPromises.rename(cloneWorkPath, normalizedPath);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
+          await cleanupPartialClone();
+
+          let existingDestinationStat: Stats | null = null;
+          try {
+            existingDestinationStat = await fsPromises.stat(normalizedPath);
+          } catch (statError) {
+            const statErr = statError as NodeJS.ErrnoException;
+            if (statErr.code !== "ENOENT") {
+              throw statError;
+            }
+          }
+
+          if (existingDestinationStat?.isDirectory()) {
+            yield {
+              type: "error",
+              code: "destination_exists",
+              error: `Destination already exists: ${normalizedPath}`,
+              normalizedPath,
+            };
+          } else {
+            yield {
+              type: "error",
+              code: "clone_failed",
+              error: `Destination already exists: ${normalizedPath}`,
+            };
+          }
+          return;
+        }
+        throw error;
+      }
+
+      if (signal?.aborted) {
+        // Abort won the race after rename but before config mutation.
+        // Remove the newly materialized destination so cancellation remains authoritative.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort cleanup only.
+        }
+        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
+        return;
+      }
+
+      const projectConfig: ProjectConfig = { workspaces: [] };
+      await this.config.editConfig((freshConfig) => {
+        if (freshConfig.projects.has(normalizedPath)) {
+          return freshConfig;
+        }
+        const updatedProjects = new Map(freshConfig.projects);
+        updatedProjects.set(normalizedPath, projectConfig);
+        return { ...freshConfig, projects: updatedProjects };
+      });
+
+      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
+        // Config persistence (editConfig → private saveConfig) logs-and-continues on write
+        // failures, so verify persistence explicitly before reporting success.
+        try {
+          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
+        } catch {
+          // Best-effort rollback only.
+        }
+        yield {
+          type: "error",
+          code: "clone_failed",
+          error: "Failed to persist cloned project configuration",
+        };
+        return;
+      }
+
+      cloneSucceeded = true;
+      yield { type: "success", projectConfig, normalizedPath };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      yield {
+        type: "error",
+        code: "clone_failed",
+        error: `Failed to clone repository: ${message}`,
+      };
+    } finally {
+      await cleanupPartialClone();
+    }
+  }
+
+  private async *runGitCloneAttempt(
+    cloneUrl: string,
+    cloneWorkPath: string,
+    signal?: AbortSignal
+  ): AsyncGenerator<
+    Extract<CloneEvent, { type: "progress" }>,
+    | { kind: "success" }
+    | { kind: "cancelled" }
+    | { kind: "failure"; code: CloneErrorCode; error: string }
+  > {
+    // An abort delivered between attempts (e.g. while the caller yielded the retry
+    // notice) must not spawn another clone.
+    if (signal?.aborted) {
+      return { kind: "cancelled" };
+    }
+
+    // Preserve full stderr so failed clones can surface git's fatal message instead of only exit code 128.
+    let collectedStderr = "";
+
+    // Set up SSH askpass mediation for SSH clone URLs.
+    // This allows clone to surface host-key and credential prompts through the
+    // same in-app dialog used by SSH runtime probes.
+    const askpass =
+      isSshCloneUrl(cloneUrl) && this.sshPromptService
+        ? await createMediatedAskpassSession({
+            sshPromptService: this.sshPromptService,
+            promptPolicy: { allowHostKey: true, allowCredential: true },
+            // Deduplicate host-key prompts by SSH endpoint identity (host:port),
+            // not by full repo path, so concurrent clones to the same host coalesce.
+            dedupeKey: deriveSshClonePromptDedupeKey(cloneUrl),
+            getStderrContext: () => collectedStderr,
+          })
+        : undefined;
+
+    try {
       const child = spawn("git", ["clone", "--progress", "--", cloneUrl, cloneWorkPath], {
         stdio: ["ignore", "pipe", "pipe"],
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...(askpass?.env ?? {}) },
@@ -915,131 +1065,39 @@ export class ProjectService {
       }
 
       if (spawnErrorMessage != null) {
-        await cleanupPartialClone();
-        const errorMessage = summarizeStderr() ?? spawnErrorMessage;
-        yield { type: "error", code: "clone_failed", error: errorMessage };
-        return;
+        return {
+          kind: "failure",
+          code: "clone_failed",
+          error: summarizeStderr() ?? spawnErrorMessage,
+        };
       }
 
       if (signal?.aborted) {
-        await cleanupPartialClone();
-        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
-        return;
+        return { kind: "cancelled" };
       }
 
       const exitCode = child.exitCode;
       const exitSignal = child.signalCode;
 
       if (exitCode !== 0 || exitSignal != null) {
-        await cleanupPartialClone();
         const errorMessage =
           summarizeStderr() ??
           (exitSignal != null
             ? `Clone failed: process terminated by signal ${String(exitSignal)}`
             : `Clone failed with exit code ${exitCode ?? "unknown"}`);
-        yield {
-          type: "error",
+        return {
+          kind: "failure",
           code: classifySshCloneFailure({
             stderr: collectedStderr,
             promptOutcome: askpass?.getLastPromptOutcome() ?? null,
           }),
-          error: errorMessage,
+          error: withCloneReadAccessHint(errorMessage, collectedStderr),
         };
-        return;
       }
 
-      if (signal?.aborted) {
-        await cleanupPartialClone();
-        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
-        return;
-      }
-
-      try {
-        await fsPromises.rename(cloneWorkPath, normalizedPath);
-      } catch (error) {
-        const err = error as NodeJS.ErrnoException;
-        if (err.code === "EEXIST" || err.code === "ENOTEMPTY") {
-          await cleanupPartialClone();
-
-          let existingDestinationStat: Stats | null = null;
-          try {
-            existingDestinationStat = await fsPromises.stat(normalizedPath);
-          } catch (statError) {
-            const statErr = statError as NodeJS.ErrnoException;
-            if (statErr.code !== "ENOENT") {
-              throw statError;
-            }
-          }
-
-          if (existingDestinationStat?.isDirectory()) {
-            yield {
-              type: "error",
-              code: "destination_exists",
-              error: `Destination already exists: ${normalizedPath}`,
-              normalizedPath,
-            };
-          } else {
-            yield {
-              type: "error",
-              code: "clone_failed",
-              error: `Destination already exists: ${normalizedPath}`,
-            };
-          }
-          return;
-        }
-        throw error;
-      }
-
-      if (signal?.aborted) {
-        // Abort won the race after rename but before config mutation.
-        // Remove the newly materialized destination so cancellation remains authoritative.
-        try {
-          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
-        } catch {
-          // Best-effort cleanup only.
-        }
-        yield { type: "error", code: "clone_failed", error: "Clone cancelled" };
-        return;
-      }
-
-      const projectConfig: ProjectConfig = { workspaces: [] };
-      await this.config.editConfig((freshConfig) => {
-        if (freshConfig.projects.has(normalizedPath)) {
-          return freshConfig;
-        }
-        const updatedProjects = new Map(freshConfig.projects);
-        updatedProjects.set(normalizedPath, projectConfig);
-        return { ...freshConfig, projects: updatedProjects };
-      });
-
-      if (!this.config.loadConfigOrDefault().projects.has(normalizedPath)) {
-        // Config persistence (editConfig → private saveConfig) logs-and-continues on write
-        // failures, so verify persistence explicitly before reporting success.
-        try {
-          await fsPromises.rm(normalizedPath, { recursive: true, force: true });
-        } catch {
-          // Best-effort rollback only.
-        }
-        yield {
-          type: "error",
-          code: "clone_failed",
-          error: "Failed to persist cloned project configuration",
-        };
-        return;
-      }
-
-      cloneSucceeded = true;
-      yield { type: "success", projectConfig, normalizedPath };
-    } catch (error) {
-      const message = getErrorMessage(error);
-      yield {
-        type: "error",
-        code: "clone_failed",
-        error: `Failed to clone repository: ${message}`,
-      };
+      return { kind: "success" };
     } finally {
       askpass?.cleanup();
-      await cleanupPartialClone();
     }
   }
 

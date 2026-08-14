@@ -53,20 +53,30 @@ async function withEnv<T>(
   }
 }
 
-async function writeFakeGitCloneShim(fakeGitPath: string): Promise<void> {
-  await fs.writeFile(
-    fakeGitPath,
-    `#!/bin/sh
+const DEFAULT_FAKE_GIT_SHIM = `#!/bin/sh
 printf '%s\n' "$@" > "$FAKE_GIT_ARGS_LOG"
 if [ "$1" = "clone" ]; then
   mkdir -p "$5/.git"
   exit 0
 fi
 exit 1
-`,
-    "utf-8"
-  );
+`;
+
+async function installFakeGit(tempDir: string, testCaseId: string, shimBody: string) {
+  const fakeBinDir = path.join(tempDir, `fake-bin-${testCaseId}`);
+  const fakeGitArgsLogPath = path.join(tempDir, `fake-git-${testCaseId}-args.log`);
+  await fs.mkdir(fakeBinDir, { recursive: true });
+  const fakeGitPath = path.join(fakeBinDir, "git");
+  await fs.writeFile(fakeGitPath, shimBody, "utf-8");
   await fs.chmod(fakeGitPath, 0o755);
+  return {
+    fakeGitArgsLogPath,
+    env: {
+      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      FAKE_GIT_ARGS_LOG: fakeGitArgsLogPath,
+      HOME: tempDir,
+    },
+  };
 }
 
 async function cloneWithFakeGit(
@@ -79,25 +89,51 @@ async function cloneWithFakeGit(
     return null;
   }
 
-  const fakeBinDir = path.join(tempDir, `fake-bin-${input.testCaseId}`);
-  const fakeGitArgsLogPath = path.join(tempDir, `fake-git-${input.testCaseId}-args.log`);
-  await fs.mkdir(fakeBinDir, { recursive: true });
-  await writeFakeGitCloneShim(path.join(fakeBinDir, "git"));
+  const fakeGit = await installFakeGit(tempDir, input.testCaseId, DEFAULT_FAKE_GIT_SHIM);
 
-  const result = await withEnv(
-    {
-      PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
-      FAKE_GIT_ARGS_LOG: fakeGitArgsLogPath,
-      HOME: tempDir,
-      SSH_AUTH_SOCK: input.sshAuthSock,
-    },
-    () => service.clone({ repoUrl: input.repoUrl, cloneParentDir: input.cloneParentDir })
+  const result = await withEnv({ ...fakeGit.env, SSH_AUTH_SOCK: input.sshAuthSock }, () =>
+    service.clone({ repoUrl: input.repoUrl, cloneParentDir: input.cloneParentDir })
   );
 
   expect(result.success).toBe(true);
   if (!result.success) throw new Error("Expected success");
-  const loggedArgs = (await fs.readFile(fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+  const loggedArgs = (await fs.readFile(fakeGit.fakeGitArgsLogPath, "utf-8")).trim().split("\n");
   return { result, loggedArgs, cloneWorkPath: loggedArgs[4] ?? "" };
+}
+
+async function collectCloneEvents(
+  tempDir: string,
+  service: ProjectService,
+  input: {
+    testCaseId: string;
+    repoUrl: string;
+    cloneParentDir: string;
+    sshAuthSock?: string;
+    gitShimBody: string;
+    signal?: AbortSignal;
+    onEvent?: (event: CloneEvent) => void;
+  }
+) {
+  if (process.platform === "win32") {
+    // These tests rely on a POSIX shell shim named "git" in PATH.
+    return null;
+  }
+
+  const fakeGit = await installFakeGit(tempDir, input.testCaseId, input.gitShimBody);
+
+  const events: CloneEvent[] = [];
+  await withEnv({ ...fakeGit.env, SSH_AUTH_SOCK: input.sshAuthSock }, async () => {
+    for await (const event of service.cloneWithProgress(
+      { repoUrl: input.repoUrl, cloneParentDir: input.cloneParentDir },
+      input.signal
+    )) {
+      events.push(event);
+      input.onEvent?.(event);
+    }
+  });
+
+  const clonedUrls = (await fs.readFile(fakeGit.fakeGitArgsLogPath, "utf-8")).trim().split("\n");
+  return { events, clonedUrls };
 }
 
 describe("ProjectService", () => {
@@ -486,6 +522,133 @@ describe("ProjectService", () => {
       expect(captured.result.data.normalizedPath).toBe(
         path.resolve(cloneParentDir, expectedFolderName)
       );
+    });
+
+    it("falls back to GitHub HTTPS when the SSH shorthand clone fails", async () => {
+      const cloneParentDir = path.join(tempDir, "fallback-transport-clones");
+      const captured = await collectCloneEvents(tempDir, service, {
+        testCaseId: "ssh-to-https-fallback",
+        repoUrl: "owner/repo",
+        cloneParentDir,
+        sshAuthSock: path.join(tempDir, "fake-ssh-agent.sock"),
+        gitShimBody: `#!/bin/sh
+printf '%s\\n' "$4" >> "$FAKE_GIT_ARGS_LOG"
+case "$4" in
+  git@github.com:*)
+    echo "git@github.com: Permission denied (publickey)." >&2
+    exit 128
+    ;;
+esac
+mkdir -p "$5/.git"
+exit 0
+`,
+      });
+      if (!captured) return;
+
+      expect(captured.clonedUrls).toEqual([
+        "git@github.com:owner/repo.git",
+        "https://github.com/owner/repo.git",
+      ]);
+      const progressLines = captured.events
+        .filter((event) => event.type === "progress")
+        .map((event) => event.line);
+      expect(
+        progressLines.some((line) =>
+          line.includes("retrying with https://github.com/owner/repo.git")
+        )
+      ).toBe(true);
+
+      const lastEvent = captured.events.at(-1);
+      expect(lastEvent?.type).toBe("success");
+      if (lastEvent?.type !== "success") throw new Error("Expected success event");
+      const expectedProjectPath = path.resolve(cloneParentDir, "repo");
+      expect(lastEvent.normalizedPath).toBe(expectedProjectPath);
+      expect(config.loadConfigOrDefault().projects.has(expectedProjectPath)).toBe(true);
+    });
+
+    it("does not start the fallback clone when aborted between attempts", async () => {
+      const cloneParentDir = path.join(tempDir, "abort-between-attempts-clones");
+      const abortController = new AbortController();
+      const captured = await collectCloneEvents(tempDir, service, {
+        testCaseId: "abort-between-attempts",
+        repoUrl: "owner/repo",
+        cloneParentDir,
+        sshAuthSock: path.join(tempDir, "fake-ssh-agent.sock"),
+        signal: abortController.signal,
+        onEvent: (event) => {
+          if (event.type === "progress" && event.line.includes("retrying with")) {
+            abortController.abort();
+          }
+        },
+        gitShimBody: `#!/bin/sh
+printf '%s\n' "$4" >> "$FAKE_GIT_ARGS_LOG"
+case "$4" in
+  git@github.com:*)
+    echo "git@github.com: Permission denied (publickey)." >&2
+    exit 128
+    ;;
+esac
+mkdir -p "$5/.git"
+exit 0
+`,
+      });
+      if (!captured) return;
+
+      expect(captured.clonedUrls).toEqual(["git@github.com:owner/repo.git"]);
+      const lastEvent = captured.events.at(-1);
+      expect(lastEvent?.type).toBe("error");
+      if (lastEvent?.type !== "error") throw new Error("Expected error event");
+      expect(lastEvent.error).toBe("Clone cancelled");
+      const leftovers = (await fs.readdir(cloneParentDir)).filter((name) =>
+        name.includes(".mux-clone-")
+      );
+      expect(leftovers).toEqual([]);
+      expect(config.loadConfigOrDefault().projects.size).toBe(0);
+    });
+
+    it("does not fall back to HTTPS for explicit SSH clone URLs", async () => {
+      const cloneParentDir = path.join(tempDir, "explicit-ssh-clones");
+      const captured = await collectCloneEvents(tempDir, service, {
+        testCaseId: "explicit-ssh-no-fallback",
+        repoUrl: "git@github.com:owner/private.git",
+        cloneParentDir,
+        gitShimBody: `#!/bin/sh
+printf '%s\\n' "$4" >> "$FAKE_GIT_ARGS_LOG"
+echo "git@github.com: Permission denied (publickey)." >&2
+exit 128
+`,
+      });
+      if (!captured) return;
+
+      expect(captured.clonedUrls).toEqual(["git@github.com:owner/private.git"]);
+      const lastEvent = captured.events.at(-1);
+      expect(lastEvent?.type).toBe("error");
+      if (lastEvent?.type !== "error") throw new Error("Expected error event");
+      expect(lastEvent.error).toContain("Permission denied");
+      expect(lastEvent.error).not.toContain("read access");
+    });
+
+    it("explains GitHub's misleading write-access error on failed clones", async () => {
+      const cloneParentDir = path.join(tempDir, "write-access-clones");
+      const captured = await collectCloneEvents(tempDir, service, {
+        testCaseId: "write-access-hint",
+        repoUrl: "https://github.com/owner/private.git",
+        cloneParentDir,
+        gitShimBody: `#!/bin/sh
+printf '%s\\n' "$4" >> "$FAKE_GIT_ARGS_LOG"
+echo "remote: Write access to repository not granted." >&2
+echo "fatal: unable to access 'https://github.com/owner/private.git/': The requested URL returned error: 403" >&2
+exit 128
+`,
+      });
+      if (!captured) return;
+
+      expect(captured.clonedUrls).toEqual(["https://github.com/owner/private.git"]);
+      const lastEvent = captured.events.at(-1);
+      expect(lastEvent?.type).toBe("error");
+      if (lastEvent?.type !== "error") throw new Error("Expected error event");
+      expect(lastEvent.error).toContain("Write access to repository not granted");
+      expect(lastEvent.error).toContain("Cloning needs only read access");
     });
 
     it("returns error when clone destination already exists", async () => {
