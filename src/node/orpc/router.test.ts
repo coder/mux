@@ -683,26 +683,37 @@ export default function workflow() { return { reportMarkdown: "should not run" }
 describe("router config.saveConfig", () => {
   let tempDir: string;
   let config: Config;
+  let setConfigEnabledMock: ReturnType<typeof mock<(enabled: boolean) => Promise<void>>>;
 
   beforeEach(() => {
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-router-test-"));
     config = new Config(tempDir);
+    setConfigEnabledMock = mock((_enabled: boolean) => Promise.resolve());
   });
 
   afterEach(() => {
+    // The write-failure test locks the dir; restore perms so cleanup succeeds.
+    try {
+      fs.chmodSync(tempDir, 0o700);
+    } catch {
+      // Already removed or never locked.
+    }
     fs.rmSync(tempDir, { recursive: true, force: true });
   });
 
   function createContext(): ORPCContext {
-    // saveConfig only touches Config and TaskService, so this partial context keeps the
-    // router-level test focused on the config mutation under test.
-    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- Other services are not used by saveConfig.
+    // These config-route tests touch Config, TaskService, and (via getConfig /
+    // updateTelemetryEnabled) TelemetryService; stub the rest of the container.
     return {
       config,
       taskService: {
         maybeStartQueuedTasks: () => Promise.resolve(undefined),
       },
-    } as ORPCContext;
+      telemetryService: {
+        isDisabledByEnv: () => false,
+        setConfigEnabled: setConfigEnabledMock,
+      },
+    } as unknown as ORPCContext;
   }
 
   test("preserves agent enable flags when a mirrored legacy subagent entry is removed", async () => {
@@ -754,6 +765,41 @@ describe("router config.saveConfig", () => {
 
     expect((await client.config.getConfig()).chatTranscriptFullWidth).toBe(false);
     expect(config.loadConfigOrDefault().chatTranscriptFullWidth).toBeUndefined();
+  });
+
+  test("updateTelemetryEnabled persists sparsely and applies the toggle to the live service", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.updateTelemetryEnabled({ enabled: false });
+
+    expect(config.loadConfigOrDefault().telemetryEnabled).toBe(false);
+    expect(setConfigEnabledMock).toHaveBeenLastCalledWith(false);
+
+    await client.config.updateTelemetryEnabled({ enabled: true });
+
+    // Enabled is the default: re-enabling clears the key instead of storing true.
+    expect(config.loadConfigOrDefault().telemetryEnabled).toBeUndefined();
+    expect(setConfigEnabledMock).toHaveBeenLastCalledWith(true);
+  });
+
+  test("updateTelemetryEnabled fails loudly when the config write does not land", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    // saveConfig writes atomically (temp file + rename in the config dir), so a
+    // read-only dir makes the write fail. saveConfig swallows that error; the
+    // route must detect it anyway rather than report success for a privacy
+    // setting that will silently revert on next launch.
+    fs.chmodSync(tempDir, 0o500);
+    try {
+      await expect(client.config.updateTelemetryEnabled({ enabled: false })).rejects.toThrow(
+        /persist the telemetry preference/
+      );
+    } finally {
+      fs.chmodSync(tempDir, 0o700);
+    }
+
+    expect(config.loadConfigOrDefault().telemetryEnabled).toBeUndefined();
+    expect(setConfigEnabledMock).not.toHaveBeenCalled();
   });
 
   test("getConfig and saveConfig round trip user preferences", async () => {

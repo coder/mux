@@ -445,9 +445,60 @@ describe("GeneralSection", () => {
     fireEvent.click(toggle);
 
     // A privacy control must not read "off" while the backend still collects:
-    // the failed write flips the optimistic state back to enabled.
+    // the failed write reloads the backend truth (still enabled).
     await waitFor(() => {
       expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: false });
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
+  test("a superseded telemetry write failure does not clobber the latest choice", async () => {
+    const { api, updateTelemetryEnabledMock } = createMockAPI({ telemetryEnabled: false });
+    const deferred: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
+    api.config.updateTelemetryEnabled = updateTelemetryEnabledMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          deferred.push({ resolve, reject });
+        })
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    });
+
+    // Rapid on → off → on; writes are serialized so only the first is in flight.
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    await waitFor(() => {
+      expect(deferred.length).toBe(1);
+    });
+
+    // The first write fails only after later intents were queued: its failure
+    // handling is superseded and must not touch the switch.
+    deferred[0].reject(new Error("write failed"));
+
+    await waitFor(() => {
+      expect(deferred.length).toBe(2);
+    });
+    deferred[1].resolve();
+    await waitFor(() => {
+      expect(deferred.length).toBe(3);
+    });
+    deferred[2].resolve();
+
+    await waitFor(() => {
+      expect(updateTelemetryEnabledMock).toHaveBeenCalledTimes(3);
+      expect(updateTelemetryEnabledMock).toHaveBeenLastCalledWith({ enabled: true });
       expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
   });

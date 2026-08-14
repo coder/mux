@@ -221,6 +221,9 @@ export function GeneralSection() {
   const chatTranscriptFullWidthLoadNonceRef = useRef(0);
   const llmDebugLogsLoadNonceRef = useRef(0);
   const telemetryEnabledLoadNonceRef = useRef(0);
+  // Monotonic id per telemetry toggle; failure handling may only touch state
+  // while its own intent is still the latest.
+  const telemetryEnabledIntentRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
@@ -428,6 +431,8 @@ export function GeneralSection() {
       return;
     }
 
+    const intent = ++telemetryEnabledIntentRef.current;
+
     // Serialize writes so rapid toggles always persist the last user choice.
     telemetryEnabledUpdateChainRef.current = telemetryEnabledUpdateChainRef.current
       .catch(() => {
@@ -437,10 +442,25 @@ export function GeneralSection() {
       .then(() => {
         // Coerce the chain back to Promise<void>.
       })
-      .catch(() => {
-        // A privacy control must never read "off" while collection continues:
-        // on a failed write, revert the optimistic state to the backend truth.
-        setTelemetryEnabled(!checked);
+      .catch(async () => {
+        // A privacy control must never read "off" while collection continues.
+        // A superseded request's failure is not ours to handle — a later write
+        // in the chain carries the newest choice and its own handling. For the
+        // latest intent, reload the backend truth rather than guessing with a
+        // blind flip (earlier writes in the chain may themselves have failed).
+        if (telemetryEnabledIntentRef.current !== intent) {
+          return;
+        }
+        try {
+          const cfg = await api.config.getConfig();
+          if (telemetryEnabledIntentRef.current === intent) {
+            setTelemetryEnabled(cfg.telemetryEnabled !== false);
+          }
+        } catch {
+          if (telemetryEnabledIntentRef.current === intent) {
+            setTelemetryEnabled(!checked);
+          }
+        }
       });
   };
 

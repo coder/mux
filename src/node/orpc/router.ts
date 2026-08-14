@@ -1544,6 +1544,16 @@ export const router = (authToken?: string) => {
             }
             return config;
           });
+          // saveConfig swallows write errors (a full disk still resolves), but a
+          // privacy opt-out must not report success while the persisted state says
+          // "enabled" — the choice would silently un-apply on next launch. Re-read
+          // the disk and fail loudly on mismatch, before touching the live client.
+          const persistedDisabled = context.config.isTelemetryDisabledByConfig();
+          if (persistedDisabled !== !input.enabled) {
+            throw new Error(
+              "Failed to persist the telemetry preference to config.json; the setting was not changed."
+            );
+          }
           // Apply immediately: disabling shuts the client down mid-session,
           // enabling re-runs the full enablement check (env vars still win).
           await context.telemetryService.setConfigEnabled(input.enabled);
