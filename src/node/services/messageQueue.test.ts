@@ -750,6 +750,64 @@ describe("MessageQueue", () => {
       expect((second.options?.muxMetadata as MuxMessageMetadata).type).toBe("agent-skill");
     });
 
+    it("should queue an MCP prompt invocation after a normal message as its own entry", () => {
+      queue.add("First message");
+
+      const metadata: MuxMessageMetadata = {
+        type: "normal",
+        rawCommand: "/mcp__coder__review src",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "slash",
+            arguments: { path: "src" },
+          },
+        ],
+      };
+
+      // Batching keeps only an entry's first muxMetadata, which would drop the
+      // prompt refs and skip snapshot materialization at dispatch.
+      expect(
+        queue.add("Using MCP prompt coder/review: src", {
+          model: "claude-3-5-sonnet-20241022",
+          agentId: "exec",
+          muxMetadata: metadata,
+        })
+      ).toBe(true);
+
+      const first = queue.dequeueNext();
+      expect(first.message).toBe("First message");
+      expect(first.options?.muxMetadata).toBeUndefined();
+
+      const second = queue.dequeueNext();
+      expect((second.options?.muxMetadata as MuxMessageMetadata).mcpPromptRefs).toHaveLength(1);
+    });
+
+    it("should queue an inline skill reference after a normal message as its own entry", () => {
+      queue.add("First message");
+
+      const metadata: MuxMessageMetadata = {
+        type: "normal",
+        agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "inline" }],
+      };
+
+      expect(
+        queue.add("Apply $tdd here", {
+          model: "claude-3-5-sonnet-20241022",
+          agentId: "exec",
+          muxMetadata: metadata,
+        })
+      ).toBe(true);
+
+      const first = queue.dequeueNext();
+      expect(first.options?.muxMetadata).toBeUndefined();
+
+      const second = queue.dequeueNext();
+      expect((second.options?.muxMetadata as MuxMessageMetadata).agentSkillRefs).toHaveLength(1);
+    });
+
     it("should queue a normal message behind an agent-skill invocation without leaking metadata", () => {
       const metadata: MuxMessageMetadata = {
         type: "agent-skill",

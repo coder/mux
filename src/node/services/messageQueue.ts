@@ -26,6 +26,18 @@ function isAgentSkillMetadata(meta: unknown): meta is AgentSkillMetadata {
   return true;
 }
 
+// MCP prompt and inline skill refs ride on type "normal" metadata but are
+// consumed only from an entry's first muxMetadata, so batching them into an
+// existing entry would silently skip snapshot materialization at dispatch.
+function hasSnapshotRefs(meta: unknown): boolean {
+  if (typeof meta !== "object" || meta === null) return false;
+  const obj = meta as Record<string, unknown>;
+  return (
+    (Array.isArray(obj.mcpPromptRefs) && obj.mcpPromptRefs.length > 0) ||
+    (Array.isArray(obj.agentSkillRefs) && obj.agentSkillRefs.length > 0)
+  );
+}
+
 function isCompactionMetadata(meta: unknown): meta is CompactionMetadata {
   if (typeof meta !== "object" || meta === null) return false;
   const obj = meta as Record<string, unknown>;
@@ -312,6 +324,7 @@ export class MessageQueue {
       internal?.removableDedupeKey === true ||
       isAgentSkillMetadata(options?.muxMetadata) ||
       isWorkspaceTurnMetadata(options?.muxMetadata) ||
+      hasSnapshotRefs(options?.muxMetadata) ||
       incomingHasAcceptedCallbacks;
     // Compaction starts its own entry (its metadata must not adopt earlier batched
     // texts), but stays open so a follow-up typed behind a pending /compact batches

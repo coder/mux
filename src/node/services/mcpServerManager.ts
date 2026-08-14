@@ -875,6 +875,14 @@ export class MCPServerManager {
    * pre-dispatch enablement checks with stale state.
    */
   private readonly workspaceOptionsMutationCounts = new Map<string, number>();
+  /**
+   * Newest overrides seen per workspace, recorded even when the workspace has
+   * no cache entry or recorded options yet (cold), where the sync in
+   * applyWorkspaceOverrides has nothing to update. ensureWorkspaceServers
+   * overlays this over caller-supplied overrides, whose persisted-state read
+   * may predate the mutation.
+   */
+  private readonly latestWorkspaceOverrides = new Map<string, WorkspaceMCPOverrides | undefined>();
   private readonly workspaceRestartLocks = new MutexMap<string>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
@@ -1262,9 +1270,19 @@ export class MCPServerManager {
    * timeout) cannot stall every prompt send in the workspace.
    */
   private async ensureWorkspaceServers(
-    options: MCPWorkspaceRequestOptions,
+    requestOptions: MCPWorkspaceRequestOptions,
     refreshToolCatalogs: boolean
   ): Promise<MCPToolsForWorkspaceResult> {
+    // workspace.mcp.set can land between a caller reading persisted overrides
+    // and reaching here; on a cold workspace there is no recorded state for
+    // that mutation to repair, so overlay the newest overrides the manager
+    // has seen over the caller's possibly stale snapshot.
+    const options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
+      ? {
+          ...requestOptions,
+          overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
+        }
+      : requestOptions;
     const {
       workspaceId,
       projectPath,
@@ -1850,10 +1868,11 @@ export class MCPServerManager {
     workspaceId: string,
     overrides: WorkspaceMCPOverrides | undefined
   ): Promise<void> {
+    this.latestWorkspaceOverrides.set(workspaceId, overrides);
+    this.bumpWorkspaceOptionsMutationCount(workspaceId);
     const recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (recorded) {
       this.lastWorkspaceRequestOptions.set(workspaceId, { ...recorded, overrides });
-      this.bumpWorkspaceOptionsMutationCount(workspaceId);
     }
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry || !recorded) return;
@@ -1981,6 +2000,8 @@ export class MCPServerManager {
   ): Promise<void> {
     if (options?.retainRestartOptions !== true) {
       this.lastWorkspaceRequestOptions.delete(workspaceId);
+      this.workspaceOptionsMutationCounts.delete(workspaceId);
+      this.latestWorkspaceOverrides.delete(workspaceId);
     }
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry) return;

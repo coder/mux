@@ -1074,6 +1074,37 @@ describe("MCPServerManager", () => {
     expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
   });
 
+  test("applies overrides recorded before the first workspace request (cold mutation)", async () => {
+    const workspaceId = "ws-cold-overrides";
+    configService.listServers = mock(() =>
+      Promise.resolve({ server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") })
+    );
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    access.startServers = mock((servers) =>
+      Promise.resolve(
+        startResult(
+          Object.keys(servers as Record<string, unknown>).map((name) => [name, { getPrompt }])
+        )
+      )
+    );
+
+    // workspace.mcp.set lands while the manager is cold (no recorded options,
+    // no cache entry), then a caller that read pre-mutation persisted
+    // overrides starts the workspace with a stale snapshot.
+    await manager.applyWorkspaceOverrides(workspaceId, { disabledServers: ["server"] });
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(result.stats.enabledServerCount).toBe(1);
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
+      "is disabled"
+    );
+    expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
+  });
+
   test("blocks prompt invocation when trust is revoked right after the prompt refresh", async () => {
     const workspaceId = "ws-post-refresh-trust";
     configService.listServers = mock((_projectPath: string, trusted: boolean) =>
