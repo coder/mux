@@ -2660,22 +2660,55 @@ export class AIService extends EventEmitter {
       // name-canonicalized provider: a cross-typed instance ({name: "openai",
       // type: "anthropic"}) canonicalizes to openai:<model>, which would apply
       // the OpenAI block's wildcard/model settings to an Anthropic-wire
-      // request and ignore the intended anthropic block. Unmappable instances
-      // (openai-compat) and shadowed prefixes keep the canonical identity.
+      // request and ignore the intended anthropic block. KNOWN instances with
+      // no catalog identity ({name: "anthropic", type: "openai-compat"},
+      // vendor-less vercel) keep the RAW gateway-scoped identity — falling
+      // back to the name-canonical form would apply the name-alike provider's
+      // block (and merge its SDK-shaped extras) onto a different wire.
+      // Unknown instances and shadowed prefixes keep the canonical identity.
       const resolveOverridesIdentity = (
         rawModelString: string,
         canonical: string,
         canonicalProvider: string
       ): { providerName: string; modelString: string; coderDerived: boolean } => {
-        const metadataCanonical = rawModelString.startsWith("coder:")
-          ? resolveCoderGatewayMetadataModel(rawModelString, this.providerService.getConfig())
-          : null;
-        const identity = metadataCanonical ?? canonical;
-        const separator = identity.indexOf(":");
+        if (rawModelString.startsWith("coder:")) {
+          const currentProvidersConfig = this.providerService.getConfig();
+          const metadataCanonical = resolveCoderGatewayMetadataModel(
+            rawModelString,
+            currentProvidersConfig
+          );
+          if (metadataCanonical != null) {
+            const separator = metadataCanonical.indexOf(":");
+            return {
+              providerName:
+                separator > 0 ? metadataCanonical.slice(0, separator) : canonicalProvider,
+              modelString: metadataCanonical,
+              coderDerived: true,
+            };
+          }
+          const coderSection = currentProvidersConfig?.coder;
+          if (!isCustomOpenAICompatibleProviderConfig(coderSection)) {
+            const wire = resolveCoderWireCanonicalModel(
+              rawModelString.slice("coder:".length),
+              coderSection as
+                | { discoveredProviders?: unknown; additionalProviders?: unknown }
+                | undefined
+            );
+            if (wire) {
+              // Known but unmappable: same coder-scoped identity as
+              // non-canonical unmappable instances (coder:llm-proxy/x), whose
+              // canonical form is already the raw string. coderDerived stays
+              // false: coder-block extras are the user's explicit config for
+              // this exact gateway model and merge into the wire namespace.
+              return { providerName: "coder", modelString: rawModelString, coderDerived: false };
+            }
+          }
+        }
+        const separator = canonical.indexOf(":");
         return {
-          providerName: separator > 0 ? identity.slice(0, separator) : canonicalProvider,
-          modelString: identity,
-          coderDerived: metadataCanonical != null,
+          providerName: separator > 0 ? canonical.slice(0, separator) : canonicalProvider,
+          modelString: canonical,
+          coderDerived: false,
         };
       };
       const overridesIdentity = resolveOverridesIdentity(

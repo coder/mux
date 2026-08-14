@@ -2111,6 +2111,77 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(toolConfig?.openaiWireFormat).toBe("responses");
   });
 
+  it("keeps unmappable cross-typed Coder overrides gateway-scoped", async () => {
+    // {name: "anthropic", type: "openai-compat"}: the instance is KNOWN but
+    // has no catalog identity (openai-compat fronts an arbitrary upstream).
+    // The override identity must stay coder-scoped — falling back to the
+    // name-canonical anthropic:<model> would apply the anthropic block's
+    // wildcard/model settings to an OpenAI-chat request and merge
+    // Anthropic-shaped extras into the OpenAI SDK namespace.
+    using muxHome = new DisposableTempDir("ai-service-main-coder-unmappable-overrides");
+    const workspaceId = "workspace-main-coder-unmappable-overrides";
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+    const modelString = "coder:anthropic/gpt-5";
+
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    harness.config.saveProvidersConfig({
+      anthropic: { modelParameters: { "*": { anthropicKnob: "yes" } } },
+      coder: { modelParameters: { "*": { coderKnob: "yes" } } },
+    });
+
+    const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in unmappable-overrides test");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockResolvedValue({
+      success: true,
+      data: {
+        model: Object.create(null) as LanguageModel,
+        effectiveModelString: modelString,
+        // Name-based canonicalization rewrites the canonical-route name even
+        // though the instance type is openai-compat.
+        canonicalModelString: "anthropic:gpt-5",
+        canonicalProviderName: "anthropic",
+        canonicalModelId: "gpt-5",
+        wireProviderName: "openai",
+        routedThroughGateway: false,
+        routeProvider: "coder",
+      },
+    });
+    const providerService = Reflect.get(harness.service, "providerService") as
+      | ProviderService
+      | undefined;
+    if (!providerService) {
+      throw new Error("Expected AIService.providerService in unmappable-overrides test");
+    }
+    spyOn(providerService, "getConfig").mockReturnValue({
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "anthropic", type: "openai-compat" }],
+      },
+    });
+
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("latest-user", "user", "fix the issue")],
+      workspaceId,
+      modelString,
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+
+    // The anthropic block's extras never reach the OpenAI wire namespace;
+    // the coder block's own extras (explicit config for this gateway model) do.
+    const openaiOptions = openAIOptionsFromStartStreamCall(harness.startStreamCalls[0]);
+    expect(openaiOptions).not.toHaveProperty("anthropicKnob");
+    expect(openaiOptions.coderKnob).toBe("yes");
+  });
+
   it("drops reasoning-only continuations before adding interrupted sentinels for non-Anthropic fallbacks", () => {
     const continuationAssistant: MuxMessage = {
       id: "assistant-reasoning-only",
