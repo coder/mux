@@ -44,7 +44,7 @@ interface MockAPIClient {
   };
 }
 
-let mockApi: MockAPIClient;
+let mockApi: MockAPIClient | null;
 
 void mock.module("@/browser/components/SelectPrimitive/SelectPrimitive", () => {
   const SelectContext = React.createContext<{
@@ -450,6 +450,26 @@ describe("GeneralSection", () => {
       expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: false });
       expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
+  });
+
+  test("disables the telemetry switch while the API is unavailable", () => {
+    // Browser-mode outage: APIProvider keeps settings mounted with api: null.
+    mockApi = null;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    // A privacy toggle must not accept a change it cannot deliver: the switch
+    // is disabled and a click leaves the conservative ON state untouched.
+    expect(toggle.hasAttribute("disabled")).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
   });
 
   test("renders the telemetry switch ON when backend truth is unreachable after a failed write", async () => {

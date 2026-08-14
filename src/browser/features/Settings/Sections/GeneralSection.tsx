@@ -423,13 +423,18 @@ export function GeneralSection() {
   };
 
   const handleTelemetryEnabledChange = (checked: boolean) => {
-    // Invalidate any in-flight config load so it doesn't overwrite the user's selection.
-    telemetryEnabledLoadNonceRef.current++;
-    setTelemetryEnabled(checked);
-
+    // No usable API (browser-mode outage): don't flip optimistically — the
+    // switch would render OFF with no write ever issued while the backend may
+    // keep collecting, silently discarding the intent. The switch itself is
+    // also disabled while api is null; this guard covers the race where the
+    // connection drops between render and click.
     if (!api?.config?.updateTelemetryEnabled) {
       return;
     }
+
+    // Invalidate any in-flight config load so it doesn't overwrite the user's selection.
+    telemetryEnabledLoadNonceRef.current++;
+    setTelemetryEnabled(checked);
 
     const intent = ++telemetryEnabledIntentRef.current;
 
@@ -787,7 +792,9 @@ export function GeneralSection() {
             <Switch
               checked={telemetryEnabled && !telemetryDisabledByEnv}
               onCheckedChange={handleTelemetryEnabledChange}
-              disabled={telemetryDisabledByEnv}
+              // Also disabled without a usable API (browser-mode outage): a
+              // privacy toggle must not accept a change it cannot deliver.
+              disabled={telemetryDisabledByEnv || !api}
               aria-label="Toggle Usage Telemetry"
             />
           </div>
