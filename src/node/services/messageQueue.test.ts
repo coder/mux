@@ -476,6 +476,33 @@ describe("MessageQueue", () => {
       ).toBe(false);
     });
 
+    it("should strip correlation when queue reordering moves user input ahead", () => {
+      const onCanceled = () => undefined;
+      const onAcceptedPreStreamFailure = () => undefined;
+      queue.add(
+        "Background report",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          onCanceled,
+          onAcceptedPreStreamFailure,
+        }
+      );
+      queue.add("User send now", { model: "gpt-4", agentId: "exec" });
+
+      expect(queue.setVisibleQueueDispatchMode("tool-end")).toBe(true);
+
+      const first = queue.dequeueNext();
+      expect(first.message).toBe("User send now");
+
+      const second = queue.dequeueNext();
+      expect(second.message).toBe("Background report");
+      expect(second.options?.muxMetadata).toBeUndefined();
+      expect(second.internal?.onCanceled).toBeUndefined();
+      expect(second.internal?.onAcceptedPreStreamFailure).toBeUndefined();
+    });
+
     it("should preserve internal workspace-turn callbacks", () => {
       const onAccepted = () => undefined;
       const onAcceptedPreStreamFailure = () => undefined;
