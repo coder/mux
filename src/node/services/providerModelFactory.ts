@@ -2385,8 +2385,13 @@ export class ProviderModelFactory {
       // A Coder selection that fell back to its type-derived route: the wire
       // follows the fallback identity, not the name-based canonical string —
       // a cross-typed coder:openai/<claude> routed to direct Anthropic must
-      // get Anthropic transforms.
-      const [seedOrigin] = parseModelString(routeSeedModelString);
+      // get Anthropic transforms. The seed can itself be gateway-scoped
+      // (a bedrock-typed instance seeds bedrock:anthropic.<model>), so take
+      // the seed's CANONICAL origin — the same identity a direct selection
+      // of that seed would prepare with (bedrock → anthropic) — instead of
+      // its prefix, which would skip Anthropic-specific transforms for the
+      // Anthropic-shaped bytes behind the fallback route.
+      const [seedOrigin] = parseModelString(normalizeToCanonical(routeSeedModelString));
       if (seedOrigin) {
         wireProviderName = seedOrigin;
       }

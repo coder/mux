@@ -2341,6 +2341,39 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("canonicalizes gateway-scoped type-derived fallback seeds for the wire identity", async () => {
+    await withTempConfig(async (config, factory) => {
+      // A bedrock-typed instance whose catalog excludes the requested model
+      // seeds its fallback from the instance type: bedrock:anthropic.<model>.
+      // The seed is itself gateway-scoped — the wire identity must be its
+      // CANONICAL origin (anthropic), matching what a direct selection of
+      // that Bedrock string prepares with; reporting "bedrock" would skip
+      // Anthropic reasoning/PDF transforms for Anthropic-shaped bytes.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "bedrock", type: "bedrock" }],
+        models: ["bedrock/anthropic.claude-opus-4-5"],
+        discoveredModels: ["bedrock/anthropic.claude-opus-4-5"],
+      });
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        bedrock: { region: "us-east-1" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel(
+        "coder:bedrock/anthropic.claude-sonnet-4-5",
+        "off"
+      );
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+      expect(result.data.effectiveModelString).toBe("bedrock:anthropic.claude-sonnet-4-5");
+      expect(result.data.routeProvider).toBe("bedrock");
+      expect(result.data.wireProviderName).toBe("anthropic");
+    });
+  });
+
   it("rejects catalog-excluded models on instances without a canonical fallback", async () => {
     await withTempConfig(async (config, factory) => {
       // openai-compat fronts an arbitrary upstream, so a catalog-excluded

@@ -1241,7 +1241,7 @@ export class AIService extends EventEmitter {
         raw: string,
         effective: string,
         canonical: string
-      ): { modelString: string; openaiWireFormat?: "chatCompletions" } => {
+      ): { modelString: string; openaiWireFormat?: "chatCompletions" | "responses" } => {
         if (!raw.startsWith("coder:")) {
           return { modelString: raw };
         }
@@ -1274,11 +1274,20 @@ export class AIService extends EventEmitter {
         if (!wire) {
           return { modelString: canonical };
         }
+        // The factory creates Coder instances from the wire alone (openai
+        // type → provider.responses, openai-chat types → provider.chat), so
+        // BOTH OpenAI wire kinds must override any pre-existing wireFormat:
+        // a refusal chain that starts on direct OpenAI Chat Completions and
+        // falls back to an openai-typed Coder instance would otherwise build
+        // Chat Completions tools/options for a Responses request.
+        const wireProtocol = coderGatewayWireProtocol(wire.providerType);
         return {
           modelString: `${wire.origin}:${wire.modelId}`,
-          ...(coderGatewayWireProtocol(wire.providerType) === "openai-chat"
+          ...(wireProtocol === "openai-chat"
             ? { openaiWireFormat: "chatCompletions" as const }
-            : {}),
+            : wireProtocol === "openai-responses"
+              ? { openaiWireFormat: "responses" as const }
+              : {}),
         };
       };
       const toolsIdentity = resolveToolsIdentity(
@@ -1289,7 +1298,7 @@ export class AIService extends EventEmitter {
       const toolsModelString = toolsIdentity.modelString;
       // The user's own wireFormat, captured BEFORE wire injection: the
       // refusal-fallback prepare() must reset to it when swapping to a model
-      // whose route is not an openai-chat Coder instance.
+      // whose route is not an OpenAI-wire Coder instance.
       const userOpenAIWireFormat = effectiveMuxProviderOptions.openai?.wireFormat;
       if (toolsIdentity.openaiWireFormat != null) {
         // Deliberate in-place update: every downstream consumer
