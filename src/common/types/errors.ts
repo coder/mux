@@ -26,9 +26,10 @@ export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
  * model applied by skill routing — exposed so the frontend can attribute
  * send telemetry to the model that actually streams; undefined when no
  * routing occurred or the send was queued for later dispatch.
- * `routedThinkingLevel` is the thinking level the routed stream actually uses
- * when routing replaced the ambient one (a class thinking suffix or a
- * re-resolved numeric one-shot index).
+ * `routedThinkingLevel` is the effective thinking level the routed stream
+ * runs at — class suffix, re-resolved numeric one-shot, or a named/ambient
+ * level riding through — after per-model floor enforcement; absent only when
+ * the send carries no thinking level at all.
  */
 export interface SendMessageAccepted {
   routedModel?: string;

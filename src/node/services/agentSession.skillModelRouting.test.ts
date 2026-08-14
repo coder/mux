@@ -207,6 +207,9 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
     expect(result.success).toBe(true);
     expect(streamed[0].modelString).toBe(KNOWN_MODELS.HAIKU.id);
     expect(streamed[0].thinkingLevel).toBe("medium");
+    // The payload reports the effective level even when the one-shot rode
+    // through unchanged — telemetry must see what the routed stream runs at.
+    expect(result.success && result.data?.routedThinkingLevel).toBe("medium");
     session.dispose();
   });
 

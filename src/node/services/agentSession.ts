@@ -3031,20 +3031,22 @@ export class AgentSession {
       }
     }
 
-    // Routed sends report the class model (and any thinking level routing
-    // replaced) back to the caller so successful-send telemetry attributes the
-    // invocation to what actually streams. The reported level goes through the
-    // same per-model floor enforcement the stream applies, so a class suffix
-    // below a configured minimum reports the clamped level actually used.
+    // Routed sends report the class model and the effective thinking level
+    // back to the caller so successful-send telemetry attributes the
+    // invocation to what actually streams. The level is whatever the stream
+    // will receive (class suffix, re-resolved numeric one-shot, or a named
+    // one-shot / ambient level riding through), clamped by the same per-model
+    // floor enforcement the stream applies — "/+off /skill" routed onto a
+    // floor-medium model reports medium, not off.
     const sendAccepted: SendMessageAccepted | undefined =
       skillModelOverride != null
         ? {
             routedModel: skillModelOverride.model,
-            ...(routedThinkingLevel != null
+            ...(optionsForStream.thinkingLevel != null
               ? {
                   routedThinkingLevel: this.enforceThinkingFloorsForModel(
                     skillModelOverride.model,
-                    routedThinkingLevel,
+                    optionsForStream.thinkingLevel,
                     this.getProvidersConfigSafe()
                   ),
                 }
