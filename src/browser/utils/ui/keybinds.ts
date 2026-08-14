@@ -513,6 +513,10 @@ export const KEYBINDS = {
   // "N" for Notifications
   TOGGLE_NOTIFICATIONS: { key: "N", ctrl: true, shift: true },
 
+  /** Toggle GitHub pull request review notifications for current workspace */
+  // macOS: Cmd+Option+G, Win/Linux: Ctrl+Alt+G
+  TOGGLE_GITHUB_REVIEW_NOTIFICATIONS: { key: "G", code: "KeyG", ctrl: true, alt: true },
+
   TOGGLE_DRIFT_MODE: { key: "G", ctrl: true, shift: true },
 
   SHOW_WORKSPACE_DETAILS: { key: "D", ctrl: true, shift: true },

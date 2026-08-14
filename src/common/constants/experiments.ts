@@ -24,6 +24,7 @@ export const EXPERIMENT_IDS = {
   AGENT_PLUGINS: "agent-plugins",
   SKILL_DYNAMIC_CONTEXT: "skill-dynamic-context",
   TIMELINE: "timeline",
+  GITHUB_PR_REVIEW_NOTIFICATIONS: "github-pr-review-notifications",
 } as const;
 
 export type ExperimentId = (typeof EXPERIMENT_IDS)[keyof typeof EXPERIMENT_IDS];
@@ -191,6 +192,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     name: "Timeline",
     description:
       "Record a durable birds-eye timeline per workspace: prompts, agent events, goals, heartbeats, sub-agents, and workflows",
+    enabledByDefault: false,
+    showInSettings: true,
+  },
+  [EXPERIMENT_IDS.GITHUB_PR_REVIEW_NOTIFICATIONS]: {
+    id: EXPERIMENT_IDS.GITHUB_PR_REVIEW_NOTIFICATIONS,
+    name: "GitHub PR review notifications",
+    description:
+      "Notify enabled workspaces when a new review is posted on their GitHub pull request",
     enabledByDefault: false,
     showInSettings: true,
   },

@@ -204,6 +204,7 @@ import {
   type HeartbeatContextMode,
   type HeartbeatSchedulePolicy,
 } from "@/constants/heartbeat";
+import { GITHUB_REVIEW_NOTIFICATION_QUEUE_DEDUPE_PREFIX } from "@/constants/githubReviewNotifications";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import {
   GOAL_BUDGET_LIMIT_KIND,
@@ -1950,6 +1951,9 @@ export class WorkspaceService extends EventEmitter {
   // from older streams from clobbering a newer streaming=true snapshot after async awaits.
   private readonly streamingGenerations = new Map<string, number>();
 
+  private githubReviewNotificationsDisabledListener:
+    | ((workspaceId: string) => Promise<void> | void)
+    | undefined;
   private timelineRecorder: TimelineRecorder = NOOP_TIMELINE_RECORDER;
 
   // Serialize todo snapshot refreshes so back-to-back todo_write/propose_plan updates cannot
@@ -5491,6 +5495,62 @@ export class WorkspaceService extends EventEmitter {
     return normalizeHeartbeatSettings(resolved.data.workspaceEntry.heartbeat, defaultIntervalMs);
   }
 
+  setGitHubReviewNotificationsDisabledListener(
+    listener: (workspaceId: string) => Promise<void> | void
+  ): void {
+    this.githubReviewNotificationsDisabledListener = listener;
+  }
+
+  getGitHubReviewNotificationsEnabled(workspaceId: string): boolean {
+    const normalizedWorkspaceId = workspaceId.trim();
+    const config = this.config.loadConfigOrDefault();
+    for (const project of config.projects.values()) {
+      const workspace = project.workspaces.find((entry) => entry.id === normalizedWorkspaceId);
+      if (workspace) {
+        return workspace.githubReviewNotificationsEnabled === true;
+      }
+    }
+    return false;
+  }
+
+  async setGitHubReviewNotificationsEnabled(
+    workspaceId: string,
+    enabled: boolean
+  ): Promise<Result<void, string>> {
+    const normalizedWorkspaceId = workspaceId.trim();
+    if (normalizedWorkspaceId.length === 0) {
+      return Err("Workspace ID must not be empty");
+    }
+    if (this.config.findWorkspace(normalizedWorkspaceId) == null) {
+      return Err("Workspace not found");
+    }
+
+    try {
+      await this.config.updateWorkspaceMetadata(normalizedWorkspaceId, {
+        githubReviewNotificationsEnabled: enabled,
+      });
+      if (!enabled) {
+        // A queued review turn must not dispatch after the user disables this setting.
+        const removalResult = this.removeQueuedMessagesByDedupeKeyPrefix(
+          normalizedWorkspaceId,
+          GITHUB_REVIEW_NOTIFICATION_QUEUE_DEDUPE_PREFIX,
+          { cancelReason: "GitHub review notifications were disabled." }
+        );
+        if (!removalResult.success) {
+          log.warn("Failed to remove queued GitHub review notifications", {
+            workspaceId: normalizedWorkspaceId,
+            error: removalResult.error,
+          });
+        }
+        await this.githubReviewNotificationsDisabledListener?.(normalizedWorkspaceId);
+      }
+      await this.emitCurrentWorkspaceMetadata(normalizedWorkspaceId);
+      return Ok(undefined);
+    } catch (error) {
+      return Err(`Failed to set GitHub review notifications: ${getErrorMessage(error)}`);
+    }
+  }
+
   private getHeartbeatDefaultIntervalMsFromConfig(config: ProjectsConfig): number {
     const intervalMs = config.heartbeatDefaultIntervalMs ?? HEARTBEAT_DEFAULT_INTERVAL_MS;
     assert(
@@ -8473,6 +8533,7 @@ export class WorkspaceService extends EventEmitter {
       /** Force Copilot billing classification to "agent" for internal sends. */
       agentInitiated?: boolean;
       onAccepted?: () => Promise<void> | void;
+      onStreamStarted?: () => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
@@ -8604,6 +8665,7 @@ export class WorkspaceService extends EventEmitter {
             cancelSignal: internal?.cancelSignal,
             onCanceled: internal?.onCanceled,
             onAccepted: internal?.onAccepted,
+            onStreamStarted: internal?.onStreamStarted,
             onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
             startStreamInBackground: internal?.startStreamInBackground,
             goalContinuation: internal?.goalContinuation,
@@ -8695,6 +8757,7 @@ export class WorkspaceService extends EventEmitter {
           cancelSignal: internal?.cancelSignal,
           onCanceled: internal?.onCanceled,
           onAccepted: internal?.onAccepted,
+          onStreamStarted: internal?.onStreamStarted,
           onAcceptedPreStreamFailure: internal?.onAcceptedPreStreamFailure,
         });
 
@@ -8773,9 +8836,11 @@ export class WorkspaceService extends EventEmitter {
         cancelSignal: internal?.cancelSignal,
         onCanceled: internal?.onCanceled,
         onAccepted: internal?.onAccepted,
+        onStreamStarted: internal?.onStreamStarted,
         onAcceptedPreStreamFailure,
       });
       if (!result.success) {
+        await onAcceptedPreStreamFailure(result.error);
         log.error("sendMessage handler: session returned error", {
           workspaceId,
           error: result.error,

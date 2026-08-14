@@ -300,6 +300,25 @@ export function isLocalProjectRuntime(
 }
 
 /**
+ * Return whether review notifications can poll this runtime without starting infrastructure.
+ * Multi-project devcontainers need a status probe for every project container.
+ */
+export function supportsGitHubReviewNotifications(
+  config: RuntimeConfig | undefined,
+  isMultiProjectWorkspace = false
+): boolean {
+  if (config == null) {
+    return !isMultiProjectWorkspace;
+  }
+  if (isMultiProjectWorkspace && isDevcontainerRuntime(config)) {
+    return false;
+  }
+  return (
+    isWorktreeRuntime(config) || isLocalProjectRuntime(config) || isDevcontainerRuntime(config)
+  );
+}
+
+/**
  * Type guard to check if a runtime config has srcBaseDir (worktree-style runtimes).
  * This narrows the type to allow safe access to srcBaseDir.
  */

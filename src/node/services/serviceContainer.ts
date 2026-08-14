@@ -50,6 +50,7 @@ import {
 import { ExperimentsService } from "@/node/services/experimentsService";
 import { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { McpOauthService } from "@/node/services/mcpOauthService";
+import { GitHubReviewNotificationService } from "@/node/services/githubReviewNotificationService";
 import { HeartbeatService } from "@/node/services/heartbeatService";
 import { AgentStatusService } from "@/node/services/agentStatusService";
 import { IdleCompactionService } from "@/node/services/idleCompactionService";
@@ -141,6 +142,7 @@ export class ServiceContainer {
   private readonly ptyService: PTYService;
   public readonly idleCompactionService: IdleCompactionService;
   public readonly idleDispatcher: IdleDispatcher;
+  public readonly githubReviewNotificationService: GitHubReviewNotificationService;
   public readonly heartbeatService: HeartbeatService;
   public readonly agentStatusService: AgentStatusService;
 
@@ -265,6 +267,14 @@ export class ServiceContainer {
       this.workspaceService,
       this.taskService,
       this.idleDispatcher
+    );
+    this.githubReviewNotificationService = new GitHubReviewNotificationService({
+      config,
+      experimentsService: this.experimentsService,
+      workspaceService: this.workspaceService,
+    });
+    this.workspaceService.setGitHubReviewNotificationsDisabledListener((workspaceId) =>
+      this.githubReviewNotificationService.resetWorkspace(workspaceId)
     );
     this.timelineService = new TimelineService(
       config,
@@ -525,6 +535,11 @@ export class ServiceContainer {
     this.heartbeatService.start();
     stepDurationsMs["heartbeatService.start"] = Date.now() - heartbeatStartedAt;
 
+    const githubReviewNotificationsStartedAt = Date.now();
+    this.githubReviewNotificationService.start();
+    stepDurationsMs["githubReviewNotificationService.start"] =
+      Date.now() - githubReviewNotificationsStartedAt;
+
     const agentStatusStartedAt = Date.now();
     this.agentStatusService.start();
     stepDurationsMs["agentStatusService.start"] = Date.now() - agentStatusStartedAt;
@@ -624,6 +639,7 @@ export class ServiceContainer {
     await this.desktopBridgeServer.stop();
     this.desktopTokenManager.dispose();
     await this.desktopSessionManager.closeAll();
+    this.githubReviewNotificationService.stop();
     this.heartbeatService.stop();
     this.agentStatusService.stop();
     this.idleCompactionService.stop();
@@ -662,6 +678,7 @@ export class ServiceContainer {
     // otherwise keep the process alive and continue calling
     // generateWorkspaceStatus against services that are about to be torn
     // down below.
+    this.githubReviewNotificationService.stop();
     this.agentStatusService.stop();
     await this.browserBridgeServer.stop();
     this.browserSessionStateHub.dispose();

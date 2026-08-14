@@ -100,6 +100,10 @@ export const WorkspaceConfigSchema = z.object({
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
   }),
+  githubReviewNotificationsEnabled: z.boolean().optional().meta({
+    description:
+      "Whether this workspace receives notifications for new GitHub pull request reviews.",
+  }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:
       "Per-workspace overrides for goal creation defaults. Sparse; each null field follows the global `goalDefaults`.",

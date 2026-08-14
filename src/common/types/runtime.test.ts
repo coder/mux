@@ -5,6 +5,7 @@ import {
   parseRuntimeModeAndHost,
   RUNTIME_MODE,
   runtimeModeSupportsSharedTaskWorkspace,
+  supportsGitHubReviewNotifications,
 } from "./runtime";
 
 describe("runtimeModeSupportsSharedTaskWorkspace", () => {
@@ -18,6 +19,40 @@ describe("runtimeModeSupportsSharedTaskWorkspace", () => {
     expect(runtimeModeSupportsSharedTaskWorkspace(RUNTIME_MODE.DOCKER)).toBe(false);
     expect(runtimeModeSupportsSharedTaskWorkspace(RUNTIME_MODE.DEVCONTAINER)).toBe(false);
     expect(runtimeModeSupportsSharedTaskWorkspace(undefined)).toBe(false);
+  });
+});
+
+describe("supportsGitHubReviewNotifications", () => {
+  it("supports local, worktree, and single-project devcontainer runtimes", () => {
+    expect(supportsGitHubReviewNotifications({ type: "local" })).toBe(true);
+    expect(supportsGitHubReviewNotifications({ type: "worktree", srcBaseDir: "/tmp/src" })).toBe(
+      true
+    );
+    expect(
+      supportsGitHubReviewNotifications({
+        type: "devcontainer",
+        configPath: ".devcontainer/devcontainer.json",
+      })
+    ).toBe(true);
+  });
+
+  it("does not support remote, Docker, or multi-project devcontainer polling", () => {
+    expect(
+      supportsGitHubReviewNotifications({
+        type: "ssh",
+        host: "example.com",
+        srcBaseDir: "/tmp/src",
+      })
+    ).toBe(false);
+    expect(supportsGitHubReviewNotifications({ type: "docker", image: "ubuntu:24.04" })).toBe(
+      false
+    );
+    expect(
+      supportsGitHubReviewNotifications(
+        { type: "devcontainer", configPath: ".devcontainer/devcontainer.json" },
+        true
+      )
+    ).toBe(false);
   });
 });
 

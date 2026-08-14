@@ -2136,6 +2136,7 @@ export class Config {
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: normalizeWorkspaceMetadataHeartbeat(workspace.heartbeat, config),
+              githubReviewNotificationsEnabled: workspace.githubReviewNotificationsEnabled,
               goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
@@ -2356,6 +2357,7 @@ export class Config {
               runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
               aiSettings: workspace.aiSettings,
               heartbeat: workspace.heartbeat,
+              githubReviewNotificationsEnabled: workspace.githubReviewNotificationsEnabled,
               goalDefaults: workspace.goalDefaults,
               aiSettingsByAgent:
                 workspace.aiSettingsByAgent ??
@@ -2424,6 +2426,7 @@ export class Config {
             runtimeConfig: workspace.runtimeConfig ?? DEFAULT_RUNTIME_CONFIG,
             aiSettings: workspace.aiSettings,
             heartbeat: workspace.heartbeat,
+            githubReviewNotificationsEnabled: workspace.githubReviewNotificationsEnabled,
             goalDefaults: workspace.goalDefaults,
             aiSettingsByAgent:
               workspace.aiSettingsByAgent ??
@@ -2529,6 +2532,7 @@ export class Config {
         runtimeConfig: metadata.runtimeConfig,
         aiSettings: metadata.aiSettings,
         heartbeat: metadata.heartbeat,
+        githubReviewNotificationsEnabled: metadata.githubReviewNotificationsEnabled,
         goalDefaults: metadata.goalDefaults,
         parentWorkspaceId: metadata.parentWorkspaceId,
         agentType: metadata.agentType,
@@ -2599,7 +2603,9 @@ export class Config {
    */
   async updateWorkspaceMetadata(
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceMetadata, "name" | "runtimeConfig">>
+    updates: Partial<
+      Pick<WorkspaceMetadata, "name" | "runtimeConfig" | "githubReviewNotificationsEnabled">
+    >
   ): Promise<void> {
     await this.editConfig((config) => {
       for (const [_projectPath, projectConfig] of config.projects) {
@@ -2607,6 +2613,9 @@ export class Config {
         if (workspace) {
           if (updates.name !== undefined) workspace.name = updates.name;
           if (updates.runtimeConfig !== undefined) workspace.runtimeConfig = updates.runtimeConfig;
+          if (updates.githubReviewNotificationsEnabled !== undefined) {
+            workspace.githubReviewNotificationsEnabled = updates.githubReviewNotificationsEnabled;
+          }
           return config;
         }
       }

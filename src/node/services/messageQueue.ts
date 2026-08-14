@@ -76,6 +76,7 @@ interface QueuedMessageInternalOptions {
   /** Dedupe-keyed maintenance sends are removable by prefix without changing global queue rules. */
   removableDedupeKey?: boolean;
   onAccepted?: () => Promise<void> | void;
+  onStreamStarted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   onCanceled?: (reason: string) => Promise<void> | void;
   /** Mutable dispatch outcome shared with sendQueuedMessages. */
@@ -119,6 +120,7 @@ interface QueueEntry {
   agentInitiatedCount: number;
   onCanceled?: (reason: string) => Promise<void> | void;
   onAccepted?: () => Promise<void> | void;
+  onStreamStarted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   cancelState?: { canceledBeforeAcceptance: boolean };
   cancelSignal?: AbortSignal;
@@ -299,6 +301,7 @@ export class MessageQueue {
 
     const incomingHasAcceptedCallbacks =
       internal?.onAccepted != null ||
+      internal?.onStreamStarted != null ||
       internal?.onAcceptedPreStreamFailure != null ||
       internal?.onCanceled != null ||
       internal?.cancelSignal != null;
@@ -377,6 +380,9 @@ export class MessageQueue {
     }
     if (internal?.onAccepted != null) {
       entry.onAccepted = internal.onAccepted;
+    }
+    if (internal?.onStreamStarted != null) {
+      entry.onStreamStarted = internal.onStreamStarted;
     }
     if (internal?.onAcceptedPreStreamFailure != null) {
       entry.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
@@ -633,6 +639,7 @@ export class MessageQueue {
       allAddsAreSynthetic ||
       allAddsAreAgentInitiated ||
       entry.onAccepted != null ||
+      entry.onStreamStarted != null ||
       entry.onAcceptedPreStreamFailure != null ||
       entry.onCanceled != null ||
       entry.cancelSignal != null;
@@ -644,6 +651,7 @@ export class MessageQueue {
           ...(entry.cancelState != null ? { cancelState: entry.cancelState } : {}),
           ...(entry.cancelSignal != null ? { cancelSignal: entry.cancelSignal } : {}),
           ...(entry.onAccepted != null ? { onAccepted: entry.onAccepted } : {}),
+          ...(entry.onStreamStarted != null ? { onStreamStarted: entry.onStreamStarted } : {}),
           ...(entry.onAcceptedPreStreamFailure != null
             ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
             : {}),

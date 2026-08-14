@@ -92,6 +92,61 @@ describe("AgentSession pre-stream errors", () => {
     expect(streamError?.messageId).toMatch(/^assistant-/);
   });
 
+  it("notifies stream start only after provider startup succeeds", async () => {
+    const workspaceId = "ws-stream-started-callback";
+    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      aiServiceOverrides: {
+        isStreaming: mock(() => true),
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    historyCleanup = cleanup;
+    const onStreamStarted = mock(() => undefined);
+
+    const result = await session.sendMessage(
+      "hello",
+      {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+      },
+      { onStreamStarted }
+    );
+
+    expect(result.success).toBe(true);
+    expect(streamMessage.mock.calls).toHaveLength(1);
+    expect(onStreamStarted).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not acknowledge a successful startup without a registered stream", async () => {
+    const workspaceId = "ws-stream-started-without-registration";
+    const streamMessage = mock((_history: MuxMessage[]) => Promise.resolve(Ok(undefined)));
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId,
+      aiServiceOverrides: {
+        isStreaming: mock(() => false),
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    historyCleanup = cleanup;
+    const onStreamStarted = mock(() => undefined);
+    const onAcceptedPreStreamFailure = mock(() => undefined);
+
+    const result = await session.sendMessage(
+      "hello",
+      {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+      },
+      { onStreamStarted, onAcceptedPreStreamFailure }
+    );
+
+    expect(result.success).toBe(true);
+    expect(onStreamStarted).not.toHaveBeenCalled();
+    expect(onAcceptedPreStreamFailure).toHaveBeenCalledTimes(1);
+  });
+
   it("notifies accepted background sends when stream startup rejects", async () => {
     const workspaceId = "ws-background-startup-rejected";
     const { session, cleanup } = await createAgentSessionHarness({ workspaceId });

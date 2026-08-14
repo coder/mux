@@ -1237,6 +1237,15 @@ export const workspace = {
       output: ResultSchema(z.void(), z.string()),
     },
   },
+  githubReviewNotifications: {
+    set: {
+      input: z.object({
+        workspaceId: z.string(),
+        enabled: z.boolean(),
+      }),
+      output: ResultSchema(z.void(), z.string()),
+    },
+  },
   goalDefaults: {
     // Per-workspace override of the global `goalDefaults` block. `get`
     // returns `null` when no override is set (i.e., this workspace uses

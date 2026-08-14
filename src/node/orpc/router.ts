@@ -4242,6 +4242,17 @@ export const router = (authToken?: string) => {
             return Ok(undefined);
           }),
       },
+      githubReviewNotifications: {
+        set: t
+          .input(schemas.workspace.githubReviewNotifications.set.input)
+          .output(schemas.workspace.githubReviewNotifications.set.output)
+          .handler(({ context, input }) =>
+            context.workspaceService.setGitHubReviewNotificationsEnabled(
+              input.workspaceId,
+              input.enabled
+            )
+          ),
+      },
       goalDefaults: {
         // Per-workspace override of the global `goalDefaults` block.
         // `get` returns `null` when this workspace has no override.

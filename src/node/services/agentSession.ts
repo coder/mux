@@ -2493,6 +2493,7 @@ export class AgentSession {
       goalKind?: GoalSyntheticMessageKind;
       startStreamInBackground?: boolean;
       onAccepted?: () => Promise<void> | void;
+      onStreamStarted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
@@ -3232,12 +3233,29 @@ export class AgentSession {
           goalKind,
           turnThinkingOverride
         );
-        if (streamResult.success && preparedTurnAbortController.signal.aborted) {
-          await notifyAcceptedPreStreamFailure(
-            createUnknownSendMessageError(
-              "Accepted stream startup was canceled during preparation."
-            )
-          );
+        if (streamResult.success) {
+          const streamRegistered =
+            !preparedTurnAbortController.signal.aborted &&
+            !this.disposed &&
+            this.aiService.isStreaming(this.workspaceId);
+          if (!streamRegistered) {
+            await notifyAcceptedPreStreamFailure(
+              createUnknownSendMessageError(
+                preparedTurnAbortController.signal.aborted
+                  ? "Accepted stream startup was canceled during preparation."
+                  : "Accepted stream startup ended before provider stream registration."
+              )
+            );
+          } else {
+            try {
+              await internal?.onStreamStarted?.();
+            } catch (error: unknown) {
+              log.error("Accepted stream start callback failed", {
+                workspaceId: this.workspaceId,
+                error: getErrorMessage(error),
+              });
+            }
+          }
         }
         return streamResult;
       } finally {
@@ -5244,6 +5262,7 @@ export class AgentSession {
       /** Isolate this keyed message so it can be selectively superseded later. */
       removableDedupeKey?: boolean;
       onAccepted?: () => Promise<void> | void;
+      onStreamStarted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };

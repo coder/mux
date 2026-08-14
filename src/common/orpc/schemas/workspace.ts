@@ -162,6 +162,10 @@ export const WorkspaceMetadataSchema = z.object({
   heartbeat: WorkspaceHeartbeatSettingsSchema.optional().meta({
     description: "Persisted heartbeat settings for this workspace.",
   }),
+  githubReviewNotificationsEnabled: z.boolean().optional().meta({
+    description:
+      "Whether this workspace receives notifications for new GitHub pull request reviews.",
+  }),
   goalDefaults: WorkspaceGoalDefaultsOverrideSchema.optional().meta({
     description:
       "Per-workspace overrides for goal creation defaults (budget, turn cap, explicit-budget). Layered on top of the global `goalDefaults` from app config.",

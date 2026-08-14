@@ -444,6 +444,12 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
         firedAt?: number;
       }
     | {
+        /** Synthetic provider-visible message for reviews posted on the linked GitHub PR. */
+        type: "github-pr-review-notification";
+        prUrl: string;
+        reviewIds: string[];
+      }
+    | {
         type: "normal"; // Regular messages
         /** Original user input for one-shot overrides (e.g., "/opus+high do something") — used as display content so the command prefix remains visible. */
         rawCommand?: string;
