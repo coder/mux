@@ -53,14 +53,25 @@ function mapPromptArguments(
   const definitions = descriptor.arguments ?? [];
   const tokens = tokenizeSlashCommandArguments(input);
   const values: Record<string, string> = {};
+  let tokenIndex = 0;
   for (const [index, definition] of definitions.entries()) {
+    // Skip an optional slot when the remaining tokens are needed by later
+    // required arguments, so `[optional, required]` maps one token to the
+    // required argument instead of reporting it missing.
+    const requiredAfter = definitions.slice(index + 1).filter((d) => d.required).length;
+    if (!definition.required && tokens.length - tokenIndex <= requiredAfter) {
+      continue;
+    }
     const value =
-      index === definitions.length - 1 ? tokens.slice(index).join(" ") : (tokens[index] ?? "");
+      index === definitions.length - 1
+        ? tokens.slice(tokenIndex).join(" ")
+        : (tokens[tokenIndex] ?? "");
     if (!value) {
       if (definition.required) return { arguments: values, missingRequired: definition.name };
       continue;
     }
     values[definition.name] = value;
+    tokenIndex++;
   }
   return { arguments: values };
 }

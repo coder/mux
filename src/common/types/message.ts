@@ -341,40 +341,21 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
 
 /**
  * A crash between snapshot persistence and the user-row append can orphan MCP
- * prompt snapshots, so provider requests keep one only when the next
- * non-snapshot row is a user message that references it (self-healing rule).
+ * prompt snapshots, so provider requests keep one only when the user row it
+ * was materialized for is present in the same history (self-healing rule).
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
-  const claimedIds = new Set<string>();
-  let pendingBlock: MuxMessage[] = [];
-  for (const message of messages) {
-    if (isSyntheticSnapshotUserMessage(message)) {
-      if (message.metadata?.mcpPromptSnapshot) pendingBlock.push(message);
-      continue;
-    }
-    if (pendingBlock.length > 0 && message.role === "user") {
-      const refs = sanitizeMcpPromptRefs(message.metadata?.muxMetadata?.mcpPromptRefs);
-      const refKeys = new Set(
-        refs.map((ref) => getMcpPromptReferenceKey(ref.serverName, ref.promptName))
-      );
-      // Refs are deduped per turn, so claim the newest snapshot per prompt;
-      // older duplicates come from a crashed earlier attempt.
-      const claimedKeys = new Set<string>();
-      for (let i = pendingBlock.length - 1; i >= 0; i--) {
-        const snapshot = pendingBlock[i].metadata?.mcpPromptSnapshot;
-        if (!snapshot) continue;
-        const key = getMcpPromptReferenceKey(snapshot.serverName, snapshot.promptName);
-        if (refKeys.has(key) && !claimedKeys.has(key)) {
-          claimedKeys.add(key);
-          claimedIds.add(pendingBlock[i].id);
-        }
-      }
-    }
-    pendingBlock = [];
-  }
-  return messages.filter(
-    (message) => !message.metadata?.mcpPromptSnapshot || claimedIds.has(message.id)
+  const nonSnapshotMessageIds = new Set(
+    messages.filter((message) => !message.metadata?.mcpPromptSnapshot).map((message) => message.id)
   );
+  return messages.filter((message) => {
+    const snapshot = message.metadata?.mcpPromptSnapshot;
+    if (!snapshot) return true;
+    return (
+      snapshot.invokingMessageId !== undefined &&
+      nonSnapshotMessageIds.has(snapshot.invokingMessageId)
+    );
+  });
 }
 
 export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
@@ -760,6 +741,13 @@ export interface MuxMetadata {
     serverName: string;
     promptName: string;
     commandKey: string;
+    /**
+     * Id of the user row this snapshot expands. Exact correlation, because
+     * adjacency plus prompt identity lets a later same-prompt turn claim a
+     * crash-orphaned snapshot. Optional only for rows persisted before the
+     * field existed; those are treated as orphans.
+     */
+    invokingMessageId?: string;
     description?: string;
   };
 }

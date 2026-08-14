@@ -168,6 +168,50 @@ describe("parseCommandWithSkillInvocation", () => {
     );
   });
 
+  test("maps a lone token to a later required argument past an earlier optional one", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [
+        {
+          ...promptDescriptor(),
+          arguments: [
+            { name: "focus", required: false },
+            { name: "path", required: true },
+          ],
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.mcpPromptInvocation?.arguments).toEqual({ path: "src" });
+  });
+
+  test("fills an earlier optional argument when enough tokens remain for required ones", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review security src deep",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [
+        {
+          ...promptDescriptor(),
+          arguments: [
+            { name: "focus", required: false },
+            { name: "path", required: true },
+          ],
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation?.arguments).toEqual({
+      focus: "security",
+      path: "src deep",
+    });
+  });
+
   test("reports a missing required MCP prompt argument before send", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/mcp__coder__review",

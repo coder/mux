@@ -48,6 +48,7 @@ describe("AgentSession MCP prompt snapshots", () => {
         serverName: "coder",
         promptName: "review",
         commandKey: "mcp__coder__review",
+        invokingMessageId: history.data[1]?.id ?? "",
         description: "Review code",
       });
       expect(history.data[0]?.parts.find((part) => part.type === "text")?.text).toBe(

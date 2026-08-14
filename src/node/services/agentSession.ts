@@ -3051,6 +3051,7 @@ export class AgentSession {
         );
         mcpPromptSnapshotMessages = await this.materializeMcpPromptSnapshots(
           typedMuxMetadata,
+          userMessage.id,
           cancelSignal
         );
       } catch (error) {
@@ -6204,6 +6205,7 @@ export class AgentSession {
 
   private async materializeMcpPromptSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
+    invokingMessageId: string,
     cancelSignal: AbortSignal | undefined
   ): Promise<MuxMessage[]> {
     const mcpServerManager = this.mcpServerManager;
@@ -6227,6 +6229,7 @@ export class AgentSession {
               serverName: ref.serverName,
               promptName: ref.promptName,
               commandKey: ref.commandKey,
+              invokingMessageId,
               ...(prompt.description !== undefined ? { description: prompt.description } : {}),
             },
           });
