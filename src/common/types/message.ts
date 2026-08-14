@@ -339,6 +339,44 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
   return Array.isArray(value) ? value.filter(isAgentSkillReference) : [];
 }
 
+/**
+ * A crash between snapshot persistence and the user-row append can orphan MCP
+ * prompt snapshots, so provider requests keep one only when the next
+ * non-snapshot row is a user message that references it (self-healing rule).
+ */
+export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
+  const claimedIds = new Set<string>();
+  let pendingBlock: MuxMessage[] = [];
+  for (const message of messages) {
+    if (isSyntheticSnapshotUserMessage(message)) {
+      if (message.metadata?.mcpPromptSnapshot) pendingBlock.push(message);
+      continue;
+    }
+    if (pendingBlock.length > 0 && message.role === "user") {
+      const refs = sanitizeMcpPromptRefs(message.metadata?.muxMetadata?.mcpPromptRefs);
+      const refKeys = new Set(
+        refs.map((ref) => getMcpPromptReferenceKey(ref.serverName, ref.promptName))
+      );
+      // Refs are deduped per turn, so claim the newest snapshot per prompt;
+      // older duplicates come from a crashed earlier attempt.
+      const claimedKeys = new Set<string>();
+      for (let i = pendingBlock.length - 1; i >= 0; i--) {
+        const snapshot = pendingBlock[i].metadata?.mcpPromptSnapshot;
+        if (!snapshot) continue;
+        const key = getMcpPromptReferenceKey(snapshot.serverName, snapshot.promptName);
+        if (refKeys.has(key) && !claimedKeys.has(key)) {
+          claimedKeys.add(key);
+          claimedIds.add(pendingBlock[i].id);
+        }
+      }
+    }
+    pendingBlock = [];
+  }
+  return messages.filter(
+    (message) => !message.metadata?.mcpPromptSnapshot || claimedIds.has(message.id)
+  );
+}
+
 export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
   const deduped = new Map<string, MCPPromptReference>();
   for (const ref of refs) {

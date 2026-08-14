@@ -66,6 +66,7 @@ import {
   createMuxMessage,
   dedupeAgentSkillRefs,
   dedupeMcpPromptRefs,
+  filterOrphanedMcpPromptSnapshots,
   sanitizeAgentSkillRefs,
   sanitizeMcpPromptRefs,
   isCompactionSummaryMetadata,
@@ -3971,7 +3972,7 @@ export class AgentSession {
       return Ok(undefined);
     }
 
-    let historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
+    const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (isStartupAbortRequested()) {
       return Ok(undefined);
     }
@@ -3980,7 +3981,11 @@ export class AgentSession {
       return Err(createUnknownSendMessageError(historyResult.error));
     }
 
-    if (historyResult.data.length === 0) {
+    // A crash between snapshot and user-row appends can leave orphaned prompt
+    // expansions on disk; exclude them from every provider request.
+    let requestMessages = filterOrphanedMcpPromptSnapshots(historyResult.data);
+
+    if (requestMessages.length === 0) {
       return Err(
         createUnknownSendMessageError(
           "Cannot resume stream: workspace history is empty. Send a new message instead."
@@ -3993,7 +3998,7 @@ export class AgentSession {
     // Non-partial trailing assistants indicate a missing user message upstream — inject a
     // [CONTINUE] sentinel so the model has a valid conversation to respond to. This is
     // defense-in-depth; callers should prefer sendMessage() which persists a real user message.
-    const lastMsg = historyResult.data[historyResult.data.length - 1];
+    const lastMsg = requestMessages[requestMessages.length - 1];
     if (lastMsg?.role === "assistant" && !lastMsg.metadata?.partial) {
       log.warn("streamWithHistory: trailing non-partial assistant detected, injecting [CONTINUE]", {
         workspaceId: this.workspaceId,
@@ -4006,16 +4011,16 @@ export class AgentSession {
       await this.historyService.appendToHistory(this.workspaceId, sentinelMessage);
       const refreshed = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
       if (refreshed.success) {
-        historyResult = refreshed;
+        requestMessages = filterOrphanedMcpPromptSnapshots(refreshed.data);
       }
     }
 
     // Capture the current user message id so retries are stable across assistant message ids.
-    const lastUserMessage = [...historyResult.data].reverse().find((m) => m.role === "user");
+    const lastUserMessage = [...requestMessages].reverse().find((m) => m.role === "user");
     this.activeStreamUserMessageId = lastUserMessage?.id;
 
     this.activeCompactionRequest = this.resolveCompactionRequest(
-      historyResult.data,
+      requestMessages,
       modelString,
       options
     );
@@ -4083,7 +4088,7 @@ export class AgentSession {
         : retryMuxMetadata?.type === "workspace-turn-task"
           ? retryMuxMetadata
           : retryMuxMetadata?.type === "bash-monitor-wake"
-            ? inheritOpenWorkspaceTurnMetadata(historyResult.data)
+            ? inheritOpenWorkspaceTurnMetadata(requestMessages)
             : undefined;
     // Mid-stream compaction runs after the original send options have already been resolved against
     // history (notably bash-monitor wakes). Persist the actual correlation used by this stream so the
@@ -4098,7 +4103,7 @@ export class AgentSession {
       extractAcpDelegatedTools(optionsMuxMetadata);
 
     const streamResult = await this.aiService.streamMessage({
-      messages: historyResult.data,
+      messages: requestMessages,
       workspaceId: this.workspaceId,
       modelString,
       abortSignal,

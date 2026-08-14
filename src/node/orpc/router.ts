@@ -5586,6 +5586,13 @@ export const router = (authToken?: string) => {
               if (!metadataResult.success) throw new Error(metadataResult.error);
               const metadata = metadataResult.data;
               const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+              // Fresh non-local runtimes (devcontainer, docker) reject exec until
+              // per-instance readiness completes, and cold prompt discovery starts
+              // stdio servers through runtime.exec (mirrors streamMessage).
+              const readyResult = await runtime.ensureReady();
+              if (!readyResult.ready) {
+                throw new Error(readyResult.error);
+              }
               const overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
                 input.workspaceId
               );

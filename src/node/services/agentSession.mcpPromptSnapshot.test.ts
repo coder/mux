@@ -1,6 +1,7 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
-import { Err } from "@/common/types/result";
+import { Err, Ok } from "@/common/types/result";
+import type { AIService } from "@/node/services/aiService";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createAgentSessionHarness } from "@/node/services/agentSession.testHarness";
 
@@ -209,6 +210,48 @@ describe("AgentSession MCP prompt snapshots", () => {
       if (!history.success) throw new Error(history.error);
       expect(history.data).toHaveLength(1);
       expect(history.data[0]?.metadata?.mcpPromptSnapshot).toBeUndefined();
+    } finally {
+      harness.session.dispose();
+      await harness.cleanup();
+    }
+  });
+
+  test("excludes crash-orphaned snapshots from provider requests", async () => {
+    const streamMessage = mock((_args: { messages: MuxMessage[] }) =>
+      Promise.resolve(Ok(undefined))
+    );
+    const harness = await createAgentSessionHarness({
+      workspaceId: "workspace",
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+
+    try {
+      // Simulate a crash after snapshot persistence but before the user row.
+      await harness.historyService.appendToHistory(
+        "workspace",
+        createMuxMessage("orphan-snap", "user", "Expanded prompt", {
+          historySequence: 0,
+          synthetic: true,
+          mcpPromptSnapshot: {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+          },
+        })
+      );
+
+      const result = await harness.session.sendMessage("Unrelated message", {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+      });
+      expect(result.success).toBe(true);
+
+      expect(streamMessage.mock.calls).toHaveLength(1);
+      const requestMessages = streamMessage.mock.calls[0][0].messages;
+      expect(requestMessages.length).toBeGreaterThan(0);
+      expect(requestMessages.map((message) => message.id)).not.toContain("orphan-snap");
     } finally {
       harness.session.dispose();
       await harness.cleanup();
