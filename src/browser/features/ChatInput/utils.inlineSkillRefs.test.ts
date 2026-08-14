@@ -108,6 +108,26 @@ describe("parseCommandWithSkillInvocation", () => {
     expect(result.mcpPromptInvocation?.arguments).toEqual({ path: "src" });
   });
 
+  test("prefers an exact commandKey match over another prompt's stableKey alias", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review_11111111 src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [
+        promptDescriptor(),
+        {
+          ...promptDescriptor(),
+          commandKey: "mcp__coder__review_11111111",
+          stableKey: "mcp__coder__review_11111111_22222222",
+          promptName: "review_11111111",
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation?.descriptor.promptName).toBe("review_11111111");
+  });
+
   test("blocks an unsuffixed key orphaned by a new collision with the current keys", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/mcp__coder__review src",

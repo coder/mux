@@ -108,9 +108,18 @@ function formatSkillInvocationText(skillName: string, userMessage: string): stri
   return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
 }
 
-// Match stableKey so drafts and recalled history survive collision-driven key changes.
-function matchesPromptCommandKey(descriptor: MCPPromptDescriptor, command: string): boolean {
-  return descriptor.commandKey === command || descriptor.stableKey === command;
+// Exact commandKey wins across the whole catalog; stableKey only recovers
+// drafts whose collision-suffixed key changed, so an alias must never shadow
+// another prompt's current commandKey.
+function findPromptDescriptor(
+  descriptors: MCPPromptDescriptor[],
+  command: string,
+  isEligible: (descriptor: MCPPromptDescriptor) => boolean = () => true
+): MCPPromptDescriptor | undefined {
+  return (
+    descriptors.find((descriptor) => descriptor.commandKey === command && isEligible(descriptor)) ??
+    descriptors.find((descriptor) => descriptor.stableKey === command && isEligible(descriptor))
+  );
 }
 
 async function loadMcpPromptDescriptors(options: {
@@ -119,8 +128,8 @@ async function loadMcpPromptDescriptors(options: {
   discovery: SkillResolutionTarget | null;
   commandKeys: string[];
 }): Promise<MCPPromptDescriptor[] | null> {
-  const hasAllDescriptors = options.commandKeys.every((commandKey) =>
-    options.descriptors.some((descriptor) => matchesPromptCommandKey(descriptor, commandKey))
+  const hasAllDescriptors = options.commandKeys.every(
+    (commandKey) => findPromptDescriptor(options.descriptors, commandKey) !== undefined
   );
   if (hasAllDescriptors || !options.api || options.discovery?.kind !== "workspace") {
     return options.descriptors;
@@ -157,7 +166,7 @@ async function resolveMcpPromptInvocation(options: {
     discovery: options.discovery,
     commandKeys: [command],
   });
-  const descriptor = descriptors?.find((candidate) => matchesPromptCommandKey(candidate, command));
+  const descriptor = descriptors ? findPromptDescriptor(descriptors, command) : undefined;
   if (!descriptor) {
     // A new collision can orphan an unsuffixed key from an old draft. Block the
     // send and offer current keys rather than treating it as plain text.
@@ -384,10 +393,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   const isInlineInvocable = (descriptor: MCPPromptDescriptor) =>
     !(descriptor.arguments ?? []).some((argument) => argument.required);
   for (const candidate of candidates) {
-    const prompt = descriptors.find(
-      (descriptor) =>
-        matchesPromptCommandKey(descriptor, candidate.skillName) && isInlineInvocable(descriptor)
-    );
+    const prompt = findPromptDescriptor(descriptors, candidate.skillName, isInlineInvocable);
     if (!prompt) {
       // Same orphaned-key ambiguity as the slash path: a new collision
       // suffixed the keys, so block the send instead of dropping the ref.

@@ -1805,11 +1805,10 @@ export class MCPServerManager {
     if (lastOptions) {
       const refresh = async (): Promise<void> => {
         // Rotated header credentials must change the signature so stale clients are replaced.
-        let refreshOptions = lastOptions;
+        let projectSecrets: Record<string, string> | undefined;
         if (this.secretsResolver) {
           try {
-            const projectSecrets = await this.secretsResolver(workspaceId, lastOptions.projectPath);
-            refreshOptions = { ...lastOptions, projectSecrets };
+            projectSecrets = await this.secretsResolver(workspaceId, lastOptions.projectPath);
           } catch (error) {
             log.debug("[MCP] Failed to re-resolve secrets for prompt refresh", {
               workspaceId,
@@ -1817,7 +1816,12 @@ export class MCPServerManager {
             });
           }
         }
-        await this.getToolsForWorkspace(refreshOptions);
+        // Re-read after the await: a settings mutation recorded while secrets
+        // resolved must not be clobbered by the pre-await options snapshot.
+        const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
+        await this.getToolsForWorkspace(
+          projectSecrets !== undefined ? { ...currentOptions, projectSecrets } : currentOptions
+        );
       };
       const refreshed = await raceWithAbortAndTimeout(refresh(), {
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
