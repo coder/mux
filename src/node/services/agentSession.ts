@@ -124,6 +124,7 @@ import {
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
 import { ROUTED_SEND_COMPACTION_HEADROOM_PERCENT } from "@/common/constants/ui";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
 import {
   getExplicitGatewayPrefix,
@@ -3017,6 +3018,38 @@ export class AgentSession {
       }
     }
 
+    // Which options a routed turn's compaction (on-send or mid-stream forced)
+    // must run with: the compaction request has to read the FULL uncompacted
+    // history, so it needs whichever model has the larger usable window.
+    // Routing usually shrinks the window (the user's model wins), but a class
+    // can also route UP — repeated routed turns can then grow the history past
+    // the user's model, and summarizing on it would just context-error again.
+    const compactionBaseOptionsForRoutedTurn = ((): SendMessageOptions | undefined => {
+      if (skillModelOverride == null) {
+        return undefined;
+      }
+      const providersConfigForWindows = this.getProvidersConfigSafe();
+      const userModel = preRoutingOptions.model;
+      if (userModel == null) {
+        return optionsForStream;
+      }
+      const userLimit = getEffectiveContextLimit(
+        userModel,
+        this.is1MContextEnabledForModel(userModel, preRoutingOptions, providersConfigForWindows),
+        providersConfigForWindows
+      );
+      const routedLimit = getEffectiveContextLimit(
+        skillModelOverride.model,
+        this.is1MContextEnabledForModel(
+          skillModelOverride.model,
+          optionsForStream,
+          providersConfigForWindows
+        ),
+        providersConfigForWindows
+      );
+      return (routedLimit ?? 0) > (userLimit ?? 0) ? optionsForStream : preRoutingOptions;
+    })();
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -3138,11 +3171,12 @@ export class AgentSession {
 
         const autoCompactionRequest = this.buildAutoCompactionRequest({
           followUpContent,
-          // Pre-routing options: the compaction request must inherit the user's
-          // model (able to read the full history), never a per-skill routed
-          // small model. The deferred follow-up re-enters sendMessage with the
-          // same skill metadata and re-routes itself.
-          baseOptions: preRoutingOptions,
+          // The compaction request must run on the model able to read the full
+          // history — usually the user's pre-routing model, or the routed model
+          // when the class routes UP to a larger window. The deferred follow-up
+          // re-enters sendMessage with the same skill metadata and re-routes
+          // itself either way.
+          baseOptions: compactionBaseOptionsForRoutedTurn ?? preRoutingOptions,
           reason: "on-send",
         });
 
@@ -3429,7 +3463,7 @@ export class AgentSession {
           preparedTurnAbortController.signal,
           goalKind,
           turnThinkingOverride,
-          skillModelOverride != null ? preRoutingOptions : undefined
+          compactionBaseOptionsForRoutedTurn
         );
         if (streamResult.success && preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -4990,6 +5024,13 @@ export class AgentSession {
           streamContext?.providersConfig ?? null
         ),
         providersConfig: streamContext?.providersConfig ?? null,
+        // A routed turn (compactionBaseOptions set) uses the routed-send
+        // policy mid-stream too: the ordinary threshold+buffer against the
+        // (usually smaller) routed window would immediately force the exact
+        // workspace-wide compaction the pre-send band declined to run.
+        ...(streamContext?.compactionBaseOptions != null
+          ? { forceThresholdPercentOverride: 100 - ROUTED_SEND_COMPACTION_HEADROOM_PERCENT }
+          : {}),
       });
 
       if (shouldInterruptForCompaction) {
