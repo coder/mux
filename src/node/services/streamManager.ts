@@ -1566,18 +1566,22 @@ export class StreamManager extends EventEmitter {
    */
   private async recordDroppedPartialUsageInSidecar(
     workspaceId: WorkspaceId,
-    streamInfo: Pick<WorkspaceStreamInfo, "model" | "toolModelUsages">,
+    streamInfo: Pick<WorkspaceStreamInfo, "model" | "metadataModel" | "toolModelUsages">,
     usage: LanguageModelV2Usage | undefined,
     providerMetadata: Record<string, unknown> | undefined,
     analyticsSource: "aborted_stream" | "errored_stream"
   ): Promise<void> {
+    // Thread the request-pinned metadata identities through the sidecar
+    // write: recordHeadlessUsage would otherwise re-resolve the raw model
+    // against the CURRENT config, so a Coder instance removed/retagged
+    // mid-turn would persist an unknown or repriced identity in analytics.
     if (usage !== undefined) {
       await this.sessionUsageService?.recordHeadlessUsage(
         workspaceId as string,
         streamInfo.model,
         cloneUsage(usage),
         providerMetadata,
-        { analyticsSource, skipSessionLedger: true }
+        { analyticsSource, skipSessionLedger: true, metadataModel: streamInfo.metadataModel }
       );
     }
     for (const toolUsage of streamInfo.toolModelUsages) {
@@ -1586,7 +1590,7 @@ export class StreamManager extends EventEmitter {
         toolUsage.model,
         cloneUsage(toolUsage.usage),
         toolUsage.providerMetadata,
-        { analyticsSource, skipSessionLedger: true }
+        { analyticsSource, skipSessionLedger: true, metadataModel: toolUsage.metadataModel }
       );
     }
   }

@@ -909,18 +909,28 @@ export class WorkspaceStore {
       const model = streamEndData.metadata?.model;
       const rawUsage = streamEndData.metadata?.usage;
       const providerMetadata = streamEndData.metadata?.providerMetadata;
+      // Request-pinned metadata identity stamped by the backend at stream
+      // start. A Coder catalog refresh can remove/retag the instance while
+      // the request is active; resolving the raw model against the browser's
+      // freshly refreshed config here would price and bucket the delta
+      // differently from the backend ledger until reload.
+      const pinnedMetadataModel = streamEndData.metadata?.metadataModel;
       if (model && rawUsage) {
         const usage = createDisplayUsage(
           rawUsage,
           model,
           providerMetadata,
-          this.resolveMetadataModel(model)
+          pinnedMetadataModel ?? this.resolveMetadataModel(model)
         );
         if (usage) {
-          // Must match the backend's ledger keys (normalizeUsageModelKey):
-          // Coder identities resolve to their record-time metadata identity,
-          // so the live delta must accumulate under the same key.
-          const normalizedModel = normalizeUsageModelKey(model, this.providersConfig);
+          // Must match the backend's ledger keys (recordSessionUsage): Coder
+          // identities use the stream's pinned record-time metadata identity,
+          // all others the canonical normalizeUsageModelKey, so the live
+          // delta accumulates under the same key.
+          const normalizedModel =
+            model.startsWith("coder:") && pinnedMetadataModel
+              ? pinnedMetadataModel
+              : normalizeUsageModelKey(model, this.providersConfig);
           const current = this.sessionUsage.get(workspaceId) ?? {
             byModel: {},
             version: 1 as const,

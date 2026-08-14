@@ -227,6 +227,13 @@ export class SessionUsageService {
        * (StreamManager's abort handler) and only need the analytics sidecar.
        */
       skipSessionLedger?: boolean;
+      /**
+       * Request-pinned pricing identity resolved when the stream/tool call
+       * started. When set, it overrides the live re-resolution below so a
+       * Coder catalog refresh that removes/retags the instance mid-turn
+       * cannot corrupt the persisted analytics identity.
+       */
+      metadataModel?: string;
     }
   ): Promise<{ model: string; usage: ChatUsageDisplay } | undefined> {
     if (!usage) return undefined;
@@ -237,15 +244,28 @@ export class SessionUsageService {
       // callers that already normalized.
       providerMetadata = withCacheWriteMetadata(providerMetadata, usage);
       usage = normalizeUsage(usage);
-      const canonicalModel = normalizeUsageModelKey(modelString, this.getProvidersConfig());
+      // Attribution key mirrors StreamManager.recordSessionUsage: Coder
+      // identities use the caller's request-pinned metadata identity so a
+      // catalog refresh mid-turn cannot re-key the row; all others keep the
+      // canonical key (their metadataModel can be a mappedToModel pricing
+      // alias, deliberately not the attribution bucket).
+      const canonicalModel =
+        modelString.startsWith("coder:") && options?.metadataModel
+          ? options.metadataModel
+          : normalizeUsageModelKey(modelString, this.getProvidersConfig());
       // Resolve mappedToModel aliases for pricing (mirrors StreamManager's
       // resolveMetadataModel): custom provider models would otherwise price
-      // against the raw custom ID (unknown → $0).
+      // against the raw custom ID (unknown → $0). A caller-pinned identity
+      // takes precedence over live re-resolution.
       let metadataModel: string;
-      try {
-        metadataModel = resolveModelForMetadata(modelString, this.getProvidersConfig());
-      } catch {
-        metadataModel = modelString;
+      if (options?.metadataModel) {
+        metadataModel = options.metadataModel;
+      } else {
+        try {
+          metadataModel = resolveModelForMetadata(modelString, this.getProvidersConfig());
+        } catch {
+          metadataModel = modelString;
+        }
       }
       const existingMux = providerMetadata?.mux;
       const effectiveProviderMetadata = options?.costsIncluded

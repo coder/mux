@@ -115,6 +115,7 @@ import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilitie
 import {
   getExplicitGatewayPrefix,
   normalizeToCanonical,
+  normalizeSelectedModel,
   isValidModelFormat,
   supports1MContext,
 } from "@/common/utils/ai/models";
@@ -1267,7 +1268,12 @@ export class AgentSession {
       return undefined;
     }
 
-    const normalized = normalizeToCanonical(trimmed);
+    // Preserve explicit gateway identities (coder:, mux-gateway:, ...) just
+    // like normal send-option normalization: normalizeToCanonical would
+    // rewrite a cross-typed canonical-name instance such as
+    // coder:openai/<claude> (type anthropic) to openai:<claude>, sending the
+    // recovered turn through direct OpenAI instead of the selected gateway.
+    const normalized = normalizeSelectedModel(trimmed);
     if (!isValidModelFormat(normalized)) {
       return undefined;
     }
