@@ -77,6 +77,21 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
     expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-1"]);
   });
 
+  test("keeps ordinary rows with a corrupted snapshot field, stripped", () => {
+    const authored = createMuxMessage("user-authored", "user", "Real user text", {
+      historySequence: 0,
+    });
+    (authored.metadata as Record<string, unknown>).mcpPromptSnapshot = null;
+    const assistant = createMuxMessage("assistant-1", "assistant", "Model reply", {
+      historySequence: 0,
+    });
+    (assistant.metadata as Record<string, unknown>).mcpPromptSnapshot = { bogus: true };
+
+    const result = filterOrphanedMcpPromptSnapshots([authored, assistant]);
+    expect(result.map((m) => m.id)).toEqual(["user-authored", "assistant-1"]);
+    expect(result.every((m) => !("mcpPromptSnapshot" in (m.metadata ?? {})))).toBe(true);
+  });
+
   test("drops raw rows whose snapshot field is present but malformed", () => {
     // Raw chat.jsonl rows bypass the oRPC sanitizer, so the request-side
     // filter must treat a present-but-invalid field as corruption.

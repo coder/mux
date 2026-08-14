@@ -40,6 +40,29 @@ describe("buildFollowUpFromSource", () => {
     expect(metadata.commandPrefix).toBe("/mcp__coder__review");
   });
 
+  test("rebuilds a slash MCP prompt turn whose content has leading whitespace", () => {
+    const followUp = buildFollowUpFromSource(
+      userMessage({
+        content: "  /mcp__coder__review src security",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "slash",
+            arguments: { path: "src", focus: "security" },
+          },
+        ],
+      })
+    );
+
+    expect(followUp.text).toBe("Using MCP prompt coder/review: src security");
+    const metadata = followUp.muxMetadata;
+    if (metadata?.type !== "normal") throw new Error("expected normal metadata");
+    // rawCommand preserves the displayed content verbatim.
+    expect(metadata.rawCommand).toBe("  /mcp__coder__review src security");
+  });
+
   test("keeps plain user content unchanged", () => {
     const followUp = buildFollowUpFromSource(userMessage({ content: "Fix the bug" }));
     expect(followUp.text).toBe("Fix the bug");

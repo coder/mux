@@ -75,8 +75,12 @@ export function buildFollowUpFromSource(
   // displays and edit-restores as the original slash invocation.
   let text = source.content;
   let promptMetadata: MuxMessageMetadata | undefined;
-  if (slashMcpPromptRef && text.startsWith("/")) {
-    const argumentText = text.replace(/^\/\S+/, "").trimStart();
+  // Trim only for command detection/extraction (the parser accepted the
+  // original send from a trimmed view); rawCommand keeps source.content
+  // verbatim so the retried row displays exactly like the original.
+  const trimmedContent = source.content.trimStart();
+  if (slashMcpPromptRef && trimmedContent.startsWith("/")) {
+    const argumentText = trimmedContent.replace(/^\/\S+/, "").trimStart();
     text = buildMcpPromptUserText(
       slashMcpPromptRef.serverName,
       slashMcpPromptRef.promptName,
