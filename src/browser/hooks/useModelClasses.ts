@@ -37,6 +37,11 @@ export function useModelClasses(): ModelClassesState {
   const refetchRef = useRef<() => void>(() => {
     // No-op until the subscription effect installs the real fetch.
   });
+  // Newest intended map across not-yet-persisted edits: serialized writes each
+  // build on the latest intent, not on the still-unpublished state.
+  const pendingMapRef = useRef<Record<string, string> | null>(null);
+  // Serializes writes so rapid edits persist in order and the last one wins.
+  const writeChainRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const getConfig = api?.config?.getConfig;
@@ -105,29 +110,45 @@ export function useModelClasses(): ModelClassesState {
     // (custom models, future syntax) must survive edits made through the
     // Settings editor — a bound-but-unparseable class already fails loudly
     // at send time and is flagged inline by the editor.
-    const next = { ...modelClasses };
+    const base = pendingMapRef.current ?? modelClasses;
+    const next = { ...base };
     const trimmed = value?.trim() ?? "";
     if (!trimmed) {
       delete next[key];
     } else {
       next[key] = trimmed;
     }
-
-    fetchVersionRef.current++;
-    setMap(next);
+    pendingMapRef.current = next;
 
     // Guarded lookup rather than a chained call: in partial-API environments
-    // (story mocks, tests) a missing route must not throw synchronously —
-    // the .catch below can only intercept async failures.
+    // (story mocks, tests) a missing route must not throw synchronously.
     const updateModelClasses = api?.config?.updateModelClasses;
     if (!updateModelClasses) {
+      pendingMapRef.current = null;
       return;
     }
-    updateModelClasses({ modelClasses: next }).catch(() => {
-      // If the write fails, re-fetch so the UI reverts to the backend's
-      // actual map rather than displaying classes routing never applies.
-      refetchRef.current();
-    });
+
+    // Persist BEFORE publishing: routing reads the backend map at send time,
+    // so optimistically advertising the new mapping would let a quick
+    // follow-up skill invocation stream on the OLD route while the editor
+    // claims the new one. The selects update on the write's ack instead.
+    writeChainRef.current = writeChainRef.current
+      .then(async () => {
+        await updateModelClasses({ modelClasses: next });
+        // Newer than any in-flight fetch: the ack is the freshest truth.
+        fetchVersionRef.current++;
+        setMap(next);
+      })
+      .catch(() => {
+        // If the write fails, re-fetch so the UI reverts to the backend's
+        // actual map rather than displaying classes routing never applies.
+        refetchRef.current();
+      })
+      .finally(() => {
+        if (pendingMapRef.current === next) {
+          pendingMapRef.current = null;
+        }
+      });
   };
 
   return {

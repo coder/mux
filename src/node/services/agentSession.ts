@@ -2980,6 +2980,7 @@ export class AgentSession {
     // uncompacted history.
     const preRoutingOptions = optionsForStream;
     let muxMetadataForMessage = typedMuxMetadata;
+    let routedThinkingLevel: ThinkingLevel | undefined;
     if (skillModelOverride != null) {
       modelForStream = skillModelOverride.model;
       // Numeric one-shot thinking is model-relative: the frontend resolved
@@ -2994,18 +2995,19 @@ export class AgentSession {
               this.getProvidersConfigSafe()
             )
           : undefined;
+      // Precedence: explicit numeric one-shot (re-resolved above) > class
+      // thinking > ambient options. skipAiSettingsPersistence marks one-shot
+      // sends, so a named "/+high /skill" keeps the user's level rather than
+      // the class default.
+      routedThinkingLevel =
+        reroutedOneShotThinking ??
+        (skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
+          ? skillModelOverride.thinkingLevel
+          : undefined);
       optionsForStream = {
         ...optionsForStream,
         model: skillModelOverride.model,
-        // Precedence: explicit numeric one-shot (re-resolved above) > class
-        // thinking > ambient options. skipAiSettingsPersistence marks one-shot
-        // sends, so a named "/+high /skill" keeps the user's level rather than
-        // the class default.
-        ...(reroutedOneShotThinking != null
-          ? { thinkingLevel: reroutedOneShotThinking }
-          : skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
-            ? { thinkingLevel: skillModelOverride.thinkingLevel }
-            : {}),
+        ...(routedThinkingLevel != null ? { thinkingLevel: routedThinkingLevel } : {}),
       };
       // The persisted request metadata must advertise the model that will
       // actually stream: the pending-turn label and downstream consumers read
@@ -3018,10 +3020,16 @@ export class AgentSession {
       }
     }
 
-    // Routed sends report the class model back to the caller so successful-send
-    // telemetry attributes the invocation to the model that actually streams.
+    // Routed sends report the class model (and any thinking level routing
+    // replaced) back to the caller so successful-send telemetry attributes the
+    // invocation to what actually streams.
     const sendAccepted: SendMessageAccepted | undefined =
-      skillModelOverride != null ? { routedModel: skillModelOverride.model } : undefined;
+      skillModelOverride != null
+        ? {
+            routedModel: skillModelOverride.model,
+            ...(routedThinkingLevel != null ? { routedThinkingLevel } : {}),
+          }
+        : undefined;
 
     // Which options a routed turn's compaction (on-send or mid-stream forced)
     // must run with: the compaction request has to read the FULL uncompacted

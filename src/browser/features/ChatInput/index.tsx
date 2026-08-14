@@ -3156,16 +3156,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setDraftReviews(preSendReviews);
         } else {
           // Track telemetry for successful message send. Skill class routing
-          // can swap the model backend-side; the send result reports the
-          // routed model so usage is attributed to what actually streams
-          // (queued sends report none and fall back to the requested model).
+          // can swap the model and thinking backend-side; the send result
+          // reports both so usage is attributed to what actually streams
+          // (queued sends report none and fall back to the requested values).
           telemetry.messageSent(
             props.workspaceId,
             result.data?.routedModel ?? effectiveModel,
             sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,
-            sendMessageOptions.thinkingLevel ?? "off"
+            result.data?.routedThinkingLevel ?? sendMessageOptions.thinkingLevel ?? "off"
           );
 
           if (oneShotOverride) {

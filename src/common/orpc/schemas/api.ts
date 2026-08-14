@@ -1410,6 +1410,9 @@ export const workspace = {
         // send telemetry to the model that actually streams. Absent when no
         // routing occurred or the send was queued for later dispatch.
         routedModel: z.string().optional(),
+        // Thinking level routing replaced (class suffix or re-resolved numeric
+        // one-shot); absent when the ambient thinking level applies.
+        routedThinkingLevel: ThinkingLevelSchema.optional(),
       }),
       SendMessageErrorSchema
     ),

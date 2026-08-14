@@ -4482,7 +4482,15 @@ export const router = (authToken?: string) => {
 
           return {
             success: true,
-            data: result.data?.routedModel != null ? { routedModel: result.data.routedModel } : {},
+            data:
+              result.data?.routedModel != null
+                ? {
+                    routedModel: result.data.routedModel,
+                    ...(result.data.routedThinkingLevel != null
+                      ? { routedThinkingLevel: result.data.routedThinkingLevel }
+                      : {}),
+                  }
+                : {},
           };
         }),
       answerAskUserQuestion: t
