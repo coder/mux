@@ -3359,6 +3359,9 @@ export class AIService extends EventEmitter {
                         : undefined,
                     rebuildProviderOptionsForThinkingLevel:
                       rebuildNextProviderOptionsForThinkingLevel,
+                    // Pinned snapshot for the swap's request-config rebuild
+                    // and metadata resolution (see PreparedModelFallback).
+                    providersConfig: nextProvidersConfig,
                     initialMetadataPatch: {
                       routedThroughGateway: next.routedThroughGateway,
                       ...(next.routeProvider != null ? { routeProvider: next.routeProvider } : {}),
@@ -3438,7 +3441,8 @@ export class AIService extends EventEmitter {
         toolSearchRuntime?.state,
         activeTurnThinkingOverride,
         rebuildProviderOptionsForThinkingLevel,
-        forcedFirstStepToolNames
+        forcedFirstStepToolNames,
+        requestProvidersConfig
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

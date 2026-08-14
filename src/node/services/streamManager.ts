@@ -257,6 +257,15 @@ export interface PreparedModelFallback {
    */
   rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
   forcedFirstStepToolNames?: string[];
+  /**
+   * Pinned providers-config snapshot the fallback request was built from
+   * (see AIService's pinCoderWireProvidersConfig). The swap's request-config
+   * rebuild and metadata resolution must read THIS snapshot, not the live
+   * config: a catalog refresh between prepare() and the swap could retag the
+   * instance and hand the prepared SDK model another wire's cache wrappers,
+   * output limits, or usage identity.
+   */
+  providersConfig?: ProvidersConfigMap;
 }
 
 export interface ModelFallbackPrepareOptions {
@@ -675,9 +684,15 @@ export class StreamManager extends EventEmitter {
     }
     return log.withFields(fields);
   }
-  resolveMetadataModel(modelString: string): string {
+  resolveMetadataModel(modelString: string, providersConfigSnapshot?: ProvidersConfigMap): string {
     try {
-      return resolveModelForMetadata(modelString, this.getProvidersConfig());
+      // A caller's pinned request snapshot wins over the live config so the
+      // recorded identity matches the request that was actually built (a
+      // concurrent catalog refresh can retag/remove the instance mid-turn).
+      return resolveModelForMetadata(
+        modelString,
+        providersConfigSnapshot ?? this.getProvidersConfig()
+      );
     } catch (error) {
       log.debug("Failed to resolve metadata model override", {
         modelString,
@@ -1640,8 +1655,14 @@ export class StreamManager extends EventEmitter {
     onToolExecutionStart?: (toolCallId: string) => void,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
     rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
-    forcedFirstStepToolNames?: string[]
+    forcedFirstStepToolNames?: string[],
+    providersConfigSnapshot?: ProvidersConfigMap
   ): StreamRequestConfig {
+    // The request's pinned providers-config snapshot (when the caller has
+    // one): cache wrappers and type-derived output limits below must resolve
+    // Coder instance metadata against the SAME config that created the SDK
+    // model, or a mid-turn catalog retag applies another wire's treatment.
+    const requestProvidersConfig = providersConfigSnapshot ?? this.getProvidersConfig();
     // Mid-turn thinking overrides mutate providerOptions IN PLACE (the SDK's
     // per-step deep-merge reads the object passed at streamText() time, so
     // identity must stay stable). An initially-undefined value would make that
@@ -1661,7 +1682,7 @@ export class StreamManager extends EventEmitter {
       system,
       modelString,
       anthropicCacheTtl,
-      this.getProvidersConfig()
+      requestProvidersConfig
     );
     if (cachedSystemMessage) {
       // Prepend cached system message and set system parameter to undefined
@@ -1680,7 +1701,7 @@ export class StreamManager extends EventEmitter {
         system,
         modelString,
         routeProvider,
-        this.getProvidersConfig()
+        requestProvidersConfig
       );
       if (openaiCachedSystem) {
         finalSystem = openaiCachedSystem;
@@ -1693,7 +1714,7 @@ export class StreamManager extends EventEmitter {
         tools,
         modelString,
         anthropicCacheTtl,
-        this.getProvidersConfig()
+        requestProvidersConfig
       );
     }
 
@@ -1709,7 +1730,7 @@ export class StreamManager extends EventEmitter {
     const runtimeModelStats = getModelStats(modelString);
     // Fall back to resolved stats for custom aliases (e.g., provider alias mappedToModel).
     const resolvedModelStats =
-      runtimeModelStats ?? getModelStatsResolved(modelString, this.getProvidersConfig());
+      runtimeModelStats ?? getModelStatsResolved(modelString, requestProvidersConfig);
     const effectiveMaxOutputTokens =
       maxOutputTokens ?? configMaxOutputTokens ?? resolvedModelStats?.max_output_tokens;
 
@@ -1946,12 +1967,13 @@ export class StreamManager extends EventEmitter {
     toolSearchState?: ToolSearchStreamState,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
     rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
-    forcedFirstStepToolNames?: string[]
+    forcedFirstStepToolNames?: string[],
+    providersConfigSnapshot?: ProvidersConfigMap
   ): WorkspaceStreamInfo {
     // abortController is created and linked to the caller-provided abortSignal in startStream().
 
     const stepTracker: StepMessageTracker = {};
-    const metadataModel = this.resolveMetadataModel(modelString);
+    const metadataModel = this.resolveMetadataModel(modelString, providersConfigSnapshot);
     const request = this.buildStreamRequestConfig(
       model,
       modelString,
@@ -1972,7 +1994,8 @@ export class StreamManager extends EventEmitter {
       (toolCallId) => this.handleToolExecutionStart(workspaceId, messageId, toolCallId),
       thinkingOverrideState,
       rebuildProviderOptionsForThinkingLevel,
-      forcedFirstStepToolNames
+      forcedFirstStepToolNames,
+      providersConfigSnapshot
     );
 
     // Start streaming - this can throw immediately if API key is missing
@@ -2691,7 +2714,8 @@ export class StreamManager extends EventEmitter {
       // createStreamResult below in case the SDK eagerly prepares step 1.
       streamInfo.request.thinkingOverrideState,
       prepared.data.rebuildProviderOptionsForThinkingLevel,
-      prepared.data.forcedFirstStepToolNames
+      prepared.data.forcedFirstStepToolNames,
+      prepared.data.providersConfig
     );
     // createStreamResult may eagerly prepare the first fallback step and update
     // latestMessages. Clear stale source-step messages before starting it so a
@@ -2740,7 +2764,10 @@ export class StreamManager extends EventEmitter {
     streamInfo.reasoningBackfillStartIndex = preserveParts ? streamInfo.parts.length : undefined;
 
     streamInfo.model = prepared.data.modelString;
-    streamInfo.metadataModel = this.resolveMetadataModel(prepared.data.modelString);
+    streamInfo.metadataModel = this.resolveMetadataModel(
+      prepared.data.modelString,
+      prepared.data.providersConfig
+    );
     if (prepared.data.thinkingLevel !== undefined) {
       streamInfo.thinkingLevel = prepared.data.thinkingLevel;
     }
@@ -4211,7 +4238,11 @@ export class StreamManager extends EventEmitter {
     toolSearchState?: ToolSearchStreamState,
     thinkingOverrideState?: ActiveTurnThinkingOverride,
     rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel,
-    forcedFirstStepToolNames?: string[]
+    forcedFirstStepToolNames?: string[],
+    // Pinned providers-config snapshot the request was assembled from (see
+    // AIService's pinCoderWireProvidersConfig): request-config building and
+    // metadata resolution must not re-read live config after model creation.
+    providersConfigSnapshot?: ProvidersConfigMap
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -4298,7 +4329,8 @@ export class StreamManager extends EventEmitter {
           toolSearchState,
           thinkingOverrideState,
           rebuildProviderOptionsForThinkingLevel,
-          forcedFirstStepToolNames
+          forcedFirstStepToolNames,
+          providersConfigSnapshot
         );
 
         // Guard against a narrow race:
