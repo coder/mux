@@ -2446,6 +2446,38 @@ describe("ProviderModelFactory Coder", () => {
     });
   });
 
+  it("rejects catalog-excluded models on canonical-named instances without a canonical fallback", async () => {
+    await withTempConfig(async (config, factory) => {
+      // {name: "anthropic", type: "openai-compat"}: metadata resolution is
+      // null (arbitrary upstream), so the fallback must not adopt the
+      // name-derived anthropic:<model> identity — the rejection applies
+      // exactly like the equivalent custom-named openai-compat instance.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "anthropic", type: "openai-compat" }],
+        models: ["anthropic/allowed-model"],
+        discoveredModels: ["anthropic/allowed-model"],
+      });
+      // Direct Anthropic credentials exist: a name-derived fallback would
+      // silently send the rejected gateway selection to direct Anthropic.
+      config.saveProvidersConfig({
+        ...config.loadProvidersConfig(),
+        anthropic: { apiKey: "sk-ant-test" },
+      } as Parameters<Config["saveProvidersConfig"]>[0]);
+      factory.coderOauthService = stubCoderOauthService();
+
+      const result = await factory.resolveAndCreateModel("coder:anthropic/excluded-model", "off");
+      expect(result.success).toBe(false);
+      if (result.success) {
+        return;
+      }
+      expect(result.error).toEqual({
+        type: "model_not_available",
+        provider: "coder",
+        modelId: "anthropic/excluded-model",
+      });
+    });
+  });
+
   it("rejects unknown provider names with an actionable error", async () => {
     await withTempConfig(async (config, factory) => {
       saveCoderConfig(config);

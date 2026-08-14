@@ -2319,14 +2319,37 @@ export class ProviderModelFactory {
       rawCoderGatewayModelId != null
         ? resolveCoderGatewayMetadataModel(modelString, providersConfigForShadowCheck)
         : null;
-    const routeSeedModelString =
-      coderMetadataCanonical != null &&
-      Object.hasOwn(
-        PROVIDER_REGISTRY,
-        coderMetadataCanonical.slice(0, coderMetadataCanonical.indexOf(":"))
-      )
-        ? coderMetadataCanonical
-        : canonicalModelString;
+    const routeSeedModelString = (() => {
+      if (
+        coderMetadataCanonical != null &&
+        Object.hasOwn(
+          PROVIDER_REGISTRY,
+          coderMetadataCanonical.slice(0, coderMetadataCanonical.indexOf(":"))
+        )
+      ) {
+        return coderMetadataCanonical;
+      }
+      if (rawCoderGatewayModelId != null) {
+        const wire = resolveCoderWireCanonicalModel(
+          rawCoderGatewayModelId,
+          providersConfigForShadowCheck.coder as
+            | { discoveredProviders?: unknown; additionalProviders?: unknown }
+            | undefined
+        );
+        if (wire) {
+          // Known but UNMAPPABLE instance (openai-compat fronts arbitrary
+          // upstreams; vendor-less vercel IDs carry no catalog identity):
+          // keep the raw gateway-scoped seed. A canonical-named cross-typed
+          // instance ({name: "anthropic", type: "openai-compat"}) would
+          // otherwise seed the name-derived anthropic:<model> identity and
+          // silently fall back to direct Anthropic when Coder is
+          // disconnected or the catalog rejects the model — the equivalent
+          // custom-named instance (coder:llm-proxy/x) is rejected instead.
+          return modelString;
+        }
+      }
+      return canonicalModelString;
+    })();
 
     const routeContext = this.resolveModelRoute(
       routeSeedModelString,
@@ -2419,7 +2442,15 @@ export class ProviderModelFactory {
         wireProviderName = wire.origin;
         coderWire = wire;
       }
-    } else if (rawCoderGatewayModelId != null && routeSeedModelString !== canonicalModelString) {
+    } else if (
+      rawCoderGatewayModelId != null &&
+      routeSeedModelString !== canonicalModelString &&
+      // Known-but-unmappable instances keep a raw coder:-scoped seed; its
+      // name-canonical origin says nothing about the wire (the instance type
+      // does), and the first branch already resolved the wire when the
+      // request stayed on the coder route.
+      !routeSeedModelString.startsWith("coder:")
+    ) {
       // A Coder selection that fell back to its type-derived route: the wire
       // follows the fallback identity, not the name-based canonical string —
       // a cross-typed coder:openai/<claude> routed to direct Anthropic must
