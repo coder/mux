@@ -145,18 +145,26 @@ describeIntegration("MCP prompts", () => {
 
       const manager = env.services.mcpServerManager;
       const seenSecrets: Array<Record<string, string> | undefined> = [];
-      const realGetTools = manager.getToolsForWorkspace.bind(manager);
-      const getToolsSpy = jest
-        .spyOn(manager, "getToolsForWorkspace")
-        .mockImplementation((options) => {
+      // getPrompt refreshes through the private ensureWorkspaceServers seam
+      // (it skips tool catalog refreshes), so observe secrets there.
+      const access = manager as unknown as {
+        ensureWorkspaceServers: (
+          options: { projectSecrets?: Record<string, string> },
+          refreshToolCatalogs: boolean
+        ) => Promise<unknown>;
+      };
+      const realEnsure = access.ensureWorkspaceServers.bind(manager);
+      const ensureSpy = jest
+        .spyOn(access, "ensureWorkspaceServers")
+        .mockImplementation((options, refreshToolCatalogs) => {
           seenSecrets.push(options.projectSecrets);
-          return realGetTools(options);
+          return realEnsure(options, refreshToolCatalogs);
         });
 
       const prompt = await manager.getPrompt(workspaceId, "prompt server", "status", {});
       expect(prompt.text).toBe("Report workspace status");
       expect(seenSecrets[0]?.MCP_TOKEN).toBe("new");
-      getToolsSpy.mockRestore();
+      ensureSpy.mockRestore();
     } finally {
       await cleanup();
     }
