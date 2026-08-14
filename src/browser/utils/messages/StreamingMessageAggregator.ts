@@ -236,6 +236,13 @@ interface StreamingContext {
   suppressNotification: boolean;
   isReplay: boolean;
   model: string;
+  /**
+   * Request-pinned pricing/metadata identity stamped by the backend at
+   * stream start. Live pricing must prefer it over re-resolving the raw
+   * model: a Coder catalog refresh can remove/retag the instance while the
+   * stream is active.
+   */
+  metadataModel?: string;
   routedThroughGateway?: boolean;
   routeProvider?: string;
 
@@ -1805,6 +1812,15 @@ export class StreamingMessageAggregator {
     return this.getActiveStreamEntry() !== undefined;
   }
 
+  /**
+   * Request-pinned metadata identity of the ACTIVE stream (see
+   * StreamingContext.metadataModel). undefined when no stream is active or
+   * the backend did not stamp one.
+   */
+  getActiveStreamMetadataModel(): string | undefined {
+    return this.getActiveStreamEntry()?.[1].metadataModel;
+  }
+
   getCurrentModel(): string | undefined {
     const activeStream = this.getActiveStreamEntry();
     if (activeStream) {
@@ -1973,6 +1989,7 @@ export class StreamingMessageAggregator {
       suppressNotification,
       isReplay: data.replay === true,
       model: data.model,
+      metadataModel: data.metadataModel,
       routedThroughGateway: data.routedThroughGateway,
       routeProvider,
       serverFirstTokenTime: null,

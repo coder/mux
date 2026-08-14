@@ -1475,6 +1475,49 @@ describe("WorkspaceStore", () => {
     expect(store.isOnChatSubscriptionActive("workspace-2")).toBe(false);
   });
 
+  describe("live usage identity pinning", () => {
+    it("prices live Coder usage via the stream's pinned metadataModel", async () => {
+      const workspaceId = "live-coder-usage-pinned";
+      createAndAddWorkspace(store, workspaceId);
+      await tick(10);
+
+      const aggregator = store.getAggregator(workspaceId);
+      if (!aggregator) {
+        throw new Error(`Missing aggregator for ${workspaceId}`);
+      }
+      // The store's providers config knows nothing about this Coder instance
+      // (removed/retagged mid-stream): live re-resolution would leave the raw
+      // coder ID unpriced, so pricing and identity must come from the
+      // backend-stamped metadataModel on stream-start.
+      aggregator.handleStreamStart({
+        type: "stream-start",
+        workspaceId,
+        messageId: "msg-live-coder",
+        historySequence: 1,
+        model: "coder:prod-anthropic/claude-sonnet-4-20250514",
+        metadataModel: "anthropic:claude-sonnet-4-20250514",
+        startTime: 1_000,
+      });
+      aggregator.handleUsageDelta({
+        type: "usage-delta",
+        workspaceId,
+        messageId: "msg-live-coder",
+        usage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+        cumulativeUsage: { inputTokens: 1000, outputTokens: 100, totalTokens: 1100 },
+      });
+
+      // Direct aggregator seeding bypasses the chat-event path, so invalidate
+      // the cached usage snapshot before reading.
+      getInternal<{ usageStore: { bump: (id: string) => void } }>(store).usageStore.bump(
+        workspaceId
+      );
+
+      const usage = store.getWorkspaceUsage(workspaceId);
+      expect(usage.liveMetadataModel).toBe("anthropic:claude-sonnet-4-20250514");
+      expect(usage.liveCostUsage?.input.cost_usd).toBeGreaterThan(0);
+    });
+  });
+
   describe("session usage refresh on activation", () => {
     it("re-fetches persisted session usage when switching to an inactive workspace", async () => {
       const sessionUsageData = {

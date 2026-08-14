@@ -296,6 +296,12 @@ export interface WorkspaceUsageState {
   liveUsage?: ChatUsageDisplay;
   /** Live cost usage during streaming (cumulative across all steps) */
   liveCostUsage?: ChatUsageDisplay;
+  /**
+   * Request-pinned metadata identity of the active stream (backend-stamped
+   * at stream start). Consumers keying/pricing live Coder usage must prefer
+   * it over re-resolving the raw model against a refreshed providers config.
+   */
+  liveMetadataModel?: string;
 }
 
 /**
@@ -2743,6 +2749,11 @@ export class WorkspaceStore {
 
       // Live streaming data (unchanged)
       const activeStreamId = aggregator.getActiveStreamMessageId();
+      // Request-pinned identity stamped by the backend at stream start: a
+      // Coder catalog refresh can remove/retag the instance mid-stream, and
+      // re-resolving the raw model against the refreshed config would price
+      // and bucket live usage differently from the backend ledger.
+      const liveMetadataModel = aggregator.getActiveStreamMetadataModel();
       const rawContextUsage = activeStreamId
         ? aggregator.getActiveStreamUsage(activeStreamId)
         : undefined;
@@ -2755,7 +2766,7 @@ export class WorkspaceStore {
               rawContextUsage,
               model,
               rawStepProviderMetadata,
-              this.resolveMetadataModel(model)
+              liveMetadataModel ?? this.resolveMetadataModel(model)
             )
           : undefined;
 
@@ -2771,7 +2782,7 @@ export class WorkspaceStore {
               rawCumulativeUsage,
               model,
               rawCumulativeProviderMetadata,
-              this.resolveMetadataModel(model)
+              liveMetadataModel ?? this.resolveMetadataModel(model)
             )
           : undefined;
 
@@ -2783,6 +2794,7 @@ export class WorkspaceStore {
         totalTokens,
         liveUsage,
         liveCostUsage,
+        liveMetadataModel,
       };
     });
   }

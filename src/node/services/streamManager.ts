@@ -2330,6 +2330,10 @@ export class StreamManager extends EventEmitter {
       messageId: streamInfo.messageId,
       ...(options?.replay && { replay: true }),
       model: canonicalModel,
+      // Request-pinned identity so frontend live pricing/bucketing cannot
+      // diverge from the backend ledger when a Coder catalog refresh
+      // removes/retags the instance mid-stream.
+      metadataModel: streamInfo.metadataModel,
       routedThroughGateway,
       ...(routeProvider != null && { routeProvider }),
       historySequence,

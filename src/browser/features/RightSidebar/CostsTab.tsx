@@ -47,12 +47,16 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     const merged = new Map<string, ChatUsageDisplay>(Object.entries(usage.sessionByModel ?? {}));
     const liveModel = usage.liveCostUsage?.model;
     if (usage.liveCostUsage && liveModel) {
-      // Same ledger key as the backend and WorkspaceStore deltas
-      // (normalizeUsageModelKey): live usage for a cross-typed Coder instance
-      // carries the raw coder:<instance>/<model> identity, and the
-      // name-canonical form (openai:<claude>) would split it into a second,
-      // wrongly attributed row next to the session's anthropic:<claude> row.
-      const key = normalizeUsageModelKey(liveModel, providersConfig);
+      // Same ledger key as the backend and WorkspaceStore deltas: live Coder
+      // usage keys on the stream's request-pinned metadata identity
+      // (liveMetadataModel) — re-resolving the raw coder:<instance>/<model>
+      // against a mid-stream-refreshed providers config could re-key or
+      // split the row from the backend's bucket. Non-Coder models keep the
+      // canonical normalizeUsageModelKey.
+      const key =
+        liveModel.startsWith("coder:") && usage.liveMetadataModel
+          ? usage.liveMetadataModel
+          : normalizeUsageModelKey(liveModel, providersConfig);
       const existing = merged.get(key);
       merged.set(
         key,

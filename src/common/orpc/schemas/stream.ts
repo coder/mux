@@ -149,6 +149,15 @@ export const StreamStartEventSchema = z.object({
     .optional()
     .meta({ description: "True when this event is emitted during stream replay" }),
   model: z.string(),
+  metadataModel: z
+    .string()
+    .optional()
+    .meta({
+      description:
+        "Request-pinned pricing/metadata identity resolved at stream start; " +
+        "frontends must prefer it over re-resolving the raw model against a " +
+        "possibly refreshed providers config",
+    }),
   routedThroughGateway: z.boolean().optional(),
   routeProvider: z.string().optional(),
   historySequence: z.number().meta({
