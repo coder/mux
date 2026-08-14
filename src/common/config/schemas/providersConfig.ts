@@ -120,6 +120,18 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    * pre-disconnect flow commit or lock out post-disconnect logins.
    */
   coderDisconnectGeneration: z.number().optional(),
+  /**
+   * Cross-process catalog refresh generation (monotonic counter, incremented
+   * by every catalog commit in coderOauthService.refreshBridgeModels). Each
+   * refresh snapshots the persisted value before fetching; a refresh whose
+   * snapshot no longer matches at commit time — in any Mux process sharing
+   * the file — refuses to commit, so a slower refresh that captured an older
+   * provider list can never overwrite a newer catalog. The in-process
+   * catalogRefreshMutex orders only one process's refreshes; this counter
+   * orders them across processes. A counter, not a wall-clock timestamp, for
+   * the same clock-skew reasons as coderDisconnectGeneration.
+   */
+  coderCatalogGeneration: z.number().optional(),
 });
 
 export const GoogleProviderConfigSchema = BaseProviderConfigSchema;

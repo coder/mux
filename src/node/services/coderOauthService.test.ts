@@ -4296,6 +4296,76 @@ describe("CoderOauthService", () => {
       expect(coderSection.discoveredModels).toBeUndefined();
     });
 
+    it("refuses to commit when another process committed a catalog mid-flight", async () => {
+      // The in-process catalogRefreshMutex cannot order refreshes from OTHER
+      // Mux processes sharing providers.jsonc. The persisted
+      // coderCatalogGeneration counter must: a refresh that began before
+      // another process committed (same session, same deployment) would
+      // otherwise overwrite the newer catalog with stale fetches.
+      deps.providersConfig = {
+        coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          // Another process finished its own refresh while this one was
+          // fetching: it bumped the generation and persisted a newer catalog.
+          const section = deps.providersConfig.coder as Record<string, unknown>;
+          section.coderCatalogGeneration = 1;
+          section.models = ["anthropic/claude-newer"];
+          section.discoveredModels = ["anthropic/claude-newer"];
+          return Promise.resolve(
+            jsonResponse([{ name: "anthropic", type: "anthropic", enabled: true }])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-stale" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error).toContain("concurrent refresh");
+      }
+      // The newer catalog stayed; the stale fetch never overwrote it.
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-newer"]);
+      expect(coderSection.coderCatalogGeneration).toBe(1);
+    });
+
+    it("increments the persisted catalog generation on every commit", async () => {
+      deps.providersConfig = {
+        coder: {
+          deploymentUrl: DEPLOYMENT_URL,
+          coderOauth: validAuth(),
+          // Hand-edited junk must sanitize to 0, not freeze the counter.
+          coderCatalogGeneration: Number.MAX_VALUE,
+        },
+      };
+
+      mockFetch((input) => {
+        const url = fetchUrl(input);
+        if (url === `${DEPLOYMENT_URL}/api/v2/ai/providers`) {
+          return Promise.resolve(
+            jsonResponse([{ name: "anthropic", type: "anthropic", enabled: true }])
+          );
+        }
+        if (url === `${DEPLOYMENT_URL}/api/v2/aibridge/anthropic/v1/models`) {
+          return Promise.resolve(jsonResponse({ data: [{ id: "claude-sonnet-4-5" }] }));
+        }
+        return Promise.resolve(new Response(`unexpected url: ${url}`, { status: 500 }));
+      });
+
+      const result = await service.refreshModels();
+      expect(result.success).toBe(true);
+      const coderSection = deps.providersConfig.coder as Record<string, unknown>;
+      expect(coderSection.discoveredModels).toEqual(["anthropic/claude-sonnet-4-5"]);
+      expect(coderSection.coderCatalogGeneration).toBe(1);
+    });
+
     it("discovers custom-named provider instances from the authoritative listing", async () => {
       deps.providersConfig = {
         coder: { deploymentUrl: DEPLOYMENT_URL, coderOauth: validAuth() },

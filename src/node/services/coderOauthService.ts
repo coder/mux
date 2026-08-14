@@ -133,17 +133,17 @@ function parseOptionalNumber(value: unknown): number | null {
 }
 
 /**
- * Normalize a persisted coderDisconnectGeneration to a non-negative safe
- * integer, treating anything else as 0. providers.jsonc is hand-editable, and
- * a finite-but-unsafe value such as Number.MAX_VALUE would freeze the
- * tombstone (MAX_VALUE + 1 === MAX_VALUE): Disconnect could no longer advance
- * it, so an in-flight login in another process would see its unchanged
- * start-time snapshot and commit AFTER the credential was cleared — silently
- * reconnecting the account. Every reader and the disconnect incrementer MUST
- * share this normalization, or their generation comparison would diverge on
- * malformed input.
+ * Normalize a persisted generation counter (coderDisconnectGeneration,
+ * coderCatalogGeneration) to a non-negative safe integer, treating anything
+ * else as 0. providers.jsonc is hand-editable, and a finite-but-unsafe value
+ * such as Number.MAX_VALUE would freeze the counter (MAX_VALUE + 1 ===
+ * MAX_VALUE): the incrementer could no longer advance it, so an in-flight
+ * flow in another process would see its unchanged start-time snapshot and
+ * commit stale state (a login after disconnect, a stale catalog over a newer
+ * one). Every reader and every incrementer MUST share this normalization, or
+ * their generation comparison would diverge on malformed input.
  */
-function sanitizeDisconnectGeneration(value: unknown): number {
+function sanitizeGenerationCounter(value: unknown): number {
   const parsed = parseOptionalNumber(value);
   return parsed != null && Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
 }
@@ -362,7 +362,7 @@ export class CoderOauthService {
           // flow starts. Kept in the section permanently — later logins
           // snapshot the new value and commit normally.
           next.coderDisconnectGeneration =
-            sanitizeDisconnectGeneration(section?.coderDisconnectGeneration) + 1;
+            sanitizeGenerationCounter(section?.coderDisconnectGeneration) + 1;
           // Discovered models/providers were fetched from the deployment's AI
           // Gateway at login time; they are meaningless without credentials and
           // are refetched on the next login. discoveredModels stays PRESENT
@@ -737,7 +737,7 @@ export class CoderOauthService {
     const section = this.config.loadProvidersConfig()?.coder as
       | { coderDisconnectGeneration?: unknown }
       | undefined;
-    return sanitizeDisconnectGeneration(section?.coderDisconnectGeneration);
+    return sanitizeGenerationCounter(section?.coderDisconnectGeneration);
   }
 
   /** True (and consumes the record) when `flowId` was cancelled before the flow registered. */
@@ -1282,9 +1282,7 @@ export class CoderOauthService {
         // disconnected. A counter comparison, not wall-clock ordering: clock
         // skew must neither let a pre-disconnect flow slip through nor lock
         // out every post-disconnect login.
-        const disconnectGeneration = sanitizeDisconnectGeneration(
-          section?.coderDisconnectGeneration
-        );
+        const disconnectGeneration = sanitizeGenerationCounter(section?.coderDisconnectGeneration);
         if (disconnectGeneration !== flowStartPersistedGeneration) {
           commitRefusalMessage = "Login was superseded by a disconnect";
           return null;
@@ -1813,6 +1811,18 @@ export class CoderOauthService {
   }
 
   private async refreshBridgeModelsSerialized(auth: CoderOauthAuth): Promise<Result<void, string>> {
+    // Cross-process refresh ordering: catalogRefreshMutex serializes only
+    // THIS process's refreshes, but multiple Mux processes share
+    // providers.jsonc (Config.withProvidersFileLock exists for exactly that).
+    // Snapshot the persisted catalog generation BEFORE any fetch; the locked
+    // commit below refuses when it moved, so a refresh that captured an
+    // older provider list can never overwrite a catalog another process
+    // committed mid-flight. A stale snapshot read here is safe: it can only
+    // cause a conservative refusal, never a stale commit.
+    const refreshStartGeneration = sanitizeGenerationCounter(
+      (this.config.loadProvidersConfig()?.coder as { coderCatalogGeneration?: unknown } | undefined)
+        ?.coderCatalogGeneration
+    );
     // The deployment's configured provider instances decide which gateway
     // routes exist (each is mounted at /<name>/...), so list them first.
     const listing = await this.retryTransient(() => this.fetchGatewayProviders(auth));
@@ -1875,6 +1885,7 @@ export class CoderOauthService {
     // not recorded in discoveredModels) are carried forward ahead of the
     // fresh catalog, so discovery never clobbers user-managed data.
     let catalogInconclusive = false;
+    let supersededByConcurrentRefresh = false;
     const setResult = await this.providerService.updateProviderSection("coder", (section) => {
       const stored = parseCoderOauthAuth(section?.coderOauth);
       // Compare the stable login-session lineage, not the access token:
@@ -1887,6 +1898,16 @@ export class CoderOauthService {
         stored.sessionId !== auth.sessionId ||
         stored.deploymentUrl !== auth.deploymentUrl
       ) {
+        return null;
+      }
+      // Same counter-comparison pattern as coderDisconnectGeneration, checked
+      // inside the providers-file lock so compare + increment are atomic
+      // ACROSS processes: a catalog commit anywhere since this refresh began
+      // means these results were fetched against a superseded provider
+      // list/catalog — refuse rather than let the older refresh win.
+      const currentCatalogGeneration = sanitizeGenerationCounter(section?.coderCatalogGeneration);
+      if (currentCatalogGeneration !== refreshStartGeneration) {
+        supersededByConcurrentRefresh = true;
         return null;
       }
       // Prior catalog state must be read INSIDE the locked mutation (a
@@ -2043,6 +2064,9 @@ export class CoderOauthService {
         if (authoritative) {
           next.discoveredProviders = providers;
         }
+        // Even an inconclusive write is a catalog commit: a slower concurrent
+        // refresh must re-fetch rather than overwrite the retained state.
+        next.coderCatalogGeneration = currentCatalogGeneration + 1;
         return { value: next };
       }
 
@@ -2060,6 +2084,7 @@ export class CoderOauthService {
         models: merged,
         discoveredModels: modelIds,
         discoveredProviders: nextProviders,
+        coderCatalogGeneration: currentCatalogGeneration + 1,
       };
       delete conclusive.staleDiscoveredModels;
       return { value: conclusive };
@@ -2082,9 +2107,18 @@ export class CoderOauthService {
     if (!setResult.data.applied) {
       // Nothing was persisted — report failure so Settings/palette callers
       // don't claim models were refreshed when the fetched catalog was
-      // discarded (login superseded or disconnected mid-refresh).
-      log.debug("[Coder OAuth] Skipping stale model catalog write (login superseded)");
-      return Err("Model refresh superseded by a newer login; try again");
+      // discarded (login superseded, disconnected mid-refresh, or another
+      // process committed a newer catalog first).
+      log.debug(
+        supersededByConcurrentRefresh
+          ? "[Coder OAuth] Skipping stale model catalog write (concurrent refresh committed first)"
+          : "[Coder OAuth] Skipping stale model catalog write (login superseded)"
+      );
+      return Err(
+        supersededByConcurrentRefresh
+          ? "Model refresh superseded by a concurrent refresh; try again"
+          : "Model refresh superseded by a newer login; try again"
+      );
     }
     return Ok(undefined);
   }
