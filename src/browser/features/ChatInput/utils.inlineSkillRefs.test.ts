@@ -95,6 +95,30 @@ describe("parseCommandWithSkillInvocation", () => {
     );
   });
 
+  test("expands an MCP prompt when the message has leading whitespace", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "  /mcp__coder__review src security",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [promptDescriptor()],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.mcpPromptInvocation?.arguments).toEqual({ path: "src", focus: "security" });
+  });
+
+  test("resolves a skill when the message has leading whitespace", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "  /tdd do something",
+      agentSkillDescriptors: [descriptor("tdd")],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.skillInvocation?.descriptor.name).toBe("tdd");
+  });
+
   test("resolves a stale collision-suffixed key via the descriptor stableKey", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/mcp__coder__review_11111111 src",

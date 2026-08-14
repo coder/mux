@@ -108,6 +108,13 @@ function formatSkillInvocationText(skillName: string, userMessage: string): stri
   return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
 }
 
+// parseCommand() trims before matching, so pasted or draft-restored text with
+// leading whitespace must be sliced from the same trimmed view or the command
+// falls through as literal text.
+function textAfterCommandPrefix(messageText: string, command: string): string {
+  return messageText.trimStart().slice(`/${command}`.length);
+}
+
 // Exact commandKey wins across the whole catalog; stableKey only recovers
 // drafts whose collision-suffixed key changed, so an alias must never shadow
 // another prompt's current commandKey.
@@ -156,8 +163,7 @@ async function resolveMcpPromptInvocation(options: {
   }
 
   const command = options.parsed.command;
-  const prefix = `/${command}`;
-  const afterPrefix = options.messageText.slice(prefix.length);
+  const afterPrefix = textAfterCommandPrefix(options.messageText, command);
   if (afterPrefix.length > 0 && !/^\s/.test(afterPrefix)) return { invocation: null };
 
   const descriptors = await loadMcpPromptDescriptors({
@@ -220,8 +226,7 @@ async function resolveSkillInvocation(options: {
   }
 
   const command = options.parsed.command;
-  const prefix = `/${command}`;
-  const afterPrefix = options.messageText.slice(prefix.length);
+  const afterPrefix = textAfterCommandPrefix(options.messageText, command);
   const hasSeparator = afterPrefix.length === 0 || /^\s/.test(afterPrefix);
 
   if (!hasSeparator) {
