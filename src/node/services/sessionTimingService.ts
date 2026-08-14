@@ -702,7 +702,15 @@ export class SessionTimingService {
     assert(typeof data.workspaceId === "string" && data.workspaceId.length > 0);
     assert(typeof data.messageId === "string" && data.messageId.length > 0);
 
-    const model = normalizeToCanonical(data.model);
+    // Timing aggregation key: coder: models use the backend's request-pinned
+    // metadata identity — name-only canonicalization would merge a
+    // cross-typed instance (coder:openai/<claude> on the Anthropic wire)
+    // into direct openai:<claude> rows, corrupting per-model latency and
+    // throughput statistics. Mirrors the session-usage ledger keying.
+    const model =
+      data.model.startsWith("coder:") && data.metadataModel
+        ? data.metadataModel
+        : normalizeToCanonical(data.model);
 
     // Validate mode: stats schema only accepts "plan" | "exec" for now.
     // Custom modes will need schema updates when supported.

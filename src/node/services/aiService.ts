@@ -978,7 +978,12 @@ export class AIService extends EventEmitter {
   async createModel(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean; workspaceId?: string }
+    opts?: {
+      agentInitiated?: boolean;
+      workspaceId?: string;
+      /** Snapshot pass-through (see ProviderModelFactory.createModel). */
+      providersConfig?: ProvidersConfig;
+    }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions, opts);
   }
@@ -2342,8 +2347,14 @@ export class AIService extends EventEmitter {
                     advisorModelString.length > 0,
                     "advisor model string must be non-empty when creating an advisor model"
                   );
+                  // ONE config snapshot for both SDK model creation and the
+                  // pinned pricing identity: two independent reads would let
+                  // a catalog refresh land between them, running the request
+                  // on one wire while recording usage under another type.
+                  const advisorProvidersConfig = this.config.loadProvidersConfig() ?? {};
                   const advisorModel = await this.createModel(advisorModelString, undefined, {
                     workspaceId,
+                    providersConfig: advisorProvidersConfig,
                   });
                   if (!advisorModel.success) {
                     throw new Error(
@@ -2354,11 +2365,11 @@ export class AIService extends EventEmitter {
                     advisorModelString,
                     modelCostsIncluded(advisorModel.data)
                   );
-                  // Creation-time identity, resolved from the same config
-                  // era as the created model (see map declaration).
+                  // Creation-time identity from the SAME snapshot the model
+                  // was created from (see map declaration).
                   toolModelMetadataModelByModelString.set(
                     advisorModelString,
-                    resolveModelForMetadata(advisorModelString, this.providerService.getConfig())
+                    resolveModelForMetadata(advisorModelString, advisorProvidersConfig)
                   );
                   return advisorModel.data;
                 },
