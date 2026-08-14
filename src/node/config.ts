@@ -1811,9 +1811,20 @@ export class Config {
     return this.loadConfigOrDefault().llmDebugLogs === true;
   }
 
-  /** Settings → General telemetry opt-out; absent means enabled. */
+  /**
+   * Settings → General telemetry opt-out; absent means enabled.
+   *
+   * Fail CLOSED: when config.json exists but cannot be read or parsed, report
+   * disabled — corrupted persisted state must not silently override an
+   * opt-out. A missing file is not an error (fresh install ⇒ enabled), and
+   * callers stay non-fatal either way.
+   */
   isTelemetryDisabledByConfig(): boolean {
-    return this.loadConfigOrDefault().telemetryEnabled === false;
+    try {
+      return this.loadConfigOrDefault({ throwOnError: true }).telemetryEnabled === false;
+    } catch {
+      return true;
+    }
   }
 
   async setUpdateChannel(channel: UpdateChannel): Promise<void> {

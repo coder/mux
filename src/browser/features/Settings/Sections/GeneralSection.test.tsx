@@ -33,6 +33,10 @@ interface MockAPIClient {
     updateChatTranscriptFullWidth: (input: { enabled: boolean }) => Promise<void>;
     updateLlmDebugLogs: (input: { enabled: boolean }) => Promise<void>;
     updateTelemetryEnabled: (input: { enabled: boolean }) => Promise<void>;
+    onConfigChanged?: (
+      input: undefined,
+      opts: { signal?: AbortSignal }
+    ) => Promise<AsyncGenerator<unknown>>;
   };
   server: {
     getSshHost: () => Promise<string | null>;
@@ -449,6 +453,55 @@ describe("GeneralSection", () => {
     await waitFor(() => {
       expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: false });
       expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
+  test("syncs the telemetry switch when another client changes the config", async () => {
+    const setup = createMockAPI({ telemetryEnabled: true });
+    const { api } = setup;
+
+    // Drivable config-change stream: pushEvent() delivers one notification.
+    let pushEvent: (() => void) | undefined;
+    api.config.onConfigChanged = (_input: undefined, _opts: { signal?: AbortSignal }) => {
+      const generator = (async function* () {
+        for (;;) {
+          await new Promise<void>((resolve) => {
+            pushEvent = resolve;
+          });
+          yield {};
+        }
+      })();
+      return Promise.resolve(generator);
+    };
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(pushEvent).toBeDefined();
+    });
+
+    // Another window persists an opt-out; this pane only learns via the stream.
+    api.config.getConfig = mock(() =>
+      Promise.resolve({
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+        chatTranscriptFullWidth: false,
+        llmDebugLogs: false,
+        telemetryEnabled: false,
+        telemetryDisabledByEnv: false,
+      })
+    );
+    pushEvent?.();
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
     });
   });
 

@@ -224,6 +224,10 @@ export function GeneralSection() {
   // Monotonic id per telemetry toggle; failure handling may only touch state
   // while its own intent is still the latest.
   const telemetryEnabledIntentRef = useRef(0);
+  // Writes still in flight (including their failure reconciliation). Config
+  // change notifications are ignored while > 0: our own settled write emits a
+  // final notification that reconciles against the true persisted state.
+  const telemetryEnabledPendingWritesRef = useRef(0);
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
@@ -437,6 +441,7 @@ export function GeneralSection() {
     setTelemetryEnabled(checked);
 
     const intent = ++telemetryEnabledIntentRef.current;
+    telemetryEnabledPendingWritesRef.current++;
 
     // Serialize writes so rapid toggles always persist the last user choice.
     telemetryEnabledUpdateChainRef.current = telemetryEnabledUpdateChainRef.current
@@ -471,8 +476,68 @@ export function GeneralSection() {
             setTelemetryEnabled(true);
           }
         }
+      })
+      .finally(() => {
+        telemetryEnabledPendingWritesRef.current--;
       });
   };
+
+  // Cross-client telemetry sync: another window/tab (or the API server) can
+  // flip the toggle; consume the config-change stream so this pane's switch
+  // tracks the true collection state instead of showing a stale value.
+  useEffect(() => {
+    if (!api?.config?.onConfigChanged) {
+      return;
+    }
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+    let iterator: AsyncIterator<unknown> | null = null;
+
+    const refreshTelemetry = async () => {
+      // Our own in-flight writes reconcile themselves; their settled write
+      // emits a final notification that lands here with the queue drained.
+      if (telemetryEnabledPendingWritesRef.current > 0) {
+        return;
+      }
+      const nonce = ++telemetryEnabledLoadNonceRef.current;
+      try {
+        const cfg = await api.config.getConfig();
+        if (nonce === telemetryEnabledLoadNonceRef.current) {
+          setTelemetryEnabled(cfg.telemetryEnabled !== false);
+          setTelemetryDisabledByEnv(cfg.telemetryDisabledByEnv === true);
+        }
+      } catch {
+        // Keep the current state; the next notification retries.
+      }
+    };
+
+    const subscription = (async () => {
+      try {
+        const subscribedIterator = await api.config.onConfigChanged(undefined, { signal });
+        if (signal.aborted) {
+          const cleanup = subscribedIterator.return?.();
+          cleanup?.catch(() => undefined);
+          return;
+        }
+        iterator = subscribedIterator;
+        for await (const _ of subscribedIterator) {
+          if (signal.aborted) {
+            break;
+          }
+          void refreshTelemetry();
+        }
+      } catch {
+        // Config subscriptions are cancelled during unmounts and API reconnects.
+      }
+    })();
+    subscription.catch(() => undefined);
+
+    return () => {
+      abortController.abort();
+      const cleanup = iterator?.return?.(undefined);
+      cleanup?.catch(() => undefined);
+    };
+  }, [api]);
 
   // Load SSH host from server on mount (browser mode only)
   useEffect(() => {

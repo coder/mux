@@ -16,6 +16,17 @@ describe("Config telemetryEnabled persistence", () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
+  it("fails closed when config.json exists but cannot be parsed", async () => {
+    const config = new Config(tempDir);
+    // Fresh install (no file) is not an error: telemetry stays enabled.
+    expect(config.isTelemetryDisabledByConfig()).toBe(false);
+
+    // A corrupted file must not silently override a possible opt-out:
+    // unreadable persisted state reports disabled.
+    await fs.writeFile(path.join(tempDir, "config.json"), "{ not json", "utf-8");
+    expect(config.isTelemetryDisabledByConfig()).toBe(true);
+  });
+
   it("round-trips the opt-out through editConfig saves and reports it", async () => {
     const config = new Config(tempDir);
     expect(config.isTelemetryDisabledByConfig()).toBe(false);
