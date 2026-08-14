@@ -26,6 +26,7 @@ import {
   withMcpPromptRefs,
   type CompactionFollowUpInput,
   type DisplayedMessage,
+  type MuxMessageMetadata,
 } from "@/common/types/message";
 
 interface CompactAndRetryState {
@@ -69,8 +70,11 @@ export function buildFollowUpFromSource(
       : undefined;
 
   // MCP slash messages display the raw command but send transformed text, so
-  // retries must rebuild the provider-visible form.
+  // retries must rebuild the provider-visible form and preserve the slash
+  // metadata (mirroring the ChatInput send site) so the follow-up row still
+  // displays and edit-restores as the original slash invocation.
   let text = source.content;
+  let promptMetadata: MuxMessageMetadata | undefined;
   if (slashMcpPromptRef && text.startsWith("/")) {
     const argumentText = text.replace(/^\/\S+/, "").trimStart();
     text = buildMcpPromptUserText(
@@ -78,6 +82,11 @@ export function buildFollowUpFromSource(
       slashMcpPromptRef.promptName,
       argumentText
     );
+    promptMetadata = {
+      type: "normal",
+      rawCommand: source.content,
+      commandPrefix: `/${slashMcpPromptRef.commandKey}`,
+    };
   }
 
   return {
@@ -87,7 +96,7 @@ export function buildFollowUpFromSource(
     // Inline skill refs must survive alongside prompt refs; withAgentSkillRefs
     // dedupes against the slash ref that buildAgentSkillMetadata already added.
     muxMetadata: withAgentSkillRefs(
-      withMcpPromptRefs(skillMetadata, source.mcpPromptRefs ?? []),
+      withMcpPromptRefs(skillMetadata ?? promptMetadata, source.mcpPromptRefs ?? []),
       source.agentSkillRefs ?? []
     ),
   };

@@ -32,6 +32,12 @@ describe("buildFollowUpFromSource", () => {
 
     expect(followUp.text).toBe("Using MCP prompt coder/review: src security");
     expect(followUp.muxMetadata?.mcpPromptRefs).toHaveLength(1);
+    // The follow-up row must keep displaying and edit-restoring as the
+    // original slash invocation, not the transformed provider text.
+    const metadata = followUp.muxMetadata;
+    if (metadata?.type !== "normal") throw new Error("expected normal metadata");
+    expect(metadata.rawCommand).toBe("/mcp__coder__review src security");
+    expect(metadata.commandPrefix).toBe("/mcp__coder__review");
   });
 
   test("keeps plain user content unchanged", () => {
