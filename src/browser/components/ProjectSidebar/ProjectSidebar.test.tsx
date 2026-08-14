@@ -1881,6 +1881,53 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
   });
 });
 
+describe("ProjectSidebar project agent count", () => {
+  const demoProjectPath = "/projects/demo-project";
+
+  beforeEach(() => setupProjectSidebarDom(demoProjectPath));
+  afterEach(cleanupProjectSidebarDom);
+
+  test("counts only top-level agents, not sub-agent descendants", () => {
+    const createProjectWorkspace = (
+      id: string,
+      parentWorkspaceId?: string
+    ): FrontendWorkspaceMetadata => ({
+      id,
+      name: `${id}-name`,
+      title: id,
+      projectName: "demo-project",
+      projectPath: demoProjectPath,
+      namedWorkspacePath: `${demoProjectPath}/${id}`,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+      parentWorkspaceId,
+    });
+
+    const view = render(
+      <ProjectSidebar
+        collapsed={false}
+        onToggleCollapsed={() => undefined}
+        sortedWorkspacesByProject={
+          new Map([
+            [
+              demoProjectPath,
+              [
+                createProjectWorkspace("root"),
+                createProjectWorkspace("child-a", "root"),
+                createProjectWorkspace("child-b", "root"),
+                createProjectWorkspace("grandchild", "child-a"),
+              ],
+            ],
+          ])
+        }
+        workspaceRecency={{}}
+      />
+    );
+
+    const projectLabel = view.getByText("demo-project");
+    expect(projectLabel.parentElement?.textContent).toBe("demo-project(1)");
+  });
+});
+
 describe("ProjectSidebar archive confirmations", () => {
   beforeEach(() => setupProjectSidebarDom());
   afterEach(cleanupProjectSidebarDom);

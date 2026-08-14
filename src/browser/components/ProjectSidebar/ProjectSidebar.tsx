@@ -1717,9 +1717,10 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const scratchWorkspaces = orderMultiProjectSectionRows(
     Array.from(scratchWorkspacesById.values())
   );
-  const scratchRowsForDisplay = hideSubAgentRows
-    ? excludeSubAgentRows(scratchWorkspaces)
-    : scratchWorkspaces;
+  // Sub-agent rows render nested under their parent, so section counts skip
+  // them (orphans and malformed-cycle rows still count, matching display).
+  const topLevelScratchWorkspaces = excludeSubAgentRows(scratchWorkspaces);
+  const scratchRowsForDisplay = hideSubAgentRows ? topLevelScratchWorkspaces : scratchWorkspaces;
   const scratchDepthByWorkspaceId = computeWorkspaceDepthMap(scratchRowsForDisplay);
   const visibleScratchWorkspaces = filterVisibleAgentRows(
     scratchRowsForDisplay,
@@ -1742,8 +1743,9 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const multiProjectWorkspaces = orderMultiProjectSectionRows(
     Array.from(multiProjectWorkspacesById.values())
   );
+  const topLevelMultiProjectWorkspaces = excludeSubAgentRows(multiProjectWorkspaces);
   const multiProjectRowsForDisplay = hideSubAgentRows
-    ? excludeSubAgentRows(multiProjectWorkspaces)
+    ? topLevelMultiProjectWorkspaces
     : multiProjectWorkspaces;
   const multiProjectDepthByWorkspaceId = computeWorkspaceDepthMap(multiProjectRowsForDisplay);
   const visibleMultiProjectWorkspaces = filterVisibleAgentRows(
@@ -1954,7 +1956,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                       <span className="text-foreground truncate text-sm font-medium">Chats</span>
                       {(scratchWorkspaces.length > 0 || scratchDrafts.length > 0) && (
                         <span className="text-muted ml-2 text-xs">
-                          ({scratchWorkspaces.length + scratchDrafts.length})
+                          ({topLevelScratchWorkspaces.length + scratchDrafts.length})
                         </span>
                       )}
                     </div>
@@ -2078,7 +2080,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                           Multi-Project
                         </span>
                         <span className="text-muted ml-2 text-xs">
-                          ({multiProjectWorkspaces.length})
+                          ({topLevelMultiProjectWorkspaces.length})
                         </span>
                       </div>
                     </div>
@@ -2161,7 +2163,8 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     const isEditingProjectDisplayName = editingProjectPath === projectPath;
                     const projectWorkspaces =
                       singleProjectWorkspacesByProject.get(projectPath) ?? [];
-                    const projectAgentCount = projectWorkspaces.length;
+                    const topLevelProjectWorkspaces = excludeSubAgentRows(projectWorkspaces);
+                    const projectAgentCount = topLevelProjectWorkspaces.length;
                     const projectHasAttention = projectWorkspaces.some(
                       (workspace) => workspaceAttentionById.get(workspace.id) === true
                     );
@@ -2375,7 +2378,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                 Object.values(activeDraftPromotions).map((metadata) => metadata.id)
                               );
                               const projectRowsForDisplay = hideSubAgentRows
-                                ? excludeSubAgentRows(projectWorkspaces)
+                                ? topLevelProjectWorkspaces
                                 : projectWorkspaces;
                               const workspacesForNormalRendering = projectRowsForDisplay.filter(
                                 (workspace) => !promotedWorkspaceIds.has(workspace.id)
