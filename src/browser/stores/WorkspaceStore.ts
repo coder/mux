@@ -73,7 +73,7 @@ import { WorkspaceConsumerManager } from "./WorkspaceConsumerManager";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
 import { sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import type { TokenConsumer } from "@/common/types/chatStats";
-import { normalizeUsageModelKey } from "@/common/utils/ai/models";
+import { normalizeUsageModelKey } from "@/common/utils/providers/modelEntries";
 import type { z } from "zod";
 import type { SessionUsageFileSchema } from "@/common/orpc/schemas/chatStats";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";

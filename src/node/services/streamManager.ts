@@ -82,12 +82,15 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
 import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
 import { stripWorkflowRunRecordsFromModelMessages } from "@/node/utils/messages/stripWorkflowRunRecordsFromModelMessages";
-import { normalizeToCanonical, normalizeUsageModelKey } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { MUX_GATEWAY_SESSION_EXPIRED_MESSAGE } from "@/common/constants/muxGatewayOAuth";
 import { getModelStats, getModelStatsResolved } from "@/common/utils/tokens/modelStats";
 import { withSequentialExecution } from "@/node/services/tools/withSequentialExecution";
 import type { ResolvedCallSettingsOverrides } from "@/common/config/schemas/modelParameters";
-import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import {
+  normalizeUsageModelKey,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import { getErrorMessage } from "@/common/utils/errors";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
 import { shellQuote } from "@/common/utils/shell";

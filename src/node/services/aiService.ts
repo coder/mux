@@ -74,7 +74,7 @@ import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeToCanonical, normalizeUsageModelKey } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
 import {
@@ -160,7 +160,10 @@ import { prepareMessagesForProvider } from "./messagePipeline";
 import { getLegacyModeForAgentMetadata, resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
 import { getTokenizerForModel } from "@/node/utils/main/tokenizer";
-import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import {
+  normalizeUsageModelKey,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import {
   simulateContextLimitError,
   simulateToolPolicyNoop,

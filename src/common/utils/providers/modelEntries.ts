@@ -141,6 +141,39 @@ export function resolveModelForMetadata(
   return resolveCoderGatewayMetadataModel(fullModelId, providersConfig) ?? fullModelId;
 }
 
+/**
+ * Usage-ledger key for a model string. Same as normalizeToCanonical, except
+ * Coder gateway identities resolve AT RECORD TIME to their durable priceable
+ * identity via resolveModelForMetadata: an explicit scoped mappedToModel
+ * ("Treat as") override wins, then the instance-type-derived upstream catalog
+ * identity (coder:prod-anthropic/<claude> -> anthropic:<claude>). Repricing
+ * (WorkspaceStore.repriceSessionUsage) sees ONLY this key: it cannot recover
+ * a Coder-scoped mapping or a removed instance's type from a stored key, so
+ * both must be applied before the key is persisted. Name-based
+ * canonicalization is ruled out too — it keys a cross-typed instance
+ * ({name: "openai", type: "anthropic"}) under openai:<claude>, so repricing
+ * strips the recorded Anthropic costs as unknown OpenAI-model costs.
+ * Unmappable identities (openai-compat instances, unknown instances, a
+ * custom provider shadowing the "coder" prefix) keep the raw key — it is
+ * their only durable identity.
+ */
+export function normalizeUsageModelKey(
+  modelString: string,
+  providersConfig?: ProviderModelsConfig | null
+): string {
+  if (modelString.startsWith("coder:")) {
+    try {
+      return resolveModelForMetadata(modelString, providersConfig ?? null);
+    } catch {
+      // Invalid model entries (hand-edited config) must not break usage
+      // recording or live frontend deltas — fall back to the type-derived
+      // identity (self-healing).
+      return resolveCoderGatewayMetadataModel(modelString, providersConfig) ?? modelString;
+    }
+  }
+  return normalizeToCanonical(modelString);
+}
+
 function parseModelId(rawValue: unknown): string | null {
   if (typeof rawValue !== "string") {
     return null;

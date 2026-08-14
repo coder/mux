@@ -17,8 +17,10 @@ import type { RolledUpChildEntry } from "@/common/orpc/schemas/chatStats";
 import type { TokenConsumer } from "@/common/types/chatStats";
 import { HEADLESS_USAGE_FILE_NAME } from "@/common/constants/paths";
 import type { MuxMessage, PersistedToolModelUsage } from "@/common/types/message";
-import { normalizeUsageModelKey } from "@/common/utils/ai/models";
-import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import {
+  normalizeUsageModelKey,
+  resolveModelForMetadata,
+} from "@/common/utils/providers/modelEntries";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { log } from "./log";
 
