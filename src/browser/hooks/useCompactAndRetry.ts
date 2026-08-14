@@ -21,6 +21,7 @@ import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   buildAgentSkillMetadata,
+  buildMcpPromptUserText,
   withMcpPromptRefs,
   type CompactionFollowUpInput,
   type DisplayedMessage,
@@ -52,7 +53,7 @@ function findTriggerUserMessage(
  * Build follow-up content from a user message source.
  * Preserves skill metadata if the original message was a skill invocation.
  */
-function buildFollowUpFromSource(
+export function buildFollowUpFromSource(
   source: Extract<DisplayedMessage, { type: "user" }>
 ): CompactionFollowUpInput {
   const slashMcpPromptRef = source.mcpPromptRefs?.find((ref) => ref.source === "slash");
@@ -66,8 +67,21 @@ function buildFollowUpFromSource(
         })
       : undefined;
 
+  // source.content is the displayed raw slash command for MCP prompt turns,
+  // but the provider-visible row was the transformed invocation text, so
+  // rebuild it or the retry would send the literal /mcp__ command.
+  let text = source.content;
+  if (slashMcpPromptRef && text.startsWith("/")) {
+    const argumentText = text.replace(/^\/\S+/, "").trimStart();
+    text = buildMcpPromptUserText(
+      slashMcpPromptRef.serverName,
+      slashMcpPromptRef.promptName,
+      argumentText
+    );
+  }
+
   return {
-    text: source.content,
+    text,
     fileParts: source.fileParts,
     reviews: source.reviews,
     muxMetadata: withMcpPromptRefs(skillMetadata, source.mcpPromptRefs ?? []),

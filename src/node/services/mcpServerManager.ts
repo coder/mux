@@ -1725,11 +1725,13 @@ export class MCPServerManager {
   }
 
   /** Updates recorded options so prompt refreshes cannot reuse stale project trust. */
-  applyProjectTrust(projectPaths: string[], trusted: boolean): void {
-    const affected = new Set(projectPaths.map((projectPath) => stripTrailingSlashes(projectPath)));
+  applyProjectTrust(updates: Array<{ projectPath: string; trusted: boolean }>): void {
+    const trustByPath = new Map(
+      updates.map((update) => [stripTrailingSlashes(update.projectPath), update.trusted])
+    );
     for (const [workspaceId, options] of this.lastWorkspaceRequestOptions) {
-      if (!affected.has(stripTrailingSlashes(options.projectPath))) continue;
-      if ((options.trusted ?? false) === trusted) continue;
+      const trusted = trustByPath.get(stripTrailingSlashes(options.projectPath));
+      if (trusted === undefined || (options.trusted ?? false) === trusted) continue;
       this.lastWorkspaceRequestOptions.set(workspaceId, { ...options, trusted });
     }
   }

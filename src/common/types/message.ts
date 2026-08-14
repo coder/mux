@@ -300,6 +300,20 @@ export function getMcpPromptReferenceKey(serverName: string, promptName: string)
   return `${serverName}\u0000${promptName}`;
 }
 
+/**
+ * Provider-visible user text for a slash MCP prompt invocation. The composer
+ * persists this transformed text while displaying the raw slash command, so
+ * retry paths must rebuild it with the same shape.
+ */
+export function buildMcpPromptUserText(
+  serverName: string,
+  promptName: string,
+  argumentText: string
+): string {
+  const base = `Using MCP prompt ${serverName}/${promptName}`;
+  return argumentText ? `${base}: ${argumentText}` : base;
+}
+
 export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
   const deduped = new Map<string, MCPPromptReference>();
   for (const ref of refs) {

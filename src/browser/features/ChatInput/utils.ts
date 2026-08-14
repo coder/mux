@@ -17,6 +17,7 @@ import type { ParsedRuntime } from "@/common/types/runtime";
 import {
   buildAgentSkillMetadata,
   dedupeAgentSkillRefs,
+  buildMcpPromptUserText,
   dedupeMcpPromptRefs,
   type AgentSkillReference,
   type MCPPromptReference,
@@ -173,9 +174,7 @@ async function resolveMcpPromptInvocation(options: {
   return {
     invocation: {
       descriptor,
-      userText: argumentText
-        ? `Using MCP prompt ${descriptor.serverName}/${descriptor.promptName}: ${argumentText}`
-        : `Using MCP prompt ${descriptor.serverName}/${descriptor.promptName}`,
+      userText: buildMcpPromptUserText(descriptor.serverName, descriptor.promptName, argumentText),
       arguments: mapped.arguments,
     },
   };

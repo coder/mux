@@ -1376,7 +1376,12 @@ describe("MCPServerManager", () => {
       }
     );
 
-    manager.applyProjectTrust([`${PROJECT_PATH}/`], false);
+    // Per-path values: a child whose effective trust stays inherited-false must
+    // not pick up a sibling path's true.
+    manager.applyProjectTrust([
+      { projectPath: `${PROJECT_PATH}/`, trusted: false },
+      { projectPath: "/tmp/other-project", trusted: true },
+    ]);
     await manager.getPrompt("workspace", "coder", "status", {});
 
     expect(getToolsSpy).toHaveBeenCalledWith({ ...request, trusted: false });

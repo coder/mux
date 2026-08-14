@@ -3324,6 +3324,8 @@ export const router = (authToken?: string) => {
           });
           // Prompt invocation revives servers from recorded request options, so
           // sync the trust change (owner plus inheriting children) immediately.
+          // Each path gets its post-edit EFFECTIVE trust: a child's own flag is
+          // ignored by isProjectTrusted when a parentProjectPath owns its trust.
           const affectedPaths = [normalizedPath];
           for (const [projectPath, project] of context.config.loadConfigOrDefault().projects) {
             if (
@@ -3333,7 +3335,12 @@ export const router = (authToken?: string) => {
               affectedPaths.push(projectPath);
             }
           }
-          context.mcpServerManager.applyProjectTrust(affectedPaths, input.trusted);
+          context.mcpServerManager.applyProjectTrust(
+            affectedPaths.map((projectPath) => ({
+              projectPath,
+              trusted: isProjectTrusted(context.config, projectPath),
+            }))
+          );
         }),
       setDisplayName: t
         .input(schemas.projects.setDisplayName.input)
