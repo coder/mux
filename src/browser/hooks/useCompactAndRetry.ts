@@ -66,8 +66,12 @@ function buildFollowUpFromSource(
   // typed text as content; re-parse it so the rebuilt follow-up keeps the
   // explicit model AND thinking overrides instead of falling back to class
   // routing / ambient workspace thinking.
+  // trimStart matches parseCommand's own tolerance for leading whitespace —
+  // a column-zero guard would silently drop the preserved one-shot.
   const parsedOneShot =
-    source.agentSkill && source.content.startsWith("/") ? parseCommand(source.content) : null;
+    source.agentSkill && source.content.trimStart().startsWith("/")
+      ? parseCommand(source.content)
+      : null;
   const oneShot = parsedOneShot?.type === "model-oneshot" ? parsedOneShot : null;
   const oneShotModel = oneShot?.modelString;
   const rawThinking = oneShot?.thinkingLevel;

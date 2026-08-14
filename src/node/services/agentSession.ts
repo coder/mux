@@ -204,6 +204,14 @@ interface AutoRetryResumeRequest {
   options: SendMessageOptions;
   agentInitiated?: boolean;
   goalKind?: GoalSyntheticMessageKind;
+  /**
+   * Pre-skill-routing options for a routed turn (see
+   * activeStreamContext.compactionBaseOptions). A same-session retry must keep
+   * the routed compaction policy — without this, the retried stream would
+   * force-compact at the workspace threshold against the routed window and
+   * summarize on the wrong model.
+   */
+  compactionBaseOptions?: SendMessageOptions;
 }
 
 function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
@@ -1035,7 +1043,8 @@ export class AgentSession {
   private setAutoRetryResumeState(
     options: SendMessageOptions | undefined,
     agentInitiated?: boolean,
-    goalKind?: GoalSyntheticMessageKind
+    goalKind?: GoalSyntheticMessageKind,
+    compactionBaseOptions?: SendMessageOptions
   ): void {
     if (!options) {
       this.lastAutoRetryResumeRequest = undefined;
@@ -1046,6 +1055,7 @@ export class AgentSession {
       options,
       ...(agentInitiated === true ? { agentInitiated: true } : {}),
       ...(goalKind != null ? { goalKind } : {}),
+      ...(compactionBaseOptions != null ? { compactionBaseOptions } : {}),
     };
   }
 
@@ -1073,6 +1083,7 @@ export class AgentSession {
       const result = await this.resumeStream(request.options, {
         agentInitiated: request.agentInitiated === true ? true : undefined,
         goalKind: request.goalKind,
+        compactionBaseOptions: request.compactionBaseOptions,
       });
       if (result.success) {
         if (!result.data.started) {
@@ -3431,7 +3442,12 @@ export class AgentSession {
 
     // Same-session retry should resume the exact accepted request we just finalized
     // in history, even if runtime warmup fails before streamWithHistory() starts.
-    this.setAutoRetryResumeState(optionsForStream, agentInitiated, goalKind);
+    this.setAutoRetryResumeState(
+      optionsForStream,
+      agentInitiated,
+      goalKind,
+      compactionBaseOptionsForRoutedTurn
+    );
     try {
       await internal?.onAccepted?.();
     } catch (error) {
@@ -3570,7 +3586,12 @@ export class AgentSession {
 
   async resumeStream(
     options: SendMessageOptions,
-    internal?: { agentInitiated?: boolean; goalKind?: GoalSyntheticMessageKind }
+    internal?: {
+      agentInitiated?: boolean;
+      goalKind?: GoalSyntheticMessageKind;
+      /** Routed-turn compaction context carried across same-session retries. */
+      compactionBaseOptions?: SendMessageOptions;
+    }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
@@ -3600,7 +3621,12 @@ export class AgentSession {
 
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
-    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
+    this.setAutoRetryResumeState(
+      optionsForStream,
+      internal?.agentInitiated,
+      internal?.goalKind,
+      internal?.compactionBaseOptions
+    );
     this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     // Open the mid-turn thinking override window for the resumed turn (after
@@ -3618,7 +3644,8 @@ export class AgentSession {
         internal?.agentInitiated,
         undefined,
         internal?.goalKind,
-        turnThinkingOverride
+        turnThinkingOverride,
+        internal?.compactionBaseOptions
       );
       if (!result.success) {
         return result;
@@ -4762,7 +4789,10 @@ export class AgentSession {
         true,
         context.agentInitiated,
         undefined,
-        context.goalKind
+        context.goalKind,
+        undefined,
+        // A routed turn's retry keeps its routed compaction policy.
+        context.compactionBaseOptions
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
