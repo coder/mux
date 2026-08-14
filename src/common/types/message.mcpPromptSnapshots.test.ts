@@ -57,6 +57,19 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
     expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-later"]);
   });
 
+  test("drops a snapshot whose invoking id points at a row without a matching ref", () => {
+    const unrelated = createMuxMessage("user-unrelated", "user", "Plain message", {
+      historySequence: 0,
+    });
+    const messages = [snapshot("snap-1", "user-unrelated"), unrelated];
+    expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-unrelated"]);
+  });
+
+  test("drops a snapshot whose invoking id points at a different prompt's turn", () => {
+    const messages = [snapshot("snap-1", "user-1", "review"), invokingUser("user-1", ["status"])];
+    expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-1"]);
+  });
+
   test("drops legacy snapshots without an invoking id", () => {
     const messages = [snapshot("snap-legacy"), invokingUser("user-1", ["review"])];
     expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-1"]);

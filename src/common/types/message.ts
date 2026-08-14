@@ -342,18 +342,28 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
 /**
  * A crash between snapshot persistence and the user-row append can orphan MCP
  * prompt snapshots, so provider requests keep one only when the user row it
- * was materialized for is present in the same history (self-healing rule).
+ * was materialized for is present and still references that server/prompt
+ * (self-healing rule; guards corrupted ids pointing at unrelated rows).
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
-  const nonSnapshotMessageIds = new Set(
-    messages.filter((message) => !message.metadata?.mcpPromptSnapshot).map((message) => message.id)
-  );
+  const promptRefKeysByMessageId = new Map<string, Set<string>>();
+  for (const message of messages) {
+    if (message.role !== "user" || message.metadata?.mcpPromptSnapshot) continue;
+    const refs = sanitizeMcpPromptRefs(message.metadata?.muxMetadata?.mcpPromptRefs);
+    if (refs.length === 0) continue;
+    promptRefKeysByMessageId.set(
+      message.id,
+      new Set(refs.map((ref) => getMcpPromptReferenceKey(ref.serverName, ref.promptName)))
+    );
+  }
   return messages.filter((message) => {
     const snapshot = message.metadata?.mcpPromptSnapshot;
     if (!snapshot) return true;
+    if (snapshot.invokingMessageId === undefined) return false;
+    const invokingRefKeys = promptRefKeysByMessageId.get(snapshot.invokingMessageId);
     return (
-      snapshot.invokingMessageId !== undefined &&
-      nonSnapshotMessageIds.has(snapshot.invokingMessageId)
+      invokingRefKeys?.has(getMcpPromptReferenceKey(snapshot.serverName, snapshot.promptName)) ===
+      true
     );
   });
 }

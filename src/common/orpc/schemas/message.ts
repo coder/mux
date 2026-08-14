@@ -184,6 +184,8 @@ export const MuxMessageSchema = z.object({
       uiVisible: z.boolean().optional(),
       transcriptAnchor: TranscriptAnchorSchema.optional().catch(undefined),
 
+      // Self-healing: one malformed persisted snapshot row must degrade to a
+      // plain synthetic message, not fail the whole history parse.
       agentSkillSnapshot: z
         .object({
           skillName: SkillNameSchema,
@@ -191,7 +193,8 @@ export const MuxMessageSchema = z.object({
           sha256: z.string(),
           frontmatterYaml: z.string().optional(),
         })
-        .optional(),
+        .optional()
+        .catch(undefined),
       mcpPromptSnapshot: z
         .object({
           serverName: z.string(),
@@ -200,7 +203,8 @@ export const MuxMessageSchema = z.object({
           invokingMessageId: z.string().optional(),
           description: z.string().optional(),
         })
-        .optional(),
+        .optional()
+        .catch(undefined),
       // Marks the hidden @file snapshot turn, which the timeline skips as context plumbing.
       fileAtMentionSnapshot: z.array(z.string()).optional(),
       error: z.string().optional(),
