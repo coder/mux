@@ -1814,12 +1814,19 @@ export class Config {
   /**
    * Settings → General telemetry opt-out; absent means enabled.
    *
-   * Fail CLOSED: when config.json exists but cannot be read or parsed, report
-   * disabled — corrupted persisted state must not silently override an
-   * opt-out. A missing file is not an error (fresh install ⇒ enabled), and
-   * callers stay non-fatal either way.
+   * Fail CLOSED: when the persisted state cannot be read, report disabled —
+   * corrupted or inaccessible state must not silently override an opt-out. A
+   * genuinely missing file is not an error (fresh install ⇒ enabled), but
+   * existsSync() masks traversal failures (EACCES on ~/.mux) as "missing", so
+   * stat explicitly to tell ENOENT apart from every other failure. Callers
+   * stay non-fatal either way.
    */
   isTelemetryDisabledByConfig(): boolean {
+    try {
+      fs.statSync(this.configFile);
+    } catch (error) {
+      return (error as NodeJS.ErrnoException).code !== "ENOENT";
+    }
     try {
       return this.loadConfigOrDefault({ throwOnError: true }).telemetryEnabled === false;
     } catch {

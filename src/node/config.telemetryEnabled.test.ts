@@ -27,6 +27,21 @@ describe("Config telemetryEnabled persistence", () => {
     expect(config.isTelemetryDisabledByConfig()).toBe(true);
   });
 
+  it("fails closed when the config directory is inaccessible", async () => {
+    const config = new Config(tempDir);
+    await fs.writeFile(path.join(tempDir, "config.json"), JSON.stringify({}), "utf-8");
+    expect(config.isTelemetryDisabledByConfig()).toBe(false);
+
+    // existsSync() masks EACCES as "missing"; the stat-based check must treat
+    // an unreachable ~/.mux as a possible opt-out, not as enabled-by-default.
+    await fs.chmod(tempDir, 0o000);
+    try {
+      expect(config.isTelemetryDisabledByConfig()).toBe(true);
+    } finally {
+      await fs.chmod(tempDir, 0o700);
+    }
+  });
+
   it("round-trips the opt-out through editConfig saves and reports it", async () => {
     const config = new Config(tempDir);
     expect(config.isTelemetryDisabledByConfig()).toBe(false);
