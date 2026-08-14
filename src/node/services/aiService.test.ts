@@ -1785,6 +1785,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
               ? "claude-opus-4-5"
               : (requestedModelString.split(":")[1] ?? requestedModelString),
             wireProviderName: isCoder ? "anthropic" : "openai",
+            ...(isCoder
+              ? {
+                  coderWire: {
+                    origin: "anthropic" as const,
+                    modelId: "claude-opus-4-5",
+                    providerType: "anthropic",
+                  },
+                }
+              : {}),
             routedThroughGateway: false,
             ...(isCoder ? { routeProvider: "coder" as ProviderName } : {}),
           },
@@ -1887,6 +1896,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         canonicalProviderName: "openai",
         canonicalModelId: "claude-opus-4-5",
         wireProviderName: "anthropic",
+        coderWire: {
+          origin: "anthropic" as const,
+          modelId: "claude-opus-4-5",
+          providerType: "anthropic",
+        },
         routedThroughGateway: false,
         routeProvider: "coder",
       },
@@ -2011,6 +2025,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         canonicalProviderName: "coder",
         canonicalModelId: "openrouter/openai/gpt-5.2",
         wireProviderName: "openai",
+        coderWire: {
+          origin: "openai" as const,
+          modelId: "openai/gpt-5.2",
+          providerType: "openrouter",
+        },
         routedThroughGateway: false,
         routeProvider: "coder",
       },
@@ -2076,6 +2095,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         canonicalProviderName: "coder",
         canonicalModelId: "prod-openai/gpt-5.2",
         wireProviderName: "openai",
+        coderWire: { origin: "openai" as const, modelId: "gpt-5.2", providerType: "openai" },
         routedThroughGateway: false,
         routeProvider: "coder",
       },
@@ -2148,6 +2168,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
         canonicalProviderName: "anthropic",
         canonicalModelId: "gpt-5",
         wireProviderName: "openai",
+        coderWire: { origin: "openai" as const, modelId: "gpt-5", providerType: "openai-compat" },
         routedThroughGateway: false,
         routeProvider: "coder",
       },

@@ -96,6 +96,51 @@ describe("resolveModelForMetadata for Coder gateway-scoped models", () => {
     );
   });
 
+  test("cross-typed instances never consult the name-derived direct entry", () => {
+    // {name: "openai", type: "anthropic"} with NO coder-scoped entry: the
+    // name-canonical fallback would find the direct OpenAI block's entry and
+    // return its mappedToModel — usage would persist and reprice under the
+    // wrong provider family. The fallback identity must be TYPE-derived.
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+      },
+      openai: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "claude-opus-4-5", mappedToModel: "openai:wrong-family" }],
+      },
+    };
+    expect(resolveModelForMetadata("coder:openai/claude-opus-4-5", config)).toBe(
+      "anthropic:claude-opus-4-5"
+    );
+    expect(getModelContextWindowOverride("coder:openai/claude-opus-4-5", config)).toBeNull();
+  });
+
+  test("type-derived family entries apply when no scoped entry exists", () => {
+    // The gateway transparently fronts the upstream model, so the instance
+    // TYPE's provider block is the right fallback for overrides.
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "openai", type: "anthropic" }],
+      },
+      anthropic: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: [{ id: "claude-opus-4-5", contextWindowTokens: 111000 }],
+      },
+    };
+    expect(getModelContextWindowOverride("coder:openai/claude-opus-4-5", config)).toBe(111000);
+  });
+
   test("custom OpenAI-compatible provider named coder keeps its own identity", () => {
     const config: ProvidersConfigMap = {
       coder: {

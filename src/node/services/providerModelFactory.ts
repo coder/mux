@@ -2232,6 +2232,17 @@ export class ProviderModelFactory {
          * providers.jsonc lookups.
          */
         wireProviderName: string;
+        /**
+         * Coder gateway wire snapshot (instance origin/type + gateway-local
+         * model ID), resolved from the SAME providers-config read that
+         * produced wireProviderName. Present only when the effective route
+         * goes through the Coder gateway. Callers assembling tools/options
+         * for this request MUST consume this snapshot instead of re-reading
+         * the providers config: an authoritative catalog refresh can change
+         * the instance's type mid-request, and a fresh read would assemble
+         * another wire's tools/options for the already-created SDK model.
+         */
+        coderWire?: { origin: "anthropic" | "openai"; modelId: string; providerType: string };
         /** Whether the request is being routed through the Mux gateway. */
         routedThroughGateway: boolean;
         /** Route provider chosen by backend routing (direct provider or gateway). */
@@ -2368,6 +2379,9 @@ export class ProviderModelFactory {
     // OpenAI — Anthropic transforms against a direct OpenAI request would be
     // invalid. Shadowed prefixes keep the custom provider's identity.
     let wireProviderName = canonicalProviderName;
+    let coderWire:
+      | { origin: "anthropic" | "openai"; modelId: string; providerType: string }
+      | undefined;
     if (
       effectiveRouteProvider === "coder" &&
       !isCustomOpenAICompatibleProviderConfig(providersConfigForShadowCheck.coder)
@@ -2380,6 +2394,7 @@ export class ProviderModelFactory {
       );
       if (wire) {
         wireProviderName = wire.origin;
+        coderWire = wire;
       }
     } else if (rawCoderGatewayModelId != null && routeSeedModelString !== canonicalModelString) {
       // A Coder selection that fell back to its type-derived route: the wire
@@ -2412,6 +2427,7 @@ export class ProviderModelFactory {
       canonicalProviderName,
       canonicalModelId,
       wireProviderName,
+      coderWire,
       routedThroughGateway,
       routeProvider,
     });

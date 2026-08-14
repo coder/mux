@@ -83,8 +83,14 @@ function findProviderModelEntry(
  *
  * Checks the raw (possibly gateway-scoped) provider block first so
  * gateway-local overrides like contextWindowTokens and mappedToModel
- * take effect. Falls back to canonical lookup only when the scoped
- * lookup misses.
+ * take effect. Falls back to a canonical-identity lookup only when the
+ * scoped lookup misses. For coder: identities the fallback identity is
+ * TYPE-derived, never name-derived: {name: "openai", type: "anthropic"}
+ * name-canonicalizes to openai:<model>, and consulting the direct OpenAI
+ * block's entry would apply the wrong provider family's mappedToModel or
+ * context-window override to an Anthropic-wire gateway model. Unmappable
+ * or shadowed coder identities get no fallback — the raw scoped entry is
+ * their only override source.
  */
 function findProviderModelEntryScoped(
   fullModelId: string,
@@ -102,12 +108,14 @@ function findProviderModelEntryScoped(
     }
   }
 
-  const canonical = normalizeToCanonical(fullModelId);
-  if (canonical === fullModelId) {
+  const fallbackIdentity = fullModelId.startsWith("coder:")
+    ? resolveCoderGatewayMetadataModel(fullModelId, providersConfig)
+    : normalizeToCanonical(fullModelId);
+  if (fallbackIdentity == null || fallbackIdentity === fullModelId) {
     return null;
   }
 
-  const canonicalParsed = parseProviderModelId(canonical);
+  const canonicalParsed = parseProviderModelId(fallbackIdentity);
   if (!canonicalParsed) {
     return null;
   }

@@ -1240,13 +1240,18 @@ export class AIService extends EventEmitter {
       const resolveToolsIdentity = (
         raw: string,
         effective: string,
-        canonical: string
+        canonical: string,
+        // The factory's wire snapshot — resolved from the SAME config read
+        // that created the SDK model. Re-reading the providers config here
+        // instead would race authoritative catalog refreshes: a mid-request
+        // type change would assemble another wire's tools/options for the
+        // already-created model. Shadowed prefixes and unknown instances have
+        // no snapshot, and their canonical form is the raw string.
+        coderWire:
+          | { origin: "anthropic" | "openai"; modelId: string; providerType: string }
+          | undefined
       ): { modelString: string; openaiWireFormat?: "chatCompletions" | "responses" } => {
         if (!raw.startsWith("coder:")) {
-          return { modelString: raw };
-        }
-        const coderSection = this.providerService.getConfig()?.coder;
-        if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
           return { modelString: raw };
         }
         if (!effective.startsWith("coder:")) {
@@ -1270,8 +1275,7 @@ export class AIService extends EventEmitter {
             modelString: passthroughGateway ? normalizeToCanonical(effective) : effective,
           };
         }
-        const wire = resolveCoderWireCanonicalModel(effective.slice("coder:".length), coderSection);
-        if (!wire) {
+        if (!coderWire) {
           return { modelString: canonical };
         }
         // The factory creates Coder instances from the wire alone (openai
@@ -1280,9 +1284,9 @@ export class AIService extends EventEmitter {
         // a refusal chain that starts on direct OpenAI Chat Completions and
         // falls back to an openai-typed Coder instance would otherwise build
         // Chat Completions tools/options for a Responses request.
-        const wireProtocol = coderGatewayWireProtocol(wire.providerType);
+        const wireProtocol = coderGatewayWireProtocol(coderWire.providerType);
         return {
-          modelString: `${wire.origin}:${wire.modelId}`,
+          modelString: `${coderWire.origin}:${coderWire.modelId}`,
           ...(wireProtocol === "openai-chat"
             ? { openaiWireFormat: "chatCompletions" as const }
             : wireProtocol === "openai-responses"
@@ -1293,7 +1297,8 @@ export class AIService extends EventEmitter {
       const toolsIdentity = resolveToolsIdentity(
         modelString,
         effectiveModelString,
-        canonicalModelString
+        canonicalModelString,
+        modelResult.data.coderWire
       );
       const toolsModelString = toolsIdentity.modelString;
       // The user's own wireFormat, captured BEFORE wire injection: the
@@ -2995,7 +3000,8 @@ export class AIService extends EventEmitter {
                 const nextToolsIdentity = resolveToolsIdentity(
                   nextModelString,
                   next.effectiveModelString,
-                  next.canonicalModelString
+                  next.canonicalModelString,
+                  next.coderWire
                 );
                 if (nextToolsIdentity.openaiWireFormat != null) {
                   // Same in-place injection as the main path: the primary
