@@ -219,8 +219,21 @@ jobs:
           # segfaults Bun on the runner (exit 132, "Bun has crashed", zero failing assertions)
           # while leaving the file transition as the only suspect, and these files are already
           # here because they do not survive sharing a process.
+          # Even isolated, Bun can segfault at teardown after every test passed
+          # (signal exits >= 128, e.g. 132 SIGILL / 139 SIGSEGV). Retry only those;
+          # genuine test failures exit 1 and must not be retried.
           for isolated_unit_test in "${isolated_unit_tests[@]}"; do
-            bun test --max-concurrency=1 "$isolated_unit_test"
+            for attempt in 1 2 3; do
+              exit_code=0
+              bun test --max-concurrency=1 "$isolated_unit_test" || exit_code=$?
+              if [[ "$exit_code" -eq 0 ]]; then
+                break
+              fi
+              if [[ "$exit_code" -lt 128 || "$attempt" -eq 3 ]]; then
+                exit "$exit_code"
+              fi
+              echo "bun crashed (exit $exit_code) on $isolated_unit_test, retrying (attempt $attempt of 3)..."
+            done
           done
 
           mapfile -d '' unit_files < <(

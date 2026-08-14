@@ -4,6 +4,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -121,9 +123,10 @@ if [[ "$SKIP_SHRINKWRAP" == "1" ]]; then
   log_info "Repacked tarball without shrinkwrap: $PACKAGE_TARBALL"
 fi
 
-# Install the package
+# Install the package. Registry publication skew (e.g. AWS SDK waves) can make
+# fresh resolution transiently fail; retry before failing.
 log_info "Installing package..."
-if ! npm install --no-save "$PACKAGE_TARBALL"; then
+if ! "$SCRIPT_DIR/retry.sh" 5 60 npm install --no-save "$PACKAGE_TARBALL"; then
   log_error "Failed to install package"
   exit 1
 fi

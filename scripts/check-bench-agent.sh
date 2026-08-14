@@ -105,9 +105,10 @@ node -e "
   require('fs').writeFileSync('$CHECK_DIR/package.json', JSON.stringify(pkg, null, 2) + '\n');
 "
 
-if ! install_output=$(cd "$CHECK_DIR" && bun install --ignore-scripts 2>&1); then
-  echo "❌ Error: bun install (lockfile-free) failed:"
-  echo "$install_output"
+# Registry publication skew (e.g. AWS SDK waves) can make a fresh resolve ask for
+# a sibling version that is not visible yet; retry before treating it as breakage.
+if ! (cd "$CHECK_DIR" && "$REPO_ROOT/scripts/retry.sh" 5 60 bun install --ignore-scripts); then
+  echo "❌ Error: bun install (lockfile-free) failed"
   exit 1
 fi
 
