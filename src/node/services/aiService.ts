@@ -105,6 +105,7 @@ import {
   resolveProviderOptionsNamespaceKey,
 } from "@/common/utils/ai/providerOptions";
 import { resolveModelParameterOverrides } from "@/common/utils/ai/modelParameterOverrides";
+import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
 import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
 import {
   coderGatewayWireProtocol,
@@ -451,6 +452,31 @@ function pinCoderInstanceProvidersConfig(
     ...view,
     coder: {
       ...(view.coder ?? { apiKeySet: false, isEnabled: true, isConfigured: true }),
+      additionalProviders: [{ name: instance.name, type: instance.type }],
+    },
+  };
+}
+
+/**
+ * Raw providers.jsonc counterpart of pinCoderInstanceProvidersConfig for
+ * consumers that need file-shaped config (modelParameters lookups). Same
+ * rationale: additionalProviders is the highest-precedence metadata source,
+ * so pinning the factory-resolved instance there keeps metadata-dependent
+ * decisions (mappedToModel aliases, sampling gates) on the type the SDK
+ * model was created for.
+ */
+function pinCoderInstanceRawProvidersConfig(
+  view: ProvidersConfig | null,
+  rawModelString: string,
+  instance: { name: string; type: string } | undefined
+): ProvidersConfig | null {
+  if (!view || !instance || !rawModelString.startsWith("coder:")) {
+    return view;
+  }
+  return {
+    ...view,
+    coder: {
+      ...(view.coder ?? {}),
       additionalProviders: [{ name: instance.name, type: instance.type }],
     },
   };
@@ -2078,6 +2104,11 @@ export class AIService extends EventEmitter {
       // providerMetadata, so remember the resolved billing mode from model creation and
       // re-stamp it before converting usage into display/session costs.
       const toolModelCostsIncludedByModelString = new Map<string, boolean>();
+      // Creation-time pricing identity for tool-created models (advisor): a
+      // Coder catalog refresh can remove/retag the instance while the tool
+      // request runs, and resolving the identity from live config at
+      // completion would price/persist the usage under a different provider.
+      const toolModelMetadataModelByModelString = new Map<string, string>();
       // Normalize: undefined -> default, null -> unlimited, positive int -> exact cap.
       const advisorMaxUses =
         cfg.advisorMaxUsesPerTurn === null
@@ -2323,6 +2354,12 @@ export class AIService extends EventEmitter {
                     advisorModelString,
                     modelCostsIncluded(advisorModel.data)
                   );
+                  // Creation-time identity, resolved from the same config
+                  // era as the created model (see map declaration).
+                  toolModelMetadataModelByModelString.set(
+                    advisorModelString,
+                    resolveModelForMetadata(advisorModelString, this.providerService.getConfig())
+                  );
                   return advisorModel.data;
                 },
                 abortSignal: combinedAbortSignal,
@@ -2380,10 +2417,13 @@ export class AIService extends EventEmitter {
               event.providerMetadata,
               toolModelCostsIncludedByModelString.get(eventModel)
             );
-            const metadataModel = resolveModelForMetadata(
-              eventModel,
-              this.providerService.getConfig()
-            );
+            // Prefer the creation-time identity captured when the tool model
+            // was created; models not created through the tool runtime fall
+            // back to live resolution (their identity is not coder-scoped).
+            const pinnedMetadataModel = toolModelMetadataModelByModelString.get(eventModel);
+            const metadataModel =
+              pinnedMetadataModel ??
+              resolveModelForMetadata(eventModel, this.providerService.getConfig());
             this.streamManager.recordToolModelUsage(workspaceId, assistantMessageId, {
               toolName: event.toolName,
               toolCallId: event.toolCallId,
@@ -2408,11 +2448,14 @@ export class AIService extends EventEmitter {
                   return;
                 }
                 // Ledger keys resolve Coder identities to their record-time
-                // metadata identity (see normalizeUsageModelKey).
-                const canonicalModel = normalizeUsageModelKey(
-                  eventModel,
-                  this.providerService.getConfig()
-                );
+                // metadata identity — the CREATION-TIME pin when available,
+                // mirroring StreamManager.recordSessionUsage. Non-coder
+                // models keep the canonical key (their metadata identity can
+                // be a mappedToModel pricing alias, not the ledger bucket).
+                const canonicalModel =
+                  eventModel.startsWith("coder:") && pinnedMetadataModel
+                    ? pinnedMetadataModel
+                    : normalizeUsageModelKey(eventModel, this.providerService.getConfig());
                 await this.sessionUsageService.recordUsage(
                   workspaceId,
                   canonicalModel,
@@ -2734,7 +2777,16 @@ export class AIService extends EventEmitter {
       );
 
       // --- Model parameter overrides from providers.jsonc ---
-      const providersConfig = this.config.loadProvidersConfig();
+      // Raw file view pinned to the SAME factory-resolved instance identity
+      // as requestProvidersConfig: resolveModelParameterOverrides resolves
+      // mappedToModel aliases and sampling gates via resolveModelForMetadata
+      // internally, so a live raw load would let a concurrent instance retag
+      // derive those decisions from another type than the created SDK model.
+      const providersConfig = pinCoderInstanceRawProvidersConfig(
+        this.config.loadProvidersConfig(),
+        modelString,
+        modelResult.data.coderSelectedInstance
+      );
       // Override config identity follows the Coder instance TYPE, not the
       // name-canonicalized provider: a cross-typed instance ({name: "openai",
       // type: "anthropic"}) canonicalizes to openai:<model>, which would apply
@@ -3283,7 +3335,13 @@ export class AIService extends EventEmitter {
                     nextProvidersConfig
                   );
                   const nextOverrides = resolveModelParameterOverrides(
-                    this.config.loadProvidersConfig(),
+                    // Same pinned-raw-view rule as the main path, keyed to
+                    // the fallback selection's own instance.
+                    pinCoderInstanceRawProvidersConfig(
+                      this.config.loadProvidersConfig(),
+                      nextModelString,
+                      next.coderSelectedInstance
+                    ),
                     nextOverridesIdentity.providerName,
                     nextOverridesIdentity.modelString,
                     next.effectiveModelString
