@@ -1769,6 +1769,13 @@ export class AgentSession {
       retryRequest.agentInitiated = true;
     }
 
+    // Routed turns persist their pre-routing compaction context; restore it so
+    // the post-relaunch retry keeps the routed compaction policy instead of
+    // force-compacting at the workspace threshold against the routed window.
+    if (persistedRetrySendOptions?.compactionBaseOptions != null) {
+      retryRequest.compactionBaseOptions = persistedRetrySendOptions.compactionBaseOptions;
+    }
+
     return retryRequest;
   }
 
@@ -2711,7 +2718,11 @@ export class AgentSession {
         return Ok(undefined);
       }
       if (!pricingGate.success) {
-        if (isManualUserMessage) {
+        // Like the class-routing and PDF gates: preservation is for dequeued
+        // sends whose composer already cleared — a rejected EDIT (now
+        // reachable here via routed skill edits) must not append the edited
+        // text as a new tail turn.
+        if (isManualUserMessage && options?.editMessageId == null) {
           const persisted = await this.preserveRejectedManualSend(
             message,
             options,
