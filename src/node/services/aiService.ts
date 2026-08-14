@@ -2371,7 +2371,31 @@ export class AIService extends EventEmitter {
                     advisorModelString,
                     resolveModelForMetadata(advisorModelString, advisorProvidersConfig)
                   );
-                  return advisorModel.data;
+                  // Wire-resolved identity for option construction, same
+                  // snapshot: a raw coder: string carries no wire info, so
+                  // buildProviderOptions would emit the wrong (or no)
+                  // namespace for custom-named/cross-typed instances. Mirrors
+                  // resolveOptionsCanonicalModel's shadow + wire rules.
+                  const advisorOptionsModelString = (() => {
+                    if (!advisorModelString.startsWith("coder:")) {
+                      return advisorModelString;
+                    }
+                    const coderSection = advisorProvidersConfig.coder;
+                    if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
+                      return advisorModelString;
+                    }
+                    const wire = resolveCoderWireCanonicalModel(
+                      advisorModelString.slice("coder:".length),
+                      coderSection as
+                        | { discoveredProviders?: unknown; additionalProviders?: unknown }
+                        | undefined
+                    );
+                    return wire ? `${wire.origin}:${wire.modelId}` : advisorModelString;
+                  })();
+                  return {
+                    model: advisorModel.data,
+                    optionsModelString: advisorOptionsModelString,
+                  };
                 },
                 abortSignal: combinedAbortSignal,
               },

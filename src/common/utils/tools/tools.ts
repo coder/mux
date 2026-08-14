@@ -319,8 +319,18 @@ export interface ToolConfiguration {
     getTranscriptSnapshot: () => ModelMessage[];
     /** Returns the frozen same-step capture snapshot for a specific advisor tool call, if available. */
     takeToolCallSnapshot: (toolCallId: string) => AdvisorToolCallSnapshot | undefined;
-    /** Creates a LanguageModel from a model string (delegates to providerModelFactory) */
-    createModel: (modelString: string) => Promise<LanguageModel>;
+    /**
+     * Creates a LanguageModel from a model string (delegates to
+     * providerModelFactory). Also returns the wire-resolved identity for
+     * provider option construction, derived from the SAME config snapshot
+     * that created the model: a raw coder:<instance>/<model> string carries
+     * no wire information on its own, so building options from it would emit
+     * the wrong (or no) provider namespace for custom-named or cross-typed
+     * instances.
+     */
+    createModel: (
+      modelString: string
+    ) => Promise<{ model: LanguageModel; optionsModelString: string }>;
     /** The abort signal from the parent stream */
     abortSignal: AbortSignal;
   };

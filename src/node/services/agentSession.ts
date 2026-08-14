@@ -3666,7 +3666,10 @@ export class AgentSession {
         return { model: null, thinkingLevel };
       }
 
-      const normalized = normalizeToCanonical(compactModelString.trim());
+      // Gateway-preserving: a cross-typed Coder compaction default
+      // (coder:openai/<claude>, type anthropic) must not persist as direct
+      // openai:<claude>, which would bypass the explicitly selected route.
+      const normalized = normalizeSelectedModel(compactModelString.trim());
       if (!isValidModelFormat(normalized)) {
         return { model: null, thinkingLevel };
       }

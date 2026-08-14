@@ -47,7 +47,10 @@ function createToolConfig(
     workspaceId?: string;
   }
 ) {
-  const createModel = mock(() => Promise.resolve({} as LanguageModel));
+  const advisorLanguageModel = Object.create(null) as LanguageModel;
+  const createModel = mock(() =>
+    Promise.resolve({ model: advisorLanguageModel, optionsModelString: ADVISOR_MODEL })
+  );
   const transcript = options?.transcript ?? createTranscript();
   const getTranscriptSnapshot = mock(() => transcript);
   const takeToolCallSnapshot = mock((_toolCallId: string) => options?.snapshot);

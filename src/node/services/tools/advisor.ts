@@ -154,12 +154,6 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
   assert(typeof runtime.createModel === "function", "advisor createModel must be a function");
 
   let usesThisTurn = 0;
-  // buildProviderOptions returns provider SDK option types; streamText accepts the
-  // same JSON-shaped values through its shared providerOptions slot.
-  const providerOptions = buildProviderOptions(
-    advisorModelString,
-    effectiveReasoningLevel
-  ) as unknown as StreamTextProviderOptions;
 
   return tool({
     description: TOOL_DEFINITIONS.advisor.description,
@@ -258,7 +252,17 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         handoffMessage != null ? [...transcript, handoffMessage] : transcript;
 
       try {
-        const model = await runtime.createModel(advisorModelString);
+        const { model, optionsModelString } = await runtime.createModel(advisorModelString);
+        // Provider options from the wire-resolved identity captured at model
+        // creation (same snapshot): a raw coder: string would resolve to the
+        // wrong (or no) provider namespace for custom-named or cross-typed
+        // instances. buildProviderOptions returns provider SDK option types;
+        // streamText accepts the same JSON-shaped values through its shared
+        // providerOptions slot.
+        const providerOptions = buildProviderOptions(
+          optionsModelString,
+          effectiveReasoningLevel
+        ) as unknown as StreamTextProviderOptions;
 
         emitAdvisorPhase("waiting_for_response");
 
