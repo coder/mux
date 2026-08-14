@@ -4060,6 +4060,86 @@ describe("TaskService", () => {
     );
   });
 
+  test("backfills workspace-turn correlation on an existing terminal report", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-restart-backfill";
+    const workspaceTurnId = "workspace-turn-restart-backfill";
+    const nestedTaskId = "nested-restart-backfill";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId),
+        projectWorkspace(projectPath, "workspace-turn", workspaceTurnId),
+        projectWorkspace(projectPath, "nested-agent", nestedTaskId, {
+          parentWorkspaceId: workspaceTurnId,
+          taskStatus: "reported",
+          reportedAt: "2026-08-14T00:00:01.000Z",
+          agentType: "explore",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { historyService, taskService } = createTaskServiceHarness(config);
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    await taskHandleStore.upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_restart_backfill",
+      ownerWorkspaceId: parentId,
+      workspaceId: workspaceTurnId,
+      turnId: "turn-restart-backfill",
+      status: "running",
+      createdAt: "2026-08-14T00:00:00.000Z",
+      updatedAt: "2026-08-14T00:00:00.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+    });
+
+    const reportMessage = createMuxMessage(
+      "existing-terminal-report",
+      "user",
+      formatSubagentReportEnvelope({
+        taskId: nestedTaskId,
+        agentType: "explore",
+        status: "completed",
+        title: "Existing result",
+        reportMarkdown: "The existing report survived the restart.",
+      }),
+      { timestamp: Date.now(), synthetic: true, uiVisible: true }
+    );
+    await historyService.appendToHistory(workspaceTurnId, reportMessage);
+
+    const terminalAttentionStore = new TerminalAttentionStore(config);
+    const notification = await terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: workspaceTurnId,
+      sourceKind: "agent_task",
+      sourceId: nestedTaskId,
+    });
+    assert(notification, "terminal attention notification must be created");
+
+    const internal = taskService as unknown as {
+      ensureAgentTerminalMessages: (
+        ownerWorkspaceId: string,
+        notifications: ReadonlyArray<typeof notification>
+      ) => Promise<unknown>;
+    };
+    await internal.ensureAgentTerminalMessages(workspaceTurnId, [notification]);
+
+    const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceTurnId);
+    expect(historyResult.success).toBe(true);
+    if (!historyResult.success) throw new Error("workspace-turn history read failed");
+    const updatedReport = historyResult.data.find((message) => message.id === reportMessage.id);
+    expect(updatedReport?.metadata?.muxMetadata).toEqual({
+      type: "workspace-turn-task",
+      taskHandleId: "wst_restart_backfill",
+      ownerWorkspaceId: parentId,
+      turnId: "turn-restart-backfill",
+    });
+  });
+
   test("workspace-turn tool-calls stream-end with superseding queued input settles error", async () => {
     // Ordinary queued input (manual message, bare /compact) also cuts the
     // stream at a tool boundary, but it supersedes the delegated turn instead

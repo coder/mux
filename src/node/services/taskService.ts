@@ -5887,6 +5887,7 @@ export class TaskService {
     if (!historyResult.success) {
       return { deliverableNotificationIds, latestMessageTimestampByTaskId };
     }
+    const existingReportMessages = new Map<string, MuxMessage>();
     const existingTaskIds = new Set<string>();
     for (const message of historyResult.data) {
       if (message.role !== "user" || message.metadata?.synthetic !== true) continue;
@@ -5898,6 +5899,7 @@ export class TaskService {
       );
       if (taskId == null) continue;
       existingTaskIds.add(taskId);
+      existingReportMessages.set(taskId, message);
       const timestamp = message.metadata?.timestamp;
       if (typeof timestamp === "number" && Number.isFinite(timestamp)) {
         latestMessageTimestampByTaskId.set(
@@ -5912,6 +5914,43 @@ export class TaskService {
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
       if (existingTaskIds.has(notification.sourceId)) {
+        const existingMessage = existingReportMessages.get(notification.sourceId);
+        if (existingMessage != null && workspaceTurnMuxMetadata != null) {
+          const existingCorrelation = this.getWorkspaceTurnMetadataFromValue(
+            existingMessage.metadata?.muxMetadata
+          );
+          const hasMatchingCorrelation =
+            existingCorrelation?.taskHandleId === workspaceTurnMuxMetadata.taskHandleId &&
+            existingCorrelation.ownerWorkspaceId === workspaceTurnMuxMetadata.ownerWorkspaceId &&
+            existingCorrelation.turnId === workspaceTurnMuxMetadata.turnId;
+          if (!hasMatchingCorrelation) {
+            const updatedMessage: MuxMessage = {
+              ...existingMessage,
+              metadata: {
+                ...existingMessage.metadata,
+                muxMetadata: workspaceTurnMuxMetadata,
+              },
+            };
+            const updateResult = await this.historyService.updateHistory(
+              ownerWorkspaceId,
+              updatedMessage
+            );
+            if (updateResult.success) {
+              existingReportMessages.set(notification.sourceId, updatedMessage);
+              this.workspaceService.emitChatEvent(ownerWorkspaceId, {
+                ...updatedMessage,
+                type: "message",
+              });
+            } else {
+              log.warn("Failed to backfill workspace-turn metadata on terminal report", {
+                ownerWorkspaceId,
+                taskId: notification.sourceId,
+                error: updateResult.error,
+              });
+            }
+          }
+        }
+
         // Report/failure delivery necessarily precedes terminal-attention enqueue. Presence in parent
         // history is therefore authoritative here; continuation freshness is checked separately
         // against the private execution's createdAt before suppressing its workspace-turn wake.
