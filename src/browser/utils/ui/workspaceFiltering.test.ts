@@ -981,6 +981,7 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowAgentCount: 0,
       workflowRunIds: new Set(),
       workflowName: undefined,
+      workflowNamesByRunId: new Map(),
     });
   });
 
@@ -1020,6 +1021,8 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowAgentCount: 1,
       workflowRunIds: new Set(["run-1", "run-2"]),
       workflowName: "Deep Research",
+      workflowNamesByRunId: new Map([["run-1", "Deep Research"]]),
+      runningWorkflowStepTitle: "workspace-worker-a",
     });
   });
 
@@ -1044,6 +1047,8 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowAgentCount: 0,
       workflowRunIds: new Set(["run-1"]),
       workflowName: undefined,
+      workflowNamesByRunId: new Map(),
+      runningWorkflowStepTitle: "workspace-worker",
     });
   });
 
@@ -1069,7 +1074,28 @@ describe("hidden sub-agents summary roll-up", () => {
       queuedWorkflowAgentCount: 0,
       workflowRunIds: new Set(),
       workflowName: undefined,
+      workflowNamesByRunId: new Map(),
     });
+  });
+
+  it("remembers run names from finished workers for workerless active runs", () => {
+    const workspaces = [
+      createWorkspace("parent"),
+      createWorkspace("owner-child", { parentWorkspaceId: "parent", taskStatus: "running" }),
+      createWorkspace("finished-worker", {
+        parentWorkspaceId: "parent",
+        taskStatus: "reported",
+        workflowTask: { runId: "run-gap", stepId: "step-1", workflowName: "Deep Research" },
+      }),
+    ];
+
+    const summary = computeSubAgentsSummaryByWorkspaceId(workspaces, {
+      getActiveWorkflowRunIds: (workspaceId) => (workspaceId === "owner-child" ? ["run-gap"] : []),
+    }).get("parent");
+
+    expect(summary?.runningWorkflowRunCount).toBe(1);
+    expect(summary?.workflowName).toBe("Deep Research");
+    expect(summary?.workflowNamesByRunId).toEqual(new Map([["run-gap", "Deep Research"]]));
   });
 
   it("counts a hidden owner's workerless active run as running", () => {

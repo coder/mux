@@ -350,7 +350,11 @@ function installProjectSidebarTestDoubles() {
           data-hidden-subagents={
             props.hiddenSubAgentsSummary
               ? JSON.stringify(props.hiddenSubAgentsSummary, (_key, value: unknown) =>
-                  value instanceof Set ? [...value] : value
+                  value instanceof Set
+                    ? [...value]
+                    : value instanceof Map
+                      ? Object.fromEntries(value as Map<string, string>)
+                      : value
                 )
               : undefined
           }
@@ -951,6 +955,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
       workflowRunIds: [],
+      workflowNamesByRunId: {},
     });
     // The delegated activity still reaches the parent row for its live dot.
     expect(parentRow.dataset.delegatedActive).toBe("1");
@@ -1021,6 +1026,8 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowAgentCount: 1,
       workflowRunIds: ["wfr_alpha"],
       workflowName: "review-pipeline",
+      workflowNamesByRunId: { wfr_alpha: "review-pipeline" },
+      runningWorkflowStepTitle: "Extract claims",
     });
   });
 

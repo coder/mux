@@ -174,6 +174,7 @@ const EMPTY_HIDDEN_SUBAGENTS_SUMMARY: WorkspaceSubAgentsSummary = {
   runningWorkflowAgentCount: 0,
   queuedWorkflowAgentCount: 0,
   workflowRunIds: new Set<string>(),
+  workflowNamesByRunId: new Map<string, string>(),
 };
 
 // Re-export WorkspaceSelection for backwards compatibility

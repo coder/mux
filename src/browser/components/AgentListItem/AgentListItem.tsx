@@ -253,10 +253,8 @@ function formatHiddenSubAgentsPresentation(
   // before its first worker spawns) is still in progress; count it as running
   // so a concurrent run's workers cannot make it look finished while its rows
   // are hidden.
-  const gapRunCount = ownActiveWorkflowRunIds.filter(
-    (runId) => !summary.workflowRunIds.has(runId)
-  ).length;
-  const runningRunCount = summary.runningWorkflowRunCount + gapRunCount;
+  const gapRunIds = ownActiveWorkflowRunIds.filter((runId) => !summary.workflowRunIds.has(runId));
+  const runningRunCount = summary.runningWorkflowRunCount + gapRunIds.length;
 
   let workflowText: string | null = null;
   if (runningRunCount > 0 || summary.queuedWorkflowRunCount > 0) {
@@ -266,34 +264,50 @@ function formatHiddenSubAgentsPresentation(
     const verb = hasRunningRun ? "running" : "queued";
     const runCount = hasRunningRun ? runningRunCount : summary.queuedWorkflowRunCount;
     // With no running worker, summary.workflowName is a queued run's name; a
-    // gap-only running label must not borrow it.
+    // gap-only running label must not borrow it, but the sole gap run's own
+    // remembered name may label it.
     const workflowName =
-      hasRunningRun && summary.runningWorkflowRunCount === 0 ? undefined : summary.workflowName;
-    const base =
-      runCount === 1 ? `${workflowName ?? "Workflow"} ${verb}` : `${runCount} workflows ${verb}`;
-    const agentCount = hasRunningRun
-      ? summary.runningWorkflowAgentCount
-      : summary.queuedWorkflowAgentCount;
-    // Gap-only runs have no countable workers; skip the "(0 agents)" noise.
-    const agentSuffix =
-      agentCount > 0 ? ` (${agentCount} agent${agentCount === 1 ? "" : "s"})` : "";
-    const queuedSuffix =
-      hasRunningRun && summary.queuedWorkflowAgentCount > 0
-        ? ` · ${summary.queuedWorkflowAgentCount} queued`
-        : "";
-    workflowText = `${base}${agentSuffix}${queuedSuffix}`;
+      hasRunningRun && summary.runningWorkflowRunCount === 0
+        ? gapRunIds.length === 1
+          ? summary.workflowNamesByRunId.get(gapRunIds[0])
+          : undefined
+        : summary.workflowName;
+    // The lone running worker's title is the run's current step; counts only
+    // add signal once several workers or runs are in flight.
+    if (
+      hasRunningRun &&
+      runCount === 1 &&
+      summary.runningWorkflowAgentCount === 1 &&
+      summary.runningWorkflowStepTitle != null
+    ) {
+      const queuedSuffix =
+        summary.queuedWorkflowAgentCount > 0 ? ` · ${summary.queuedWorkflowAgentCount} queued` : "";
+      workflowText = `${workflowName ?? "Workflow"} · ${summary.runningWorkflowStepTitle}${queuedSuffix}`;
+    } else {
+      const base =
+        runCount === 1 ? `${workflowName ?? "Workflow"} ${verb}` : `${runCount} workflows ${verb}`;
+      const agentCount = hasRunningRun
+        ? summary.runningWorkflowAgentCount
+        : summary.queuedWorkflowAgentCount;
+      // Gap-only runs have no countable workers; skip the "(0 agents)" noise.
+      const agentSuffix =
+        agentCount > 0 ? ` (${agentCount} agent${agentCount === 1 ? "" : "s"})` : "";
+      const queuedSuffix =
+        hasRunningRun && summary.queuedWorkflowAgentCount > 0
+          ? ` · ${summary.queuedWorkflowAgentCount} queued`
+          : "";
+      workflowText = `${base}${agentSuffix}${queuedSuffix}`;
+    }
   }
 
   let subAgentText: string | null = null;
-  if (summary.runningSubAgentCount > 0 || summary.queuedSubAgentCount > 0) {
-    const parts = [`${summary.subAgentCount} sub-agent${summary.subAgentCount === 1 ? "" : "s"}`];
-    if (summary.runningSubAgentCount > 0) {
-      parts.push(`${summary.runningSubAgentCount} active`);
-    }
+  if (summary.runningSubAgentCount > 0) {
+    subAgentText = formatSubAgentCount(summary.runningSubAgentCount, "active");
     if (summary.queuedSubAgentCount > 0) {
-      parts.push(`${summary.queuedSubAgentCount} queued`);
+      subAgentText += ` · ${summary.queuedSubAgentCount} queued`;
     }
-    subAgentText = parts.join(" · ");
+  } else if (summary.queuedSubAgentCount > 0) {
+    subAgentText = formatSubAgentCount(summary.queuedSubAgentCount, "queued");
   }
 
   if (workflowText != null && subAgentText != null) {
