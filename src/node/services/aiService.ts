@@ -418,6 +418,44 @@ function resolveMuxToolScope(
   };
 }
 
+/**
+ * Pin the factory-resolved Coder instance type into a providers-config view.
+ *
+ * Every request builder (message prep, options, headers, overrides,
+ * capability lookups, mid-turn rebuild closures) consumes ONE snapshot per
+ * request instead of re-reading ProviderService. Pinning closes the residual
+ * race between the factory's own config read and this capture: a concurrent
+ * authoritative catalog refresh that rewrites the selected instance's type
+ * would otherwise make the builders resolve a different wire than the
+ * already-created SDK model. additionalProviders is the highest-precedence
+ * metadata source (resolveCoderGatewayProvider consults it first), so the
+ * pinned entry wins over any concurrently rewritten discovered metadata.
+ * Only the SELECTED instance is pinned; requests that did not route through
+ * the Coder gateway (no coderWire) keep the view untouched.
+ */
+function pinCoderWireProvidersConfig(
+  view: ProvidersConfigMap,
+  effectiveModelString: string,
+  coderWire: { origin: "anthropic" | "openai"; modelId: string; providerType: string } | undefined
+): ProvidersConfigMap {
+  if (!coderWire || !effectiveModelString.startsWith("coder:")) {
+    return view;
+  }
+  const gatewayModelId = effectiveModelString.slice("coder:".length);
+  const separator = gatewayModelId.indexOf("/");
+  if (separator <= 0) {
+    return view;
+  }
+  const instanceName = gatewayModelId.slice(0, separator);
+  return {
+    ...view,
+    coder: {
+      ...(view.coder ?? { apiKeySet: false, isEnabled: true, isConfigured: true }),
+      additionalProviders: [{ name: instanceName, type: coderWire.providerType }],
+    },
+  };
+}
+
 function derivePromptCacheScope(metadata: WorkspaceMetadata): string {
   return `${metadata.projectName}-${uniqueSuffix([metadata.projectPath])}`;
 }
@@ -1213,6 +1251,19 @@ export class AIService extends EventEmitter {
         routedThroughGateway,
         routeProvider,
       } = modelResult.data;
+      // ONE providers-config snapshot for every request builder (messages,
+      // options, headers, overrides, capability lookups, mid-turn rebuild
+      // closures). Re-reading ProviderService per builder races concurrent
+      // catalog refreshes: an instance-type change mid-request would hand the
+      // already-created SDK model another wire's options/headers. The
+      // factory-resolved instance type is PINNED into the snapshot so every
+      // coder-wire resolution matches the created model even when the change
+      // lands between the factory's read and this capture.
+      const requestProvidersConfig = pinCoderWireProvidersConfig(
+        this.providerService.getConfig(),
+        effectiveModelString,
+        modelResult.data.coderWire
+      );
       // Capability lookups must see the RAW coder identity: name-based
       // canonicalization can rewrite a cross-typed instance (coder:openai/x
       // with type anthropic) to openai:x, hiding the instance metadata that
@@ -1221,7 +1272,7 @@ export class AIService extends EventEmitter {
       // mux-gateway:origin/x would otherwise leak through unresolved).
       const capabilityModelString = resolveModelForMetadata(
         modelString.startsWith("coder:") ? modelString : canonicalModelString,
-        this.providerService.getConfig()
+        requestProvidersConfig
       );
       // Provider-specific tool assembly keys on the WIRE identity of the
       // EFFECTIVE route: raw coder:<instance>/<model> strings parse as
@@ -2505,10 +2556,7 @@ export class AIService extends EventEmitter {
         mcpWarningPrefix = `[Warning: ${mcpStats.failedServerCount} MCP server(s) failed to start: ${failedNames}. Tools from these servers are unavailable. Check MCP server configuration in Settings.]\n\n`;
         systemMessage = `${mcpWarningPrefix}${systemMessage}`;
         // Keep context-size estimation accurate after mutating the system prompt.
-        const metadataModel = resolveModelForMetadata(
-          modelString,
-          this.providerService.getConfig()
-        );
+        const metadataModel = resolveModelForMetadata(modelString, requestProvidersConfig);
         const tokenizer = await getTokenizerForModel(modelString, metadataModel);
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
       }
@@ -2546,7 +2594,7 @@ export class AIService extends EventEmitter {
         providerForMessages: wireProviderName,
         effectiveThinkingLevel,
         modelString,
-        providersConfig: this.providerService.getConfig(),
+        providersConfig: requestProvidersConfig,
         anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
         workspaceId,
       });
@@ -2639,7 +2687,7 @@ export class AIService extends EventEmitter {
         effectiveMuxProviderOptions,
         workspaceId,
         truncationMode,
-        this.providerService.getConfig(),
+        requestProvidersConfig,
         routeProvider,
         promptCacheScope,
         reasoningMode
@@ -2655,7 +2703,7 @@ export class AIService extends EventEmitter {
         modelString,
         effectiveMuxProviderOptions,
         workspaceId,
-        this.providerService.getConfig(),
+        requestProvidersConfig,
         routeProvider
       );
 
@@ -2674,10 +2722,12 @@ export class AIService extends EventEmitter {
       const resolveOverridesIdentity = (
         rawModelString: string,
         canonical: string,
-        canonicalProvider: string
+        canonicalProvider: string,
+        // The request's pinned snapshot (main or fallback) — never a fresh
+        // read, so the override identity matches the created model's wire.
+        currentProvidersConfig: ReturnType<ProviderService["getConfig"]>
       ): { providerName: string; modelString: string; coderDerived: boolean } => {
         if (rawModelString.startsWith("coder:")) {
-          const currentProvidersConfig = this.providerService.getConfig();
           const metadataCanonical = resolveCoderGatewayMetadataModel(
             rawModelString,
             currentProvidersConfig
@@ -2719,7 +2769,8 @@ export class AIService extends EventEmitter {
       const overridesIdentity = resolveOverridesIdentity(
         modelString,
         canonicalModelString,
-        canonicalProviderName
+        canonicalProviderName,
+        requestProvidersConfig
       );
       const resolvedOverrides = resolveModelParameterOverrides(
         providersConfig,
@@ -2785,7 +2836,7 @@ export class AIService extends EventEmitter {
       // to the model default so clamping never loosens below policy.
       const minThinkingLevel =
         providedMinThinkingLevel ??
-        resolveMinimumThinkingLevel(modelString, undefined, this.providerService.getConfig());
+        resolveMinimumThinkingLevel(modelString, undefined, requestProvidersConfig);
       // Rebuilds provider options for a new level using the exact same pipeline
       // as the initial build (policy clamp → resolveEffectiveThinkingLevel →
       // buildProviderOptions → providers.jsonc extras merge). Consumed by
@@ -2798,12 +2849,12 @@ export class AIService extends EventEmitter {
           modelString,
           level,
           minThinkingLevel,
-          this.providerService.getConfig()
+          requestProvidersConfig
         );
         const effective = resolveEffectiveThinkingLevel(
           modelString,
           clamped,
-          this.providerService.getConfig()
+          requestProvidersConfig
         );
         if (effective === currentEffectiveLevelRef.current) {
           return null;
@@ -2827,7 +2878,7 @@ export class AIService extends EventEmitter {
           effectiveMuxProviderOptions,
           workspaceId,
           truncationMode,
-          this.providerService.getConfig(),
+          requestProvidersConfig,
           routeProvider,
           promptCacheScope,
           reasoningMode
@@ -2997,6 +3048,13 @@ export class AIService extends EventEmitter {
                   return Err(formatSendMessageError(nextModelResult.error).message);
                 }
                 const next = nextModelResult.data;
+                // Same single-snapshot rule as the main path, pinned to the
+                // FALLBACK model's factory-resolved wire.
+                const nextProvidersConfig = pinCoderWireProvidersConfig(
+                  this.providerService.getConfig(),
+                  next.effectiveModelString,
+                  next.coderWire
+                );
                 const nextToolsIdentity = resolveToolsIdentity(
                   nextModelString,
                   next.effectiveModelString,
@@ -3025,7 +3083,7 @@ export class AIService extends EventEmitter {
                     nextModelString.startsWith("coder:")
                       ? nextModelString
                       : next.canonicalModelString,
-                    this.providerService.getConfig()
+                    nextProvidersConfig
                   );
                   const nextAllTools = await getToolsForModel(
                     // Wire identity, mirroring the main path: provider-specific
@@ -3144,7 +3202,7 @@ export class AIService extends EventEmitter {
                     // direct-provider string, hiding the instance metadata
                     // from cache/option/header builders.
                     modelString: nextModelString,
-                    providersConfig: this.providerService.getConfig(),
+                    providersConfig: nextProvidersConfig,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
                     workspaceId,
                   });
@@ -3157,7 +3215,7 @@ export class AIService extends EventEmitter {
                     effectiveMuxProviderOptions,
                     workspaceId,
                     truncationMode,
-                    this.providerService.getConfig(),
+                    nextProvidersConfig,
                     next.routeProvider,
                     promptCacheScope,
                     reasoningMode
@@ -3169,7 +3227,7 @@ export class AIService extends EventEmitter {
                     nextModelString,
                     effectiveMuxProviderOptions,
                     workspaceId,
-                    this.providerService.getConfig(),
+                    nextProvidersConfig,
                     next.routeProvider
                   );
                   if (pendingRunMetadataId != null) {
@@ -3186,7 +3244,8 @@ export class AIService extends EventEmitter {
                   const nextOverridesIdentity = resolveOverridesIdentity(
                     nextModelString,
                     next.canonicalModelString,
-                    next.canonicalProviderName
+                    next.canonicalProviderName,
+                    nextProvidersConfig
                   );
                   const nextOverrides = resolveModelParameterOverrides(
                     this.config.loadProvidersConfig(),
@@ -3236,12 +3295,12 @@ export class AIService extends EventEmitter {
                         nextModelString,
                         level,
                         nextMinThinkingLevel,
-                        this.providerService.getConfig()
+                        nextProvidersConfig
                       );
                       const effective = resolveEffectiveThinkingLevel(
                         nextModelString,
                         clamped,
-                        this.providerService.getConfig()
+                        nextProvidersConfig
                       );
                       if (effective === nextCurrentEffectiveLevelRef.current) {
                         return null;
@@ -3263,7 +3322,7 @@ export class AIService extends EventEmitter {
                         effectiveMuxProviderOptions,
                         workspaceId,
                         truncationMode,
-                        this.providerService.getConfig(),
+                        nextProvidersConfig,
                         next.routeProvider,
                         promptCacheScope,
                         reasoningMode

@@ -6,7 +6,9 @@ import {
   getTotalCost,
   type ChatUsageDisplay,
 } from "@/common/utils/tokens/usageAggregator";
-import { normalizeToCanonical, formatModelStringForDisplay } from "@/common/utils/ai/models";
+import { formatModelStringForDisplay } from "@/common/utils/ai/models";
+import { normalizeUsageModelKey } from "@/common/utils/providers/modelEntries";
+import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { usePersistedState } from "@/browser/hooks/usePersistedState";
 import { ToggleGroup, type ToggleOption } from "@/browser/components/ToggleGroup/ToggleGroup";
 import { TOKEN_COMPONENT_COLORS, formatTokens } from "@/common/utils/tokens/tokenMeterUtils";
@@ -26,6 +28,7 @@ interface CostsTabProps {
 
 const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
   const usage = useWorkspaceUsage(workspaceId);
+  const { config: providersConfig } = useProvidersConfig();
   const [viewMode, setViewMode] = usePersistedState<ViewMode>("costsTab:viewMode", "session");
 
   // Session usage for cost calculation
@@ -44,7 +47,12 @@ const CostsTabComponent: React.FC<CostsTabProps> = ({ workspaceId }) => {
     const merged = new Map<string, ChatUsageDisplay>(Object.entries(usage.sessionByModel ?? {}));
     const liveModel = usage.liveCostUsage?.model;
     if (usage.liveCostUsage && liveModel) {
-      const key = normalizeToCanonical(liveModel);
+      // Same ledger key as the backend and WorkspaceStore deltas
+      // (normalizeUsageModelKey): live usage for a cross-typed Coder instance
+      // carries the raw coder:<instance>/<model> identity, and the
+      // name-canonical form (openai:<claude>) would split it into a second,
+      // wrongly attributed row next to the session's anthropic:<claude> row.
+      const key = normalizeUsageModelKey(liveModel, providersConfig);
       const existing = merged.get(key);
       merged.set(
         key,
