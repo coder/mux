@@ -1033,6 +1033,45 @@ describe("MCPServerManager", () => {
     expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
   });
 
+  test("blocks prompt invocation when trust is revoked during a same-signature refresh", async () => {
+    const workspaceId = "ws-cached-trust";
+    // Arm after cold start so revocation lands inside the prompt refresh's
+    // config derivation, where the same-signature fast path returns cached servers.
+    let revokeOnNextTrustedList = false;
+    configService.listServers = mock((_projectPath: string, trusted: boolean) => {
+      if (revokeOnNextTrustedList && trusted) {
+        revokeOnNextTrustedList = false;
+        manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+      }
+      return Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      );
+    });
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { getPrompt }],
+          ["stable", { getPrompt }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+    revokeOnNextTrustedList = true;
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
+      "is disabled"
+    );
+    expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
+  });
+
   test("blocks prompt invocation on a server disabled during cold startup", async () => {
     const workspaceId = "ws-mid-startup-disable";
     configService.listServers = mock(() =>

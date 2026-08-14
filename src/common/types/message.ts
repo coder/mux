@@ -350,6 +350,18 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
   return Array.isArray(value) ? value.filter(isAgentSkillReference) : [];
 }
 
+function isMcpPromptSnapshotWithInvokingId(
+  value: unknown
+): value is { serverName: string; promptName: string; invokingMessageId: string } {
+  if (value === null || typeof value !== "object") return false;
+  const snapshot = value as Partial<NonNullable<MuxMetadata["mcpPromptSnapshot"]>>;
+  return (
+    typeof snapshot.serverName === "string" &&
+    typeof snapshot.promptName === "string" &&
+    typeof snapshot.invokingMessageId === "string"
+  );
+}
+
 /**
  * Drops MCP prompt snapshots orphaned by a crash between snapshot persistence
  * and the user-row append: a snapshot survives only when its invoking user row
@@ -358,7 +370,7 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
   const promptRefKeysByMessageId = new Map<string, Set<string>>();
   for (const message of messages) {
-    if (message.role !== "user" || message.metadata?.mcpPromptSnapshot) continue;
+    if (message.role !== "user" || message.metadata?.mcpPromptSnapshot !== undefined) continue;
     const refs = sanitizeMcpPromptRefs(message.metadata?.muxMetadata?.mcpPromptRefs);
     if (refs.length === 0) continue;
     promptRefKeysByMessageId.set(
@@ -367,9 +379,12 @@ export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMes
     );
   }
   return messages.filter((message) => {
-    const snapshot = message.metadata?.mcpPromptSnapshot;
-    if (!snapshot) return true;
-    if (snapshot.invokingMessageId === undefined) return false;
+    // Raw chat.jsonl rows bypass the oRPC .catch(undefined) sanitizer, so a
+    // present-but-malformed snapshot field (e.g. null) marks a corrupted
+    // expansion row: exclude it from provider requests.
+    const snapshot: unknown = message.metadata?.mcpPromptSnapshot;
+    if (snapshot === undefined) return true;
+    if (!isMcpPromptSnapshotWithInvokingId(snapshot)) return false;
     const invokingRefKeys = promptRefKeysByMessageId.get(snapshot.invokingMessageId);
     return (
       invokingRefKeys?.has(getMcpPromptReferenceKey(snapshot.serverName, snapshot.promptName)) ===

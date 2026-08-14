@@ -77,6 +77,29 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
     expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-1"]);
   });
 
+  test("drops raw rows whose snapshot field is present but malformed", () => {
+    // Raw chat.jsonl rows bypass the oRPC sanitizer, so the request-side
+    // filter must treat a present-but-invalid field as corruption.
+    const corruptRow = (id: string, snapshotValue: unknown): MuxMessage => {
+      const message = createMuxMessage(id, "user", "Expanded review", {
+        historySequence: 0,
+        synthetic: true,
+      });
+      (message.metadata as Record<string, unknown>).mcpPromptSnapshot = snapshotValue;
+      return message;
+    };
+    const messages = [
+      corruptRow("snap-null", null),
+      corruptRow("snap-wrong-shape", { serverName: 42, promptName: "review" }),
+      snapshot("snap-valid", "user-1"),
+      invokingUser("user-1", ["review"]),
+    ];
+    expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual([
+      "snap-valid",
+      "user-1",
+    ]);
+  });
+
   test("keeps multiple snapshots correlated to the same turn", () => {
     const messages = [
       snapshot("snap-1", "user-1", "review"),

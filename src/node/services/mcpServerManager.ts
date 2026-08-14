@@ -1474,6 +1474,11 @@ export class MCPServerManager {
         await this.refreshModernInstanceTools(existing.instances);
       }
 
+      // A trust or settings mutation can land while getAllServers() runs above;
+      // re-derive enablement so this cached return cannot leave a revoked
+      // repo-local server invocable.
+      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, existing);
+
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
         stats: existing.stats,
@@ -1626,6 +1631,9 @@ export class MCPServerManager {
           if (refreshToolCatalogs) {
             await this.refreshModernInstanceTools(current.instances);
           }
+          // Same cached-return hazard as the fast path above: a mutation may
+          // have landed after the concurrent starter's repair ran.
+          await this.repairEnablementAfterConcurrentMutation(workspaceId, options, current);
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,

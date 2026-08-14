@@ -283,6 +283,10 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
       return tools;
     },
     prompts: async (options) => {
+      // Cursorless listPrompts() aggregates every prompts/list page inside the
+      // SDK (capped by ClientOptions.listMaxPages), passing these options to
+      // each page request; tests/ipc/config/mcpPrompts.test.ts pins page-two
+      // coverage against a paginating fixture.
       const result = await client.listPrompts(undefined, {
         timeout: PROMPT_LIST_TIMEOUT_MS,
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
