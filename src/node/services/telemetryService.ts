@@ -144,6 +144,9 @@ export class TelemetryService {
   private readonly isDisabledByConfig?: () => boolean;
   private initInFlight: Promise<void> | null = null;
   private configApplyChain: Promise<void> = Promise.resolve();
+  /** Rate limit for capture()'s lazy cross-process re-enable initialization. */
+  private static readonly LAZY_INIT_RETRY_MS = 30_000;
+  private lastLazyInitAttemptMs = 0;
 
   /**
    * Check if telemetry is enabled.
@@ -328,12 +331,22 @@ export class TelemetryService {
     // the desktop app) must stop capturing when the user opts out in the
     // other process. Event volume is low (discrete user actions), so the
     // config read is acceptable here for a privacy control.
-    if (
-      isTelemetryDisabledByEnv(process.env) ||
-      this.isDisabledByConfig?.() === true ||
-      !this.client ||
-      !this.distinctId
-    ) {
+    if (isTelemetryDisabledByEnv(process.env) || this.isDisabledByConfig?.() === true) {
+      return;
+    }
+
+    if (!this.client || !this.distinctId) {
+      // Cross-process re-enable: this process may have started while the
+      // shared config said opted-out (client never created) and another
+      // process has since re-enabled. Kick a lazy, serialized initialize —
+      // rate-limited because every enablement gate (dev mode, packaging)
+      // still applies and may legitimately keep the client null. The current
+      // event is dropped; the process converges for subsequent ones.
+      const now = Date.now();
+      if (now - this.lastLazyInitAttemptMs > TelemetryService.LAZY_INIT_RETRY_MS) {
+        this.lastLazyInitAttemptMs = now;
+        void this.initialize().catch(() => undefined);
+      }
       return;
     }
 

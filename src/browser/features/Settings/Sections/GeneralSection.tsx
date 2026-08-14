@@ -515,6 +515,15 @@ export function GeneralSection() {
       });
   };
 
+  // An API replacement (browser-mode reconnect) obsoletes in-flight telemetry
+  // writes made through the previous client: invalidate their pending intents
+  // so a late rejection from the old client can't run failure reconciliation
+  // against state the new client has since confirmed. The subscription effect
+  // below re-establishes on the new client and re-syncs on connect.
+  useEffect(() => {
+    telemetryEnabledIntentRef.current++;
+  }, [api]);
+
   // Cross-client telemetry sync: another window/tab (or the API server) can
   // flip the toggle; consume the config-change stream so this pane's switch
   // tracks the true collection state instead of showing a stale value.
