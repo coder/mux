@@ -3175,6 +3175,12 @@ export class AgentSession {
       }
     }
 
+    if (shouldPersistTurnSnapshots && mcpPromptSnapshotMessages.length > 0) {
+      for (const snapshotMessage of mcpPromptSnapshotMessages) {
+        this.emitChatEvent({ ...snapshotMessage, type: "message" });
+      }
+    }
+
     // When on-send compaction triggers, the original user message is NOT emitted now —
     // it was not persisted and will be dispatched (persisted + emitted) as a follow-up
     // after compaction completes. Emitting it here would cause a duplicate in the

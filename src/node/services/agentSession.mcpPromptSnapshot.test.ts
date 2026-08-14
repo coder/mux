@@ -30,6 +30,7 @@ describe("AgentSession MCP prompt snapshots", () => {
     const harness = await createAgentSessionHarness({
       workspaceId: "workspace",
       mcpServerManager: { getPrompt } as unknown as MCPServerManager,
+      captureEvents: true,
     });
 
     try {
@@ -61,6 +62,16 @@ describe("AgentSession MCP prompt snapshots", () => {
         { path: "src" },
         undefined
       );
+
+      // The live transcript must receive the snapshot before the user row,
+      // not only after a history replay.
+      const emittedIds = harness.events
+        .filter((event) => "id" in event)
+        .map((event) => (event as { id: string }).id);
+      const snapshotId = history.data[0]?.id ?? "";
+      const userId = history.data[1]?.id ?? "";
+      expect(emittedIds.indexOf(snapshotId)).toBeGreaterThanOrEqual(0);
+      expect(emittedIds.indexOf(snapshotId)).toBeLessThan(emittedIds.indexOf(userId));
     } finally {
       harness.session.dispose();
       await harness.cleanup();
