@@ -123,6 +123,7 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
+import { ROUTED_SEND_COMPACTION_HEADROOM_PERCENT } from "@/common/constants/ui";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
 import {
   getExplicitGatewayPrefix,
@@ -3083,14 +3084,16 @@ export class AgentSession {
       // `shouldForceCompact` remains a stricter (threshold + buffer) signal for
       // mid-stream forcing where we want to avoid abrupt interruptions too early.
       //
-      // Skill-routed sends compact only when the content genuinely cannot fit
-      // the routed model's window: applying the threshold to the (smaller)
-      // routed window would let a one-off cheap-skill invocation force an
-      // unrequested, irreversible, workspace-wide compaction of a session far
-      // under its own model's limit.
+      // Skill-routed sends compact only when the content genuinely risks
+      // overrunning the routed model's window: applying the threshold to the
+      // (smaller) routed window would let a one-off cheap-skill invocation
+      // force an unrequested, irreversible, workspace-wide compaction of a
+      // session far under its own model's limit. The headroom accounts for
+      // the pending turn (new message, attachments, skill snapshot), which
+      // the recorded usage doesn't include yet.
       const shouldCompactBeforeSend =
         skillModelOverride != null
-          ? compactionResult.usagePercentage >= 100
+          ? compactionResult.usagePercentage >= 100 - ROUTED_SEND_COMPACTION_HEADROOM_PERCENT
           : compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
       if (shouldCompactBeforeSend) {
         const followUpFileParts = effectiveFileParts?.map((part) => ({
