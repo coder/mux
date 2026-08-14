@@ -1025,6 +1025,17 @@ export class ProviderModelFactory {
       agentInitiated?: boolean;
       workspaceId?: string;
       routeContext?: RouteContext;
+      /**
+       * Providers-config snapshot to create the model from. Passed by
+       * resolveAndCreateModel so routing, the returned coderWire snapshot,
+       * and SDK model creation all read ONE config: another Mux process can
+       * rewrite providers.jsonc between those steps (e.g. an authoritative
+       * catalog refresh changing an instance's type), and a fresh reload
+       * here would create a model on the new wire while the caller
+       * assembles tools/options for the old one. Direct createModel callers
+       * omit it and keep loading the current config.
+       */
+      providersConfig?: ProvidersConfig;
     }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     const result = await this._createModelCore(modelString, muxProviderOptions, opts);
@@ -1056,7 +1067,11 @@ export class ProviderModelFactory {
   private async _createModelCore(
     modelString: string,
     muxProviderOptions?: MuxProviderOptions,
-    opts?: { agentInitiated?: boolean; routeContext?: RouteContext }
+    opts?: {
+      agentInitiated?: boolean;
+      routeContext?: RouteContext;
+      providersConfig?: ProvidersConfig;
+    }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     try {
       // Route resolution is centralized here so every caller gets identical,
@@ -1066,7 +1081,8 @@ export class ProviderModelFactory {
       modelString = this.resolveGatewayModelString(
         modelString,
         opts?.routeContext,
-        explicitGateway
+        explicitGateway,
+        opts?.providersConfig
       );
 
       // Parse model string (format: "provider:model-id")
@@ -1079,8 +1095,10 @@ export class ProviderModelFactory {
         });
       }
 
-      // Load providers configuration - the ONLY source of truth
-      const providersConfig = this.config.loadProvidersConfig() ?? {};
+      // Load providers configuration - the ONLY source of truth. A caller's
+      // snapshot (resolveAndCreateModel) wins so the created model matches
+      // the wire/route identity that snapshot produced (see createModel).
+      const providersConfig = opts?.providersConfig ?? this.config.loadProvidersConfig() ?? {};
       const providerConfigEntry = providersConfig[providerName];
       const providerIsBuiltIn = isBuiltInProvider(providerName);
       const providerIsCustomOpenAICompatible =
@@ -2310,7 +2328,10 @@ export class ProviderModelFactory {
         ? coderMetadataCanonical
         : canonicalModelString;
 
-    const routeContext = this.resolveModelRoute(routeSeedModelString);
+    const routeContext = this.resolveModelRoute(
+      routeSeedModelString,
+      providersConfigForShadowCheck
+    );
     if (rawCoderGatewayModelId != null) {
       const appConfig = this.config.loadConfigOrDefault();
       const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(
@@ -2346,14 +2367,16 @@ export class ProviderModelFactory {
         effectiveModelString = this.resolveGatewayModelString(
           routeSeedModelString,
           routeContext,
-          undefined
+          undefined,
+          providersConfigForShadowCheck
         );
       }
     } else {
       effectiveModelString = this.resolveGatewayModelString(
         effectiveModelString,
         routeContext,
-        explicitGateway
+        explicitGateway,
+        providersConfigForShadowCheck
       );
     }
 
@@ -2415,6 +2438,11 @@ export class ProviderModelFactory {
     const modelResult = await this.createModel(effectiveModelString, muxProviderOptions, {
       ...opts,
       routeContext,
+      // ONE config snapshot for the whole resolve+create: the wire snapshot
+      // above and the SDK model must come from the same providers.jsonc read,
+      // or a concurrent instance-type change makes them describe different
+      // wires.
+      providersConfig: providersConfigForShadowCheck,
     });
     if (!modelResult.success) {
       return Err(modelResult.error);
@@ -2433,9 +2461,15 @@ export class ProviderModelFactory {
     });
   }
 
-  private resolveModelRoute(canonicalModel: string): RouteContext {
+  private resolveModelRoute(
+    canonicalModel: string,
+    providersConfigSnapshot?: ProvidersConfig
+  ): RouteContext {
     const config = this.config.loadConfigOrDefault();
-    const providersConfig = this.config.loadProvidersConfig?.() ?? {};
+    // resolveAndCreateModel passes its snapshot so route availability,
+    // accessibility, the wire snapshot, and model creation all read one
+    // providers.jsonc state (see createModel's providersConfig option).
+    const providersConfig = providersConfigSnapshot ?? this.config.loadProvidersConfig?.() ?? {};
     const isGatewayModelAccessible = createGatewayModelAccessibilityChecker(
       providersConfig,
       this.policyService
@@ -2462,7 +2496,8 @@ export class ProviderModelFactory {
   resolveGatewayModelString(
     modelString: string,
     modelKeyOrRouteContext?: string | RouteContext,
-    explicitGatewayOrLegacyFlag?: ProviderName | boolean
+    explicitGatewayOrLegacyFlag?: ProviderName | boolean,
+    providersConfigSnapshot?: ProvidersConfig
   ): string {
     // Legacy callers may still pass boolean true to mean an explicit mux-gateway request.
     const explicitGateway: ProviderName | undefined =
@@ -2472,7 +2507,9 @@ export class ProviderModelFactory {
           ? explicitGatewayOrLegacyFlag
           : undefined;
 
-    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    // Same single-snapshot rule as resolveModelRoute: callers holding one
+    // providers.jsonc read pass it so routing cannot diverge from it.
+    const providersConfig = providersConfigSnapshot ?? this.config.loadProvidersConfig() ?? {};
 
     // Shadow check on the RAW prefix, BEFORE gateway canonicalization: a
     // custom OpenAI-compatible provider can shadow a built-in gateway id

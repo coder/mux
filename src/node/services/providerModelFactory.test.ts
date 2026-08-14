@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { generateText, type Tool } from "ai";
 import { xai } from "@ai-sdk/xai";
 import { writeFile } from "node:fs/promises";
@@ -2338,6 +2338,52 @@ describe("ProviderModelFactory Coder", () => {
       expect(result.data.effectiveModelString).toBe("anthropic:claude-sonnet-4-5");
       expect(result.data.routeProvider).toBe("anthropic");
       expect(result.data.wireProviderName).toBe("anthropic");
+    });
+  });
+
+  it("creates the SDK model from the same config snapshot as the wire report", async () => {
+    await withTempConfig(async (config, factory) => {
+      // Another Mux process rewrites providers.jsonc between route/wire
+      // resolution and model creation (an authoritative refresh changing the
+      // instance's type). The created SDK model must follow the SAME
+      // snapshot as the returned coderWire — a fresh reload inside
+      // createModel would produce an OpenAI-chat model while the caller
+      // assembles Anthropic tools/options from the reported wire.
+      saveCoderConfig(config, {
+        discoveredProviders: [{ name: "prod", type: "anthropic" }],
+        models: ["prod/claude-opus-4-5"],
+        discoveredModels: ["prod/claude-opus-4-5"],
+      });
+      factory.coderOauthService = stubCoderOauthService();
+
+      const realLoad = config.loadProvidersConfig.bind(config);
+      let loads = 0;
+      const loadSpy = spyOn(config, "loadProvidersConfig").mockImplementation(() => {
+        loads++;
+        // realLoad parses a fresh object per call, so mutating it here never
+        // leaks into other reads.
+        const current = realLoad();
+        if (loads > 1 && current?.coder) {
+          // Every read after resolveAndCreateModel's snapshot sees the
+          // concurrently rewritten type.
+          current.coder.discoveredProviders = [{ name: "prod", type: "openai-compat" }];
+        }
+        return current;
+      });
+      try {
+        const result = await factory.resolveAndCreateModel("coder:prod/claude-opus-4-5", "off");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+        expect(loads).toBeGreaterThan(1);
+        expect(result.data.wireProviderName).toBe("anthropic");
+        expect(result.data.coderWire?.providerType).toBe("anthropic");
+        // The SDK model matches the reported wire, not the rewritten config.
+        expect((result.data.model as { provider?: unknown }).provider).toBe("anthropic.messages");
+      } finally {
+        loadSpy.mockRestore();
+      }
     });
   });
 
