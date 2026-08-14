@@ -65,6 +65,8 @@ import type {
 } from "@/common/orpc/schemas/memory";
 import { memoryLogicalKey } from "@/node/services/memoryMeta";
 import { secretsToRecord } from "@/common/types/secrets";
+import { isMultiProject } from "@/common/utils/multiProject";
+import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import { roundToBase2 } from "@/common/telemetry/utils";
 import { createAsyncEventQueue } from "@/common/utils/asyncEventIterator";
 import { withQueueHeartbeat } from "@/common/utils/withQueueHeartbeat";
@@ -5584,10 +5586,16 @@ export const router = (authToken?: string) => {
               if (!metadataResult.success) throw new Error(metadataResult.error);
               const metadata = metadataResult.data;
               const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-              const [overrides, projectSecrets] = await Promise.all([
-                context.workspaceMcpOverridesService.getOverridesForWorkspace(input.workspaceId),
-                secretsToRecord(context.config.getEffectiveSecrets(metadata.projectPath)),
-              ]);
+              const overrides = await context.workspaceMcpOverridesService.getOverridesForWorkspace(
+                input.workspaceId
+              );
+              // Match streamMessage and the prompt-invocation resolver: multi-project
+              // workspaces need every project's secrets, not just the primary's.
+              const projectSecrets = await secretsToRecord(
+                isMultiProject(metadata)
+                  ? mergeMultiProjectSecrets(metadata, context.config)
+                  : context.config.getEffectiveSecrets(metadata.projectPath)
+              );
               const agentPlugins = resolveAgentPluginsMcpContext(metadata, workspacePath);
               return context.mcpServerManager.getPromptsForWorkspace({
                 workspaceId: input.workspaceId,
