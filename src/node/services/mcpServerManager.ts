@@ -47,6 +47,7 @@ import {
 import { getErrorMessage } from "@/common/utils/errors";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
 import { raceWithAbortAndTimeout } from "@/node/utils/concurrency/withTimeout";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
 
 const TEST_TIMEOUT_MS = 10_000;
 const IDLE_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
@@ -1715,6 +1716,23 @@ export class MCPServerManager {
         workspaceId,
         error: getErrorMessage(error),
       });
+    }
+  }
+
+  /**
+   * Sync a project trust change into recorded workspace request options.
+   * getPrompt refreshes from those options before invoking, so a revoked
+   * project must not keep serving repo-local prompts from a stale
+   * trusted=true snapshot. Callers pass every affected project path (the
+   * trust owner plus children inheriting via parentProjectPath); scratch
+   * workspaces are untouched because their paths never match.
+   */
+  applyProjectTrust(projectPaths: string[], trusted: boolean): void {
+    const affected = new Set(projectPaths.map((projectPath) => stripTrailingSlashes(projectPath)));
+    for (const [workspaceId, options] of this.lastWorkspaceRequestOptions) {
+      if (!affected.has(stripTrailingSlashes(options.projectPath))) continue;
+      if ((options.trusted ?? false) === trusted) continue;
+      this.lastWorkspaceRequestOptions.set(workspaceId, { ...options, trusted });
     }
   }
 

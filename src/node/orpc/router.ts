@@ -3310,8 +3310,8 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.setTrust.input)
         .output(schemas.projects.setTrust.output)
         .handler(async ({ context, input }) => {
+          const normalizedPath = stripTrailingSlashes(input.projectPath);
           await context.config.editConfig((config) => {
-            const normalizedPath = stripTrailingSlashes(input.projectPath);
             let project = config.projects.get(normalizedPath);
             if (!project) {
               // Create a minimal project entry so trust can be set before
@@ -3322,6 +3322,18 @@ export const router = (authToken?: string) => {
             project.trusted = input.trusted;
             return config;
           });
+          // Prompt invocation revives servers from recorded request options, so
+          // sync the trust change (owner plus inheriting children) immediately.
+          const affectedPaths = [normalizedPath];
+          for (const [projectPath, project] of context.config.loadConfigOrDefault().projects) {
+            if (
+              project.parentProjectPath !== undefined &&
+              stripTrailingSlashes(project.parentProjectPath) === normalizedPath
+            ) {
+              affectedPaths.push(projectPath);
+            }
+          }
+          context.mcpServerManager.applyProjectTrust(affectedPaths, input.trusted);
         }),
       setDisplayName: t
         .input(schemas.projects.setDisplayName.input)

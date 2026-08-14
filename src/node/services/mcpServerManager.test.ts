@@ -1355,6 +1355,36 @@ describe("MCPServerManager", () => {
     expect(getPrompt).toHaveBeenCalledTimes(1);
   });
 
+  test("applyProjectTrust flips recorded trust so getPrompt refreshes untrusted", async () => {
+    const request = workspaceRequest("workspace", { trusted: true });
+    const otherRequest = workspaceRequest("other-workspace", {
+      projectPath: "/tmp/other-project",
+      trusted: true,
+    });
+    access.lastWorkspaceRequestOptions.set("workspace", request);
+    access.lastWorkspaceRequestOptions.set("other-workspace", otherRequest);
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
+    );
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
+      (options: { workspaceId: string }) => {
+        access.workspaceServers.set(options.workspaceId, {
+          enabledServerNames: new Set(["coder"]),
+          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+        });
+        return Promise.resolve({ tools: {}, stats: cachedStats() });
+      }
+    );
+
+    manager.applyProjectTrust([`${PROJECT_PATH}/`], false);
+    await manager.getPrompt("workspace", "coder", "status", {});
+
+    expect(getToolsSpy).toHaveBeenCalledWith({ ...request, trusted: false });
+    expect(access.lastWorkspaceRequestOptions.get("other-workspace")).toBe(otherRequest);
+    getToolsSpy.mockRestore();
+  });
+
   test("getPrompt rejects promptly when aborted during refresh startup", async () => {
     access.lastWorkspaceRequestOptions.set("workspace", workspaceRequest("workspace"));
     const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(

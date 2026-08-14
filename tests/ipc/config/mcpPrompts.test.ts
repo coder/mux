@@ -1,3 +1,4 @@
+import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { shouldRunIntegrationTests, setupWorkspaceWithoutProvider } from "../setup";
 import { HAIKU_MODEL, readChatHistory, resolveOrpcClient, sendMessageWithModel } from "../helpers";
@@ -112,6 +113,37 @@ describeIntegration("MCP prompts", () => {
       expect(rejected).toBe(true);
       // The bound distinguishes cancellation from the prompt timeout.
       expect(Date.now() - startedAt).toBeLessThan(10_000);
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("revoking project trust blocks cached repo-local prompt invocation", async () => {
+    const { env, workspaceId, tempGitRepo, cleanup } =
+      await setupWorkspaceWithoutProvider("mcp-prompts-trust");
+    env.services.aiService.enableMockMode();
+    const client = resolveOrpcClient(env);
+
+    try {
+      await fs.mkdir(path.join(tempGitRepo, ".mux"), { recursive: true });
+      await fs.writeFile(
+        path.join(tempGitRepo, ".mux", "mcp.jsonc"),
+        JSON.stringify({ servers: { "repo server": { command: MCP_SERVER_COMMAND } } })
+      );
+      await client.projects.setTrust({ projectPath: tempGitRepo, trusted: true });
+
+      const prompts = await client.workspace.mcp.prompts.list({ workspaceId });
+      expect(prompts.some((prompt) => prompt.serverName === "repo server")).toBe(true);
+
+      await client.projects.setTrust({ projectPath: tempGitRepo, trusted: false });
+
+      let rejection: unknown;
+      try {
+        await env.services.mcpServerManager.getPrompt(workspaceId, "repo server", "status", {});
+      } catch (error) {
+        rejection = error;
+      }
+      expect(String(rejection)).toMatch(/disabled|not connected/);
     } finally {
       await cleanup();
     }
