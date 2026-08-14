@@ -607,16 +607,37 @@ describe("AgentListItem", () => {
     expect(rowView.queryByText("Workflow running")).toBeNull();
   });
 
-  test("keeps coordinator streaming copy ahead of the hidden sub-agents summary", () => {
-    mockWorkspaceSidebarState = createWorkspaceSidebarState({ canInterrupt: true });
+  test("shows the hidden sub-agents summary while the coordinator itself streams", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({
+      canInterrupt: true,
+      agentStatus: { emoji: "🔄", message: "Validating and packaging" },
+    });
 
     const { row } = renderWorkspaceItem({
       hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 2, runningSubAgentCount: 2 }),
     });
     const rowView = within(row);
 
-    expect(rowView.getByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeTruthy();
-    expect(rowView.queryByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`)).toBeNull();
+    expect(rowView.getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent).toBe(
+      "2 sub-agents · 2 active"
+    );
+    expect(rowView.queryByTestId(`workspace-status-indicator-${TEST_WORKSPACE_ID}`)).toBeNull();
+    // The row's own streaming state still shows through the green dot.
+    expect(row.querySelector(".bg-content-success")).toBeTruthy();
+  });
+
+  test("shows the hidden sub-agents summary over an armed bash monitor", () => {
+    mockWorkspaceSidebarState = createWorkspaceSidebarState({ activeBashMonitorCount: 1 });
+
+    const { row } = renderWorkspaceItem({
+      hiddenSubAgentsSummary: makeHiddenSummary({ subAgentCount: 2, runningSubAgentCount: 2 }),
+    });
+    const rowView = within(row);
+
+    expect(rowView.getByTestId(`workspace-hidden-subagents-${TEST_WORKSPACE_ID}`).textContent).toBe(
+      "2 sub-agents · 2 active"
+    );
+    expect(rowView.queryByText("Watching background bash")).toBeNull();
   });
 
   test("distinguishes queued from running hidden sub-agents", () => {

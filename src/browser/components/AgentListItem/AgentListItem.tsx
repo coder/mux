@@ -764,15 +764,11 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
         activeWorkflowRunIds ?? EMPTY_WORKFLOW_RUN_IDS
       )
     : null;
-  // The summary supersedes the plain delegated/workflow lines; questions,
-  // streaming, deletion, an armed bash monitor, and errors still win.
+  // With sub-agent rows hidden, the summary outranks the coordinator's own
+  // streaming/todo/bash-monitor status text (the status dot still shows own
+  // work). Questions, deletion, and errors still win.
   const shouldShowHiddenSubAgentsStatus =
-    hiddenSubAgentsPresentation != null &&
-    !awaitingUserQuestion &&
-    displayStreamingStatusPhase === null &&
-    !isRemoving &&
-    !shouldShowBashMonitorStatus &&
-    !hasError;
+    hiddenSubAgentsPresentation != null && !awaitingUserQuestion && !isRemoving && !hasError;
   const visualState = getVisualState({
     awaitingUserQuestion,
     isInitializing,
