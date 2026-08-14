@@ -1598,15 +1598,20 @@ export class StreamManager extends EventEmitter {
       return;
     }
     const workspaceLog = this.getWorkspaceLogger(workspaceId, streamInfo);
+    // Ledger key for Coder identities: the stream's PINNED record-time
+    // metadata identity (streamInfo.metadataModel), NOT a live re-resolution
+    // of the raw model. A catalog refresh can remove/retag the instance while
+    // the turn is active; re-resolving here would key the ledger differently
+    // from the pricing identity createDisplayUsage just used, and repricing
+    // would later change or strip the row. Non-Coder models keep the
+    // canonical key: their metadata identity can be a mappedToModel alias
+    // target — a pricing identity, deliberately not the ledger bucket.
+    const ledgerModel =
+      model.startsWith("coder:") && streamInfo?.metadataModel
+        ? streamInfo.metadataModel
+        : normalizeUsageModelKey(model, this.getProvidersConfig());
     try {
-      await this.sessionUsageService.recordUsage(
-        workspaceId as string,
-        // Coder identities resolve to their record-time metadata identity so
-        // ledger keys stay priceable after instance metadata changes (see
-        // normalizeUsageModelKey).
-        normalizeUsageModelKey(model, this.getProvidersConfig()),
-        messageUsage
-      );
+      await this.sessionUsageService.recordUsage(workspaceId as string, ledgerModel, messageUsage);
     } catch (error) {
       (logLevel === "error" ? workspaceLog.error : workspaceLog.warn)(logMessage, { error });
     }

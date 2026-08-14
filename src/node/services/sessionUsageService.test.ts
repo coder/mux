@@ -788,6 +788,44 @@ describe("SessionUsageService", () => {
       );
     });
 
+    it("keys recovered Coder usage by the persisted metadata model", async () => {
+      // Recovery runs AFTER mutable instance metadata may have changed: here
+      // the custom instance is gone from providers config entirely, so
+      // re-resolving the raw coder: model would produce an unresolvable raw
+      // key that repricing later strips. The persisted record-time
+      // metadataModel must key the bucket instead — for the assistant usage
+      // AND the tool usage.
+      const workspaceId = "coder-metadata-model-rebuild";
+      const rawModel = "coder:prod-anthropic/claude-opus-4-5";
+      const metadataModel = "anthropic:claude-opus-4-5";
+      const toolUsage = {
+        toolName: "advisor",
+        toolCallId: "tool-call-coder-1",
+        timestamp: Date.now(),
+        model: rawModel,
+        metadataModel,
+        usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+      };
+      const assistantMessage = createMuxMessage("msg-coder-rebuild", "assistant", "Hello", {
+        historySequence: 1,
+        timestamp: Date.now(),
+        model: rawModel,
+        metadataModel,
+        usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      });
+      Object.assign((assistantMessage.metadata ??= {}), {
+        toolModelUsages: [toolUsage],
+      });
+
+      await service.rebuildFromMessages(workspaceId, [assistantMessage]);
+
+      const result = await service.getSessionUsage(workspaceId);
+      expect(result).toBeDefined();
+      expect(Object.keys(result?.byModel ?? {})).toEqual([metadataModel]);
+      expect(result?.byModel[metadataModel]?.input.tokens).toBe(130);
+      expect(result?.lastRequest?.model).toBe(metadataModel);
+    });
+
     it("should skip malformed tool model usage entries during rebuild", async () => {
       const workspaceId = "tool-usage-rebuild-skips-malformed";
       const sameModel = "openai:gpt-4";

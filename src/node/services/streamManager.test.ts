@@ -706,6 +706,48 @@ describe("StreamManager - refusal usage attribution", () => {
     expect(recordedKeys).toEqual(["anthropic:claude-opus-4-5"]);
   });
 
+  test("ledger key uses the stream's pinned metadata identity when instance metadata is gone", async () => {
+    // A catalog refresh can remove/retag the instance while the turn is
+    // active: the LIVE config no longer resolves coder:prod/<claude>, so a
+    // live re-resolution would key the ledger under the raw string while
+    // createDisplayUsage priced with the pinned metadataModel — repricing
+    // would then strip the row. The stream's record-time metadataModel must
+    // key the ledger instead.
+    const rawModel = "coder:prod/claude-opus-4-5";
+    const recordedKeys: string[] = [];
+    const sessionUsageService = {
+      recordUsage: (_workspaceId: string, model: string) => {
+        recordedKeys.push(model);
+        return Promise.resolve();
+      },
+    } as unknown as SessionUsageService;
+
+    // Live config has NO metadata for the instance (removed mid-turn).
+    const streamManager = new StreamManager(historyService, sessionUsageService, () => ({}));
+    const recordSessionUsage = Reflect.get(streamManager, "recordSessionUsage") as (
+      workspaceId: string,
+      model: string,
+      usage: Record<string, number>,
+      providerMetadata: undefined,
+      logMessage: string,
+      logLevel: "warn" | "error",
+      streamInfo?: Record<string, unknown>
+    ) => Promise<void>;
+    expect(typeof recordSessionUsage).toBe("function");
+
+    await recordSessionUsage.call(
+      streamManager,
+      "ws-pinned-metadata",
+      rawModel,
+      { inputTokens: 100, outputTokens: 10, totalTokens: 110 },
+      undefined,
+      "test",
+      "warn",
+      { metadataModel: "anthropic:claude-opus-4-5" }
+    );
+    expect(recordedKeys).toEqual(["anthropic:claude-opus-4-5"]);
+  });
+
   test("message metadata preserves the raw Coder identity", () => {
     // WorkspaceStore live deltas and SessionUsageService history rebuilds
     // re-key usage from metadata.model via normalizeUsageModelKey, which

@@ -583,8 +583,25 @@ export class SessionUsageService {
     const result: SessionUsageFile = this.createEmptyUsageFile();
     let lastAssistantUsage: { model: string; usage: ChatUsageDisplay } | undefined;
 
-    const mergeUsageForModel = (rawModel: string, usage: ChatUsageDisplay): void => {
-      const model = normalizeUsageModelKey(rawModel, this.getProvidersConfig());
+    // Recovery bucket key: rebuilds run AFTER mutable Coder instance metadata
+    // may have changed (provider removed, retagged), so a raw coder: history
+    // model can no longer be re-resolved against the current config. The
+    // history already persists the record-time identity (metadataModel) and
+    // prices with it below — key the bucket with it too, or the raw/incorrect
+    // key gets repriced as unknown and its costs stripped. Non-Coder models
+    // keep the canonical key: their metadataModel can be a mappedToModel
+    // alias target (pricing identity, not the ledger bucket).
+    const usageBucketKey = (rawModel: string, metadataModel: string | undefined): string =>
+      rawModel.startsWith("coder:") && metadataModel
+        ? metadataModel
+        : normalizeUsageModelKey(rawModel, this.getProvidersConfig());
+
+    const mergeUsageForModel = (
+      rawModel: string,
+      usage: ChatUsageDisplay,
+      metadataModel?: string
+    ): void => {
+      const model = usageBucketKey(rawModel, metadataModel);
       const existing = result.byModel[model];
       result.byModel[model] = existing ? sumUsageHistory([existing, usage])! : usage;
     };
@@ -616,7 +633,7 @@ export class SessionUsageService {
         return;
       }
 
-      mergeUsageForModel(rawModel, usage);
+      mergeUsageForModel(rawModel, usage, metadataModel);
     };
 
     for (const msg of messages) {
@@ -644,9 +661,9 @@ export class SessionUsageService {
           );
 
           if (usage) {
-            mergeUsageForModel(rawModel, usage);
+            mergeUsageForModel(rawModel, usage, msg.metadata.metadataModel);
             lastAssistantUsage = {
-              model: normalizeUsageModelKey(rawModel, this.getProvidersConfig()),
+              model: usageBucketKey(rawModel, msg.metadata.metadataModel),
               usage,
             };
           }
