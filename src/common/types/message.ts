@@ -92,6 +92,8 @@ export type StartupRetrySendOptions = Pick<
   | "disableWorkspaceAgents"
   | "allowAgentSetGoal"
 > & {
+  /** Correlation for a delegated workspace turn that must survive restart recovery. */
+  muxMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
   /** Internal-only Copilot billing override for startup auto-retry. */
   agentInitiated?: boolean;
   /** Internal goal continuation classification for startup auto-retry accounting. */
@@ -107,6 +109,9 @@ export function pickStartupRetrySendOptions(
   agentInitiated?: boolean,
   goalKind?: GoalSyntheticMessageKind
 ): StartupRetrySendOptions {
+  const workspaceTurnMuxMetadata = options.muxMetadata as
+    | Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+    | undefined;
   return {
     model: options.model,
     agentId: options.agentId,
@@ -119,6 +124,7 @@ export function pickStartupRetrySendOptions(
     experiments: options.experiments,
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     allowAgentSetGoal: options.allowAgentSetGoal,
+    ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
     ...(goalKind != null ? { goalKind } : {}),
   };

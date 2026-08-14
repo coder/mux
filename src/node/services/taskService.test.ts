@@ -3983,7 +3983,8 @@ describe("TaskService", () => {
   });
 
   test("terminal nested agent report resumes a workspace turn with correlation", async () => {
-    const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest();
+    const { config, parentId, taskService, workspaceMocks, historyService } =
+      await startWorkspaceTurnForTest();
     await config.editConfig((cfg) => {
       const project = cfg.projects.get(path.join(rootDir, "repo"));
       assert(project, "test project must exist");
@@ -4020,6 +4021,24 @@ describe("TaskService", () => {
         },
         { type: "text", text: "The nested terminal report is complete." },
       ],
+    });
+
+    const childHistory = await historyService.getHistoryFromLatestBoundary("childworkspace");
+    expect(childHistory.success).toBe(true);
+    if (!childHistory.success) throw new Error("child history read failed");
+    const reportMessage = childHistory.data.find(
+      (message) =>
+        message.role === "user" &&
+        message.parts.some(
+          (part) =>
+            part.type === "text" && part.text.includes("The nested terminal report is complete.")
+        )
+    );
+    expect(reportMessage?.metadata?.muxMetadata).toEqual({
+      type: "workspace-turn-task",
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
     });
 
     await Promise.all([

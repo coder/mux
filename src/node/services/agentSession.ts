@@ -1659,10 +1659,18 @@ export class AgentSession {
       return compactionRequest;
     }
 
+    const workspaceTurnMuxMetadata =
+      lastUserMuxMetadata?.type === "workspace-turn-task"
+        ? lastUserMuxMetadata
+        : persistedRetrySendOptions?.muxMetadata;
+
     const retryRequest: StartupRetrySendOptions = {
       model: baseModel,
       agentId: baseAgentId,
     };
+    if (workspaceTurnMuxMetadata != null) {
+      retryRequest.muxMetadata = workspaceTurnMuxMetadata;
+    }
     if (baseThinkingLevel) {
       retryRequest.thinkingLevel = baseThinkingLevel;
     }

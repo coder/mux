@@ -184,6 +184,46 @@ describe("AgentSession workspace-turn correlation inheritance", () => {
     expect(streamed).toBeUndefined();
   });
 
+  test("workspace-turn correlation persists in startup retry options", async () => {
+    const workspaceId = "workspace-turn-retry-metadata";
+    const streamMessage = mock((_opts: StreamMessageOptions) => Promise.resolve(Ok(undefined)));
+    const { session, cleanup, historyService } = await createAgentSessionHarness({
+      workspaceId,
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    try {
+      const result = await session.sendMessage(
+        "Nested terminal report",
+        {
+          model: "anthropic:claude-sonnet-4-5",
+          agentId: "exec",
+          muxMetadata: correlation,
+        },
+        { synthetic: true, agentInitiated: true }
+      );
+      expect(result.success).toBe(true);
+
+      const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(historyResult.success).toBe(true);
+      if (!historyResult.success) throw new Error("history read failed");
+      const userMessage = historyResult.data.find(
+        (message) =>
+          message.role === "user" &&
+          message.parts.some(
+            (part) => part.type === "text" && part.text === "Nested terminal report"
+          )
+      );
+      expect(userMessage?.metadata?.retrySendOptions).toMatchObject({
+        muxMetadata: correlation,
+      });
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("on-send compaction consuming a wake stamps the correlation on the follow-up", async () => {
     const workspaceId = "workspace-turn-compaction-stamp";
     const streamMessage = mock((_opts: StreamMessageOptions) => Promise.resolve(Ok(undefined)));

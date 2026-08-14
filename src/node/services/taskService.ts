@@ -5907,6 +5907,8 @@ export class TaskService {
       }
     }
 
+    const workspaceTurnMuxMetadata =
+      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
     const sessionDir = this.config.getSessionDir(ownerWorkspaceId);
     for (const notification of notifications) {
       if (existingTaskIds.has(notification.sourceId)) {
@@ -5957,7 +5959,12 @@ export class TaskService {
         report != null ? createTaskReportMessageId() : createTaskFailureMessageId(),
         "user",
         content,
-        { timestamp, synthetic: true, uiVisible: true }
+        {
+          timestamp,
+          synthetic: true,
+          uiVisible: true,
+          ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
+        }
       );
       const appendResult = await this.historyService.appendToHistory(ownerWorkspaceId, message);
       if (!appendResult.success) {
@@ -12865,11 +12872,14 @@ export class TaskService {
         : {}),
     });
 
+    const workspaceTurnMuxMetadata =
+      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
     const messageId = createTaskReportMessageId();
     const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
       synthetic: true,
       uiVisible: true,
+      ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
     });
 
     const appendResult = await this.historyService.appendToHistory(
