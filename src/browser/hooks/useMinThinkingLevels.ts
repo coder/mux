@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAPI } from "@/browser/contexts/API";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   getAvailableThinkingLevels,
   getDefaultMinimumThinkingLevel,
@@ -99,7 +99,7 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
 
   const getMinOverride = useCallback(
     (modelString: string): ThinkingLevel | undefined =>
-      minThinkingLevelByModel[normalizeToCanonical(modelString)],
+      minThinkingLevelByModel[normalizeSelectedModel(modelString)],
     [minThinkingLevelByModel]
   );
 
@@ -107,7 +107,7 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
     (modelString: string): ThinkingLevel =>
       resolveMinimumThinkingLevel(
         modelString,
-        minThinkingLevelByModel[normalizeToCanonical(modelString)],
+        minThinkingLevelByModel[normalizeSelectedModel(modelString)],
         providersConfig
       ),
     [minThinkingLevelByModel, providersConfig]
@@ -115,7 +115,7 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
 
   const setMinThinkingLevel = useCallback(
     (modelString: string, level: ThinkingLevel | null) => {
-      const key = normalizeToCanonical(modelString);
+      const key = normalizeSelectedModel(modelString);
       const next = { ...minThinkingLevelByModel };
       // Keep the persisted map sparse: clear the override when it has the same effect as the
       // built-in default floor. We compare effective lowest-available levels so models whose

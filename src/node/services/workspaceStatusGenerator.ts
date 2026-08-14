@@ -151,6 +151,12 @@ export async function generateWorkspaceStatus(
          * as ordinary input.
          */
         providerMetadata?: Record<string, unknown>;
+        /**
+         * Creation-time pricing identity from the same snapshot that created
+         * the model — a Coder catalog refresh mid-generation must not
+         * re-attribute this spend.
+         */
+        metadataModel: string;
       }
     ) => Promise<void>;
   } = {}
@@ -177,7 +183,10 @@ export async function generateWorkspaceStatus(
   for (let i = 0; i < maxAttempts; i++) {
     const modelString = candidates[i];
 
-    const modelResult = await aiService.createModel(modelString, undefined, {
+    // Pinned creation: the returned metadataModel comes from the SAME config
+    // snapshot as the SDK model, so usage recorded below cannot be
+    // re-attributed by a concurrent Coder catalog refresh.
+    const modelResult = await aiService.createModelWithPinnedMetadata(modelString, {
       agentInitiated: true,
     });
     if (!modelResult.success) {
@@ -189,7 +198,7 @@ export async function generateWorkspaceStatus(
 
     try {
       const currentStream = streamText({
-        model: modelResult.data,
+        model: modelResult.data.model,
         prompt: buildWorkspaceStatusPrompt(transcript, options),
         tools: {
           propose_status: tool({
@@ -226,8 +235,9 @@ export async function generateWorkspaceStatus(
           if (settled !== undefined) {
             const [usage, steps] = settled;
             await options.recordUsage(modelString, usage, {
-              costsIncluded: modelCostsIncluded(modelResult.data),
+              costsIncluded: modelCostsIncluded(modelResult.data.model),
               providerMetadata: accumulateStepsProviderMetadata(steps),
+              metadataModel: modelResult.data.metadataModel,
             });
           }
         } catch {
@@ -253,7 +263,7 @@ export async function generateWorkspaceStatus(
       // call the periodic AgentStatusService loop would leak transports
       // for every successful or failed candidate, every tick, every
       // workspace.
-      runLanguageModelCleanup(modelResult.data);
+      runLanguageModelCleanup(modelResult.data.model);
     }
   }
 

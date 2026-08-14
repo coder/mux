@@ -238,13 +238,15 @@ async function createFixture(options?: {
     metaService,
     historyService,
     {
-      createModel: async () => {
+      createModelWithPinnedMetadata: async (modelString: string) => {
         modelCalls.push(Date.now());
         if (options?.modelGate) await options.modelGate;
-        return Ok(
-          options?.modelFactory?.() ??
-            (streamFailing ? failingScriptedModel(capturePrompt) : scriptedModel(capturePrompt))
-        );
+        return Ok({
+          model:
+            options?.modelFactory?.() ??
+            (streamFailing ? failingScriptedModel(capturePrompt) : scriptedModel(capturePrompt)),
+          metadataModel: modelString,
+        });
       },
     },
     {

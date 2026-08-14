@@ -362,7 +362,12 @@ export class AgentStatusService {
             modelString,
             usage,
             usageOptions.providerMetadata,
-            { costsIncluded: usageOptions.costsIncluded, analyticsSource: "workspace_status" }
+            {
+              costsIncluded: usageOptions.costsIncluded,
+              analyticsSource: "workspace_status",
+              // Creation-time identity from the generator's pinned snapshot.
+              metadataModel: usageOptions.metadataModel,
+            }
           );
           if (recorded) {
             this.requestAnalyticsIngest?.(workspaceId);

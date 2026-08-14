@@ -410,7 +410,9 @@ function normalizeMinThinkingLevelByModel(
   for (const [key, level] of Object.entries(value as Record<string, unknown>)) {
     const coerced = coerceThinkingLevel(level);
     if (coerced !== undefined) {
-      out[normalizeToCanonical(key)] = coerced;
+      // Gateway-preserving key: explicit coder:<instance>/<model> floors
+      // must not collapse into (and clobber) the direct provider's entry.
+      out[normalizeSelectedModel(key)] = coerced;
     }
   }
 

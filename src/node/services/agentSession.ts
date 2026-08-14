@@ -4028,7 +4028,9 @@ export class AgentSession {
     const minThinkingOverride =
       typeof maybeConfig.loadConfigOrDefault === "function"
         ? maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel?.[
-            normalizeToCanonical(modelString)
+            // Gateway-preserving key: an explicit coder:<instance>/<model>
+            // floor must stay distinct from a direct model with the same ID.
+            normalizeSelectedModel(modelString)
           ]
         : undefined;
     // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)

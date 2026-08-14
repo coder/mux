@@ -74,7 +74,7 @@ import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
 import {
@@ -986,6 +986,32 @@ export class AIService extends EventEmitter {
     }
   ): Promise<Result<LanguageModel, SendMessageError>> {
     return this.providerModelFactory.createModel(modelString, muxProviderOptions, opts);
+  }
+
+  /**
+   * Create a model AND its pricing/metadata identity from ONE providers.jsonc
+   * snapshot. For headless callers (status generation, memory sweeps) that
+   * record usage via recordHeadlessUsage: resolving the identity at
+   * completion (or from a second read) races catalog refreshes — a Coder
+   * instance removed/retagged mid-request would attribute the spend to an
+   * unknown or different upstream than the wire the model was created for.
+   */
+  async createModelWithPinnedMetadata(
+    modelString: string,
+    opts?: { agentInitiated?: boolean; workspaceId?: string }
+  ): Promise<Result<{ model: LanguageModel; metadataModel: string }, SendMessageError>> {
+    const providersConfig = this.config.loadProvidersConfig() ?? {};
+    const result = await this.providerModelFactory.createModel(modelString, undefined, {
+      ...opts,
+      providersConfig,
+    });
+    if (!result.success) {
+      return result;
+    }
+    return Ok({
+      model: result.data,
+      metadataModel: resolveModelForMetadata(modelString, providersConfig),
+    });
   }
 
   private wrapToolsForDelegation(
@@ -3134,7 +3160,7 @@ export class AIService extends EventEmitter {
                   resolveMinimumThinkingLevel(
                     nextModelString,
                     this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
-                      normalizeToCanonical(nextModelString)
+                      normalizeSelectedModel(nextModelString)
                     ],
                     this.providerService.getConfig()
                   ),
@@ -3178,7 +3204,7 @@ export class AIService extends EventEmitter {
                 const nextMinThinkingLevel = resolveMinimumThinkingLevel(
                   nextModelString,
                   this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
-                    normalizeToCanonical(nextModelString)
+                    normalizeSelectedModel(nextModelString)
                   ],
                   nextProvidersConfig
                 );
