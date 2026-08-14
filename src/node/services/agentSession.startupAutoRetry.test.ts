@@ -269,7 +269,7 @@ describe("AgentSession startup auto-retry recovery", () => {
 
     session.ensureStartupAutoRetryCheck();
     await privateSession.startupAutoRetryCheckPromise;
-    expect(privateSession.lastAutoRetryResumeRequest?.options.muxMetadata).toBeUndefined();
+    expect(privateSession.lastAutoRetryResumeRequest?.options.muxMetadata).toEqual(muxMetadata);
 
     await privateSession.retryActiveStream();
 
