@@ -96,7 +96,6 @@ function makeHiddenSummary(
     runningWorkflowAgentCount: 0,
     queuedWorkflowAgentCount: 0,
     workflowRunIds: new Set(),
-    workflowNamesByRunId: new Map(),
     ...overrides,
   };
 }
@@ -272,6 +271,7 @@ function renderWorkspaceItem(
     isWorkspaceLiveActive?: boolean;
     delegatedActivity?: WorkspaceDelegatedActivity;
     hiddenSubAgentsSummary?: WorkspaceSubAgentsSummary;
+    getWorkflowRunName?: (runId: string) => string | undefined;
     completedChildrenExpanded?: boolean;
     onToggleCompletedChildren?: (workspaceId: string) => void;
     onSelectWorkspace?: (selection: WorkspaceSelection) => void;
@@ -292,6 +292,7 @@ function renderWorkspaceItem(
       isWorkspaceLiveActive={options.isWorkspaceLiveActive}
       delegatedActivity={options.delegatedActivity}
       hiddenSubAgentsSummary={options.hiddenSubAgentsSummary}
+      getWorkflowRunName={options.getWorkflowRunName}
       completedChildrenExpanded={options.completedChildrenExpanded}
       onToggleCompletedChildren={options.onToggleCompletedChildren}
       onSelectWorkspace={options.onSelectWorkspace ?? (() => undefined)}
@@ -641,16 +642,15 @@ describe("AgentListItem", () => {
     ).toBe("Deep Research · Implementer · 2 queued");
   });
 
-  test("labels a lone gap-only run with its remembered workflow name", () => {
+  test("labels a lone gap-only run with its retained workflow name", () => {
     mockWorkspaceSidebarState = createWorkspaceSidebarState({
       activeWorkflowRunIds: ["run-gap"],
       activeWorkflowRunCount: 1,
     });
 
     const { row } = renderWorkspaceItem({
-      hiddenSubAgentsSummary: makeHiddenSummary({
-        workflowNamesByRunId: new Map([["run-gap", "Deep Research"]]),
-      }),
+      hiddenSubAgentsSummary: makeHiddenSummary(),
+      getWorkflowRunName: (runId) => (runId === "run-gap" ? "Deep Research" : undefined),
     });
 
     expect(
@@ -804,6 +804,7 @@ describe("AgentListItem", () => {
         workflowRunIds: new Set(["run-queued"]),
         workflowName: "Deep Research",
       }),
+      getWorkflowRunName: (runId) => (runId === "run-queued" ? "Deep Research" : undefined),
     });
 
     expect(

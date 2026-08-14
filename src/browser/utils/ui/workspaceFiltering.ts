@@ -394,8 +394,6 @@ export interface WorkspaceSubAgentsSummary {
   workflowRunIds: ReadonlySet<string>;
   /** Name of the first running workflow run, or first queued run when none run. */
   workflowName?: string;
-  /** Names retained after workers finish so active runs between steps remain labeled. */
-  workflowNamesByRunId: ReadonlyMap<string, string>;
   /** Title of the first running workflow worker, the run's current step. */
   runningWorkflowStepTitle?: string;
 }
@@ -407,6 +405,12 @@ interface SubAgentsSummaryOptions extends DelegatedActivityOptions {
    * between sequential steps and has no countable workers.
    */
   getActiveWorkflowRunIds?: (workspaceId: string) => readonly string[];
+  /**
+   * Workflow name for a run, from state retained beyond worker lifetimes.
+   * Workers are deleted after reporting, so a run between sequential steps
+   * has no descendant carrying its name.
+   */
+  getWorkflowRunName?: (runId: string) => string | undefined;
 }
 
 /** Roll a hidden-descendant census up to each ancestor workspace. */
@@ -446,7 +450,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
     runningWorkflowAgentCount: number;
     queuedWorkflowAgentCount: number;
     workflowRunsById: Map<string, WorkflowRunRollup>;
-    workflowNamesByRunId: Map<string, string>;
   }
 
   const result = new Map<string, WorkspaceSubAgentsSummary>();
@@ -465,7 +468,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
       workflowRunsById: new Map(),
-      workflowNamesByRunId: new Map(),
     };
 
     const mergeWorkflowRun = (runId: string, rollup: WorkflowRunRollup): void => {
@@ -482,15 +484,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
       const childWorkflowRunId = child.workflowTask?.runId ?? ancestorWorkflowRunId;
       const isRunning = isWorkspaceDelegatedActivityActive(child, options);
       const isQueued = !isRunning && isWorkspaceDelegatedActivityQueued(child);
-
-      // Remember run names from inactive workers too, so a run whose workers
-      // all finished (between sequential steps) can still be labeled.
-      if (child.workflowTask?.workflowName != null) {
-        const namedRunId = child.workflowTask.runId;
-        if (!summary.workflowNamesByRunId.has(namedRunId)) {
-          summary.workflowNamesByRunId.set(namedRunId, child.workflowTask.workflowName);
-        }
-      }
 
       if (childWorkflowRunId == null) {
         summary.subAgentCount += 1;
@@ -521,11 +514,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
       for (const [runId, rollup] of childSummary.workflowRunsById) {
         mergeWorkflowRun(runId, rollup);
       }
-      for (const [runId, name] of childSummary.workflowNamesByRunId) {
-        if (!summary.workflowNamesByRunId.has(runId)) {
-          summary.workflowNamesByRunId.set(runId, name);
-        }
-      }
 
       // A run the child owns that has no tracked worker (between sequential
       // steps) is still in progress and must count as running; runs already
@@ -545,7 +533,7 @@ export function computeSubAgentsSummaryByWorkspaceId(
       let queuedWorkflowName: string | undefined;
       let runningWorkflowStepTitle: string | undefined;
       for (const [runId, run] of summary.workflowRunsById) {
-        const runName = run.name ?? summary.workflowNamesByRunId.get(runId);
+        const runName = run.name ?? options.getWorkflowRunName?.(runId);
         if (run.hasRunning) {
           runningWorkflowRunCount += 1;
           runningWorkflowName ??= runName;
@@ -567,7 +555,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
         workflowRunIds: new Set(summary.workflowRunsById.keys()),
         // A queued-only run must never lend its name to the running label.
         workflowName: runningWorkflowRunCount > 0 ? runningWorkflowName : queuedWorkflowName,
-        workflowNamesByRunId: new Map(summary.workflowNamesByRunId),
         runningWorkflowStepTitle,
       });
     }

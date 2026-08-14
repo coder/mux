@@ -174,7 +174,6 @@ const EMPTY_HIDDEN_SUBAGENTS_SUMMARY: WorkspaceSubAgentsSummary = {
   runningWorkflowAgentCount: 0,
   queuedWorkflowAgentCount: 0,
   workflowRunIds: new Set<string>(),
-  workflowNamesByRunId: new Map<string, string>(),
 };
 
 // Re-export WorkspaceSelection for backwards compatibility
@@ -902,6 +901,12 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   // an active workflow keeps a stable sidebar header between sequential steps after its worker row
   // has been deleted; inactive child rows themselves remain absent.
   const retainedWorkflowTaskGroupsRef = useRef<Map<string, SidebarTaskGroupModel>>(new Map());
+  // Same transience problem for the hidden-sub-agents summary: retain each
+  // run's workflow name past its workers so runs between sequential steps stay
+  // labeled; entries are pruned once the owning workspace drops the run.
+  const workflowRunNamesRef = useRef<Map<string, { ownerWorkspaceId: string; name: string }>>(
+    new Map()
+  );
   const toggleTaskGroupExpansion = (storageKey: string, isCurrentlyExpanded: boolean) => {
     setExpandedTaskGroups((prev) => ({
       ...prev,
@@ -1668,6 +1673,24 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
   const isWorkflowRunActive = (workspaceId: string, runId: string): boolean =>
     getActiveWorkflowRunIds(workspaceId).includes(runId);
   const allSidebarWorkspaces = Array.from(sortedWorkspacesByProject.values()).flat();
+  // Learn run names while a worker row still carries them (workers are deleted
+  // after reporting), then drop names whose run is no longer active.
+  for (const workspace of allSidebarWorkspaces) {
+    const workflowTask = workspace.workflowTask;
+    if (workflowTask?.workflowName != null && workspace.parentWorkspaceId != null) {
+      workflowRunNamesRef.current.set(workflowTask.runId, {
+        ownerWorkspaceId: workspace.parentWorkspaceId,
+        name: workflowTask.workflowName,
+      });
+    }
+  }
+  for (const [runId, entry] of workflowRunNamesRef.current) {
+    if (!isWorkflowRunActive(entry.ownerWorkspaceId, runId)) {
+      workflowRunNamesRef.current.delete(runId);
+    }
+  }
+  const getWorkflowRunName = (runId: string): string | undefined =>
+    workflowRunNamesRef.current.get(runId)?.name;
   const delegatedActivityByWorkspaceId = computeDelegatedActivityByWorkspaceId(
     allSidebarWorkspaces,
     { isWorkspaceLiveActive }
@@ -1676,6 +1699,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     ? computeSubAgentsSummaryByWorkspaceId(allSidebarWorkspaces, {
         isWorkspaceLiveActive,
         getActiveWorkflowRunIds,
+        getWorkflowRunName,
       })
     : null;
   // In hide mode every row gets at least the empty summary: rows without
@@ -2035,6 +2059,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                             isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                             delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                             hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
+                            getWorkflowRunName={getWorkflowRunName}
                             completedChildrenExpanded={expandedCompletedParentIds.has(metadata.id)}
                             onToggleCompletedChildren={toggleCompletedChildrenExpansion}
                           />
@@ -2117,6 +2142,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                               isWorkspaceLiveActive={isWorkspaceLiveActive(metadata.id)}
                               delegatedActivity={delegatedActivityByWorkspaceId.get(metadata.id)}
                               hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
+                              getWorkflowRunName={getWorkflowRunName}
                               completedChildrenExpanded={expandedCompletedParentIds.has(
                                 metadata.id
                               )}
@@ -2511,6 +2537,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                                       metadata.id
                                     )}
                                     hiddenSubAgentsSummary={getHiddenSubAgentsSummary(metadata.id)}
+                                    getWorkflowRunName={getWorkflowRunName}
                                     completedChildrenExpanded={expandedCompletedParentIds.has(
                                       metadata.id
                                     )}

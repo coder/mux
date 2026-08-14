@@ -125,6 +125,7 @@ interface MockAgentListItemProps {
   rowRenderMeta?: AgentRowRenderMeta;
   delegatedActivity?: { activeCount: number; queuedCount: number };
   hiddenSubAgentsSummary?: WorkspaceSubAgentsSummary;
+  getWorkflowRunName?: (runId: string) => string | undefined;
   subAgentConnectorLayout?: "default" | "task-group-member";
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
@@ -358,6 +359,11 @@ function installProjectSidebarTestDoubles() {
                 )
               : undefined
           }
+          data-run-names={JSON.stringify(
+            (activeWorkflowRunIdsByWorkspaceId.get(metadata.id) ?? []).map(
+              (runId: string) => props.getWorkflowRunName?.(runId) ?? null
+            )
+          )}
         >
           <span>{displayTitle}</span>
           {hasCompletedChildren && props.onToggleCompletedChildren ? (
@@ -955,7 +961,6 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       runningWorkflowAgentCount: 0,
       queuedWorkflowAgentCount: 0,
       workflowRunIds: [],
-      workflowNamesByRunId: {},
     });
     // The delegated activity still reaches the parent row for its live dot.
     expect(parentRow.dataset.delegatedActive).toBe("1");
@@ -1026,9 +1031,64 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       queuedWorkflowAgentCount: 1,
       workflowRunIds: ["wfr_alpha"],
       workflowName: "review-pipeline",
-      workflowNamesByRunId: { wfr_alpha: "review-pipeline" },
       runningWorkflowStepTitle: "Extract claims",
     });
+  });
+
+  test("retains a hidden run's workflow name across workerless step gaps", () => {
+    window.localStorage.setItem(SIDEBAR_HIDE_SUBAGENTS_KEY, JSON.stringify(true));
+    window.localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify(["/projects/demo-project"]));
+    projectContextValue = createProjectContextValue({
+      userProjects: new Map([["/projects/demo-project", { workspaces: [] }]]),
+      hasAnyProject: true,
+      resolveNewChatProjectPath: () => "/projects/demo-project",
+    });
+
+    const singleProjectRefs = [
+      { projectPath: "/projects/demo-project", projectName: "demo-project" },
+    ];
+    const parentWorkspace = {
+      ...createWorkspace("parent", { title: "Parent workspace" }),
+      projects: singleProjectRefs,
+    };
+    const worker = {
+      ...createWorkspace("worker-1", {
+        parentWorkspaceId: "parent",
+        taskStatus: "running",
+        title: "Extract claims",
+        workflowTask: { runId: "wfr_alpha", stepId: "claims", workflowName: "review-pipeline" },
+      }),
+      projects: singleProjectRefs,
+    };
+    const renderProps = (child?: FrontendWorkspaceMetadata) =>
+      ({
+        collapsed: false,
+        onToggleCollapsed: () => undefined,
+        sortedWorkspacesByProject: new Map([
+          ["/projects/demo-project", [parentWorkspace, ...(child ? [child] : [])]],
+        ]),
+        workspaceRecency: { parent: Date.now(), "worker-1": Date.now() },
+      }) as const;
+
+    activeWorkflowRunIdsByWorkspaceId.set("parent", ["wfr_alpha"]);
+    const view = render(<ProjectSidebar {...renderProps(worker)} />);
+    const runNames = () =>
+      JSON.parse(view.getByTestId(agentItemTestId("parent")).dataset.runNames ?? "null") as Array<
+        string | null
+      > | null;
+    expect(runNames()).toEqual(["review-pipeline"]);
+
+    // Workers are deleted after reporting, so the inter-step render contains
+    // only the parent; the name must come from retained run-level state.
+    view.rerender(<ProjectSidebar {...renderProps()} />);
+    expect(runNames()).toEqual(["review-pipeline"]);
+
+    // Run completion prunes the retained name.
+    activeWorkflowRunIdsByWorkspaceId.set("parent", []);
+    view.rerender(<ProjectSidebar {...renderProps()} />);
+    activeWorkflowRunIdsByWorkspaceId.set("parent", ["wfr_alpha"]);
+    view.rerender(<ProjectSidebar {...renderProps()} />);
+    expect(runNames()).toEqual([null]);
   });
 
   test("keeps promoted active descendants in the visible ancestor connector group", () => {

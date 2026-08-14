@@ -135,6 +135,11 @@ export interface AgentListItemProps extends AgentListItemBaseProps {
   isWorkspaceLiveActive?: boolean;
   delegatedActivity?: WorkspaceDelegatedActivity;
   hiddenSubAgentsSummary?: WorkspaceSubAgentsSummary;
+  /**
+   * Workflow name for an own active run, retained beyond worker lifetimes so
+   * a run between sequential steps (no live worker) stays labeled.
+   */
+  getWorkflowRunName?: (runId: string) => string | undefined;
   completedChildrenExpanded?: boolean;
   onToggleCompletedChildren?: (workspaceId: string) => void;
   onSelectWorkspace: (selection: WorkspaceSelection) => void;
@@ -247,7 +252,8 @@ const EMPTY_WORKFLOW_RUN_IDS: readonly string[] = [];
  */
 function formatHiddenSubAgentsPresentation(
   summary: WorkspaceSubAgentsSummary,
-  ownActiveWorkflowRunIds: readonly string[]
+  ownActiveWorkflowRunIds: readonly string[],
+  getWorkflowRunName?: (runId: string) => string | undefined
 ): { icon: LucideIcon; text: string } | null {
   // An own active run without a live worker (between sequential steps, or
   // before its first worker spawns) is still in progress; count it as running
@@ -264,11 +270,11 @@ function formatHiddenSubAgentsPresentation(
     const verb = hasRunningRun ? "running" : "queued";
     const runCount = hasRunningRun ? runningRunCount : summary.queuedWorkflowRunCount;
     // When only gap runs are active, summary.workflowName may belong to a queued run.
-    // Only a single gap run has an unambiguous remembered name.
+    // Only a single gap run has an unambiguous name.
     const workflowName =
       hasRunningRun && summary.runningWorkflowRunCount === 0
         ? gapRunIds.length === 1
-          ? summary.workflowNamesByRunId.get(gapRunIds[0])
+          ? getWorkflowRunName?.(gapRunIds[0])
           : undefined
         : summary.workflowName;
     // The lone running worker's title is the run's current step; counts only
@@ -564,6 +570,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
     rowRenderMeta,
     delegatedActivity,
     hiddenSubAgentsSummary,
+    getWorkflowRunName,
     completedChildrenExpanded,
     onToggleCompletedChildren,
     onSelectWorkspace,
@@ -774,7 +781,8 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
   const hiddenSubAgentsPresentation = hiddenSubAgentsSummary
     ? formatHiddenSubAgentsPresentation(
         hiddenSubAgentsSummary,
-        activeWorkflowRunIds ?? EMPTY_WORKFLOW_RUN_IDS
+        activeWorkflowRunIds ?? EMPTY_WORKFLOW_RUN_IDS,
+        getWorkflowRunName
       )
     : null;
   // With sub-agent rows hidden, the summary outranks the coordinator's own
