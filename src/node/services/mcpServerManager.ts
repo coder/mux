@@ -833,6 +833,12 @@ export interface MCPWorkspaceRequestOptions {
   agentPlugins?: AgentPluginsMcpContext | null;
 }
 
+/** Resolves current effective secrets for a workspace's prompt refresh. */
+export type MCPWorkspaceSecretsResolver = (
+  workspaceId: string,
+  projectPath: string
+) => Promise<Record<string, string>>;
+
 interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
   stats: MCPWorkspaceStats;
@@ -875,10 +881,15 @@ export class MCPServerManager {
   private inlineServers: Record<string, string> = {};
   private readonly policyService: PolicyService | null;
   private mcpOauthService: McpOauthService | null = null;
+  private secretsResolver: MCPWorkspaceSecretsResolver | null = null;
   private ignoreConfigFile = false;
 
   setMcpOauthService(service: McpOauthService): void {
     this.mcpOauthService = service;
+  }
+
+  setSecretsResolver(resolver: MCPWorkspaceSecretsResolver): void {
+    this.secretsResolver = resolver;
   }
   constructor(
     private readonly configService: MCPConfigService,
@@ -1748,7 +1759,25 @@ export class MCPServerManager {
     // so idle cleanup can close it.
     const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (lastOptions) {
-      const refreshed = await raceWithAbortAndTimeout(this.getToolsForWorkspace(lastOptions), {
+      const refresh = async (): Promise<void> => {
+        // Re-resolve secrets so a rotated HTTP header credential changes the
+        // config signature and recycles the stale authenticated client; the
+        // recorded snapshot only reflects the last discovery.
+        let refreshOptions = lastOptions;
+        if (this.secretsResolver) {
+          try {
+            const projectSecrets = await this.secretsResolver(workspaceId, lastOptions.projectPath);
+            refreshOptions = { ...lastOptions, projectSecrets };
+          } catch (error) {
+            log.debug("[MCP] Failed to re-resolve secrets for prompt refresh", {
+              workspaceId,
+              error: getErrorMessage(error),
+            });
+          }
+        }
+        await this.getToolsForWorkspace(refreshOptions);
+      };
+      const refreshed = await raceWithAbortAndTimeout(refresh(), {
         ...(options?.signal !== undefined ? { signal: options.signal } : {}),
       });
       if (refreshed.kind === "aborted") {

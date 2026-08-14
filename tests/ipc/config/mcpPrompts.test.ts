@@ -1,3 +1,4 @@
+import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { shouldRunIntegrationTests, setupWorkspaceWithoutProvider } from "../setup";
@@ -113,6 +114,48 @@ describeIntegration("MCP prompts", () => {
       expect(rejected).toBe(true);
       // The bound distinguishes cancellation from the prompt timeout.
       expect(Date.now() - startedAt).toBeLessThan(10_000);
+    } finally {
+      await cleanup();
+    }
+  }, 60_000);
+
+  test("rotated project secrets reach the prompt-invocation refresh", async () => {
+    const { env, workspaceId, tempGitRepo, cleanup } =
+      await setupWorkspaceWithoutProvider("mcp-prompts-secrets");
+    env.services.aiService.enableMockMode();
+    const client = resolveOrpcClient(env);
+
+    try {
+      const addResult = await client.mcp.add({
+        name: "prompt server",
+        command: MCP_SERVER_COMMAND,
+      });
+      expect(addResult.success).toBe(true);
+      await client.secrets.update({
+        projectPath: tempGitRepo,
+        secrets: [{ key: "MCP_TOKEN", value: "old" }],
+      });
+
+      // Record workspace request options with the pre-rotation snapshot.
+      await client.workspace.mcp.prompts.list({ workspaceId });
+
+      await client.secrets.update({
+        projectPath: tempGitRepo,
+        secrets: [{ key: "MCP_TOKEN", value: "new" }],
+      });
+
+      const manager = env.services.mcpServerManager;
+      const seenSecrets: Array<Record<string, string> | undefined> = [];
+      const realGetTools = manager.getToolsForWorkspace.bind(manager);
+      const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation((options) => {
+        seenSecrets.push(options.projectSecrets);
+        return realGetTools(options);
+      });
+
+      const prompt = await manager.getPrompt(workspaceId, "prompt server", "status", {});
+      expect(prompt.text).toBe("Report workspace status");
+      expect(seenSecrets[0]?.MCP_TOKEN).toBe("new");
+      getToolsSpy.mockRestore();
     } finally {
       await cleanup();
     }

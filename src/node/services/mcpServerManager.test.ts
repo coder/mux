@@ -1385,6 +1385,53 @@ describe("MCPServerManager", () => {
     getToolsSpy.mockRestore();
   });
 
+  test("getPrompt refreshes with resolver-provided secrets instead of the recorded snapshot", async () => {
+    const request = workspaceRequest("workspace", { projectSecrets: { TOKEN: "old" } });
+    access.lastWorkspaceRequestOptions.set("workspace", request);
+    manager.setSecretsResolver(() => Promise.resolve({ TOKEN: "new" }));
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
+    );
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
+      (options: { workspaceId: string }) => {
+        access.workspaceServers.set(options.workspaceId, {
+          enabledServerNames: new Set(["coder"]),
+          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+        });
+        return Promise.resolve({ tools: {}, stats: cachedStats() });
+      }
+    );
+
+    await manager.getPrompt("workspace", "coder", "status", {});
+
+    expect(getToolsSpy).toHaveBeenCalledWith({ ...request, projectSecrets: { TOKEN: "new" } });
+    getToolsSpy.mockRestore();
+  });
+
+  test("getPrompt falls back to the recorded secrets snapshot when the resolver fails", async () => {
+    const request = workspaceRequest("workspace", { projectSecrets: { TOKEN: "old" } });
+    access.lastWorkspaceRequestOptions.set("workspace", request);
+    manager.setSecretsResolver(() => Promise.reject(new Error("config unavailable")));
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
+    );
+    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
+      (options: { workspaceId: string }) => {
+        access.workspaceServers.set(options.workspaceId, {
+          enabledServerNames: new Set(["coder"]),
+          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+        });
+        return Promise.resolve({ tools: {}, stats: cachedStats() });
+      }
+    );
+
+    expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({ text: "Status" });
+    expect(getToolsSpy).toHaveBeenCalledWith(request);
+    getToolsSpy.mockRestore();
+  });
+
   test("getPrompt rejects promptly when aborted during refresh startup", async () => {
     access.lastWorkspaceRequestOptions.set("workspace", workspaceRequest("workspace"));
     const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
