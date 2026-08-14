@@ -1271,6 +1271,11 @@ export class MCPServerManager {
 
     this.lastWorkspaceRequestOptions.set(workspaceId, options);
 
+    // Global mutations (mcp.setEnabled / mcp.remove) bump the config
+    // generation without replacing recorded options; capture it before config
+    // reads so enablement repair can detect them.
+    const configGenerationUsed = this.configService.configGeneration;
+
     // Fetch full server info for project-level allowlists and server filtering
     const allServers = await this.getAllServers(projectPath, trusted, agentPlugins);
 
@@ -1477,7 +1482,12 @@ export class MCPServerManager {
       // A trust or settings mutation can land while getAllServers() runs above;
       // re-derive enablement so this cached return cannot leave a revoked
       // repo-local server invocable.
-      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, existing);
+      await this.repairEnablementAfterConcurrentMutation(
+        workspaceId,
+        options,
+        existing,
+        configGenerationUsed
+      );
 
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
@@ -1589,7 +1599,12 @@ export class MCPServerManager {
       );
       existing.stats = leasedStats;
       existing.enabledServerNames = enabledServerNames;
-      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, existing);
+      await this.repairEnablementAfterConcurrentMutation(
+        workspaceId,
+        options,
+        existing,
+        configGenerationUsed
+      );
 
       // The deferred restart retains same-named instances with the old config,
       // so record which servers changed to block prompt invocation on them.
@@ -1633,7 +1648,12 @@ export class MCPServerManager {
           }
           // Same cached-return hazard as the fast path above: a mutation may
           // have landed after the concurrent starter's repair ran.
-          await this.repairEnablementAfterConcurrentMutation(workspaceId, options, current);
+          await this.repairEnablementAfterConcurrentMutation(
+            workspaceId,
+            options,
+            current,
+            configGenerationUsed
+          );
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,
@@ -1683,7 +1703,12 @@ export class MCPServerManager {
         lastActivity: Date.now(),
       };
       this.workspaceServers.set(workspaceId, entry);
-      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, entry);
+      await this.repairEnablementAfterConcurrentMutation(
+        workspaceId,
+        options,
+        entry,
+        configGenerationUsed
+      );
 
       return {
         tools: this.collectTools(instances, fullServerInfo, overrides),
@@ -1751,11 +1776,18 @@ export class MCPServerManager {
   private async repairEnablementAfterConcurrentMutation(
     workspaceId: string,
     optionsUsed: MCPWorkspaceRequestOptions,
-    entry: WorkspaceServers
+    entry: WorkspaceServers,
+    configGenerationUsed: number
   ): Promise<void> {
     try {
       let recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
-      while (recorded !== undefined && recorded !== optionsUsed) {
+      // Workspace-scoped mutations (trust, overrides) replace the recorded
+      // options object; global config mutations only bump the generation.
+      // Either signals that the derived enablement may be stale.
+      let needsRepair =
+        recorded !== optionsUsed || this.configService.configGeneration !== configGenerationUsed;
+      while (recorded !== undefined && needsRepair) {
+        const generationRead = this.configService.configGeneration;
         const enabled = await this.listServers(
           recorded.projectPath,
           recorded.overrides,
@@ -1763,12 +1795,13 @@ export class MCPServerManager {
           recorded.agentPlugins
         );
         const latest = this.lastWorkspaceRequestOptions.get(workspaceId);
-        if (latest === recorded) {
+        if (latest === recorded && this.configService.configGeneration === generationRead) {
           entry.enabledServerNames = new Set(Object.keys(enabled));
           return;
         }
         // Another mutation landed while we derived enablement; recompute.
         recorded = latest;
+        needsRepair = true;
       }
     } catch (error) {
       log.debug("[MCP] Failed to repair enablement after concurrent settings change", {

@@ -223,6 +223,19 @@ export class MCPConfigService {
       encoding: "utf-8",
       mode: 0o600,
     });
+    this.globalConfigGeneration += 1;
+  }
+
+  /**
+   * Bumped after every successful global config write. Global mutations
+   * (setServerEnabled, removeServer) never replace per-workspace recorded
+   * request options, so MCPServerManager compares generations to detect
+   * mutations that land while a server startup is in flight.
+   */
+  private globalConfigGeneration = 0;
+
+  get configGeneration(): number {
+    return this.globalConfigGeneration;
   }
 
   /**

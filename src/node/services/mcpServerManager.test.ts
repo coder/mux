@@ -118,6 +118,7 @@ function cachedStats(overrides: Record<string, unknown> = {}) {
 describe("MCPServerManager", () => {
   let configService: {
     listServers: ReturnType<typeof mock>;
+    configGeneration: number;
   };
 
   let manager: MCPServerManager;
@@ -126,6 +127,7 @@ describe("MCPServerManager", () => {
   beforeEach(() => {
     configService = {
       listServers: mock(() => Promise.resolve({})),
+      configGeneration: 0,
     };
 
     manager = new MCPServerManager(configService as unknown as MCPConfigService);
@@ -1095,6 +1097,49 @@ describe("MCPServerManager", () => {
         ["server", { getPrompt }],
         ["stable", { getPrompt }],
       ]);
+    });
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Simulate an idle reap that retains recorded request options.
+    access.workspaceServers.delete(workspaceId);
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
+      "is disabled"
+    );
+    expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
+  });
+
+  test("blocks prompt invocation when a global disable lands during cold startup", async () => {
+    const workspaceId = "ws-mid-startup-global-disable";
+    let globallyDisabled = false;
+    configService.listServers = mock(() =>
+      Promise.resolve(
+        globallyDisabled
+          ? { stable: stdioConfig("cmd-stable") }
+          : { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+      )
+    );
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    let startCount = 0;
+    access.startServers = mock(() => {
+      startCount += 1;
+      if (startCount === 2) {
+        // Global mcp.setEnabled(false) completes while the revival startup is
+        // in flight: it bumps the config generation but never replaces the
+        // recorded per-workspace request options.
+        globallyDisabled = true;
+        configService.configGeneration += 1;
+      }
+      return Promise.resolve(
+        startResult([
+          ["server", { getPrompt }],
+          ["stable", { getPrompt }],
+        ])
+      );
     });
 
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
