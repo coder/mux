@@ -332,9 +332,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const asyncCommandTokenRef = useRef(0);
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
   // Send-time command/ref resolution can await cold MCP discovery. Every
-  // in-flight send in the current scope shares this controller; aborting it on
-  // scope change or unmount discards stale continuations so they cannot send
-  // to the captured workspace or clear the newly selected workspace's draft.
+  // in-flight send in the current scope shares this controller; when the
+  // composer is reused for a different scope, aborting it discards stale
+  // continuations so they cannot clear the new scope's draft or send against
+  // it. Unmount intentionally does not abort: a send submitted just before
+  // navigating away (e.g. to Settings) must still deliver to its captured
+  // workspace (see unreadIndicator.test.ts).
   const sendResolutionAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -653,8 +656,6 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       isMountedRef.current = false;
       mcpPromptsAbortRef.current?.abort();
       mcpPromptsAbortRef.current = null;
-      sendResolutionAbortRef.current?.abort();
-      sendResolutionAbortRef.current = null;
     };
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
