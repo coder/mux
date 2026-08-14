@@ -116,7 +116,7 @@ import type {
 } from "@/common/orpc/types";
 
 import type { z } from "zod";
-import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
+import type { SendMessageAccepted, SendMessageError, StreamErrorType } from "@/common/types/errors";
 // Aliased to avoid clashing with the private `formatSendMessageError` string formatter below.
 import { formatSendMessageError as classifySendMessageError } from "@/node/services/utils/sendMessageError";
 import type { IdleCompactionOutcome } from "@/node/services/idleCompactionService";
@@ -8499,7 +8499,7 @@ export class WorkspaceService extends EventEmitter {
        */
       yieldToQueuedMessages?: boolean;
     }
-  ): Promise<Result<void, SendMessageError>> {
+  ): Promise<Result<SendMessageAccepted | undefined, SendMessageError>> {
     log.debug("sendMessage handler: Received", {
       workspaceId,
       messagePreview: message.substring(0, 50),

@@ -33,7 +33,7 @@ import {
   SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH,
   type GoalSyntheticMessageKind,
 } from "@/constants/goals";
-import type { SendMessageError } from "@/common/types/errors";
+import type { SendMessageAccepted, SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId, resolvePersistedAgentIdCandidates } from "@/common/utils/agentIds";
 import {
@@ -2558,7 +2558,7 @@ export class AgentSession {
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }
-  ): Promise<Result<void, SendMessageError>> {
+  ): Promise<Result<SendMessageAccepted | undefined, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
@@ -3018,6 +3018,11 @@ export class AgentSession {
       }
     }
 
+    // Routed sends report the class model back to the caller so successful-send
+    // telemetry attributes the invocation to the model that actually streams.
+    const sendAccepted: SendMessageAccepted | undefined =
+      skillModelOverride != null ? { routedModel: skillModelOverride.model } : undefined;
+
     // Which options a routed turn's compaction (on-send or mid-stream forced)
     // must run with: the compaction request has to read the FULL uncompacted
     // history, so it needs whichever model has the larger usable window.
@@ -3423,7 +3428,9 @@ export class AgentSession {
     this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
 
-    const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
+    const startPreparedStream = async (): Promise<
+      Result<SendMessageAccepted | undefined, SendMessageError>
+    > => {
       try {
         if (preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -3472,7 +3479,7 @@ export class AgentSession {
             )
           );
         }
-        return streamResult;
+        return streamResult.success ? Ok(sendAccepted) : streamResult;
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
         // session stuck in PREPARING. Guard by controller identity so an aborted startup cannot
@@ -3522,7 +3529,7 @@ export class AgentSession {
           }
           drainQueuedMessagesAfterFailedStartup();
         });
-      return Ok(undefined);
+      return Ok(sendAccepted);
     }
 
     // Non-edit sends preserve the old behavior so pre-stream startup failures still propagate to

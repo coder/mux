@@ -21,6 +21,16 @@ import type {
 export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
 
 /**
+ * Success payload of an accepted (non-queued) send. `routedModel` is the class
+ * model applied by skill routing — exposed so the frontend can attribute
+ * send telemetry to the model that actually streams; undefined when no
+ * routing occurred or the send was queued for later dispatch.
+ */
+export interface SendMessageAccepted {
+  routedModel?: string;
+}
+
+/**
  * Stream error types - categorizes errors during AI streaming
  * Used across backend (StreamManager) and frontend (StreamErrorMessage)
  */

@@ -2908,12 +2908,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const policyModel = modelOverride ?? baseModel;
 
       // Preflight: if the message includes PDFs, ensure the selected model can accept them.
+      // Routable skill invocations (no explicit model override) may stream on a
+      // class model with different PDF capabilities than the workspace model, so
+      // this local check would judge the wrong model both ways — defer to the
+      // backend gate, which validates against the routed model and rejects with
+      // a persisted, visible error.
+      const pdfPreflightModelIsAuthoritative = !(skillInvocation && !modelOverride);
       const pdfAttachments = attachments.filter(
         (attachment): attachment is Extract<ChatAttachment, { kind: "provider" }> =>
           attachment.kind === "provider" &&
           getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
-      if (pdfAttachments.length > 0) {
+      if (pdfAttachments.length > 0 && pdfPreflightModelIsAuthoritative) {
         const caps = getModelCapabilitiesResolved(policyModel, providersConfig);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
@@ -3149,10 +3155,13 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
         } else {
-          // Track telemetry for successful message send
+          // Track telemetry for successful message send. Skill class routing
+          // can swap the model backend-side; the send result reports the
+          // routed model so usage is attributed to what actually streams
+          // (queued sends report none and fall back to the requested model).
           telemetry.messageSent(
             props.workspaceId,
-            effectiveModel,
+            result.data?.routedModel ?? effectiveModel,
             sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,

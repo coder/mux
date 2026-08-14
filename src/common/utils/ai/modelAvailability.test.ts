@@ -99,14 +99,14 @@ describe("isModelServableWithProvidersConfig", () => {
       ).toBe(true);
     });
 
-    test("an OAuth-required model is unservable without stored tokens even with an API key", () => {
+    test("an API key serves OAuth-preferred models too (factory falls back to the key)", () => {
       expect(
         isModelServableWithProvidersConfig({
           canonicalModel: "openai:gpt-5.3-codex-spark",
           routePriority: ["direct"],
           providersConfig: openaiProviders({ apiKeySet: true }),
         })
-      ).toBe(false);
+      ).toBe(true);
     });
   });
 });

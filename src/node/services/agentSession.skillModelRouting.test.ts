@@ -118,6 +118,9 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
 
     const result = await session.sendMessage("Use skill done", skillSendOptions());
     expect(result.success).toBe(true);
+    // The accepted-send payload reports the routed model so the frontend can
+    // attribute send telemetry to what actually streams.
+    expect(result.success && result.data?.routedModel).toBe(KNOWN_MODELS.HAIKU.id);
     expect(streamed).toHaveLength(1);
     expect(streamed[0].modelString).toBe(KNOWN_MODELS.HAIKU.id);
     // "+0" is model-relative: haiku's lowest allowed level is "off".
@@ -176,6 +179,8 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
       skillSendOptions({ skipSkillModelRouting: true })
     );
     expect(result.success).toBe(true);
+    // No routing applied — the accepted-send payload must not name a model.
+    expect(result.success && result.data?.routedModel).toBeUndefined();
     expect(streamed[0].modelString).toBe(USER_MODEL);
     expect(streamed[0].thinkingLevel).toBeUndefined();
     session.dispose();

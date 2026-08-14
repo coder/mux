@@ -70,19 +70,17 @@ export function hasOpenAIApiKey(config: unknown): boolean {
  * Can a DIRECT OpenAI route serve this model with the credentials on hand?
  *
  * `isConfigured` alone over-reports: a Codex-OAuth-only config serves only the
- * OAuth-allowed model set, and OAuth-required models are unservable without
- * stored tokens even when an API key exists. Mirrors providerModelFactory's
- * credential selection so availability checks can't claim a direct route the
- * factory would reject with api_key_not_found.
+ * OAuth-allowed model set. Mirrors providerModelFactory's credential outcome —
+ * an API key always attempts (OAuth-required models fall back to the key and
+ * let the API decide), while stored tokens without a key serve only allowed
+ * models — so availability checks can't claim a direct route the factory
+ * would reject with api_key_not_found.
  */
 export function canDirectOpenAIServeModel(
   model: string,
   providersConfig: ProvidersConfigMap | null | undefined
 ): boolean {
   const openAIConfig = providersConfig?.openai;
-  if (isCodexOauthRequiredModel(model, providersConfig ?? null)) {
-    return hasCodexOauthTokens(openAIConfig);
-  }
   if (hasOpenAIApiKey(openAIConfig)) {
     return true;
   }

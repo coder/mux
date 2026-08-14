@@ -4480,7 +4480,10 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
 
-          return { success: true, data: {} };
+          return {
+            success: true,
+            data: result.data?.routedModel != null ? { routedModel: result.data.routedModel } : {},
+          };
         }),
       answerAskUserQuestion: t
         .input(schemas.workspace.answerAskUserQuestion.input)
