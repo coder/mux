@@ -505,6 +505,59 @@ describe("GeneralSection", () => {
     });
   });
 
+  test("re-syncs telemetry state for changes that land before the subscription connects", async () => {
+    const setup = createMockAPI({ telemetryEnabled: true });
+    const { api } = setup;
+
+    // Hold the subscription unestablished so a config change can land in the
+    // gap between the initial snapshot and the listener coming online.
+    let resolveSubscribe: ((generator: AsyncGenerator<unknown>) => void) | undefined;
+    api.config.onConfigChanged = (_input: undefined, _opts: { signal?: AbortSignal }) =>
+      new Promise<AsyncGenerator<unknown>>((resolve) => {
+        resolveSubscribe = resolve;
+      });
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(resolveSubscribe).toBeDefined();
+    });
+
+    // Another client opts out while this pane has no listener yet.
+    api.config.getConfig = mock(() =>
+      Promise.resolve({
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+        chatTranscriptFullWidth: false,
+        llmDebugLogs: false,
+        telemetryEnabled: false,
+        telemetryDisabledByEnv: false,
+      })
+    );
+
+    // Connecting the subscription must trigger a re-sync — no event is ever
+    // pushed for the change that already happened.
+    resolveSubscribe?.(
+      (async function* () {
+        await new Promise<void>(() => {
+          // Never yields; the post-connect refresh is what syncs.
+        });
+        yield {};
+      })()
+    );
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+    });
+  });
+
   test("replays a config notification that arrived while a local write was in flight", async () => {
     const setup = createMockAPI({ telemetryEnabled: true });
     const { api, updateTelemetryEnabledMock } = setup;

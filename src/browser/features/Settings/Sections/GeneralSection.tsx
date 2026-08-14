@@ -545,6 +545,10 @@ export function GeneralSection() {
           return;
         }
         iterator = subscribedIterator;
+        // The initial config snapshot raced this subscription's establishment:
+        // a change landing in that gap had no listener and would leave the
+        // switch stale until the next unrelated edit. Re-sync once connected.
+        refreshTelemetry();
         for await (const _ of subscribedIterator) {
           if (signal.aborted) {
             break;
