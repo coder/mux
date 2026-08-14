@@ -2508,6 +2508,22 @@ export class AgentSession {
 
     const cancelSignal = internal?.cancelSignal;
     const persistedCancelableMessageIds: string[] = [];
+    // An append failure mid-preparation would otherwise orphan earlier synthetic
+    // snapshot rows in active history without their invoking user row, and later
+    // provider requests would read that context (best effort, mirrors cancellation).
+    const rollbackPersistedTurnRows = async (): Promise<void> => {
+      if (persistedCancelableMessageIds.length === 0) return;
+      const rollbackResult = await this.historyService.deleteMessages(
+        this.workspaceId,
+        persistedCancelableMessageIds
+      );
+      if (!rollbackResult.success) {
+        log.error("Failed to roll back partially persisted turn rows", {
+          workspaceId: this.workspaceId,
+          error: rollbackResult.error,
+        });
+      }
+    };
     let cancellationHandled = false;
     let cancellationDisabled = false;
     const cancelBeforeAcceptance = async (): Promise<boolean> => {
@@ -3066,6 +3082,7 @@ export class AgentSession {
           snapshotMessage
         );
         if (!skillSnapshotAppendResult.success) {
+          await rollbackPersistedTurnRows();
           return Err(createUnknownSendMessageError(skillSnapshotAppendResult.error));
         }
         persistedCancelableMessageIds.push(snapshotMessage.id);
@@ -3082,6 +3099,7 @@ export class AgentSession {
           snapshotMessage
         );
         if (!appendResult.success) {
+          await rollbackPersistedTurnRows();
           return Err(createUnknownSendMessageError(appendResult.error));
         }
         persistedCancelableMessageIds.push(snapshotMessage.id);
@@ -3096,9 +3114,7 @@ export class AgentSession {
     if (!autoCompactionMessage) {
       const appendResult = await this.historyService.appendToHistory(this.workspaceId, userMessage);
       if (!appendResult.success) {
-        // Note: If we get here with snapshots, one or more snapshots may already be persisted but user message
-        // failed. This is a rare edge case (disk full mid-operation). The next edit will clean up
-        // the orphan via the truncation logic that removes preceding snapshots.
+        await rollbackPersistedTurnRows();
         return Err(createUnknownSendMessageError(appendResult.error));
       }
       persistedCancelableMessageIds.push(userMessage.id);

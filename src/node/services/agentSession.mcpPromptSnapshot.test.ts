@@ -1,5 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { Err } from "@/common/types/result";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createAgentSessionHarness } from "@/node/services/agentSession.testHarness";
 
@@ -138,6 +139,41 @@ describe("AgentSession MCP prompt snapshots", () => {
       expect(result.error.type).toBe("unknown");
       expect(JSON.stringify(result.error)).toContain("Cannot expand MCP prompt 'coder/review'");
 
+      const history = await harness.historyService.getLastMessages("workspace", 10);
+      expect(history.success).toBe(true);
+      if (!history.success) throw new Error(history.error);
+      expect(history.data).toHaveLength(0);
+    } finally {
+      harness.session.dispose();
+      await harness.cleanup();
+    }
+  });
+
+  test("rolls back persisted snapshot rows when the user row append fails", async () => {
+    const getPrompt = mock(() => Promise.resolve({ text: "Expanded prompt" }));
+    const harness = await createAgentSessionHarness({
+      workspaceId: "workspace",
+      mcpServerManager: { getPrompt } as unknown as MCPServerManager,
+    });
+
+    try {
+      const realAppend = harness.historyService.appendToHistory.bind(harness.historyService);
+      const appendToHistory = spyOn(harness.historyService, "appendToHistory").mockImplementation(
+        async (workspaceId: string, message: MuxMessage) => {
+          if (message.metadata?.mcpPromptSnapshot) return realAppend(workspaceId, message);
+          return Err("disk full");
+        }
+      );
+
+      const result = await harness.session.sendMessage("Using MCP prompt coder/review: src", {
+        model: "anthropic:claude-3-5-sonnet-latest",
+        agentId: "exec",
+        muxMetadata: promptMetadata(),
+      });
+      expect(result.success).toBe(false);
+      appendToHistory.mockRestore();
+
+      // The orphaned snapshot must not survive for later provider requests.
       const history = await harness.historyService.getLastMessages("workspace", 10);
       expect(history.success).toBe(true);
       if (!history.success) throw new Error(history.error);
