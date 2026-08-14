@@ -5,6 +5,8 @@
  * Prefixes are preserved for backward compatibility with existing history.
  */
 
+import { MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX } from "@/common/types/message";
+
 const randomSuffix = (len = 9) =>
   Math.random()
     .toString(36)
@@ -25,7 +27,7 @@ export const createAgentSkillSnapshotMessageId = (): string =>
   `agent-skill-snapshot-${Date.now()}-${randomSuffix(7)}`;
 
 export const createMcpPromptSnapshotMessageId = (): string =>
-  `mcp-prompt-snapshot-${Date.now()}-${randomSuffix(7)}`;
+  `${MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX}${Date.now()}-${randomSuffix(7)}`;
 
 /** Compaction summary message IDs: summary-{timestamp}-{random} */
 export const createCompactionSummaryMessageId = (): string =>

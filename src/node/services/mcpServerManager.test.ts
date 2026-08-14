@@ -70,6 +70,7 @@ function testInstance(
     }>;
     getPrompt?: ReturnType<typeof mock>;
     refreshTools?: ReturnType<typeof mock>;
+    refreshPrompts?: ReturnType<typeof mock>;
     close?: ReturnType<typeof mock>;
     isClosed?: boolean;
   } = {}
@@ -82,6 +83,7 @@ function testInstance(
     prompts: options.prompts ?? [],
     getPrompt: options.getPrompt ?? mock(() => Promise.resolve({ messages: [] })),
     ...(options.refreshTools !== undefined ? { refreshTools: options.refreshTools } : {}),
+    ...(options.refreshPrompts !== undefined ? { refreshPrompts: options.refreshPrompts } : {}),
     isClosed: options.isClosed ?? false,
     close: options.close ?? mock(() => Promise.resolve(undefined)),
   };
@@ -1133,6 +1135,66 @@ describe("MCPServerManager", () => {
       "is disabled"
     );
     expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
+  });
+
+  test("excludes a server from prompt discovery when trust is revoked right after the refresh", async () => {
+    const workspaceId = "ws-post-refresh-discovery-trust";
+    configService.listServers = mock((_projectPath: string, trusted: boolean) =>
+      Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      )
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { prompts: [{ name: "review" }] }],
+          ["stable", { prompts: [{ name: "status" }] }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+
+    // Revoke in the gap after the discovery refresh resolves but before the
+    // enablement copy runs.
+    const originalEnsure = access.ensureWorkspaceServers.bind(manager);
+    let revokeAfterRefresh = true;
+    access.ensureWorkspaceServers = async (...args: unknown[]) => {
+      const result = await originalEnsure(...args);
+      if (revokeAfterRefresh) {
+        revokeAfterRefresh = false;
+        manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+      }
+      return result;
+    };
+
+    const descriptors = await manager.getPromptsForWorkspace(
+      workspaceRequest(workspaceId, { trusted: true })
+    );
+    expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
+  });
+
+  test("prompt discovery forwards the abort signal to prompt refreshes", async () => {
+    const workspaceId = "ws-discovery-signal";
+    configService.listServers = mock(() => Promise.resolve({ server: stdioConfig("cmd-1") }));
+    const refreshPrompts = mock((_options?: { signal?: AbortSignal }) => Promise.resolve());
+    access.startServers = mock(() =>
+      Promise.resolve(startResult([["server", { refreshPrompts }]]))
+    );
+
+    const controller = new AbortController();
+    await manager.getPromptsForWorkspace(workspaceRequest(workspaceId), {
+      signal: controller.signal,
+    });
+    expect(refreshPrompts).toHaveBeenCalledWith({ signal: controller.signal });
+
+    controller.abort();
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(
+      manager.getPromptsForWorkspace(workspaceRequest(workspaceId), { signal: controller.signal })
+    ).rejects.toThrow("aborted");
   });
 
   test("blocks prompt invocation when trust is revoked right after the prompt refresh", async () => {

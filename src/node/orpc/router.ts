@@ -5578,7 +5578,7 @@ export const router = (authToken?: string) => {
           list: t
             .input(schemas.workspace.mcp.prompts.list.input)
             .output(schemas.workspace.mcp.prompts.list.output)
-            .handler(async ({ context, input }) => {
+            .handler(async ({ context, input, signal }) => {
               await context.aiService.waitForInit(input.workspaceId);
               const metadataResult = await context.aiService.getWorkspaceMetadata(
                 input.workspaceId
@@ -5616,16 +5616,19 @@ export const router = (authToken?: string) => {
               const agentPlugins = hostCheckoutRoot
                 ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
                 : null;
-              return context.mcpServerManager.getPromptsForWorkspace({
-                workspaceId: input.workspaceId,
-                projectPath: metadata.projectPath,
-                runtime,
-                workspacePath,
-                trusted: isWorkspaceProjectTrusted(context.config, metadata),
-                overrides,
-                projectSecrets,
-                agentPlugins,
-              });
+              return context.mcpServerManager.getPromptsForWorkspace(
+                {
+                  workspaceId: input.workspaceId,
+                  projectPath: metadata.projectPath,
+                  runtime,
+                  workspacePath,
+                  trusted: isWorkspaceProjectTrusted(context.config, metadata),
+                  overrides,
+                  projectSecrets,
+                  agentPlugins,
+                },
+                signal !== undefined ? { signal } : undefined
+              );
             }),
         },
         set: t

@@ -77,6 +77,34 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
     expect(filterOrphanedMcpPromptSnapshots(messages).map((m) => m.id)).toEqual(["user-1"]);
   });
 
+  test("keeps other synthetic rows with a corrupted snapshot field, stripped", () => {
+    // A file-mention snapshot row corrupted with a malformed mcpPromptSnapshot
+    // must survive as a sanitized row, not be dropped as an MCP orphan.
+    const fileSnapshotRow = createMuxMessage("file-snap-1", "user", "File contents", {
+      historySequence: 0,
+      synthetic: true,
+      fileAtMentionSnapshot: ["@src/foo.ts"],
+    });
+    (fileSnapshotRow.metadata as Record<string, unknown>).mcpPromptSnapshot = null;
+
+    const result = filterOrphanedMcpPromptSnapshots([fileSnapshotRow]);
+    expect(result.map((m) => m.id)).toEqual(["file-snap-1"]);
+    expect(result[0].metadata?.fileAtMentionSnapshot).toEqual(["@src/foo.ts"]);
+    expect("mcpPromptSnapshot" in (result[0].metadata ?? {})).toBe(false);
+  });
+
+  test("drops a corrupted expansion row identified by its snapshot message id", () => {
+    // The dedicated ID prefix marks genuine expansion rows even when the
+    // snapshot payload itself is corrupted beyond shape recognition.
+    const corrupted = createMuxMessage("mcp-prompt-snapshot-123-abc", "user", "Expanded", {
+      historySequence: 0,
+      synthetic: true,
+    });
+    (corrupted.metadata as Record<string, unknown>).mcpPromptSnapshot = null;
+
+    expect(filterOrphanedMcpPromptSnapshots([corrupted])).toEqual([]);
+  });
+
   test("keeps ordinary rows with a corrupted snapshot field, stripped", () => {
     const authored = createMuxMessage("user-authored", "user", "Real user text", {
       historySequence: 0,
@@ -104,8 +132,8 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
       return message;
     };
     const messages = [
-      corruptRow("snap-null", null),
-      corruptRow("snap-wrong-shape", { serverName: 42, promptName: "review" }),
+      corruptRow("mcp-prompt-snapshot-1-null", null),
+      corruptRow("mcp-prompt-snapshot-2-shape", { serverName: 42, promptName: "review" }),
       snapshot("snap-valid", "user-1"),
       invokingUser("user-1", ["review"]),
     ];
@@ -145,5 +173,18 @@ describe("sanitizeMcpPromptRefs arguments", () => {
       const refs = sanitizeMcpPromptRefs([{ ...baseRef, arguments: malformed }]);
       expect(refs).toEqual([baseRef]);
     }
+  });
+
+  test("drops references with empty or invalid identity strings", () => {
+    // Retaining an empty identity would make snapshot materialization fail on
+    // every compact-and-retry instead of self-healing the corrupted history.
+    const invalidIdentities: unknown[] = [
+      { serverName: "", promptName: "", commandKey: "", source: "slash" },
+      { ...baseRef, serverName: "" },
+      { ...baseRef, promptName: "" },
+      { ...baseRef, commandKey: "not-an-mcp-key" },
+    ];
+    expect(sanitizeMcpPromptRefs(invalidIdentities)).toEqual([]);
+    expect(sanitizeMcpPromptRefs([baseRef])).toEqual([baseRef]);
   });
 });

@@ -14,6 +14,7 @@ import type { AgentMode } from "./mode";
 import type { AgentSkillScope } from "./agentSkill";
 import type { ThinkingLevel } from "./thinking";
 import { type ReviewNoteData, formatReviewForModel } from "./review";
+import { isMcpPromptCommandKey } from "@/common/utils/tools/mcpPromptCommandKey";
 
 export type { ModelMessage };
 
@@ -312,10 +313,15 @@ export function buildMcpPromptUserText(
 export function isMcpPromptReference(value: unknown): value is MCPPromptReference {
   if (value === null || typeof value !== "object") return false;
   const ref = value as Partial<MCPPromptReference>;
+  // Empty identities would make snapshot materialization fail on every
+  // compact-and-retry instead of self-healing, so reject them here.
   return (
     typeof ref.serverName === "string" &&
+    ref.serverName.length > 0 &&
     typeof ref.promptName === "string" &&
+    ref.promptName.length > 0 &&
     typeof ref.commandKey === "string" &&
+    isMcpPromptCommandKey(ref.commandKey) &&
     (ref.source === "slash" || ref.source === "inline")
   );
 }
@@ -350,16 +356,15 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
   return Array.isArray(value) ? value.filter(isAgentSkillReference) : [];
 }
 
-function isMcpPromptSnapshotWithInvokingId(
+/** Shared with the node-side ID factory so snapshot rows stay identifiable. */
+export const MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX = "mcp-prompt-snapshot-";
+
+function isMcpPromptSnapshotBaseShape(
   value: unknown
-): value is { serverName: string; promptName: string; invokingMessageId: string } {
+): value is { serverName: string; promptName: string; invokingMessageId?: string } {
   if (value === null || typeof value !== "object") return false;
   const snapshot = value as Partial<NonNullable<MuxMetadata["mcpPromptSnapshot"]>>;
-  return (
-    typeof snapshot.serverName === "string" &&
-    typeof snapshot.promptName === "string" &&
-    typeof snapshot.invokingMessageId === "string"
-  );
+  return typeof snapshot.serverName === "string" && typeof snapshot.promptName === "string";
 }
 
 /**
@@ -368,16 +373,20 @@ function isMcpPromptSnapshotWithInvokingId(
  * exists and still references the same prompt.
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
-  // Only synthetic user rows are droppable snapshot rows; corruption can add
-  // the field to authored/model rows, which must survive with it stripped.
-  const isSnapshotRow = (message: MuxMessage): boolean =>
+  // Only genuine MCP expansion rows are droppable: synthetic user rows
+  // identified by the dedicated snapshot ID prefix or a valid snapshot shape.
+  // Corruption can add the field to any other row (authored, model, or other
+  // synthetic kinds), which must survive with the invalid field stripped.
+  const isMcpSnapshotRow = (message: MuxMessage): boolean =>
     message.role === "user" &&
     message.metadata?.synthetic === true &&
-    message.metadata.mcpPromptSnapshot !== undefined;
+    message.metadata.mcpPromptSnapshot !== undefined &&
+    (message.id.startsWith(MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX) ||
+      isMcpPromptSnapshotBaseShape(message.metadata.mcpPromptSnapshot));
 
   const promptRefKeysByMessageId = new Map<string, Set<string>>();
   for (const message of messages) {
-    if (message.role !== "user" || isSnapshotRow(message)) continue;
+    if (message.role !== "user" || isMcpSnapshotRow(message)) continue;
     const refs = sanitizeMcpPromptRefs(message.metadata?.muxMetadata?.mcpPromptRefs);
     if (refs.length === 0) continue;
     promptRefKeysByMessageId.set(
@@ -388,14 +397,17 @@ export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMes
   return messages.flatMap((message): MuxMessage[] => {
     const snapshot: unknown = message.metadata?.mcpPromptSnapshot;
     if (snapshot === undefined || message.metadata === undefined) return [message];
-    if (!isSnapshotRow(message)) {
+    if (!isMcpSnapshotRow(message)) {
       const { mcpPromptSnapshot: _stripped, ...metadata } = message.metadata;
       return [{ ...message, metadata }];
     }
     // Raw chat.jsonl rows bypass the oRPC .catch(undefined) sanitizer, so a
-    // present-but-malformed snapshot field (e.g. null) marks a corrupted
-    // expansion row: exclude it from provider requests.
-    if (!isMcpPromptSnapshotWithInvokingId(snapshot)) return [];
+    // present-but-malformed snapshot on an expansion row marks it corrupted:
+    // exclude it from provider requests. Legacy rows without an invoking id
+    // are treated as crash orphans.
+    if (!isMcpPromptSnapshotBaseShape(snapshot) || snapshot.invokingMessageId === undefined) {
+      return [];
+    }
     const invokingRefKeys = promptRefKeysByMessageId.get(snapshot.invokingMessageId);
     return invokingRefKeys?.has(
       getMcpPromptReferenceKey(snapshot.serverName, snapshot.promptName)

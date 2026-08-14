@@ -807,7 +807,7 @@ interface MCPServerInstance {
    * results carry no freshness hints).
    */
   refreshTools?: () => Promise<void>;
-  refreshPrompts?: () => Promise<void>;
+  refreshPrompts?: (options?: { signal?: AbortSignal }) => Promise<void>;
   close: () => Promise<void>;
 }
 
@@ -973,12 +973,15 @@ export class MCPServerManager {
     );
   }
 
-  private async refreshInstancePrompts(instances: Map<string, MCPServerInstance>): Promise<void> {
+  private async refreshInstancePrompts(
+    instances: Map<string, MCPServerInstance>,
+    signal?: AbortSignal
+  ): Promise<void> {
     await Promise.all(
       [...instances.values()].map(async (instance) => {
         if (instance.isClosed || !instance.refreshPrompts) return;
         try {
-          await instance.refreshPrompts();
+          await instance.refreshPrompts(signal !== undefined ? { signal } : undefined);
         } catch (error) {
           log.debug("[MCP] Prompt list refresh failed; keeping cached prompts", {
             name: instance.name,
@@ -1704,17 +1707,45 @@ export class MCPServerManager {
   }
 
   async getPromptsForWorkspace(
-    options: MCPWorkspaceRequestOptions
+    options: MCPWorkspaceRequestOptions,
+    callOptions?: { signal?: AbortSignal }
   ): Promise<MCPPromptDescriptor[]> {
-    await this.ensureWorkspaceServers(options, false);
-    const entry = this.workspaceServers.get(options.workspaceId);
+    const workspaceId = options.workspaceId;
+    // Same post-refresh mutation gap as getPrompt: a trust or settings
+    // mutation completing after the refresh resolves must not let this copy
+    // pre-mutation enablement. Retry until both mutation counters are stable
+    // across one refresh; retries re-read recorded options so they pick up
+    // the mutation. Racing with the abort signal lets an abandoned discovery
+    // return promptly while a losing startup finishes into the cache (idle
+    // cleanup closes it), matching getPrompt's cancellation semantics.
+    for (;;) {
+      const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
+      const generationBefore = this.configService.configGeneration;
+      const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? options;
+      const refreshed = await raceWithAbortAndTimeout(
+        this.ensureWorkspaceServers(currentOptions, false),
+        {
+          ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),
+        }
+      );
+      if (refreshed.kind === "aborted") {
+        throw new Error("MCP prompt discovery was aborted");
+      }
+      if (
+        (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) === optionsMutationsBefore &&
+        this.configService.configGeneration === generationBefore
+      ) {
+        break;
+      }
+    }
+    const entry = this.workspaceServers.get(workspaceId);
     if (!entry) return [];
 
     // Disabled clients can remain cached until a leased restart, so filter prompts.
     const enabledInstances = new Map(
       [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
     );
-    await this.refreshInstancePrompts(enabledInstances);
+    await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
     const instances = [...enabledInstances.values()].sort((a, b) => a.name.localeCompare(b.name));
@@ -2678,8 +2709,8 @@ export class MCPServerManager {
           prompts: [],
           getPrompt: (promptName, args, options) =>
             readyClient.getPrompt(promptName, args, options),
-          refreshPrompts: async () => {
-            instance.prompts = await readyClient.prompts();
+          refreshPrompts: async (options) => {
+            instance.prompts = await readyClient.prompts(options);
           },
           isClosed: transportClosed,
           ...(isModernEra(negotiatedPrior)
@@ -2930,8 +2961,8 @@ export class MCPServerManager {
         tools,
         prompts: [],
         getPrompt: (promptName, args, options) => activeClient.getPrompt(promptName, args, options),
-        refreshPrompts: async () => {
-          instance.prompts = await activeClient.prompts();
+        refreshPrompts: async (options) => {
+          instance.prompts = await activeClient.prompts(options);
         },
         isClosed: transportErrored || clientClosed,
         ...(isModernEra(negotiatedPrior)

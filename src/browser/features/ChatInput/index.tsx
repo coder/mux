@@ -173,6 +173,7 @@ import {
 } from "@/common/types/runtime";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import {
+  type AgentSkillReference,
   type MuxMessageMetadata,
   type ReviewNoteDataForDisplay,
   prepareUserMessageForSend,
@@ -228,6 +229,8 @@ import {
   resolveMcpPromptRefsForSend,
   validateCreationRuntime,
   filePartsToChatAttachments,
+  type MCPPromptInvocation,
+  type SkillInvocation,
   type SkillResolutionTarget,
 } from "./utils";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -446,6 +449,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const mcpPromptsRequestRef = useRef<Promise<void> | null>(null);
   const mcpPromptsLoadedAtRef = useRef(0);
   const mcpPromptsWorkspaceRef = useRef<string | null>(null);
+  // Abandoned cold discovery would otherwise keep starting servers and
+  // waiting out prompts/list deadlines for a workspace we already left.
+  const mcpPromptsAbortRef = useRef<AbortController | null>(null);
   const atMentionDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const atMentionRequestIdRef = useRef(0);
   const lastAtMentionScopeIdRef = useRef<string | null>(null);
@@ -638,6 +644,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   useEffect(() => {
     return () => {
       isMountedRef.current = false;
+      mcpPromptsAbortRef.current?.abort();
+      mcpPromptsAbortRef.current = null;
     };
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -1038,7 +1046,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
   );
 
-  const isSendInFlight = variant === "creation" ? creationState.isSending : isSending;
+  // Creation sends also pass through the async resolution phase guarded by
+  // sendingCount, so include it alongside the creation-specific flag.
+  const isSendInFlight = variant === "creation" ? creationState.isSending || isSending : isSending;
   const sendInFlightBlocksInput =
     variant === "workspace" ? isSendInFlight && !isStreamStarting : isSendInFlight;
 
@@ -1583,6 +1593,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         mcpPromptsLoadedAtRef.current = 0;
         mcpPromptsRequestIdRef.current++;
         mcpPromptsRequestRef.current = null;
+        mcpPromptsAbortRef.current?.abort();
+        mcpPromptsAbortRef.current = null;
         setMcpPromptDescriptors([]);
       }
       return;
@@ -1593,6 +1605,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       mcpPromptsLoadedAtRef.current = 0;
       mcpPromptsRequestIdRef.current++;
       mcpPromptsRequestRef.current = null;
+      mcpPromptsAbortRef.current?.abort();
+      mcpPromptsAbortRef.current = null;
       setMcpPromptDescriptors([]);
     }
 
@@ -1603,8 +1617,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (mcpPromptsRequestRef.current) return;
 
     const requestId = ++mcpPromptsRequestIdRef.current;
+    const abortController = new AbortController();
+    mcpPromptsAbortRef.current = abortController;
     const request = api.workspace.mcp.prompts
-      .list({ workspaceId })
+      .list({ workspaceId }, { signal: abortController.signal })
       .then((prompts) => {
         if (
           mcpPromptsWorkspaceRef.current !== workspaceId ||
@@ -1626,6 +1642,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       .finally(() => {
         if (mcpPromptsRequestRef.current === request) {
           mcpPromptsRequestRef.current = null;
+        }
+        if (mcpPromptsAbortRef.current === abortController) {
+          mcpPromptsAbortRef.current = null;
         }
       });
     mcpPromptsRequestRef.current = request;
@@ -2614,44 +2633,55 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
                 transferredDraftProjectDiscovery,
             }
           : null;
-    const {
-      parsed,
-      skillInvocation,
-      mcpPromptInvocation,
-      error: invocationError,
-    } = await parseCommandWithSkillInvocation({
-      messageText,
-      agentSkillDescriptors,
-      mcpPromptDescriptors,
-      api,
-      discovery: skillDiscovery,
-    });
-    if (invocationError) {
-      pushToast({ type: "error", message: invocationError });
-      return;
-    }
-    const inlineReferenceCandidates = extractInlineSkillReferenceCandidates(messageText);
-    const [combinedSkillRefs, mcpPromptRefsResult] = await Promise.all([
-      resolveInlineSkillRefsForSend({
+    // Resolving commands/references can include cold MCP server startup and
+    // prompt discovery; mark the send in flight so a second Enter cannot start
+    // a duplicate send against the same captured draft.
+    setSendingCount((c) => c + 1);
+    let parsed: ParsedCommand;
+    let skillInvocation: SkillInvocation | null;
+    let mcpPromptInvocation: MCPPromptInvocation | null;
+    let combinedSkillRefs: AgentSkillReference[];
+    let mcpPromptRefsResult: Awaited<ReturnType<typeof resolveMcpPromptRefsForSend>>;
+    try {
+      const resolution = await parseCommandWithSkillInvocation({
         messageText,
-        slashInvocation: skillInvocation,
         agentSkillDescriptors,
+        mcpPromptDescriptors,
         api,
         discovery: skillDiscovery,
-        candidates: inlineReferenceCandidates,
-      }),
-      resolveMcpPromptRefsForSend({
-        messageText,
-        slashInvocation: mcpPromptInvocation,
-        descriptors: mcpPromptDescriptors,
-        api,
-        discovery: skillDiscovery,
-        candidates: inlineReferenceCandidates,
-      }),
-    ]);
-    if (mcpPromptRefsResult.error) {
-      pushToast({ type: "error", message: mcpPromptRefsResult.error });
-      return;
+      });
+      parsed = resolution.parsed;
+      skillInvocation = resolution.skillInvocation;
+      mcpPromptInvocation = resolution.mcpPromptInvocation;
+      if (resolution.error) {
+        pushToast({ type: "error", message: resolution.error });
+        return;
+      }
+      const inlineReferenceCandidates = extractInlineSkillReferenceCandidates(messageText);
+      [combinedSkillRefs, mcpPromptRefsResult] = await Promise.all([
+        resolveInlineSkillRefsForSend({
+          messageText,
+          slashInvocation: skillInvocation,
+          agentSkillDescriptors,
+          api,
+          discovery: skillDiscovery,
+          candidates: inlineReferenceCandidates,
+        }),
+        resolveMcpPromptRefsForSend({
+          messageText,
+          slashInvocation: mcpPromptInvocation,
+          descriptors: mcpPromptDescriptors,
+          api,
+          discovery: skillDiscovery,
+          candidates: inlineReferenceCandidates,
+        }),
+      ]);
+      if (mcpPromptRefsResult.error) {
+        pushToast({ type: "error", message: mcpPromptRefsResult.error });
+        return;
+      }
+    } finally {
+      setSendingCount((c) => c - 1);
     }
     const combinedMcpPromptRefs = mcpPromptRefsResult.refs;
 
