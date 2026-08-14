@@ -504,16 +504,26 @@ export function GeneralSection() {
         telemetryEnabledPendingWritesRef.current--;
         // Replay a notification that arrived during the write window: the
         // backend may have changed under us (another client, or our own write
-        // whose notification fired before the RPC resolved).
+        // whose notification fired before the RPC resolved). Replays go
+        // through the ref so they use the CURRENT api generation — this
+        // callback can outlive an API replacement.
         if (
           telemetryEnabledPendingWritesRef.current === 0 &&
           telemetryEnabledMissedNotificationRef.current
         ) {
           telemetryEnabledMissedNotificationRef.current = false;
-          void refreshTelemetryFromBackend();
+          refreshTelemetryRef.current();
         }
       });
   };
+
+  // Always points at the CURRENT api generation's refresh: settle-replay
+  // callbacks from old writes outlive an API replacement and must not replay
+  // through the disconnected client they captured (a failed read there would
+  // consume the deferred notification and strand the switch stale).
+  const refreshTelemetryRef = useRef<() => void>(() => {
+    // No-op until the api effect installs the real refresh.
+  });
 
   // An API replacement (browser-mode reconnect) obsoletes in-flight telemetry
   // writes made through the previous client: invalidate their pending intents
@@ -522,6 +532,8 @@ export function GeneralSection() {
   // below re-establishes on the new client and re-syncs on connect.
   useEffect(() => {
     telemetryEnabledIntentRef.current++;
+    refreshTelemetryRef.current = () => void refreshTelemetryFromBackend();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshTelemetryFromBackend only closes over `api` (the dep) and stable refs/setters.
   }, [api]);
 
   // Cross-client telemetry sync: another window/tab (or the API server) can

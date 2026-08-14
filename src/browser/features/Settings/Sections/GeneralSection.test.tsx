@@ -621,6 +621,72 @@ describe("GeneralSection", () => {
     });
   });
 
+  test("replays a deferred notification through the replacement API client", async () => {
+    const setupA = createMockAPI({ telemetryEnabled: true });
+    const apiA = setupA.api;
+
+    let pushEventA: (() => void) | undefined;
+    apiA.config.onConfigChanged = (_input: undefined, _opts: { signal?: AbortSignal }) => {
+      const generator = (async function* () {
+        for (;;) {
+          await new Promise<void>((resolve) => {
+            pushEventA = resolve;
+          });
+          yield {};
+        }
+      })();
+      return Promise.resolve(generator);
+    };
+
+    let rejectWriteA: ((error: Error) => void) | undefined;
+    apiA.config.updateTelemetryEnabled = setupA.updateTelemetryEnabledMock.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectWriteA = reject;
+        })
+    );
+    mockApi = apiA;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(pushEventA).toBeDefined();
+    });
+
+    // Local opt-out in flight on client A; a change notification arrives and
+    // is deferred behind the pending write.
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(rejectWriteA).toBeDefined();
+    });
+    pushEventA?.();
+
+    // APIProvider replaces the client while the old write is still pending.
+    // The replacement's config says telemetry is enabled (the other client's
+    // enable won).
+    const setupB = createMockAPI({ telemetryEnabled: true });
+    mockApi = setupB.api;
+    view.rerender(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    // The old write settles AFTER the replacement: the deferred notification
+    // must replay through client B, not the disconnected client A.
+    rejectWriteA?.(new Error("connection dropped"));
+
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
   test("disables the telemetry switch while the API is unavailable", () => {
     // Browser-mode outage: APIProvider keeps settings mounted with api: null.
     mockApi = null;
