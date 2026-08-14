@@ -5415,16 +5415,40 @@ export class AgentSession {
   }
 
   /**
-   * Whether a queued entry, a dequeued entry, or a different direct send is preparing.
+   * Whether an earlier queued, dequeued, or direct send supersedes a continuation.
    *
-   * A direct send with the same workspace-turn correlation remains the current
-   * continuation and does not supersede the proposed report.
+   * A predecessor with the same workspace-turn correlation remains part of the
+   * continuation chain and does not supersede the proposed report.
    */
   hasQueuedOrDispatchingEntry(continuationMetadata?: WorkspaceTurnMuxMetadata): boolean {
     const hasDifferentPreparingSend =
       this.turnPhase === TurnPhase.PREPARING &&
       !hasSameWorkspaceTurnCorrelation(this.preparingWorkspaceTurnMetadata, continuationMetadata);
-    return hasDifferentPreparingSend || this.dispatchingQueuedEntry || !this.messageQueue.isEmpty();
+    if (hasDifferentPreparingSend) {
+      return true;
+    }
+
+    if (this.dispatchingQueuedEntry) {
+      const dispatchingMetadata = getWorkspaceTurnMuxMetadata(
+        this.dispatchingQueuedEntryMuxMetadata
+      );
+      if (!hasSameWorkspaceTurnCorrelation(dispatchingMetadata, continuationMetadata)) {
+        return true;
+      }
+    }
+
+    if (!this.messageQueue.isEmpty()) {
+      if (continuationMetadata == null) {
+        return true;
+      }
+      return !this.messageQueue.hasNextWorkspaceTurnContinuation(
+        continuationMetadata.taskHandleId,
+        continuationMetadata.ownerWorkspaceId,
+        continuationMetadata.turnId
+      );
+    }
+
+    return false;
   }
 
   /**
