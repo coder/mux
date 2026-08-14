@@ -833,6 +833,8 @@ export type DisplayedMessage =
       };
       /** Preserved so compaction retry can rematerialize MCP prompt invocations. */
       mcpPromptRefs?: MCPPromptReference[];
+      /** Preserved so compaction retry can rematerialize inline skill references. */
+      agentSkillRefs?: AgentSkillReference[];
       /**
        * Inline skill and MCP prompt snapshots are derived from prior synthetic messages.
        * They are not persisted on the user message itself.

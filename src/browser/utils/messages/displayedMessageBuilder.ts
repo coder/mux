@@ -7,7 +7,11 @@ import type {
   MuxMessage,
   MuxMessageMetadata,
 } from "@/common/types/message";
-import { getCompactionFollowUpContent, sanitizeMcpPromptRefs } from "@/common/types/message";
+import {
+  getCompactionFollowUpContent,
+  sanitizeAgentSkillRefs,
+  sanitizeMcpPromptRefs,
+} from "@/common/types/message";
 import type { StreamErrorType } from "@/common/types/errors";
 import { GOAL_BUDGET_LIMIT_KIND, GOAL_CONTINUATION_KIND } from "@/constants/goals";
 import { getFollowUpContentText } from "@/browser/utils/compaction/format";
@@ -261,6 +265,8 @@ function buildUserDisplayedMessages(options: {
   let rawCommand = getRawCommand(muxMeta);
   const sanitizedMcpPromptRefs = sanitizeMcpPromptRefs(muxMeta?.mcpPromptRefs);
   const mcpPromptRefs = sanitizedMcpPromptRefs.length > 0 ? sanitizedMcpPromptRefs : undefined;
+  const sanitizedAgentSkillRefs = sanitizeAgentSkillRefs(muxMeta?.agentSkillRefs);
+  const agentSkillRefs = sanitizedAgentSkillRefs.length > 0 ? sanitizedAgentSkillRefs : undefined;
   const slashMcpPromptRef = mcpPromptRefs?.find((ref) => ref.source === "slash");
   const agentSkill =
     muxMeta?.type === "agent-skill"
@@ -316,6 +322,7 @@ function buildUserDisplayedMessages(options: {
       timestamp: baseTimestamp,
       agentSkill,
       mcpPromptRefs,
+      agentSkillRefs,
       inlineSkillSnapshots,
       compactionRequest,
       reviews: muxMeta?.reviews,

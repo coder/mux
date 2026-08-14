@@ -550,6 +550,7 @@ describe("Agent skill snapshot association", () => {
             source: "slash",
           },
         ],
+        agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "inline" }],
       },
     });
     const inlineSnapshot = createMuxMessage("prompt-snapshot-2", "user", "Expanded prompt body", {
@@ -588,6 +589,9 @@ describe("Agent skill snapshot association", () => {
     }
     expect(slashMessage.agentSkill?.snapshot?.body).toBe("Expanded prompt body");
     expect(slashMessage.mcpPromptRefs).toEqual(slash.metadata?.muxMetadata?.mcpPromptRefs);
+    expect(slashMessage.agentSkillRefs).toEqual([
+      { skillName: "tdd", scope: "global", source: "inline" },
+    ]);
     expect(inlineMessage.mcpPromptRefs).toEqual(inline.metadata?.muxMetadata?.mcpPromptRefs);
     expect(inlineMessage.inlineSkillSnapshots?.mcp__coder__review?.snapshot.body).toBe(
       "Expanded prompt body"

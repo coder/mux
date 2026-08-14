@@ -2837,7 +2837,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const promptMuxMetadata: MuxMessageMetadata | undefined = mcpPromptInvocation
         ? {
             type: "normal",
-            rawCommand: messageText,
+            // Include the staged-attachment notice so edit restoration and
+            // compact-and-retry (which prefer rawCommand) keep the attached files.
+            rawCommand: appendStagedAttachmentNotice(messageText, sendAttachments),
             commandPrefix: `/${mcpPromptInvocation.descriptor.commandKey}`,
           }
         : undefined;

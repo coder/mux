@@ -22,6 +22,7 @@ import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   buildAgentSkillMetadata,
   buildMcpPromptUserText,
+  withAgentSkillRefs,
   withMcpPromptRefs,
   type CompactionFollowUpInput,
   type DisplayedMessage,
@@ -83,7 +84,12 @@ export function buildFollowUpFromSource(
     text,
     fileParts: source.fileParts,
     reviews: source.reviews,
-    muxMetadata: withMcpPromptRefs(skillMetadata, source.mcpPromptRefs ?? []),
+    // Inline skill refs must survive alongside prompt refs; withAgentSkillRefs
+    // dedupes against the slash ref that buildAgentSkillMetadata already added.
+    muxMetadata: withAgentSkillRefs(
+      withMcpPromptRefs(skillMetadata, source.mcpPromptRefs ?? []),
+      source.agentSkillRefs ?? []
+    ),
   };
 }
 

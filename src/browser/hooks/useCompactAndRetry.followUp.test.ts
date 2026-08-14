@@ -40,6 +40,44 @@ describe("buildFollowUpFromSource", () => {
     expect(followUp.muxMetadata).toBeUndefined();
   });
 
+  test("preserves inline skill refs alongside slash MCP prompt refs", () => {
+    const followUp = buildFollowUpFromSource(
+      userMessage({
+        content: "/mcp__coder__review src",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "slash",
+          },
+        ],
+        agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "inline" }],
+        agentSkill: { skillName: "mcp__coder__review", scope: "built-in" },
+      })
+    );
+
+    expect(followUp.muxMetadata?.mcpPromptRefs).toHaveLength(1);
+    expect(followUp.muxMetadata?.agentSkillRefs).toEqual([
+      { skillName: "tdd", scope: "global", source: "inline" },
+    ]);
+  });
+
+  test("does not duplicate the slash skill ref when preserving displayed refs", () => {
+    const followUp = buildFollowUpFromSource(
+      userMessage({
+        content: "/tdd strict",
+        agentSkill: { skillName: "tdd", scope: "global", arguments: "strict" },
+        agentSkillRefs: [{ skillName: "tdd", scope: "global", source: "slash" }],
+      })
+    );
+
+    expect(followUp.muxMetadata?.type).toBe("agent-skill");
+    expect(followUp.muxMetadata?.agentSkillRefs).toEqual([
+      { skillName: "tdd", scope: "global", source: "slash" },
+    ]);
+  });
+
   test("keeps inline-only MCP prompt turns unchanged", () => {
     const followUp = buildFollowUpFromSource(
       userMessage({
