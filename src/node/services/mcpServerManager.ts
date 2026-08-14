@@ -873,18 +873,13 @@ export class MCPServerManager {
   // servers at send time; forgotten only on workspace removal.
   private readonly lastWorkspaceRequestOptions = new Map<string, MCPWorkspaceRequestOptions>();
   /**
-   * Bumped whenever a mutation replaces a workspace's recorded options.
-   * getPrompt compares it (plus the global config generation) across its
-   * refresh so a mutation completing after the refresh cannot pass the
-   * pre-dispatch enablement checks with stale state.
+   * Prompt paths compare this counter with global config generation across
+   * refreshes so workspace mutations cannot pass stale dispatch checks.
    */
   private readonly workspaceOptionsMutationCounts = new Map<string, number>();
   /**
-   * Newest overrides seen per workspace, recorded even when the workspace has
-   * no cache entry or recorded options yet (cold), where the sync in
-   * applyWorkspaceOverrides has nothing to update. ensureWorkspaceServers
-   * overlays this over caller-supplied overrides, whose persisted-state read
-   * may predate the mutation.
+   * Retains overrides for cold workspaces, where applyWorkspaceOverrides has no
+   * cached or recorded state to repair, so stale caller snapshots can be overlaid.
    */
   private readonly latestWorkspaceOverrides = new Map<string, WorkspaceMCPOverrides | undefined>();
   private readonly latestProjectTrust = new Map<string, boolean>();
@@ -1273,18 +1268,15 @@ export class MCPServerManager {
   }
 
   /**
-   * refreshToolCatalogs=false skips tools/list refreshes on cached instances;
-   * prompt paths use it so one stale unrelated server (60s SDK default
-   * timeout) cannot stall every prompt send in the workspace.
+   * Skips tools/list refreshes on cached instances so an unrelated server's
+   * 60-second SDK timeout cannot block prompt paths.
    */
   private async ensureWorkspaceServers(
     requestOptions: MCPWorkspaceRequestOptions,
     refreshToolCatalogs: boolean
   ): Promise<MCPToolsForWorkspaceResult> {
-    // workspace.mcp.set can land between a caller reading persisted overrides
-    // and reaching here; on a cold workspace there is no recorded state for
-    // that mutation to repair, so overlay the newest overrides the manager
-    // has seen over the caller's possibly stale snapshot.
+    // Cold workspaces have no recorded state for applyWorkspaceOverrides to repair.
+    // Overlay the newest overrides over a caller snapshot that may predate the mutation.
     let options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
       ? {
           ...requestOptions,
@@ -1645,8 +1637,7 @@ export class MCPServerManager {
           if (refreshToolCatalogs) {
             await this.refreshModernInstanceTools(current.instances);
           }
-          // Same cached-return hazard as the fast path above: a mutation may
-          // have landed after the concurrent starter's repair ran.
+          // Repair again in case a mutation landed after the concurrent starter's check.
           await this.repairEnablementAfterConcurrentMutation(
             workspaceId,
             options,
@@ -1721,15 +1712,9 @@ export class MCPServerManager {
     callOptions?: { signal?: AbortSignal }
   ): Promise<MCPPromptDescriptor[]> {
     const workspaceId = options.workspaceId;
-    // Same post-refresh mutation gap as getPrompt, extended over the prompt
-    // catalog fetch: a trust or settings mutation completing while
-    // prompts/list is pending must not let a pre-mutation enabled-instance
-    // copy leak descriptors from a now-disabled server. Retry until both
-    // mutation counters are stable across one refresh plus catalog fetch;
-    // retries re-read recorded options so they pick up the mutation. Racing
-    // with the abort signal lets an abandoned discovery return promptly while
-    // a losing startup finishes into the cache (idle cleanup closes it),
-    // matching getPrompt's cancellation semantics.
+    // Keep refreshing until both mutation counters remain stable across catalog fetch,
+    // preventing a pre-mutation instance copy from leaking descriptors. Abort returns
+    // promptly while a losing startup may finish into the cache for idle cleanup.
     let enabledInstances: Map<string, MCPServerInstance>;
     for (;;) {
       const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
@@ -1747,10 +1732,9 @@ export class MCPServerManager {
       const entry = this.workspaceServers.get(workspaceId);
       if (!entry) return [];
 
-      // Disabled clients can remain cached until a leased restart, so filter
-      // prompts. Lease-deferred reconfigured servers stay stale until they
-      // restart; skip them so discovery neither queries the old endpoint nor
-      // returns its outdated catalog.
+      // Disabled clients may remain cached during leased restarts. Skip disabled and
+      // reconfigured instances so discovery neither queries stale endpoints nor
+      // returns outdated catalogs.
       enabledInstances = new Map(
         [...entry.instances].filter(
           ([serverName]) =>
@@ -1859,11 +1843,8 @@ export class MCPServerManager {
   }
 
   /**
-   * Settings mutations sync only an existing cache entry, so one landing while
-   * servers start would be lost: a disabled or trust-revoked server could stay
-   * invocable, and an edited server would keep serving its pre-edit instance.
-   * Re-derive enablement from the latest recorded options and block prompt
-   * invocation on servers whose start config changed until the next restart.
+   * Settings changes during startup can miss cache synchronization. Re-derive
+   * enablement and mark reconfigured clients stale before prompt dispatch.
    */
   private async repairEnablementAfterConcurrentMutation(
     workspaceId: string,
@@ -1873,9 +1854,8 @@ export class MCPServerManager {
   ): Promise<void> {
     try {
       let recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
-      // Workspace-scoped mutations (trust, overrides) replace the recorded
-      // options object; global config mutations only bump the generation.
-      // Either signals that the derived enablement may be stale.
+      // Workspace mutations replace recorded options; global mutations only bump a
+      // generation. Either can invalidate derived enablement.
       let needsRepair =
         recorded !== optionsUsed || this.configService.configGeneration !== configGenerationUsed;
       while (recorded !== undefined && needsRepair) {
@@ -1906,7 +1886,6 @@ export class MCPServerManager {
           }
           return;
         }
-        // Another mutation landed while we derived enablement; recompute.
         recorded = latest;
         needsRepair = true;
       }
@@ -2005,11 +1984,9 @@ export class MCPServerManager {
           false
         );
       };
-      // A mutation completing after a refresh resolves would pass the stale
-      // enablement checks below, so refresh until both mutation counters are
-      // stable across one refresh: only synchronous code then separates the
-      // checks from dispatch. A mutation landing after that is concurrent
-      // with the in-flight request, which no dispatch-side check can prevent.
+      // Refresh until both mutation counters remain stable so no mutation completes
+      // between refresh and the synchronous dispatch checks. Later mutations race
+      // with the in-flight request and cannot be prevented here.
       for (;;) {
         const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
         const generationBefore = this.configService.configGeneration;

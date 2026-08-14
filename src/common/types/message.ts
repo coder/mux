@@ -373,10 +373,9 @@ function isMcpPromptSnapshotBaseShape(
  * exists and still references the same prompt.
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
-  // Only genuine MCP expansion rows are droppable: synthetic user rows
-  // identified by the dedicated snapshot ID prefix or a valid snapshot shape.
-  // Corruption can add the field to any other row (authored, model, or other
-  // synthetic kinds), which must survive with the invalid field stripped.
+  // Drop only genuine expansion rows, identified by the ID prefix or valid
+  // snapshot shape. Other rows may be corrupted with this field and must
+  // survive after it is stripped.
   const isMcpSnapshotRow = (message: MuxMessage): boolean =>
     message.role === "user" &&
     message.metadata?.synthetic === true &&
@@ -401,10 +400,8 @@ export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMes
       const { mcpPromptSnapshot: _stripped, ...metadata } = message.metadata;
       return [{ ...message, metadata }];
     }
-    // Raw chat.jsonl rows bypass the oRPC .catch(undefined) sanitizer, so a
-    // present-but-malformed snapshot on an expansion row marks it corrupted:
-    // exclude it from provider requests. Legacy rows without an invoking id
-    // are treated as crash orphans.
+    // Raw chat.jsonl bypasses oRPC sanitization. Malformed expansion snapshots
+    // and legacy snapshots without an invoking ID are crash orphans.
     if (!isMcpPromptSnapshotBaseShape(snapshot) || snapshot.invokingMessageId === undefined) {
       return [];
     }

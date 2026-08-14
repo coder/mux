@@ -425,7 +425,6 @@ describe("MCPServerManager", () => {
         () => undefined
       );
 
-      // Concurrent startups finish in nondeterministic order.
       expect(result.failedServerNames.sort()).toEqual(["broken-server", "slow-server"]);
       expect(result.timedOutServerNames).toEqual(["slow-server"]);
     } finally {
@@ -1456,8 +1455,6 @@ describe("MCPServerManager", () => {
     // Simulate an idle reap that retains recorded request options.
     access.workspaceServers.delete(workspaceId);
 
-    // getPrompt detects the mid-startup edit, restarts onto the edited
-    // config, and serves the prompt from the post-edit instance.
     expect(await manager.getPrompt(workspaceId, "server", "review", {})).toEqual({ text: "hi" });
     const entry = access.workspaceServers.get(workspaceId) as { configSignature: string };
     expect(entry.configSignature).toContain("cmd-2");

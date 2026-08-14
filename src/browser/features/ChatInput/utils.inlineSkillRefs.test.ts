@@ -459,8 +459,8 @@ describe("resolveMcpPromptRefsForSend", () => {
   });
 
   test("forwards the send abort signal to prompt discovery on both surfaces", async () => {
-    // A send abandoned by a workspace switch must be able to cancel the cold
-    // discovery request instead of holding it open until the startup deadline.
+    // Workspace switches must cancel cold discovery instead of waiting for its
+    // startup deadline.
     const listCalls: Array<{ signal?: AbortSignal } | undefined> = [];
     const api = {
       workspace: {

@@ -69,10 +69,9 @@ export function buildFollowUpFromSource(
         })
       : undefined;
 
-  // MCP slash messages display the raw command but send transformed text, so
-  // retries must rebuild the provider-visible form and preserve the slash
-  // metadata (mirroring the ChatInput send site) so the follow-up row still
-  // displays and edit-restores as the original slash invocation.
+  // MCP slash messages display raw commands but send transformed text. Rebuild
+  // provider content and preserve slash metadata so retried rows remain editable
+  // as their original invocation.
   let text = source.content;
   let promptMetadata: MuxMessageMetadata | undefined;
   // Trim only for command detection/extraction (the parser accepted the

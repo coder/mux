@@ -63,8 +63,7 @@ describe("AgentSession MCP prompt snapshots", () => {
         undefined
       );
 
-      // The live transcript must receive the snapshot before the user row,
-      // not only after a history replay.
+      // The live transcript must also emit the snapshot before the user row.
       const emittedIds = harness.events
         .filter((event) => "id" in event)
         .map((event) => (event as { id: string }).id);

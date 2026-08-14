@@ -227,10 +227,8 @@ export class MCPConfigService {
   }
 
   /**
-   * Bumped after every successful global config write. Global mutations
-   * (setServerEnabled, removeServer) never replace per-workspace recorded
-   * request options, so MCPServerManager compares generations to detect
-   * mutations that land while a server startup is in flight.
+   * Incremented after successful global config writes. Prompt paths compare it
+   * across refreshes because global mutations do not replace workspace options.
    */
   private globalConfigGeneration = 0;
 
