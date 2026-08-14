@@ -64,7 +64,7 @@ import {
   createTaskFailureMessageId,
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
-import { defaultModel, normalizeToCanonical } from "@/common/utils/ai/models";
+import { defaultModel, normalizeSelectedModel } from "@/common/utils/ai/models";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -1803,7 +1803,13 @@ export class TaskService {
       coerceNonEmptyString(parentRuntimeAiSettings?.modelString) ??
       coerceNonEmptyString(parentAiSettings?.model) ??
       defaultModel;
-    const canonicalModel = normalizeToCanonical(taskModelString).trim();
+    // Gateway-preserving normalization: this value is persisted into child
+    // workspace aiSettings and drives queued follow-ups and plan→exec
+    // continuations. normalizeToCanonical would rewrite a cross-typed Coder
+    // instance (coder:openai/<claude> with type anthropic) to openai:<claude>,
+    // silently bypassing the gateway on later sends. Thinking helpers below
+    // resolve coder: identities type-derived via resolveModelForMetadata.
+    const canonicalModel = normalizeSelectedModel(taskModelString);
     assert(canonicalModel.length > 0, "resolveTaskAISettings: resolved model must be non-empty");
 
     // Resolve an explicit override first so numeric thinking indices map into the
@@ -3603,7 +3609,9 @@ export class TaskService {
           // (see resolveTaskAISettings).
           resolveThinkingInput(
             args.thinkingLevel,
-            normalizeToCanonical(model),
+            // Gateway-preserving so cross-typed Coder instances map indices
+            // into their TYPE-derived ladder, not the name-alike provider's.
+            normalizeSelectedModel(model),
             this.aiService.getProvidersConfig()
           )
         : (targetAiSettings?.thinkingLevel ??
@@ -9521,7 +9529,9 @@ export class TaskService {
 
         const canonicalModel =
           coerceNonEmptyString(task.aiSettings?.model) ??
-          normalizeToCanonical(task.taskModelString ?? defaultModel);
+          // Gateway-preserving (see resolveTaskAISettings): this lands in the
+          // relaunched task's persisted aiSettings.
+          normalizeSelectedModel(task.taskModelString ?? defaultModel);
         const createdAt = task.createdAt ?? getIsoNow();
         await this.editWorkspaceEntry(taskId, (workspace) => {
           workspace.taskStatus = "starting";

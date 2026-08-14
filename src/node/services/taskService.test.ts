@@ -609,6 +609,43 @@ describe("TaskService", () => {
     await fsPromises.rm(rootDir, { recursive: true, force: true });
   });
 
+  test("resolveTaskAISettings preserves explicit gateway model identities", async () => {
+    const config = await createTestConfig(rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+
+    const resolver = (
+      taskService as unknown as {
+        resolveTaskAISettings: (params: {
+          cfg: ReturnType<Config["loadConfigOrDefault"]>;
+          parentMeta: Record<string, never>;
+          agentId: string;
+          modelString?: string;
+        }) => { taskModelString: string; canonicalModel: string };
+      }
+    ).resolveTaskAISettings.bind(taskService);
+
+    // A cross-typed canonical-name Coder instance (coder:openai/<claude> with
+    // type anthropic) must stay gateway-scoped in the PERSISTED settings:
+    // name canonicalization would rewrite it to openai:<claude>, sending
+    // queued follow-ups and plan→exec continuations to direct OpenAI.
+    const gateway = resolver({
+      cfg: config.loadConfigOrDefault(),
+      parentMeta: {},
+      agentId: "exec",
+      modelString: "coder:openai/claude-sonnet-4-20250514",
+    });
+    expect(gateway.canonicalModel).toBe("coder:openai/claude-sonnet-4-20250514");
+
+    // Non-gateway strings keep canonical normalization.
+    const direct = resolver({
+      cfg: config.loadConfigOrDefault(),
+      parentMeta: {},
+      agentId: "exec",
+      modelString: "anthropic:claude-sonnet-4-20250514",
+    });
+    expect(direct.canonicalModel).toBe("anthropic:claude-sonnet-4-20250514");
+  });
+
   test("scratch tasks share the managed workdir and stay in the scratch config bucket", async () => {
     const config = await createTestConfig(rootDir);
     const parentId = "1111111111";
