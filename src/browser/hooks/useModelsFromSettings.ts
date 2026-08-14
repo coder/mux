@@ -391,9 +391,14 @@ export function useModelsFromSettings() {
     [api, config, refresh, effectivePolicy]
   );
 
+  // Hidden-model preferences use the gateway-preserving identity: model lists
+  // surface explicit gateway entries raw (e.g. coder:openai/<model>), and
+  // filterHiddenModels/ModelsSection compare exact strings. Name-only
+  // canonicalization would persist openai:<model> instead — leaving the
+  // gateway entry visible while hiding the distinct direct model.
   const hideModel = useCallback(
     (modelString: string) => {
-      const canonical = normalizeToCanonical(modelString).trim();
+      const canonical = normalizeSelectedModel(modelString).trim();
       if (!canonical) {
         return;
       }
@@ -413,7 +418,7 @@ export function useModelsFromSettings() {
 
   const unhideModel = useCallback(
     (modelString: string) => {
-      const canonical = normalizeToCanonical(modelString).trim();
+      const canonical = normalizeSelectedModel(modelString).trim();
       if (!canonical) {
         return;
       }

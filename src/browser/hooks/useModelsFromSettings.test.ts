@@ -790,3 +790,52 @@ describe("useModelsFromSettings provider availability gating", () => {
     expect(result.current.hiddenModelsForSelector).toContain(KNOWN_MODELS.GPT.id);
   });
 });
+
+describe("useModelsFromSettings hidden-model gateway identity", () => {
+  beforeEach(setupUseModelsHookTest);
+  afterEach(cleanupUseModelsHookTest);
+
+  test("hiding an explicit Coder gateway model hides that entry, not the direct model", async () => {
+    // Cross-typed instance: name "openai", type "anthropic". Name-only
+    // canonicalization would persist openai:claude-opus-4-1, leaving the
+    // Coder entry visible and hiding the distinct direct OpenAI model.
+    providersConfig = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["openai/claude-opus-4-1"],
+      },
+      openai: {
+        apiKeySet: true,
+        isEnabled: true,
+        isConfigured: true,
+        models: ["claude-opus-4-1"],
+      },
+    };
+
+    const { result } = renderHook(() => useModelsFromSettings());
+
+    expect(result.current.models).toContain("coder:openai/claude-opus-4-1");
+    expect(result.current.models).toContain("openai:claude-opus-4-1");
+
+    act(() => {
+      result.current.hideModel("coder:openai/claude-opus-4-1");
+    });
+
+    await waitFor(() => {
+      expect(result.current.hiddenModels).toContain("coder:openai/claude-opus-4-1");
+    });
+    expect(result.current.models).not.toContain("coder:openai/claude-opus-4-1");
+    // The distinct direct model must stay visible.
+    expect(result.current.models).toContain("openai:claude-opus-4-1");
+
+    act(() => {
+      result.current.unhideModel("coder:openai/claude-opus-4-1");
+    });
+
+    await waitFor(() => {
+      expect(result.current.models).toContain("coder:openai/claude-opus-4-1");
+    });
+  });
+});
