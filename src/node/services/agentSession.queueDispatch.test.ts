@@ -1,11 +1,18 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 
+import type { MuxMessageMetadata } from "@/common/types/message";
 import { Err, Ok } from "@/common/types/result";
 import type { WorkspaceGoalService } from "./workspaceGoalService";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 import type { AIService } from "./aiService";
 
 const TEST_MODEL = "anthropic:claude-sonnet-4-5";
+const WORKSPACE_TURN_CORRELATION = {
+  type: "workspace-turn-task",
+  taskHandleId: "wst_preparing",
+  ownerWorkspaceId: "owner-workspace",
+  turnId: "turn-preparing",
+} as const;
 
 function toolCallEndEvent(workspaceId: string): Record<string, unknown> {
   return {
@@ -54,13 +61,28 @@ async function waitForCondition(condition: () => boolean, timeoutMs = 500): Prom
 }
 
 describe("AgentSession queued message tool-call dispatch", () => {
-  test("counts a direct preparing send as a superseding predecessor", async () => {
+  test("counts only a different direct preparing send as a superseding predecessor", async () => {
     const sessionHolder: {
-      current?: { hasQueuedOrDispatchingEntry(): boolean };
+      current?: {
+        hasQueuedOrDispatchingEntry(
+          continuationMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+        ): boolean;
+      };
     } = {};
-    let preparingSeen = false;
+    let preparingState:
+      | { sameTurn: boolean; differentTurn: boolean; uncorrelated: boolean }
+      | undefined;
     const streamMessage = mock(() => {
-      preparingSeen = sessionHolder.current?.hasQueuedOrDispatchingEntry() === true;
+      const session = sessionHolder.current;
+      preparingState = {
+        sameTurn: session?.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION) === true,
+        differentTurn:
+          session?.hasQueuedOrDispatchingEntry({
+            ...WORKSPACE_TURN_CORRELATION,
+            turnId: "turn-different",
+          }) === true,
+        uncorrelated: session?.hasQueuedOrDispatchingEntry() === true,
+      };
       return Promise.resolve(Ok(undefined));
     });
     const { session, cleanup } = await createAgentSessionHarness({
@@ -76,10 +98,11 @@ describe("AgentSession queued message tool-call dispatch", () => {
       const result = await session.sendMessage("direct send", {
         model: TEST_MODEL,
         agentId: "exec",
+        muxMetadata: WORKSPACE_TURN_CORRELATION,
       });
 
       expect(result.success).toBe(true);
-      expect(preparingSeen).toBe(true);
+      expect(preparingState).toEqual({ sameTurn: false, differentTurn: true, uncorrelated: true });
       expect(session.hasQueuedOrDispatchingEntry()).toBe(false);
     } finally {
       session.dispose();

@@ -292,6 +292,26 @@ function extractAcpDelegatedTools(muxMetadata: unknown): string[] | undefined {
     (muxMetadata as Record<string, unknown>)[ACP_DELEGATED_TOOLS_METADATA_KEY]
   );
 }
+type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+
+function getWorkspaceTurnMuxMetadata(muxMetadata: unknown): WorkspaceTurnMuxMetadata | undefined {
+  const metadata = muxMetadata as MuxMessageMetadata | undefined;
+  return metadata?.type === "workspace-turn-task" ? metadata : undefined;
+}
+
+function hasSameWorkspaceTurnCorrelation(
+  first: WorkspaceTurnMuxMetadata | undefined,
+  second: WorkspaceTurnMuxMetadata | undefined
+): boolean {
+  return (
+    first != null &&
+    second != null &&
+    first.taskHandleId === second.taskHandleId &&
+    first.ownerWorkspaceId === second.ownerWorkspaceId &&
+    first.turnId === second.turnId
+  );
+}
+
 /**
  * Find the still-open workspace-turn correlation for a bash-monitor-wake
  * continuation stream.
@@ -607,6 +627,9 @@ export class AgentSession {
    */
   private dispatchingQueuedEntry = false;
   private dispatchingQueuedEntryMuxMetadata?: unknown;
+
+  /** Correlation of the direct send currently in the PREPARING phase, if any. */
+  private preparingWorkspaceTurnMetadata?: WorkspaceTurnMuxMetadata;
 
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
   private activeStreamContext?: {
@@ -3198,6 +3221,7 @@ export class AgentSession {
 
     const preparedTurnAbortController = new AbortController();
     this.activePreparedTurnAbortController = preparedTurnAbortController;
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
 
     const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
@@ -3339,6 +3363,7 @@ export class AgentSession {
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
     this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     // Open the mid-turn thinking override window for the resumed turn (after
     // setTurnPhase(PREPARING), which clears the holder on the IDLE transition).
@@ -4335,6 +4360,9 @@ export class AgentSession {
 
     await this.finalizeCompactionRetry(data.messageId);
     this.setAutoRetryResumeState(retryOptionsForResume, retryAgentInitiated, retryGoalKind);
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(
+      retryOptionsForResume.muxMetadata
+    );
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -4429,6 +4457,7 @@ export class AgentSession {
     await this.clearFailedAssistantMessage(data.messageId, "post-compaction-retry");
 
     // Retry the same request, but without post-compaction injection.
+    this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(context.options?.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     let retryResult: Result<void, SendMessageError>;
     try {
@@ -4641,6 +4670,7 @@ export class AgentSession {
       if (payload.type === "stream-start") {
         this.dispatchingQueuedEntry = false;
         this.dispatchingQueuedEntryMuxMetadata = undefined;
+        this.preparingWorkspaceTurnMetadata = undefined;
         this.activeStreamStartedAtMs = payload.startTime;
         this.queuedProviderToolEndAbortInFlight = false;
         this.activeToolCallIds.clear();
@@ -5136,6 +5166,7 @@ export class AgentSession {
     if (next === TurnPhase.IDLE) {
       this.dispatchingQueuedEntry = false;
       this.dispatchingQueuedEntryMuxMetadata = undefined;
+      this.preparingWorkspaceTurnMetadata = undefined;
       // Turn ended: expire any mid-turn thinking override. Safe unconditionally
       // because a replacement turn (e.g. an edit) only creates its holder after
       // the preempted turn has already been transitioned to IDLE.
@@ -5384,17 +5415,16 @@ export class AgentSession {
   }
 
   /**
-   * Whether a queued entry, a dequeued entry, or a direct send is still preparing.
+   * Whether a queued entry, a dequeued entry, or a different direct send is preparing.
    *
-   * This distinguishes a report queued behind another entry from a report queued
-   * directly behind the active stream.
+   * A direct send with the same workspace-turn correlation remains the current
+   * continuation and does not supersede the proposed report.
    */
-  hasQueuedOrDispatchingEntry(): boolean {
-    return (
-      this.turnPhase === TurnPhase.PREPARING ||
-      this.dispatchingQueuedEntry ||
-      !this.messageQueue.isEmpty()
-    );
+  hasQueuedOrDispatchingEntry(continuationMetadata?: WorkspaceTurnMuxMetadata): boolean {
+    const hasDifferentPreparingSend =
+      this.turnPhase === TurnPhase.PREPARING &&
+      !hasSameWorkspaceTurnCorrelation(this.preparingWorkspaceTurnMetadata, continuationMetadata);
+    return hasDifferentPreparingSend || this.dispatchingQueuedEntry || !this.messageQueue.isEmpty();
   }
 
   /**
@@ -5637,6 +5667,7 @@ export class AgentSession {
 
       // Set PREPARING synchronously before the async sendMessage to prevent
       // incoming messages from bypassing the queue during the await gap.
+      this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(options?.muxMetadata);
       this.setTurnPhase(TurnPhase.PREPARING);
 
       void this.sendMessage(message, options, internal)

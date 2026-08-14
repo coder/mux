@@ -8586,6 +8586,9 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const normalizedOptions = this.normalizeSendMessageAgentId(options);
+      const normalizedMuxMetadata = normalizedOptions.muxMetadata as MuxMessageMetadata | undefined;
+      const workspaceTurnContinuationMetadata =
+        normalizedMuxMetadata?.type === "workspace-turn-task" ? normalizedMuxMetadata : undefined;
 
       const isWorkspaceTurnContinuation = internal?.workspaceTurnContinuation === true;
       const stripWorkspaceTurnCorrelation = (
@@ -8597,7 +8600,8 @@ export class WorkspaceService extends EventEmitter {
       };
       const getContinuationSendState = () => {
         const preserveCorrelation =
-          !isWorkspaceTurnContinuation || !session.hasQueuedOrDispatchingEntry();
+          !isWorkspaceTurnContinuation ||
+          !session.hasQueuedOrDispatchingEntry(workspaceTurnContinuationMetadata);
         return {
           options: preserveCorrelation
             ? normalizedOptions
