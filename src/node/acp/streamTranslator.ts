@@ -696,9 +696,8 @@ function extractRawCommandFromFrontendMetadata(frontendMetadata: unknown): strin
     return null;
   }
 
-  // "normal" carries rawCommand for MCP prompt invocations and one-shot
-  // overrides; both persist transformed text, so replay the authored command
-  // like the desktop transcript's getRawCommand does.
+  // "normal" can carry rawCommand for transformed MCP prompts and one-shot
+  // overrides, so replay the authored command as the desktop transcript does.
   if (frontendMetadata.type !== "agent-skill" && frontendMetadata.type !== "normal") {
     return null;
   }

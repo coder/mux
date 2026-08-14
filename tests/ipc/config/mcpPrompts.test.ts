@@ -90,7 +90,6 @@ describeIntegration("MCP prompts", () => {
       });
       expect(addResult.success).toBe(true);
 
-      // Start servers and record workspace request options for getPrompt.
       await client.workspace.mcp.prompts.list({ workspaceId });
 
       const controller = new AbortController();
@@ -111,8 +110,7 @@ describeIntegration("MCP prompts", () => {
         rejected = true;
       }
       expect(rejected).toBe(true);
-      // Well under PROMPT_GET_TIMEOUT_MS: proves the abort signal reached the
-      // SDK request instead of being dropped by the instance wrapper.
+      // The bound distinguishes cancellation from the prompt timeout.
       expect(Date.now() - startedAt).toBeLessThan(10_000);
     } finally {
       await cleanup();

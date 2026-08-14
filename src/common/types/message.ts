@@ -956,11 +956,7 @@ export interface QueuedMessage {
   hasCompactionRequest?: boolean;
 }
 
-/**
- * Synthetic snapshot rows (file @-mention, agent skill, MCP prompt) that precede
- * a user message. Edit truncation and history scans must treat them as part of
- * the user message they annotate, so every snapshot kind must be listed here.
- */
+/** Keep every snapshot kind here so history scans and edits retain it with its user message. */
 export function isSyntheticSnapshotUserMessage(message: MuxMessage): boolean {
   return (
     message.role === "user" &&

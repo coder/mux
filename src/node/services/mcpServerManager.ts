@@ -839,11 +839,7 @@ interface MCPToolsForWorkspaceResult {
 interface WorkspaceServers {
   configSignature: string;
   instances: Map<string, MCPServerInstance>;
-  /**
-   * Currently enabled server names. Under a lease, disabling a server defers its
-   * restart and leaves the stale client in `instances`; prompt surfaces filter
-   * on this set so they never expose or invoke a disabled server.
-   */
+  /** Filters prompts while leased restarts can leave disabled clients cached. */
   enabledServerNames: Set<string>;
   stats: MCPWorkspaceStats;
   timedOutServerNames: string[];
@@ -1651,8 +1647,7 @@ export class MCPServerManager {
     const entry = this.workspaceServers.get(options.workspaceId);
     if (!entry) return [];
 
-    // Mirror the leased tools path: a disabled server's stale client may still
-    // sit in entry.instances until its deferred restart.
+    // Disabled clients can remain cached until a leased restart, so filter prompts.
     const enabledInstances = new Map(
       [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
     );
@@ -1696,11 +1691,7 @@ export class MCPServerManager {
     return descriptors;
   }
 
-  /**
-   * Sync a workspace's saved MCP overrides into cached state. Stream-time tool
-   * discovery recomputes enablement anyway; this keeps getPrompt (which can run
-   * before any stream) from trusting a stale enabledServerNames set.
-   */
+  /** Keeps prompt invocation from using stale enablement before the next stream refresh. */
   async applyWorkspaceOverrides(
     workspaceId: string,
     overrides: WorkspaceMCPOverrides | undefined
@@ -1734,14 +1725,9 @@ export class MCPServerManager {
     args: Record<string, string>,
     options?: { signal?: AbortSignal }
   ): Promise<{ text: string; description?: string }> {
-    // Re-evaluate current config before invoking: Settings mutations (global or
-    // project add/remove/disable/edit) persist without touching this cache, so
-    // a cached instance could otherwise serve a disabled or stale server. The
-    // refresh recomputes enablement, restarts servers whose config changed, and
-    // revives instances reaped by idle cleanup. Racing the caller's signal
-    // keeps an interrupted send from blocking on sequential server startup; a
-    // startup that loses the race still completes into the cache, so its
-    // instances stay tracked for idle cleanup rather than leaking.
+    // Refresh cached state because it can outlive configuration changes. Race
+    // startup with cancellation, but let a losing startup finish into the cache
+    // so idle cleanup can close it.
     const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (lastOptions) {
       const refreshed = await raceWithAbortAndTimeout(this.getToolsForWorkspace(lastOptions), {

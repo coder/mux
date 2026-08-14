@@ -551,7 +551,6 @@ describe("Agent skill snapshot association", () => {
         ],
       },
     });
-    // Each send persists its own snapshot row directly before its user row.
     const inlineSnapshot = createMuxMessage("prompt-snapshot-2", "user", "Expanded prompt body", {
       historySequence: 3,
       timestamp: 0,
@@ -622,7 +621,6 @@ describe("Agent skill snapshot association", () => {
         mcpPromptRefs: [promptRef],
       },
     });
-    // Second invocation whose materialization failed: no snapshot row precedes it.
     const second = createMuxMessage("prompt-second", "user", "Using MCP prompt coder/review", {
       historySequence: 3,
       timestamp: 0,

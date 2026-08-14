@@ -96,8 +96,7 @@ function formatSkillInvocationText(skillName: string, userMessage: string): stri
   return userMessage ? `Using skill ${skillName}: ${userMessage}` : `Use skill ${skillName}`;
 }
 
-// stableKey keeps previously inserted collision-suffixed keys (drafts, history
-// recall) resolving after catalog changes strip the survivor's suffix.
+// Match stableKey so drafts and recalled history survive collision-driven key changes.
 function matchesPromptCommandKey(descriptor: MCPPromptDescriptor, command: string): boolean {
   return descriptor.commandKey === command || descriptor.stableKey === command;
 }
@@ -148,9 +147,8 @@ async function resolveMcpPromptInvocation(options: {
   });
   const descriptor = descriptors?.find((candidate) => matchesPromptCommandKey(candidate, command));
   if (!descriptor) {
-    // A prompt that once owned this unsuffixed key gains a hash suffix when a
-    // colliding sibling appears, so an old draft's key stops matching. Block
-    // the send with the current keys instead of silently sending plain text.
+    // A new collision can orphan an unsuffixed key from an old draft. Block the
+    // send and offer current keys rather than treating it as plain text.
     const baseMatches = (descriptors ?? []).filter(
       (candidate) => buildMcpPromptBaseKey(candidate.serverName, candidate.promptName) === command
     );

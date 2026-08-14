@@ -1220,19 +1220,15 @@ describe("MCPServerManager", () => {
       return new Map(descriptors.map((d) => [d.promptName, d.commandKey]));
     };
 
-    // "Code-Review" and "code_review" normalize to the same base key.
     const keys = await collectKeys(["Code-Review", "code_review", "status"]);
     const reversedKeys = await collectKeys(["code_review", "Code-Review", "status"]);
 
     expect(keys.get("Code-Review")).toMatch(/^mcp__coder__code_review_[0-9a-f]{8}$/);
     expect(keys.get("code_review")).toMatch(/^mcp__coder__code_review_[0-9a-f]{8}$/);
     expect(keys.get("Code-Review")).not.toBe(keys.get("code_review"));
-    // Keys derive from each prompt's own identity, so ordering cannot swap them.
     expect(reversedKeys).toEqual(keys);
     expect(keys.get("status")).toBe("mcp__coder__status");
 
-    // When the colliding sibling disappears, the survivor's commandKey drops the
-    // suffix, but its stableKey still equals the previously suffixed key.
     const soloDescriptors = await (async () => {
       access.workspaceServers.set("workspace", {
         enabledServerNames: new Set(["coder"]),
@@ -1252,7 +1248,6 @@ describe("MCPServerManager", () => {
       tools: {},
       stats: cachedStats(),
     });
-    // Leased deferred restart: the disabled server's stale client is still cached.
     access.workspaceServers.set("workspace", {
       enabledServerNames: new Set(["enabled"]),
       instances: new Map([
@@ -1354,7 +1349,6 @@ describe("MCPServerManager", () => {
     await manager.getToolsForWorkspace(workspaceRequest("workspace"));
     expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({ text: "Status" });
 
-    // Settings removes the server after the prompt reference was composed.
     configService.listServers = mock(() => Promise.resolve({}));
     // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
     await expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("disabled");

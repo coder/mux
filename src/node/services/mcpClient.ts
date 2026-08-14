@@ -289,9 +289,8 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
       client.getPrompt(
         { name, arguments: args },
         {
-          // Prompt expansion blocks send preparation, so it gets a much
-          // tighter deadline than tool calls and honors the send's cancel
-          // signal for prompt recovery of the composer.
+          // Prompt expansion blocks send preparation, so use a shorter timeout than
+          // tool calls and honor send cancellation.
           timeout: PROMPT_GET_TIMEOUT_MS,
           ...(options?.signal !== undefined ? { signal: options.signal } : {}),
         }

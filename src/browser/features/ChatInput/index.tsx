@@ -1629,8 +1629,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       });
     mcpPromptsRequestRef.current = request;
-    // atMentionCursorNonce: caret movement into an existing `$` token must also
-    // trigger discovery (e.g. a restored draft with the caret placed later).
+    // Caret movement must retrigger discovery when the input text is unchanged.
   }, [api, input, variant, workspaceId, atMentionCursorNonce]);
 
   useEffect(() => {

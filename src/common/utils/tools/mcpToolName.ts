@@ -12,12 +12,7 @@ export interface BuildMcpPromptCommandKeyOptions {
   serverName: string;
   promptName: string;
   usedNames: Set<string>;
-  /**
-   * Force the identity hash suffix. Callers set this for every member of a
-   * normalized collision group so key assignment does not depend on catalog
-   * order: each member gets base + hash(own identity) regardless of which
-   * colliding sibling is listed first.
-   */
+  /** Forces identity suffixing so normalized collision groups stay independent of catalog order. */
   forceSuffix?: boolean;
 }
 
@@ -105,12 +100,7 @@ export function buildMcpToolName(options: BuildMcpToolNameOptions): BuildMcpTool
   });
 }
 
-/**
- * Identity-derived alias for a prompt: always hash-suffixed, so it never
- * changes with catalog membership. Composer matching falls back to it, which
- * keeps previously inserted collision-suffixed keys resolving after the
- * colliding sibling disappears and its survivor's commandKey loses the suffix.
- */
+/** Stable identity alias used to resolve suffixed keys after catalog membership changes. */
 export function buildMcpPromptStableKey(serverName: string, promptName: string): string | null {
   const result = buildMcpName({
     baseName: buildMcpPromptBaseKey(serverName, promptName),
