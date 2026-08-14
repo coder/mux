@@ -961,7 +961,6 @@ describe("MCPServerManager", () => {
       await expect(manager.getPrompt(workspaceId, "server", "review", {})).rejects.toThrow(
         "was reconfigured while a stream is active"
       );
-      // Unchanged sibling servers stay invocable.
       expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({
         text: "hi",
       });

@@ -229,7 +229,6 @@ describe("AgentSession MCP prompt snapshots", () => {
     });
 
     try {
-      // Simulate a crash after snapshot persistence but before the user row.
       await harness.historyService.appendToHistory(
         "workspace",
         createMuxMessage("orphan-snap", "user", "Expanded prompt", {

@@ -184,8 +184,7 @@ export const MuxMessageSchema = z.object({
       uiVisible: z.boolean().optional(),
       transcriptAnchor: TranscriptAnchorSchema.optional().catch(undefined),
 
-      // Self-healing: one malformed persisted snapshot row must degrade to a
-      // plain synthetic message, not fail the whole history parse.
+      // Ignore malformed snapshot metadata so one row cannot fail the whole history parse.
       agentSkillSnapshot: z
         .object({
           skillName: SkillNameSchema,

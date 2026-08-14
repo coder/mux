@@ -52,8 +52,6 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
   });
 
   test("drops a crash orphan even when a later turn references the same prompt", () => {
-    // The later inline invocation failed to materialize (no new snapshot) but
-    // its user row still carries the ref; identity must not claim the orphan.
     const messages = [
       snapshot("orphan-snap", "user-crashed"),
       invokingUser("user-later", ["review"]),

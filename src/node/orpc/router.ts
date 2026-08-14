@@ -5596,9 +5596,8 @@ export const router = (authToken?: string) => {
                 throw new Error(formatSendMessageError(runtimeContextResult.error).message);
               }
               const { runtime, workspacePath, hostCheckoutRoot } = runtimeContextResult.data;
-              // Fresh non-local runtimes (devcontainer, docker) reject exec until
-              // per-instance readiness completes, and cold prompt discovery starts
-              // stdio servers through runtime.exec (mirrors streamMessage).
+              // Cold prompt discovery can start stdio servers through runtime.exec,
+              // so wait until the runtime is ready.
               const readyResult = await runtime.ensureReady();
               if (!readyResult.ready) {
                 throw new Error(readyResult.error);
@@ -5613,8 +5612,7 @@ export const router = (authToken?: string) => {
                   ? mergeMultiProjectSecrets(metadata, context.config)
                   : context.config.getEffectiveSecrets(metadata.projectPath)
               );
-              // Plugin containers anchor at the checkout root, not the subProjectPath
-              // execution directory (same gating as streamMessage).
+              // Agent Plugin containers anchor at the checkout root, not a subproject directory.
               const agentPlugins = hostCheckoutRoot
                 ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
                 : null;

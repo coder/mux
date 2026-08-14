@@ -330,8 +330,7 @@ export function sanitizeMcpPromptRefs(value: unknown): MCPPromptReference[] {
   if (!Array.isArray(value)) return [];
   return value.filter(isMcpPromptReference).map((ref) => {
     if (ref.arguments === undefined || isStringRecord(ref.arguments)) return ref;
-    // Malformed persisted arguments would make every prompts/get retry fail,
-    // so drop just that field and keep the reference identity.
+    // Drop malformed persisted arguments so prompt expansion can retry without them.
     const { arguments: _malformed, ...rest } = ref;
     return rest;
   });
@@ -352,10 +351,9 @@ export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
 }
 
 /**
- * A crash between snapshot persistence and the user-row append can orphan MCP
- * prompt snapshots, so provider requests keep one only when the user row it
- * was materialized for is present and still references that server/prompt
- * (self-healing rule; guards corrupted ids pointing at unrelated rows).
+ * Drops MCP prompt snapshots orphaned by a crash between snapshot persistence
+ * and the user-row append: a snapshot survives only when its invoking user row
+ * exists and still references the same prompt.
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
   const promptRefKeysByMessageId = new Map<string, Set<string>>();
@@ -763,12 +761,7 @@ export interface MuxMetadata {
     serverName: string;
     promptName: string;
     commandKey: string;
-    /**
-     * Id of the user row this snapshot expands. Exact correlation, because
-     * adjacency plus prompt identity lets a later same-prompt turn claim a
-     * crash-orphaned snapshot. Optional only for rows persisted before the
-     * field existed; those are treated as orphans.
-     */
+    /** Missing legacy values are treated as crash orphans. */
     invokingMessageId?: string;
     description?: string;
   };

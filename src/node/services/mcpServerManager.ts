@@ -851,10 +851,7 @@ interface WorkspaceServers {
   timedOutServerNames: string[];
   /** Prevent concurrent cached retries from stacking startup attempts for the same server. */
   retryingTimedOutServerNames: Set<string>;
-  /**
-   * Servers whose config changed while a lease deferred their restart. Prompt
-   * invocation must not reach these stale endpoints or credentials.
-   */
+  /** Blocks prompt invocation on stale clients while an active lease defers restart. */
   stalePromptServerNames?: Set<string>;
   lastActivity: number;
 }
@@ -1353,7 +1350,6 @@ export class MCPServerManager {
 
     if (existing?.configSignature === signature && !hasClosedInstance) {
       existing.lastActivity = Date.now();
-      // A reverted config change means cached instances match again.
       delete existing.stalePromptServerNames;
 
       const timedOutServerNamesToRetry = this.getTimedOutServerNamesToRetry(
@@ -1580,12 +1576,8 @@ export class MCPServerManager {
       if (signature === existing.configSignature) {
         delete existing.stalePromptServerNames;
       } else {
-        let previousEntries: Record<string, unknown> = {};
-        try {
-          previousEntries = JSON.parse(existing.configSignature) as Record<string, unknown>;
-        } catch {
-          // Unparseable prior signature: treat every server as changed.
-        }
+        // configSignature is always in-process JSON.stringify output, so parsing cannot fail.
+        const previousEntries = JSON.parse(existing.configSignature) as Record<string, unknown>;
         existing.stalePromptServerNames = new Set(
           Object.keys(signatureEntries).filter(
             (name) =>

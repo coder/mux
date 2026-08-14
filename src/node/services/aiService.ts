@@ -1004,12 +1004,7 @@ export class AIService extends EventEmitter {
     return `Workspace ${workspaceId} reached multi-project AI runtime execution while ${EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES} is disabled`;
   }
 
-  /**
-   * Build the runtime and execution path exactly as stream startup does,
-   * including the shared-root MultiProjectRuntime for multi-project
-   * workspaces. Public so non-stream callers (MCP prompt discovery) start
-   * stdio servers with the same signature stream startup later reuses.
-   */
+  /** Builds the runtime context shared by stream startup and MCP prompt discovery. */
   createWorkspaceRuntimeContext(
     workspaceId: string,
     metadata: WorkspaceMetadata
@@ -1021,9 +1016,8 @@ export class AIService extends EventEmitter {
 
     const metadataWithPath = {
       ...metadata,
-      // Existing SSH workspaces may still live at a persisted root that differs from the canonical
-      // hashed project layout, so stream startup seeds the runtime from config for the current
-      // workspace instead of always reconstructing the path from project metadata.
+      // Existing SSH workspaces may use a persisted root that differs from the
+      // canonical hashed layout.
       namedWorkspacePath: workspace.workspacePath,
     };
 
@@ -1071,17 +1065,10 @@ export class AIService extends EventEmitter {
       singleProjectContext?.workspacePath ??
       (isSSHRuntime(metadata.runtimeConfig)
         ? resolveWorkspaceExecutionPath(metadataWithPath, runtime)
-        : // Non-SSH multi-project runtimes intentionally start from their shared container root so
-          // sibling repos stay addressable during agent/tool setup. SSH workspaces are the exception:
-          // upgraded legacy layouts must reuse the persisted root from config until remote layout
-          // detection seeds the new hashed paths.
+        : // Multi-project containers start at their shared root so sibling repos remain addressable.
           runtime.getWorkspacePath(metadata.projectPath, metadata.name));
 
-    // Host checkout root for single-project host workspaces. This differs
-    // from `workspacePath` for subProjectPath workspaces, whose execution
-    // path is a subdirectory of the checkout; Agent Plugins containers (MCP
-    // and skills) anchor at the checkout root, matching the oRPC listing
-    // paths (resolveWorkspaceRootPath).
+    // Agent Plugin containers use the host checkout root, not a subproject directory.
     const hostCheckoutRoot =
       singleProjectContext &&
       metadata.runtimeConfig.type !== "ssh" &&
