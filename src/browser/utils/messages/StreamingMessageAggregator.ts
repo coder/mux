@@ -348,6 +348,7 @@ interface MCPPromptSnapshotContent {
   serverName: string;
   promptName: string;
   commandKey: string;
+  invokingMessageId?: string;
   description?: string;
   body: string;
 }
@@ -411,6 +412,7 @@ function maybeCollectAgentSkillSnapshot(
 }
 
 function deriveInlineSkillSnapshotDisplayState(
+  messageId: string,
   rawRefs: unknown,
   latestAgentSkillSnapshotByKey: ReadonlyMap<string, AgentSkillSnapshotContent>,
   rawMcpRefs: unknown,
@@ -440,7 +442,8 @@ function deriveInlineSkillSnapshotDisplayState(
     const snapshot = latestMcpPromptSnapshotByKey.get(
       getMcpPromptReferenceKey(ref.serverName, ref.promptName)
     );
-    if (!snapshot) continue;
+    // Same exact-correlation rule as the slash surface (crash orphans).
+    if (snapshot?.invokingMessageId !== messageId) continue;
     snapshotsBySkillName[ref.commandKey] = {
       skillName: ref.commandKey,
       scope: "built-in",
@@ -3573,11 +3576,17 @@ export class StreamingMessageAggregator {
           message.role === "user"
             ? sanitizeMcpPromptRefs(muxMeta?.mcpPromptRefs).find((ref) => ref.source === "slash")
             : undefined;
-        const mcpPromptSnapshot = slashMcpPromptRef
+        const mcpPromptSnapshotCandidate = slashMcpPromptRef
           ? blockMcpPromptSnapshotByKey.get(
               getMcpPromptReferenceKey(slashMcpPromptRef.serverName, slashMcpPromptRef.promptName)
             )
           : undefined;
+        // Prompt identity alone can attach a crash-orphaned expansion to a
+        // later same-prompt turn; require the exact invoking row.
+        const mcpPromptSnapshot =
+          mcpPromptSnapshotCandidate?.invokingMessageId === message.id
+            ? mcpPromptSnapshotCandidate
+            : undefined;
 
         const agentSkillSnapshotForDisplay = agentSkillSnapshot
           ? { frontmatterYaml: agentSkillSnapshot.frontmatterYaml, body: agentSkillSnapshot.body }
@@ -3592,6 +3601,7 @@ export class StreamingMessageAggregator {
         const inlineSkillSnapshotState =
           message.role === "user"
             ? deriveInlineSkillSnapshotDisplayState(
+                message.id,
                 muxMeta?.agentSkillRefs,
                 latestAgentSkillSnapshotByKey,
                 muxMeta?.mcpPromptRefs,

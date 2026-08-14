@@ -533,6 +533,7 @@ describe("Agent skill snapshot association", () => {
         serverName: "coder",
         promptName: "review",
         commandKey: "mcp__coder__review",
+        invokingMessageId: "prompt-slash",
       },
     });
     const slash = createMuxMessage("prompt-slash", "user", "Using MCP prompt coder/review", {
@@ -561,6 +562,7 @@ describe("Agent skill snapshot association", () => {
         serverName: "coder",
         promptName: "review",
         commandKey: "mcp__coder__review",
+        invokingMessageId: "prompt-inline",
       },
     });
     const inline = createMuxMessage("prompt-inline", "user", "Use $mcp__coder__review", {
@@ -659,6 +661,7 @@ describe("Agent skill snapshot association", () => {
         serverName: "coder",
         promptName: "review",
         commandKey: "mcp__coder__review",
+        invokingMessageId: "prompt-first",
       },
     });
     const first = createMuxMessage("prompt-first", "user", "Using MCP prompt coder/review", {
@@ -691,6 +694,43 @@ describe("Agent skill snapshot association", () => {
     }
     expect(firstMessage.agentSkill?.snapshot?.body).toBe("Expanded prompt body");
     expect(secondMessage.agentSkill?.snapshot).toBeUndefined();
+  });
+
+  it("does not attach a crash-orphaned snapshot to a later same-prompt turn", () => {
+    const aggregator = createAggregator();
+    const orphan = createMuxMessage("orphan-snapshot", "user", "Stale expansion", {
+      historySequence: 1,
+      timestamp: 0,
+      synthetic: true,
+      mcpPromptSnapshot: {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+        invokingMessageId: "user-crashed",
+      },
+    });
+    const later = createMuxMessage("prompt-later", "user", "Use $mcp__coder__review", {
+      historySequence: 2,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        mcpPromptRefs: [
+          {
+            serverName: "coder",
+            promptName: "review",
+            commandKey: "mcp__coder__review",
+            source: "inline" as const,
+          },
+        ],
+      },
+    });
+
+    aggregator.loadHistoricalMessages([orphan, later]);
+    const displayed = aggregator.getDisplayedMessages();
+    const laterMessage = displayed[0];
+    if (laterMessage?.type !== "user") throw new Error("Expected displayed user message");
+    expect(laterMessage.inlineSkillSnapshots).toBeUndefined();
+    expect(laterMessage.agentSkill).toBeUndefined();
   });
 
   it("uses the latest snapshot available at each invocation turn", () => {

@@ -9,6 +9,26 @@ function createMessage() {
   };
 }
 
+describe("MuxMessageSchema mcpPromptSnapshot parsing", () => {
+  test("preserves invokingMessageId across boundary parsing", () => {
+    const parsed = MuxMessageSchema.parse({
+      ...createMessage(),
+      role: "user" as const,
+      metadata: {
+        synthetic: true,
+        mcpPromptSnapshot: {
+          serverName: "coder",
+          promptName: "review",
+          commandKey: "mcp__coder__review",
+          invokingMessageId: "user-1",
+        },
+      },
+    });
+
+    expect(parsed.metadata?.mcpPromptSnapshot?.invokingMessageId).toBe("user-1");
+  });
+});
+
 describe("MuxMessageSchema compactionEpoch parsing", () => {
   test("preserves valid positive integer compactionEpoch", () => {
     const parsed = MuxMessageSchema.parse({

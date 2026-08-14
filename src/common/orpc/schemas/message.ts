@@ -197,6 +197,7 @@ export const MuxMessageSchema = z.object({
           serverName: z.string(),
           promptName: z.string(),
           commandKey: z.string(),
+          invokingMessageId: z.string().optional(),
           description: z.string().optional(),
         })
         .optional(),

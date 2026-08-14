@@ -46,6 +46,8 @@ export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
  */
 const SDK_TOOL_CALL_TIMEOUT_MS = MCP_TOOL_CALL_TIMEOUT_MS + 5_000;
 const PROMPT_GET_TIMEOUT_MS = 30_000;
+// One hung server must not stall the whole slash/inline prompt catalog.
+const PROMPT_LIST_TIMEOUT_MS = 10_000;
 
 export interface MCPHttpTransportConfig {
   type: "http" | "sse";
@@ -88,7 +90,7 @@ export type MCPGetPromptResult = Awaited<ReturnType<Client["getPrompt"]>>;
 export interface MCPClientHandle {
   /** Fetch tools/list and build AI SDK tools whose execute calls tools/call. */
   tools(): Promise<Record<string, Tool>>;
-  prompts(): Promise<MCPPrompt[]>;
+  prompts(options?: { signal?: AbortSignal }): Promise<MCPPrompt[]>;
   getPrompt(
     name: string,
     args: Record<string, string>,
@@ -280,8 +282,11 @@ export async function createMCPClient(config: MCPClientConfig): Promise<MCPClien
       }
       return tools;
     },
-    prompts: async () => {
-      const result = await client.listPrompts();
+    prompts: async (options) => {
+      const result = await client.listPrompts(undefined, {
+        timeout: PROMPT_LIST_TIMEOUT_MS,
+        ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+      });
       assert(Array.isArray(result.prompts), "MCP prompts/list result must carry a prompts array");
       return result.prompts;
     },
