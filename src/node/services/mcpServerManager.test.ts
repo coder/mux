@@ -1176,6 +1176,44 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("excludes a server when trust is revoked while its prompt catalog refresh is pending", async () => {
+    const workspaceId = "ws-refresh-window-trust";
+    configService.listServers = mock((_projectPath: string, trusted: boolean) =>
+      Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      )
+    );
+
+    // Revoke inside prompts/list: the pre-mutation enabled-instance copy was
+    // already taken when the mutation lands, so only a post-refresh counter
+    // recheck can drop the now-disabled server's descriptors.
+    let revokeOnFirstRefresh = true;
+    const refreshPrompts = mock(() => {
+      if (revokeOnFirstRefresh) {
+        revokeOnFirstRefresh = false;
+        manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+      }
+      return Promise.resolve();
+    });
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { prompts: [{ name: "review" }], refreshPrompts }],
+          ["stable", { prompts: [{ name: "status" }], refreshPrompts }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+
+    const descriptors = await manager.getPromptsForWorkspace(
+      workspaceRequest(workspaceId, { trusted: true })
+    );
+    expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
+  });
+
   test("prompt discovery forwards the abort signal to prompt refreshes", async () => {
     const workspaceId = "ws-discovery-signal";
     configService.listServers = mock(() => Promise.resolve({ server: stdioConfig("cmd-1") }));

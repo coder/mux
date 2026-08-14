@@ -457,6 +457,46 @@ describe("resolveMcpPromptRefsForSend", () => {
     expect(result.error).toBeUndefined();
     expect(result.refs).toEqual([]);
   });
+
+  test("forwards the send abort signal to prompt discovery on both surfaces", async () => {
+    // A send abandoned by a workspace switch must be able to cancel the cold
+    // discovery request instead of holding it open until the startup deadline.
+    const listCalls: Array<{ signal?: AbortSignal } | undefined> = [];
+    const api = {
+      workspace: {
+        mcp: {
+          prompts: {
+            list: (_input: unknown, callOptions?: { signal?: AbortSignal }) => {
+              listCalls.push(callOptions);
+              return Promise.resolve([{ ...promptDescriptor(), arguments: [] }]);
+            },
+          },
+        },
+      },
+    } as unknown as Parameters<typeof parseCommandWithSkillInvocation>[0]["api"];
+    const controller = new AbortController();
+
+    await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [],
+      api,
+      discovery: { kind: "workspace", workspaceId: "ws-1" },
+      signal: controller.signal,
+    });
+    await resolveMcpPromptRefsForSend({
+      messageText: "Use $mcp__coder__review please",
+      slashInvocation: null,
+      descriptors: [],
+      api,
+      discovery: { kind: "workspace", workspaceId: "ws-1" },
+      signal: controller.signal,
+    });
+
+    expect(listCalls).toHaveLength(2);
+    expect(listCalls[0]?.signal).toBe(controller.signal);
+    expect(listCalls[1]?.signal).toBe(controller.signal);
+  });
 });
 
 describe("hasProjectScopedSkillRef", () => {

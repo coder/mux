@@ -1711,13 +1711,16 @@ export class MCPServerManager {
     callOptions?: { signal?: AbortSignal }
   ): Promise<MCPPromptDescriptor[]> {
     const workspaceId = options.workspaceId;
-    // Same post-refresh mutation gap as getPrompt: a trust or settings
-    // mutation completing after the refresh resolves must not let this copy
-    // pre-mutation enablement. Retry until both mutation counters are stable
-    // across one refresh; retries re-read recorded options so they pick up
-    // the mutation. Racing with the abort signal lets an abandoned discovery
-    // return promptly while a losing startup finishes into the cache (idle
-    // cleanup closes it), matching getPrompt's cancellation semantics.
+    // Same post-refresh mutation gap as getPrompt, extended over the prompt
+    // catalog fetch: a trust or settings mutation completing while
+    // prompts/list is pending must not let a pre-mutation enabled-instance
+    // copy leak descriptors from a now-disabled server. Retry until both
+    // mutation counters are stable across one refresh plus catalog fetch;
+    // retries re-read recorded options so they pick up the mutation. Racing
+    // with the abort signal lets an abandoned discovery return promptly while
+    // a losing startup finishes into the cache (idle cleanup closes it),
+    // matching getPrompt's cancellation semantics.
+    let enabledInstances: Map<string, MCPServerInstance>;
     for (;;) {
       const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
       const generationBefore = this.configService.configGeneration;
@@ -1731,6 +1734,14 @@ export class MCPServerManager {
       if (refreshed.kind === "aborted") {
         throw new Error("MCP prompt discovery was aborted");
       }
+      const entry = this.workspaceServers.get(workspaceId);
+      if (!entry) return [];
+
+      // Disabled clients can remain cached until a leased restart, so filter prompts.
+      enabledInstances = new Map(
+        [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
+      );
+      await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
       if (
         (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) === optionsMutationsBefore &&
         this.configService.configGeneration === generationBefore
@@ -1738,14 +1749,6 @@ export class MCPServerManager {
         break;
       }
     }
-    const entry = this.workspaceServers.get(workspaceId);
-    if (!entry) return [];
-
-    // Disabled clients can remain cached until a leased restart, so filter prompts.
-    const enabledInstances = new Map(
-      [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
-    );
-    await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
     const instances = [...enabledInstances.values()].sort((a, b) => a.name.localeCompare(b.name));

@@ -331,9 +331,16 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   });
   const asyncCommandTokenRef = useRef(0);
   const workspaceId = variant === "workspace" ? props.workspaceId : null;
+  // Send-time command/ref resolution can await cold MCP discovery. Every
+  // in-flight send in the current scope shares this controller; aborting it on
+  // scope change or unmount discards stale continuations so they cannot send
+  // to the captured workspace or clear the newly selected workspace's draft.
+  const sendResolutionAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     asyncCommandScopeRef.current = { variant, workspaceId };
+    sendResolutionAbortRef.current?.abort();
+    sendResolutionAbortRef.current = null;
   }, [variant, workspaceId]);
 
   const store = useWorkspaceStoreRaw();
@@ -646,6 +653,8 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       isMountedRef.current = false;
       mcpPromptsAbortRef.current?.abort();
       mcpPromptsAbortRef.current = null;
+      sendResolutionAbortRef.current?.abort();
+      sendResolutionAbortRef.current = null;
     };
   }, []);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -2637,6 +2646,12 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     // prompt discovery; mark the send in flight so a second Enter cannot start
     // a duplicate send against the same captured draft.
     setSendingCount((c) => c + 1);
+    sendResolutionAbortRef.current ??= new AbortController();
+    const resolutionSignal = sendResolutionAbortRef.current.signal;
+    const isSendScopeCurrent = () =>
+      !resolutionSignal.aborted &&
+      asyncCommandScopeRef.current.variant === variant &&
+      asyncCommandScopeRef.current.workspaceId === workspaceId;
     let parsed: ParsedCommand;
     let skillInvocation: SkillInvocation | null;
     let mcpPromptInvocation: MCPPromptInvocation | null;
@@ -2649,7 +2664,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         mcpPromptDescriptors,
         api,
         discovery: skillDiscovery,
+        signal: resolutionSignal,
       });
+      if (!isSendScopeCurrent()) return;
       parsed = resolution.parsed;
       skillInvocation = resolution.skillInvocation;
       mcpPromptInvocation = resolution.mcpPromptInvocation;
@@ -2674,8 +2691,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           api,
           discovery: skillDiscovery,
           candidates: inlineReferenceCandidates,
+          signal: resolutionSignal,
         }),
       ]);
+      if (!isSendScopeCurrent()) return;
       if (mcpPromptRefsResult.error) {
         pushToast({ type: "error", message: mcpPromptRefsResult.error });
         return;

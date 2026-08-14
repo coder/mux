@@ -134,6 +134,7 @@ async function loadMcpPromptDescriptors(options: {
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
   commandKeys: string[];
+  signal?: AbortSignal;
 }): Promise<MCPPromptDescriptor[] | null> {
   const hasAllDescriptors = options.commandKeys.every(
     (commandKey) => findPromptDescriptor(options.descriptors, commandKey) !== undefined
@@ -143,9 +144,10 @@ async function loadMcpPromptDescriptors(options: {
   }
 
   try {
-    return await options.api.workspace.mcp.prompts.list({
-      workspaceId: options.discovery.workspaceId,
-    });
+    return await options.api.workspace.mcp.prompts.list(
+      { workspaceId: options.discovery.workspaceId },
+      options.signal !== undefined ? { signal: options.signal } : undefined
+    );
   } catch {
     return null;
   }
@@ -157,6 +159,7 @@ async function resolveMcpPromptInvocation(options: {
   descriptors: MCPPromptDescriptor[];
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
+  signal?: AbortSignal;
 }): Promise<{ invocation: MCPPromptInvocation | null; error?: string }> {
   if (!isUnknownSlashCommand(options.parsed) || !isMcpPromptCommandKey(options.parsed.command)) {
     return { invocation: null };
@@ -171,6 +174,7 @@ async function resolveMcpPromptInvocation(options: {
     api: options.api,
     discovery: options.discovery,
     commandKeys: [command],
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   const descriptor = descriptors ? findPromptDescriptor(descriptors, command) : undefined;
   if (!descriptor) {
@@ -283,6 +287,7 @@ export async function parseCommandWithSkillInvocation(options: {
   mcpPromptDescriptors?: MCPPromptDescriptor[];
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
+  signal?: AbortSignal;
 }): Promise<{
   parsed: ParsedCommand;
   skillInvocation: SkillInvocation | null;
@@ -296,6 +301,7 @@ export async function parseCommandWithSkillInvocation(options: {
     descriptors: options.mcpPromptDescriptors ?? [],
     api: options.api,
     discovery: options.discovery,
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   if (promptResolution.invocation || promptResolution.error) {
     return {
@@ -369,6 +375,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
   candidates?: InlineSkillCandidate[];
+  signal?: AbortSignal;
 }): Promise<{ refs: MCPPromptReference[]; error?: string }> {
   const refs: MCPPromptReference[] = [];
   if (options.slashInvocation) {
@@ -392,6 +399,7 @@ export async function resolveMcpPromptRefsForSend(options: {
     api: options.api,
     discovery: options.discovery,
     commandKeys: candidates.map((candidate) => candidate.skillName),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
   if (!descriptors) return { refs };
 
