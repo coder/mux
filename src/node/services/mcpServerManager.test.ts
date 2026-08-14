@@ -1176,6 +1176,35 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("overlays a trust revocation recorded before a cold workspace's first request", async () => {
+    const workspaceId = "ws-cold-trust";
+    configService.listServers = mock((_projectPath: string, trusted: boolean) =>
+      Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      )
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { prompts: [{ name: "review" }] }],
+          ["stable", { prompts: [{ name: "status" }] }],
+        ])
+      )
+    );
+
+    // Revocation lands while the workspace is cold (no recorded options), so
+    // only the retained per-project trust can correct the stale snapshot the
+    // stream captured before the revocation.
+    manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+
+    const descriptors = await manager.getPromptsForWorkspace(
+      workspaceRequest(workspaceId, { trusted: true })
+    );
+    expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
+  });
+
   test("excludes servers reconfigured while leased from prompt discovery", async () => {
     const workspaceId = "ws-stale-prompt-discovery";
     let command = "cmd-1";

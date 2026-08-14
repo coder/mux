@@ -5579,7 +5579,10 @@ export const router = (authToken?: string) => {
             .input(schemas.workspace.mcp.prompts.list.input)
             .output(schemas.workspace.mcp.prompts.list.output)
             .handler(async ({ context, input, signal }) => {
-              await context.aiService.waitForInit(input.workspaceId);
+              // Preflight waits (init, Coder/SSH/devcontainer startup) can take
+              // minutes; forward the handler signal so navigating away cancels
+              // the whole request, not just the MCP manager phase.
+              await context.aiService.waitForInit(input.workspaceId, signal);
               const metadataResult = await context.aiService.getWorkspaceMetadata(
                 input.workspaceId
               );
@@ -5598,7 +5601,9 @@ export const router = (authToken?: string) => {
               const { runtime, workspacePath, hostCheckoutRoot } = runtimeContextResult.data;
               // Cold prompt discovery can start stdio servers through runtime.exec,
               // so wait until the runtime is ready.
-              const readyResult = await runtime.ensureReady();
+              const readyResult = await runtime.ensureReady(
+                signal !== undefined ? { signal } : undefined
+              );
               if (!readyResult.ready) {
                 throw new Error(readyResult.error);
               }

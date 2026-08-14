@@ -887,6 +887,7 @@ export class MCPServerManager {
    * may predate the mutation.
    */
   private readonly latestWorkspaceOverrides = new Map<string, WorkspaceMCPOverrides | undefined>();
+  private readonly latestProjectTrust = new Map<string, boolean>();
   private readonly workspaceRestartLocks = new MutexMap<string>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
@@ -1284,12 +1285,21 @@ export class MCPServerManager {
     // and reaching here; on a cold workspace there is no recorded state for
     // that mutation to repair, so overlay the newest overrides the manager
     // has seen over the caller's possibly stale snapshot.
-    const options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
+    let options = this.latestWorkspaceOverrides.has(requestOptions.workspaceId)
       ? {
           ...requestOptions,
           overrides: this.latestWorkspaceOverrides.get(requestOptions.workspaceId),
         }
       : requestOptions;
+    // Same cold-workspace gap for project trust: a revocation landing while a
+    // stream's pre-await trusted snapshot is still in flight has no recorded
+    // options to repair, so overlay the newest trust the manager has seen.
+    const latestTrust = this.latestProjectTrust.get(
+      stripTrailingSlashes(requestOptions.projectPath)
+    );
+    if (latestTrust !== undefined && (options.trusted ?? false) !== latestTrust) {
+      options = { ...options, trusted: latestTrust };
+    }
     const {
       workspaceId,
       projectPath,
@@ -1942,6 +1952,11 @@ export class MCPServerManager {
     const trustByPath = new Map(
       updates.map((update) => [stripTrailingSlashes(update.projectPath), update.trusted])
     );
+    // Retained by project path so cold workspaces (no recorded options yet)
+    // pick up the mutation when their first request reaches the manager.
+    for (const [path, trusted] of trustByPath) {
+      this.latestProjectTrust.set(path, trusted);
+    }
     for (const [workspaceId, options] of this.lastWorkspaceRequestOptions) {
       const trusted = trustByPath.get(stripTrailingSlashes(options.projectPath));
       if (trusted === undefined || (options.trusted ?? false) === trusted) continue;
