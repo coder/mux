@@ -1,4 +1,3 @@
-import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { shouldRunIntegrationTests, setupWorkspaceWithoutProvider } from "../setup";
@@ -147,10 +146,12 @@ describeIntegration("MCP prompts", () => {
       const manager = env.services.mcpServerManager;
       const seenSecrets: Array<Record<string, string> | undefined> = [];
       const realGetTools = manager.getToolsForWorkspace.bind(manager);
-      const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation((options) => {
-        seenSecrets.push(options.projectSecrets);
-        return realGetTools(options);
-      });
+      const getToolsSpy = jest
+        .spyOn(manager, "getToolsForWorkspace")
+        .mockImplementation((options) => {
+          seenSecrets.push(options.projectSecrets);
+          return realGetTools(options);
+        });
 
       const prompt = await manager.getPrompt(workspaceId, "prompt server", "status", {});
       expect(prompt.text).toBe("Report workspace status");
