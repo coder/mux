@@ -320,10 +320,7 @@ export function isMcpPromptReference(value: unknown): value is MCPPromptReferenc
   );
 }
 
-/**
- * muxMetadata persists as z.any(), so one corrupted history line (e.g. [null])
- * must be filtered at read time rather than crashing aggregation (self-healing rule).
- */
+/** muxMetadata persists as z.any(), so corrupted references require read-time filtering. */
 export function sanitizeMcpPromptRefs(value: unknown): MCPPromptReference[] {
   return Array.isArray(value) ? value.filter(isMcpPromptReference) : [];
 }
@@ -338,7 +335,6 @@ export function isAgentSkillReference(value: unknown): value is AgentSkillRefere
   );
 }
 
-/** Same read-time filtering as sanitizeMcpPromptRefs for the peer refs field. */
 export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
   return Array.isArray(value) ? value.filter(isAgentSkillReference) : [];
 }

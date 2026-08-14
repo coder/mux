@@ -2508,9 +2508,8 @@ export class AgentSession {
 
     const cancelSignal = internal?.cancelSignal;
     const persistedCancelableMessageIds: string[] = [];
-    // An append failure mid-preparation would otherwise orphan earlier synthetic
-    // snapshot rows in active history without their invoking user row, and later
-    // provider requests would read that context (best effort, mirrors cancellation).
+    // Roll back synthetic snapshots if the invoking user row fails to persist, or
+    // later provider requests could consume orphaned context.
     const rollbackPersistedTurnRows = async (): Promise<void> => {
       if (persistedCancelableMessageIds.length === 0) return;
       const rollbackResult = await this.historyService.deleteMessages(
@@ -6205,7 +6204,6 @@ export class AgentSession {
     const mcpServerManager = this.mcpServerManager;
     if (!mcpServerManager) return [];
 
-    // Corrupted persisted refs must not fail the send (self-healing rule).
     const refs = dedupeMcpPromptRefs(sanitizeMcpPromptRefs(muxMetadata?.mcpPromptRefs));
     const snapshots = await Promise.all(
       refs.map(async (ref): Promise<MuxMessage | null> => {

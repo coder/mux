@@ -173,7 +173,6 @@ describe("AgentSession MCP prompt snapshots", () => {
       expect(result.success).toBe(false);
       appendToHistory.mockRestore();
 
-      // The orphaned snapshot must not survive for later provider requests.
       const history = await harness.historyService.getLastMessages("workspace", 10);
       expect(history.success).toBe(true);
       if (!history.success) throw new Error(history.error);
