@@ -1,6 +1,7 @@
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { isModelAvailable } from "@/common/routing";
 import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
+import { canDirectOpenAIServeModel } from "@/common/utils/providers/codexOauthRouting";
 
 /**
  * Provider-configured predicate shared by the routing UI (useRouting) and the
@@ -63,7 +64,19 @@ export function isModelServableWithProvidersConfig(args: {
     args.canonicalModel,
     args.routePriority ?? ["direct"],
     args.routeOverrides ?? {},
-    (provider) => isRouteProviderConfigured(providersConfig, provider),
+    (provider) => {
+      if (!isRouteProviderConfigured(providersConfig, provider)) {
+        return false;
+      }
+      // OpenAI's isConfigured can mean Codex-OAuth-only credentials, which
+      // serve only the OAuth-allowed model set — a direct route the factory
+      // would reject (api_key_not_found) must not win over a later gateway or
+      // suppress the actionable class error.
+      if (provider === "openai") {
+        return canDirectOpenAIServeModel(args.canonicalModel, providersConfig);
+      }
+      return true;
+    },
     (gateway, modelId) => isRouteGatewayModelAccessible(providersConfig, gateway, modelId)
   );
 }

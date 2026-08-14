@@ -60,4 +60,53 @@ describe("isModelServableWithProvidersConfig", () => {
       })
     ).toBe(true);
   });
+
+  describe("direct OpenAI credential gating", () => {
+    function openaiProviders(entry: Record<string, unknown>): ProvidersConfigMap {
+      return { openai: { isConfigured: true, ...entry } } as unknown as ProvidersConfigMap;
+    }
+
+    test("an OAuth-only config cannot serve an OAuth-ineligible model directly", () => {
+      // gpt-5.5-pro is not in the Codex OAuth allowed set: with no API key the
+      // factory would reject the direct route (api_key_not_found), so
+      // availability must not claim it.
+      expect(
+        isModelServableWithProvidersConfig({
+          canonicalModel: "openai:gpt-5.5-pro",
+          routePriority: ["direct"],
+          providersConfig: openaiProviders({ codexOauthSet: true }),
+        })
+      ).toBe(false);
+    });
+
+    test("an OAuth-only config serves OAuth-allowed models directly", () => {
+      expect(
+        isModelServableWithProvidersConfig({
+          canonicalModel: "openai:gpt-5.5",
+          routePriority: ["direct"],
+          providersConfig: openaiProviders({ codexOauthSet: true }),
+        })
+      ).toBe(true);
+    });
+
+    test("an API key serves OAuth-ineligible models directly", () => {
+      expect(
+        isModelServableWithProvidersConfig({
+          canonicalModel: "openai:gpt-5.5-pro",
+          routePriority: ["direct"],
+          providersConfig: openaiProviders({ apiKeySet: true }),
+        })
+      ).toBe(true);
+    });
+
+    test("an OAuth-required model is unservable without stored tokens even with an API key", () => {
+      expect(
+        isModelServableWithProvidersConfig({
+          canonicalModel: "openai:gpt-5.3-codex-spark",
+          routePriority: ["direct"],
+          providersConfig: openaiProviders({ apiKeySet: true }),
+        })
+      ).toBe(false);
+    });
+  });
 });
