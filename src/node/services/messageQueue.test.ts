@@ -461,6 +461,21 @@ describe("MessageQueue", () => {
       ).toBe(false);
     });
 
+    it("should reject a same-turn continuation when any queued predecessor is unrelated", () => {
+      queue.add("First follow up", { model: "gpt-4", agentId: "exec", muxMetadata: metadata });
+      queue.add("Second follow up", { model: "gpt-4", agentId: "exec", muxMetadata: metadata });
+
+      expect(
+        queue.hasAllWorkspaceTurnContinuations("wst_followup", "parent-workspace", "turn-1")
+      ).toBe(true);
+
+      queue.add("Unrelated message");
+
+      expect(
+        queue.hasAllWorkspaceTurnContinuations("wst_followup", "parent-workspace", "turn-1")
+      ).toBe(false);
+    });
+
     it("should preserve internal workspace-turn callbacks", () => {
       const onAccepted = () => undefined;
       const onAcceptedPreStreamFailure = () => undefined;

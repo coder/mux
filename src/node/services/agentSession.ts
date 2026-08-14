@@ -5441,7 +5441,7 @@ export class AgentSession {
       if (continuationMetadata == null) {
         return true;
       }
-      return !this.messageQueue.hasNextWorkspaceTurnContinuation(
+      return !this.messageQueue.hasAllWorkspaceTurnContinuations(
         continuationMetadata.taskHandleId,
         continuationMetadata.ownerWorkspaceId,
         continuationMetadata.turnId

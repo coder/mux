@@ -128,9 +128,25 @@ describe("AgentSession queued message tool-call dispatch", () => {
       expect(session.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION)).toBe(false);
       expect(session.hasQueuedOrDispatchingEntry(differentCorrelation)).toBe(true);
 
+      session.queueMessage(
+        "second queued continuation",
+        { model: TEST_MODEL, agentId: "exec", muxMetadata: WORKSPACE_TURN_CORRELATION },
+        { synthetic: true }
+      );
+      expect(session.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION)).toBe(false);
+
+      session.queueMessage(
+        "unrelated predecessor",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+        }
+      );
+      expect(session.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION)).toBe(true);
+
       const sendMessage = spyOn(session, "sendMessage").mockResolvedValue(Ok(undefined));
       session.sendQueuedMessages();
-      expect(session.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION)).toBe(false);
+      expect(session.hasQueuedOrDispatchingEntry(WORKSPACE_TURN_CORRELATION)).toBe(true);
       expect(session.hasQueuedOrDispatchingEntry(differentCorrelation)).toBe(true);
       sendMessage.mockRestore();
     } finally {

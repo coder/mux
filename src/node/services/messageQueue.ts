@@ -177,6 +177,31 @@ export class MessageQueue {
   }
 
   /**
+   * Whether every queued entry continues the exact workspace turn correlation.
+   *
+   * The caller uses this for a new continuation that has not entered the queue.
+   * An unrelated entry anywhere ahead of it supersedes the correlation.
+   */
+  hasAllWorkspaceTurnContinuations(
+    taskHandleId: string,
+    ownerWorkspaceId: string,
+    turnId: string
+  ): boolean {
+    return (
+      this.entries.length > 0 &&
+      this.entries.every((entry) => {
+        const metadata = entry.muxMetadata;
+        return (
+          isWorkspaceTurnMetadata(metadata) &&
+          metadata.taskHandleId === taskHandleId &&
+          metadata.ownerWorkspaceId === ownerWorkspaceId &&
+          metadata.turnId === turnId
+        );
+      })
+    );
+  }
+
+  /**
    * Whether the next entry continues the exact workspace turn correlation.
    */
   hasNextWorkspaceTurnContinuation(
