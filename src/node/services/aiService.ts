@@ -1221,11 +1221,14 @@ export class AIService extends EventEmitter {
 
       // Mode (plan|exec|compact) is derived from the selected agent definition.
       const effectiveMuxProviderOptions: MuxProviderOptions = muxProviderOptions ?? {};
-      // Clamp away levels the provider rejects (Mythos-class Anthropic cannot
-      // disable thinking) so provider options, replay transforms, and metadata
-      // all agree with the provider's actual thinking behavior. Providers config
-      // is passed so aliases mapped to Mythos models get the same treatment.
-      const effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
+      // Preliminary clamp for the factory call only: the factory reads the
+      // thinking level solely for the xAI Grok variant swap, which never
+      // depends on Coder instance metadata, so a pre-snapshot resolution is
+      // safe there. The FINAL effectiveThinkingLevel is re-resolved below
+      // from the pinned request snapshot — resolving it from this earlier
+      // read would race a concurrent instance retag and disagree with the
+      // wire the factory created the SDK model for.
+      const preliminaryThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
         modelString,
         thinkingLevel,
         this.providerService.getConfig()
@@ -1235,7 +1238,7 @@ export class AIService extends EventEmitter {
       const resolveAndCreateModelStartedAt = Date.now();
       const modelResult = await this.providerModelFactory.resolveAndCreateModel(
         modelString,
-        effectiveThinkingLevel,
+        preliminaryThinkingLevel,
         effectiveMuxProviderOptions,
         { agentInitiated, workspaceId }
       );
@@ -1263,6 +1266,16 @@ export class AIService extends EventEmitter {
         this.providerService.getConfig(),
         modelString,
         modelResult.data.coderSelectedInstance
+      );
+      // FINAL thinking clamp from the pinned snapshot (Mythos-class Anthropic
+      // cannot disable thinking; aliases mapped to Mythos models get the same
+      // treatment). Resolved here — not from the pre-factory read — so a
+      // concurrent instance retag cannot leave the level derived from one
+      // type while options/messages are built for the other's wire.
+      const effectiveThinkingLevel: ThinkingLevel = resolveEffectiveThinkingLevel(
+        modelString,
+        thinkingLevel,
+        requestProvidersConfig
       );
       // Capability lookups must see the RAW coder identity: name-based
       // canonicalization can rewrite a cross-typed instance (coder:openai/x

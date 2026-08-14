@@ -166,11 +166,12 @@ import {
   isSSHRuntime,
   isDockerRuntime,
 } from "@/common/types/runtime";
-import {
-  isValidModelFormat,
-  normalizeSelectedModel,
-  normalizeToCanonical,
-} from "@/common/utils/ai/models";
+// Backend maintenance sends (goal continuations, idle compaction, heartbeats)
+// normalize persisted models with gateway-preserving normalizeSelectedModel:
+// normalizeToCanonical would rewrite cross-typed Coder selections
+// (coder:openai/<claude> with type anthropic) to direct openai:<claude>,
+// bypassing the gateway or failing without direct credentials.
+import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import { DEFAULT_MODEL } from "@/common/constants/knownModels";
 import {
   hasBudgetedResumableGoal,
@@ -10769,7 +10770,7 @@ export class WorkspaceService extends EventEmitter {
       if (typeof raw !== "string" || raw.trim().length === 0) {
         continue;
       }
-      const normalized = normalizeToCanonical(raw.trim());
+      const normalized = normalizeSelectedModel(raw.trim());
       if (isValidModelFormat(normalized)) {
         const thinkingLevel = coerceThinkingLevel(candidate.thinkingLevel);
         const reasoningMode = coerceOpenAIReasoningMode(candidate.reasoningMode);
@@ -10960,7 +10961,7 @@ export class WorkspaceService extends EventEmitter {
     const globalCompactDefaultModel = globalCompactDefaults?.modelString;
     const normalizedGlobalCompactDefaultModel =
       typeof globalCompactDefaultModel === "string"
-        ? normalizeToCanonical(globalCompactDefaultModel.trim())
+        ? normalizeSelectedModel(globalCompactDefaultModel.trim())
         : undefined;
     const validGlobalCompactDefaultModel =
       normalizedGlobalCompactDefaultModel && isValidModelFormat(normalizedGlobalCompactDefaultModel)
@@ -10971,7 +10972,7 @@ export class WorkspaceService extends EventEmitter {
       config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString;
     const normalizedGlobalExecDefaultModel =
       typeof globalExecDefaultModel === "string"
-        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        ? normalizeSelectedModel(globalExecDefaultModel.trim())
         : undefined;
     const validGlobalExecDefaultModel =
       normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
@@ -10986,7 +10987,7 @@ export class WorkspaceService extends EventEmitter {
       activity?.lastModel ??
       WORKSPACE_DEFAULTS.model;
 
-    let model = normalizeToCanonical(fallbackModel);
+    let model = normalizeSelectedModel(fallbackModel);
     if (!isValidModelFormat(model)) {
       log.warn("Idle compaction resolved invalid model; falling back to workspace default", {
         workspaceId,
@@ -11360,7 +11361,7 @@ export class WorkspaceService extends EventEmitter {
     const globalAgentDefaultModel = globalAgentDefaults?.modelString;
     const normalizedGlobalAgentDefaultModel =
       typeof globalAgentDefaultModel === "string"
-        ? normalizeToCanonical(globalAgentDefaultModel.trim())
+        ? normalizeSelectedModel(globalAgentDefaultModel.trim())
         : undefined;
     const validGlobalAgentDefaultModel =
       normalizedGlobalAgentDefaultModel && isValidModelFormat(normalizedGlobalAgentDefaultModel)
@@ -11374,7 +11375,7 @@ export class WorkspaceService extends EventEmitter {
     const globalExecDefaultModel = globalExecDefaults?.modelString;
     const normalizedGlobalExecDefaultModel =
       typeof globalExecDefaultModel === "string"
-        ? normalizeToCanonical(globalExecDefaultModel.trim())
+        ? normalizeSelectedModel(globalExecDefaultModel.trim())
         : undefined;
     const validGlobalExecDefaultModel =
       normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
@@ -11389,7 +11390,7 @@ export class WorkspaceService extends EventEmitter {
       activity?.lastModel ??
       WORKSPACE_DEFAULTS.model;
 
-    let model = normalizeToCanonical(fallbackModel);
+    let model = normalizeSelectedModel(fallbackModel);
     if (!isValidModelFormat(model)) {
       log.warn("Heartbeat resolved invalid model; falling back to workspace default", {
         workspaceId,
