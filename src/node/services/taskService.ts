@@ -129,7 +129,7 @@ import {
 import { secretsToRecord } from "@/common/types/secrets";
 import { getErrorMessage } from "@/common/utils/errors";
 import { isNonRetryableStreamError } from "@/common/utils/messages/retryEligibility";
-import type { StreamErrorType } from "@/common/types/errors";
+import type { SendMessageError, StreamErrorType } from "@/common/types/errors";
 import { hasCompletedAgentReport } from "@/common/utils/agentTaskCompletion";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { CONTEXT_BOUNDARY_KINDS } from "@/common/constants/contextBoundary";
@@ -5919,11 +5919,9 @@ export class TaskService {
           const existingCorrelation = this.getWorkspaceTurnMetadataFromValue(
             existingMessage.metadata?.muxMetadata
           );
-          const hasMatchingCorrelation =
-            existingCorrelation?.taskHandleId === workspaceTurnMuxMetadata.taskHandleId &&
-            existingCorrelation.ownerWorkspaceId === workspaceTurnMuxMetadata.ownerWorkspaceId &&
-            existingCorrelation.turnId === workspaceTurnMuxMetadata.turnId;
-          if (!hasMatchingCorrelation) {
+          // A report can outlive its original turn. Only repair reports without correlation;
+          // replacing a valid correlation could deliver an old result to a later turn.
+          if (existingCorrelation == null) {
             const updatedMessage: MuxMessage = {
               ...existingMessage,
               metadata: {
@@ -7150,10 +7148,38 @@ export class TaskService {
           startStreamInBackground: true,
           queueDedupeKey: `agent-report:${childWorkspaceId}:${toolCallId}`,
           removableQueueDedupeKey: true,
+          ...(workspaceTurnMuxMetadata != null
+            ? {
+                onCanceled: async (reason: string) => {
+                  await this.settleWorkspaceTurnContinuationFailure(
+                    parentWorkspaceId,
+                    workspaceTurnMuxMetadata,
+                    "interrupted",
+                    reason
+                  );
+                },
+                onAcceptedPreStreamFailure: async (error: SendMessageError) => {
+                  await this.settleWorkspaceTurnContinuationFailure(
+                    parentWorkspaceId,
+                    workspaceTurnMuxMetadata,
+                    "error",
+                    formatSendMessageError(error).message
+                  );
+                },
+              }
+            : {}),
         }
       );
       if (!sendResult.success) {
         const formattedError = formatSendMessageError(sendResult.error);
+        if (workspaceTurnMuxMetadata != null) {
+          await this.settleWorkspaceTurnContinuationFailure(
+            parentWorkspaceId,
+            workspaceTurnMuxMetadata,
+            "error",
+            formattedError.message
+          );
+        }
         throw new Error(
           `agent_report failed to wake the parent workspace: ${formattedError.message}`
         );
@@ -10869,6 +10895,40 @@ export class TaskService {
       }
 
       return this.buildWorkspaceTurnMuxMetadata(current);
+    });
+  }
+
+  // A queued report can defer the preceding stream-end. If dispatch then fails, settle that
+  // exact turn here because no replacement stream-end can arrive.
+  private async settleWorkspaceTurnContinuationFailure(
+    workspaceId: string,
+    muxMetadata: WorkspaceTurnMuxMetadata,
+    status: "interrupted" | "error",
+    error: string
+  ): Promise<void> {
+    const record = await this.taskHandleStore.getWorkspaceTurn(
+      muxMetadata.ownerWorkspaceId,
+      muxMetadata.taskHandleId
+    );
+    if (
+      record?.workspaceId !== workspaceId ||
+      record?.turnId !== muxMetadata.turnId ||
+      !isActiveWorkspaceTurnTaskStatus(record?.status)
+    ) {
+      return;
+    }
+
+    const next: WorkspaceTurnTaskHandleRecord = {
+      ...record,
+      status,
+      updatedAt: getIsoNow(),
+      error,
+    };
+    delete next.deferredMessageIds;
+    await this.settleWorkspaceTurn({
+      record,
+      next,
+      waiterSettlement: { status: "error", error: new Error(error) },
     });
   }
 
