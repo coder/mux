@@ -300,11 +300,6 @@ export function getMcpPromptReferenceKey(serverName: string, promptName: string)
   return `${serverName}\u0000${promptName}`;
 }
 
-/**
- * Provider-visible user text for a slash MCP prompt invocation. The composer
- * persists this transformed text while displaying the raw slash command, so
- * retry paths must rebuild it with the same shape.
- */
 export function buildMcpPromptUserText(
   serverName: string,
   promptName: string,

@@ -67,9 +67,8 @@ export function buildFollowUpFromSource(
         })
       : undefined;
 
-  // source.content is the displayed raw slash command for MCP prompt turns,
-  // but the provider-visible row was the transformed invocation text, so
-  // rebuild it or the retry would send the literal /mcp__ command.
+  // MCP slash messages display the raw command but send transformed text, so
+  // retries must rebuild the provider-visible form.
   let text = source.content;
   if (slashMcpPromptRef && text.startsWith("/")) {
     const argumentText = text.replace(/^\/\S+/, "").trimStart();

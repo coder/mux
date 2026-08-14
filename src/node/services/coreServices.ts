@@ -152,9 +152,8 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.policyService
   );
   aiService.setMCPServerManager(mcpServerManager);
-  // Prompt invocation refreshes from recorded request options, whose secrets
-  // snapshot goes stale on rotation. Mirror the stream path's resolution
-  // (multi-project merge when applicable) so refreshes carry current secrets.
+  // Recorded prompt options can hold stale secret snapshots, so prompt refreshes
+  // resolve credentials from current configuration.
   mcpServerManager.setSecretsResolver(async (workspaceId, projectPath) => {
     const metadataResult = await aiService.getWorkspaceMetadata(workspaceId);
     const metadata = metadataResult.success ? metadataResult.data : null;

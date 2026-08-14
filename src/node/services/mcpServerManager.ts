@@ -833,7 +833,6 @@ export interface MCPWorkspaceRequestOptions {
   agentPlugins?: AgentPluginsMcpContext | null;
 }
 
-/** Resolves current effective secrets for a workspace's prompt refresh. */
 export type MCPWorkspaceSecretsResolver = (
   workspaceId: string,
   projectPath: string
@@ -1749,9 +1748,7 @@ export class MCPServerManager {
     const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (lastOptions) {
       const refresh = async (): Promise<void> => {
-        // Re-resolve secrets so a rotated HTTP header credential changes the
-        // config signature and recycles the stale authenticated client; the
-        // recorded snapshot only reflects the last discovery.
+        // Rotated header credentials must change the signature so stale clients are replaced.
         let refreshOptions = lastOptions;
         if (this.secretsResolver) {
           try {
