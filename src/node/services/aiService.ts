@@ -2889,12 +2889,16 @@ export class AIService extends EventEmitter {
       }
 
       // --- Refusal fallback chain ---
-      // Resolved from app config by canonical source model; task children can
-      // opt out via taskOnRefusal: "fail" (see resolveWorkspaceModelFallbackChain).
+      // Resolved from app config by the RAW selection (metadata-aware inside):
+      // a cross-typed Coder instance (coder:openai/x, type anthropic) must use
+      // its own gateway-scoped chain, never the direct provider's. Task
+      // children can opt out via taskOnRefusal: "fail" (see
+      // resolveWorkspaceModelFallbackChain).
       const modelFallbackChain = resolveWorkspaceModelFallbackChain(
         this.config.loadConfigOrDefault(),
         workspaceId,
-        canonicalModelString
+        modelString,
+        this.providerService.getConfig()
       );
 
       // Lazily rebuilds the per-model slice of this pipeline (model creation,

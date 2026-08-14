@@ -46,10 +46,11 @@ export async function tryReadGitHeadCommitSha(
 export function resolveWorkspaceModelFallbackChain(
   config: ReturnType<Config["loadConfigOrDefault"]>,
   workspaceId: string,
-  canonicalModelString: string
+  modelString: string,
+  providersConfig?: Record<string, unknown> | null
 ): string[] {
   assert(workspaceId.length > 0, "resolveWorkspaceModelFallbackChain: workspaceId required");
-  const chain = resolveModelFallbackChain(config.modelFallbacks, canonicalModelString);
+  const chain = resolveModelFallbackChain(config.modelFallbacks, modelString, providersConfig);
   if (chain.length === 0) {
     return chain;
   }
