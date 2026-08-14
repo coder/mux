@@ -99,6 +99,18 @@ describe("isModelServableWithProvidersConfig", () => {
       ).toBe(true);
     });
 
+    test("a custom openai-compatible provider shadowing the openai id is exempt from OAuth gating", () => {
+      // Keyless custom endpoints authenticate on their own terms; built-in
+      // OpenAI credential rules must not mark their models unavailable.
+      expect(
+        isModelServableWithProvidersConfig({
+          canonicalModel: "openai:gpt-5.5-pro",
+          routePriority: ["direct"],
+          providersConfig: openaiProviders({ providerType: "openai-compatible" }),
+        })
+      ).toBe(true);
+    });
+
     test("an API key serves OAuth-preferred models too (factory falls back to the key)", () => {
       expect(
         isModelServableWithProvidersConfig({
