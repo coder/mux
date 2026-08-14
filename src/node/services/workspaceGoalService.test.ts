@@ -6,6 +6,7 @@ import { ExtensionMetadataService } from "@/node/services/ExtensionMetadataServi
 import { WorkspaceGoalService, type GoalContinuationRuntimeBridge } from "./workspaceGoalService";
 import { IdleDispatcher } from "./idleDispatcher";
 import { createTestHistoryService } from "./testHistoryService";
+import type { SendMessageOptions } from "@/common/orpc/types";
 import type { HistoryService } from "./historyService";
 import type { GoalRecordV1, GoalStatus } from "@/common/types/goal";
 import {
@@ -554,6 +555,37 @@ describe("WorkspaceGoalService", () => {
       "goal_continuation_fired",
       expect.objectContaining({ source: "stream_end_idle_dispatch" })
     );
+  });
+
+  test("does not carry workspace-turn metadata into goal continuations", async () => {
+    await setGoalOk(service, { workspaceId, objective: "Start a new goal continuation" });
+    const dispatcher = new IdleDispatcher();
+    const seenOptions: SendMessageOptions[] = [];
+    service.registerGoalContinuationConsumer(
+      dispatcher,
+      continuationBridge((input) => {
+        seenOptions.push(input.options);
+        return Promise.resolve(true);
+      })
+    );
+
+    await service.requestContinuationAfterStreamEnd({
+      workspaceId,
+      sendOptions: {
+        model: "openai:gpt-4o",
+        agentId: "exec",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "delegated-task",
+          ownerWorkspaceId: "owner-workspace",
+          turnId: "delegated-turn",
+        },
+      },
+      streamEndedAtMs: 10_000,
+    });
+
+    expect(seenOptions).toHaveLength(1);
+    expect(seenOptions[0]?.muxMetadata).toBeUndefined();
   });
 
   test("can suppress setGoal kickoff continuation for CLI-controlled kickoff", async () => {

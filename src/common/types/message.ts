@@ -109,9 +109,9 @@ export function pickStartupRetrySendOptions(
   agentInitiated?: boolean,
   goalKind?: GoalSyntheticMessageKind
 ): StartupRetrySendOptions {
-  const workspaceTurnMuxMetadata = options.muxMetadata as
-    | Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
-    | undefined;
+  const typedMuxMetadata = options.muxMetadata as MuxMessageMetadata | undefined;
+  const workspaceTurnMuxMetadata =
+    typedMuxMetadata?.type === "workspace-turn-task" ? typedMuxMetadata : undefined;
   return {
     model: options.model,
     agentId: options.agentId,

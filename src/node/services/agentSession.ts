@@ -5477,6 +5477,10 @@ export class AgentSession {
   hasPendingWorkspaceTurnContinuation(
     metadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
   ): boolean {
+    if (hasSameWorkspaceTurnCorrelation(this.preparingWorkspaceTurnMetadata, metadata)) {
+      return true;
+    }
+
     if (
       this.messageQueue.hasNextWorkspaceTurnContinuation(
         metadata.taskHandleId,

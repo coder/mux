@@ -67,10 +67,19 @@ describe("AgentSession queued message tool-call dispatch", () => {
         hasQueuedOrDispatchingEntry(
           continuationMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
         ): boolean;
+        hasPendingWorkspaceTurnContinuation(
+          continuationMetadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+        ): boolean;
       };
     } = {};
     let preparingState:
-      | { sameTurn: boolean; differentTurn: boolean; uncorrelated: boolean }
+      | {
+          sameTurn: boolean;
+          differentTurn: boolean;
+          uncorrelated: boolean;
+          pendingSameTurn: boolean;
+          pendingDifferentTurn: boolean;
+        }
       | undefined;
     const streamMessage = mock(() => {
       const session = sessionHolder.current;
@@ -82,6 +91,13 @@ describe("AgentSession queued message tool-call dispatch", () => {
             turnId: "turn-different",
           }) === true,
         uncorrelated: session?.hasQueuedOrDispatchingEntry() === true,
+        pendingSameTurn:
+          session?.hasPendingWorkspaceTurnContinuation(WORKSPACE_TURN_CORRELATION) === true,
+        pendingDifferentTurn:
+          session?.hasPendingWorkspaceTurnContinuation({
+            ...WORKSPACE_TURN_CORRELATION,
+            turnId: "turn-different",
+          }) === true,
       };
       return Promise.resolve(Ok(undefined));
     });
@@ -102,7 +118,13 @@ describe("AgentSession queued message tool-call dispatch", () => {
       });
 
       expect(result.success).toBe(true);
-      expect(preparingState).toEqual({ sameTurn: false, differentTurn: true, uncorrelated: true });
+      expect(preparingState).toEqual({
+        sameTurn: false,
+        differentTurn: true,
+        uncorrelated: true,
+        pendingSameTurn: true,
+        pendingDifferentTurn: false,
+      });
       expect(session.hasQueuedOrDispatchingEntry()).toBe(false);
     } finally {
       session.dispose();

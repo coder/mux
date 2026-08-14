@@ -374,6 +374,8 @@ function continuationSendOptions(sendOptions: SendMessageOptions): SendMessageOp
     ...pickStartupRetrySendOptions(sendOptions),
     allowAgentSetGoal: undefined,
   };
+  // Startup retries preserve workspace-turn correlation, but goal continuations start a new turn.
+  delete options.muxMetadata;
   return options;
 }
 

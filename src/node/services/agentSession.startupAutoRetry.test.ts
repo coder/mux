@@ -9,7 +9,7 @@ import type { HistoryService } from "./historyService";
 import type { Config } from "@/node/config";
 import type { InitStateManager } from "./initStateManager";
 import type { WorkspaceChatMessage, SendMessageOptions } from "@/common/orpc/types";
-import { createMuxMessage } from "@/common/types/message";
+import { createMuxMessage, pickStartupRetrySendOptions } from "@/common/types/message";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { Ok } from "@/common/types/result";
@@ -283,16 +283,21 @@ describe("AgentSession startup auto-retry recovery", () => {
     const workspaceId = "startup-retry-workflow-result-metadata";
     const { session, historyService, aiService, cleanup } = await createSessionBundle(workspaceId);
     cleanups.push(cleanup);
+    const workflowMetadata = {
+      type: "workflow-result" as const,
+      rawCommand: "/deep-research mux",
+      runId: "wfr_1",
+    };
     const appendResult = await historyService.appendToHistory(
       workspaceId,
       createMuxMessage("user-1", "user", "Use the workflow result", {
         timestamp: Date.now(),
-        retrySendOptions: { model: "openai:gpt-4o", agentId: "exec" },
-        muxMetadata: {
-          type: "workflow-result",
-          rawCommand: "/deep-research mux",
-          runId: "wfr_1",
-        },
+        retrySendOptions: pickStartupRetrySendOptions({
+          model: "openai:gpt-4o",
+          agentId: "exec",
+          muxMetadata: workflowMetadata,
+        }),
+        muxMetadata: workflowMetadata,
       })
     );
     expect(appendResult.success).toBe(true);
