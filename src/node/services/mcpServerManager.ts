@@ -1570,6 +1570,7 @@ export class MCPServerManager {
       );
       existing.stats = leasedStats;
       existing.enabledServerNames = enabledServerNames;
+      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, existing);
 
       // The deferred restart retains same-named instances with the old config,
       // so record which servers changed to block prompt invocation on them.
@@ -1646,7 +1647,7 @@ export class MCPServerManager {
       const allFailedNames = [...restartFailedNames, ...startFailedNames];
       const stats = this.createWorkspaceStats(enabledEntries.length, instances, allFailedNames);
 
-      this.workspaceServers.set(workspaceId, {
+      const entry: WorkspaceServers = {
         configSignature: signature,
         instances,
         enabledServerNames,
@@ -1654,7 +1655,9 @@ export class MCPServerManager {
         timedOutServerNames: startTimedOutNames,
         retryingTimedOutServerNames: new Set(),
         lastActivity: Date.now(),
-      });
+      };
+      this.workspaceServers.set(workspaceId, entry);
+      await this.repairEnablementAfterConcurrentMutation(workspaceId, options, entry);
 
       return {
         tools: this.collectTools(instances, fullServerInfo, overrides),
@@ -1712,6 +1715,41 @@ export class MCPServerManager {
       }
     }
     return descriptors;
+  }
+
+  /**
+   * Settings mutations sync only an existing cache entry, so one landing while
+   * servers start would be lost and could leave a disabled or trust-revoked
+   * server invocable. Re-derive enablement from the latest recorded options.
+   */
+  private async repairEnablementAfterConcurrentMutation(
+    workspaceId: string,
+    optionsUsed: MCPWorkspaceRequestOptions,
+    entry: WorkspaceServers
+  ): Promise<void> {
+    try {
+      let recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
+      while (recorded !== undefined && recorded !== optionsUsed) {
+        const enabled = await this.listServers(
+          recorded.projectPath,
+          recorded.overrides,
+          recorded.trusted ?? false,
+          recorded.agentPlugins
+        );
+        const latest = this.lastWorkspaceRequestOptions.get(workspaceId);
+        if (latest === recorded) {
+          entry.enabledServerNames = new Set(Object.keys(enabled));
+          return;
+        }
+        // Another mutation landed while we derived enablement; recompute.
+        recorded = latest;
+      }
+    } catch (error) {
+      log.debug("[MCP] Failed to repair enablement after concurrent settings change", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
   }
 
   /** Keeps prompt invocation from using stale enablement before the next stream refresh. */
