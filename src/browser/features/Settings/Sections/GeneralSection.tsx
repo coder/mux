@@ -458,7 +458,12 @@ export function GeneralSection() {
           }
         } catch {
           if (telemetryEnabledIntentRef.current === intent) {
-            setTelemetryEnabled(!checked);
+            // Backend truth is unreachable (e.g. the connection dropped after
+            // the request may already have persisted and applied). Indeterminate
+            // state must render as ON: showing "off" while telemetry might be
+            // collecting is the one lie a privacy toggle can't tell. The next
+            // successful config load reconciles the real value.
+            setTelemetryEnabled(true);
           }
         }
       });

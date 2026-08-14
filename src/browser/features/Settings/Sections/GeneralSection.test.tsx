@@ -452,6 +452,38 @@ describe("GeneralSection", () => {
     });
   });
 
+  test("renders the telemetry switch ON when backend truth is unreachable after a failed write", async () => {
+    const { api, updateTelemetryEnabledMock } = createMockAPI({ telemetryEnabled: true });
+    api.config.updateTelemetryEnabled = updateTelemetryEnabledMock.mockImplementation(() =>
+      Promise.reject(new Error("connection dropped"))
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+
+    // After the initial load, make the reconciliation getConfig fail too, so
+    // the disable attempt ends with no confirmed backend state.
+    api.config.getConfig = mock(() => Promise.reject(new Error("connection dropped")));
+
+    fireEvent.click(toggle);
+
+    // Indeterminate outcome must render ON: the disable may not have landed,
+    // and a privacy switch must not read "off" while collection may continue.
+    await waitFor(() => {
+      expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: false });
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
   test("a superseded telemetry write failure does not clobber the latest choice", async () => {
     const { api, updateTelemetryEnabledMock } = createMockAPI({ telemetryEnabled: false });
     const deferred: Array<{ resolve: () => void; reject: (error: Error) => void }> = [];
