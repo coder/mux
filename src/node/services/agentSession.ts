@@ -1635,18 +1635,26 @@ export class AgentSession {
     const persistedModel = this.normalizeStartupModel(persistedRetrySendOptions?.model);
     const assistantModel = this.normalizeStartupModel(lastAssistantMessage?.metadata?.model);
     const agentSettingsModel = this.normalizeStartupModel(agentSettings?.model);
-    const baseModel = isChildTaskWorkspace
-      ? (agentSettingsModel ?? persistedModel ?? assistantModel ?? DEFAULT_MODEL)
-      : (persistedModel ?? assistantModel ?? agentSettingsModel ?? DEFAULT_MODEL);
+    // A retry row carrying routed compaction context recorded the CLASS model
+    // the turn actually streamed on. That persisted model must win even in
+    // child task workspaces (whose creation-time settings normally take
+    // precedence) — resuming on the workspace model while restoring a routed
+    // compaction policy would mismatch both. Agent identity stays the child's.
+    const isRoutedRetryRow = persistedRetrySendOptions?.compactionBaseOptions != null;
+    const baseModel =
+      isChildTaskWorkspace && !isRoutedRetryRow
+        ? (agentSettingsModel ?? persistedModel ?? assistantModel ?? DEFAULT_MODEL)
+        : (persistedModel ?? assistantModel ?? agentSettingsModel ?? DEFAULT_MODEL);
 
     const persistedThinkingLevel = coerceThinkingLevel(persistedRetrySendOptions?.thinkingLevel);
     const assistantThinkingLevel = coerceThinkingLevel(
       lastAssistantMessage?.metadata?.thinkingLevel
     );
     const agentSettingsThinkingLevel = coerceThinkingLevel(agentSettings?.thinkingLevel);
-    const baseThinkingLevel = isChildTaskWorkspace
-      ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
-      : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
+    const baseThinkingLevel =
+      isChildTaskWorkspace && !isRoutedRetryRow
+        ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
+        : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
 
     // Pro reasoning mode threads alongside thinkingLevel from the same sources
     // (assistant message metadata does not carry it), so startup retries do not
