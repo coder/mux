@@ -23,6 +23,9 @@ interface MCPServerManagerTestAccess {
   workspaceServers: Map<string, unknown>;
   lastWorkspaceRequestOptions: Map<string, unknown>;
   cleanupIdleServers: () => void;
+  ensureWorkspaceServers: (
+    ...args: unknown[]
+  ) => Promise<{ tools: Record<string, Tool>; stats: unknown }>;
   startServers: (...args: unknown[]) => Promise<{
     instances: Map<string, unknown>;
     failedServerNames: string[];
@@ -66,6 +69,7 @@ function testInstance(
       arguments?: Array<{ name: string; description?: string; required?: boolean }>;
     }>;
     getPrompt?: ReturnType<typeof mock>;
+    refreshTools?: ReturnType<typeof mock>;
     close?: ReturnType<typeof mock>;
     isClosed?: boolean;
   } = {}
@@ -77,6 +81,7 @@ function testInstance(
     tools: options.tools ?? {},
     prompts: options.prompts ?? [],
     getPrompt: options.getPrompt ?? mock(() => Promise.resolve({ messages: [] })),
+    ...(options.refreshTools !== undefined ? { refreshTools: options.refreshTools } : {}),
     isClosed: options.isClosed ?? false,
     close: options.close ?? mock(() => Promise.resolve(undefined)),
   };
@@ -969,6 +974,29 @@ describe("MCPServerManager", () => {
     }
   });
 
+  test("prompt paths skip cached tool catalog refreshes", async () => {
+    const workspaceId = "ws-skip-tool-refresh";
+    configService.listServers = mock(() => Promise.resolve({ server: stdioConfig("cmd-1") }));
+
+    const getPrompt = mock(() =>
+      Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "hi" } }] })
+    );
+    const refreshTools = mock(() => Promise.resolve(undefined));
+    access.startServers = mock(() =>
+      Promise.resolve(startResult([["server", { getPrompt, refreshTools }]]))
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    const toolPathRefreshCount = refreshTools.mock.calls.length;
+    expect(toolPathRefreshCount).toBeGreaterThan(0);
+
+    // A hung tools/list on any server must not stall prompt listing or invocation.
+    await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
+    expect(await manager.getPrompt(workspaceId, "server", "review", {})).toEqual({ text: "hi" });
+    expect(refreshTools).toHaveBeenCalledTimes(toolPathRefreshCount);
+  });
+
   test("blocks prompt invocation when trust is revoked during secret resolution", async () => {
     const workspaceId = "ws-secrets-trust";
     configService.listServers = mock((_projectPath: string, trusted: boolean) =>
@@ -1285,7 +1313,7 @@ describe("MCPServerManager", () => {
     expect(Object.keys(secondStartedServers ?? {}).sort()).toEqual(["global", "repo"]);
   });
   test("lists namespaced prompt descriptors from connected instances", async () => {
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockResolvedValue({
       tools: {},
       stats: cachedStats(),
     });
@@ -1371,7 +1399,7 @@ describe("MCPServerManager", () => {
   });
 
   test("suffixes every member of a colliding prompt key group, independent of order", async () => {
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockResolvedValue({
       tools: {},
       stats: cachedStats(),
     });
@@ -1410,7 +1438,7 @@ describe("MCPServerManager", () => {
   });
 
   test("excludes disabled servers from prompt discovery and getPrompt", async () => {
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockResolvedValue({
       tools: {},
       stats: cachedStats(),
     });
@@ -1433,7 +1461,7 @@ describe("MCPServerManager", () => {
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
     );
     const request = workspaceRequest("workspace");
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(() => {
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation(() => {
       access.workspaceServers.set("workspace", {
         enabledServerNames: new Set(["coder"]),
         instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
@@ -1445,7 +1473,7 @@ describe("MCPServerManager", () => {
     expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({
       text: "Status",
     });
-    expect(getToolsSpy).toHaveBeenCalledWith(request);
+    expect(getToolsSpy).toHaveBeenCalledWith(request, false);
     getToolsSpy.mockRestore();
   });
 
@@ -1532,15 +1560,13 @@ describe("MCPServerManager", () => {
     const getPrompt = mock(() =>
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
     );
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
-      (options: { workspaceId: string }) => {
-        access.workspaceServers.set(options.workspaceId, {
-          enabledServerNames: new Set(["coder"]),
-          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
-        });
-        return Promise.resolve({ tools: {}, stats: cachedStats() });
-      }
-    );
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation((options) => {
+      access.workspaceServers.set((options as { workspaceId: string }).workspaceId, {
+        enabledServerNames: new Set(["coder"]),
+        instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+      });
+      return Promise.resolve({ tools: {}, stats: cachedStats() });
+    });
 
     manager.applyProjectTrust([
       { projectPath: `${PROJECT_PATH}/`, trusted: false },
@@ -1548,7 +1574,7 @@ describe("MCPServerManager", () => {
     ]);
     await manager.getPrompt("workspace", "coder", "status", {});
 
-    expect(getToolsSpy).toHaveBeenCalledWith({ ...request, trusted: false });
+    expect(getToolsSpy).toHaveBeenCalledWith({ ...request, trusted: false }, false);
     expect(access.lastWorkspaceRequestOptions.get("other-workspace")).toBe(otherRequest);
     getToolsSpy.mockRestore();
   });
@@ -1561,19 +1587,20 @@ describe("MCPServerManager", () => {
     const getPrompt = mock(() =>
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
     );
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
-      (options: { workspaceId: string }) => {
-        access.workspaceServers.set(options.workspaceId, {
-          enabledServerNames: new Set(["coder"]),
-          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
-        });
-        return Promise.resolve({ tools: {}, stats: cachedStats() });
-      }
-    );
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation((options) => {
+      access.workspaceServers.set((options as { workspaceId: string }).workspaceId, {
+        enabledServerNames: new Set(["coder"]),
+        instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+      });
+      return Promise.resolve({ tools: {}, stats: cachedStats() });
+    });
 
     await manager.getPrompt("workspace", "coder", "status", {});
 
-    expect(getToolsSpy).toHaveBeenCalledWith({ ...request, projectSecrets: { TOKEN: "new" } });
+    expect(getToolsSpy).toHaveBeenCalledWith(
+      { ...request, projectSecrets: { TOKEN: "new" } },
+      false
+    );
     getToolsSpy.mockRestore();
   });
 
@@ -1585,24 +1612,22 @@ describe("MCPServerManager", () => {
     const getPrompt = mock(() =>
       Promise.resolve({ messages: [{ role: "user", content: { type: "text", text: "Status" } }] })
     );
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
-      (options: { workspaceId: string }) => {
-        access.workspaceServers.set(options.workspaceId, {
-          enabledServerNames: new Set(["coder"]),
-          instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
-        });
-        return Promise.resolve({ tools: {}, stats: cachedStats() });
-      }
-    );
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation((options) => {
+      access.workspaceServers.set((options as { workspaceId: string }).workspaceId, {
+        enabledServerNames: new Set(["coder"]),
+        instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+      });
+      return Promise.resolve({ tools: {}, stats: cachedStats() });
+    });
 
     expect(await manager.getPrompt("workspace", "coder", "status", {})).toEqual({ text: "Status" });
-    expect(getToolsSpy).toHaveBeenCalledWith(request);
+    expect(getToolsSpy).toHaveBeenCalledWith(request, false);
     getToolsSpy.mockRestore();
   });
 
   test("getPrompt rejects promptly when aborted during refresh startup", async () => {
     access.lastWorkspaceRequestOptions.set("workspace", workspaceRequest("workspace"));
-    const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockImplementation(
+    const getToolsSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation(
       () => new Promise<never>(() => undefined)
     );
     const controller = new AbortController();

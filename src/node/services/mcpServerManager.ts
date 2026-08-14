@@ -1246,6 +1246,18 @@ export class MCPServerManager {
   async getToolsForWorkspace(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPToolsForWorkspaceResult> {
+    return this.ensureWorkspaceServers(options, true);
+  }
+
+  /**
+   * refreshToolCatalogs=false skips tools/list refreshes on cached instances;
+   * prompt paths use it so one stale unrelated server (60s SDK default
+   * timeout) cannot stall every prompt send in the workspace.
+   */
+  private async ensureWorkspaceServers(
+    options: MCPWorkspaceRequestOptions,
+    refreshToolCatalogs: boolean
+  ): Promise<MCPToolsForWorkspaceResult> {
     const {
       workspaceId,
       projectPath,
@@ -1457,8 +1469,10 @@ export class MCPServerManager {
         serverCount: enabledEntries.length,
       });
 
-      // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-      await this.refreshModernInstanceTools(existing.instances);
+      if (refreshToolCatalogs) {
+        // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
+        await this.refreshModernInstanceTools(existing.instances);
+      }
 
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
@@ -1587,8 +1601,10 @@ export class MCPServerManager {
         );
       }
 
-      // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-      await this.refreshModernInstanceTools(instancesForTools);
+      if (refreshToolCatalogs) {
+        // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
+        await this.refreshModernInstanceTools(instancesForTools);
+      }
 
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
@@ -1607,7 +1623,9 @@ export class MCPServerManager {
         );
         if (current.configSignature === signature && !currentHasClosedInstance) {
           current.lastActivity = Date.now();
-          await this.refreshModernInstanceTools(current.instances);
+          if (refreshToolCatalogs) {
+            await this.refreshModernInstanceTools(current.instances);
+          }
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,
@@ -1669,7 +1687,7 @@ export class MCPServerManager {
   async getPromptsForWorkspace(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPPromptDescriptor[]> {
-    await this.getToolsForWorkspace(options);
+    await this.ensureWorkspaceServers(options, false);
     const entry = this.workspaceServers.get(options.workspaceId);
     if (!entry) return [];
 
@@ -1819,8 +1837,9 @@ export class MCPServerManager {
         // Re-read after the await: a settings mutation recorded while secrets
         // resolved must not be clobbered by the pre-await options snapshot.
         const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
-        await this.getToolsForWorkspace(
-          projectSecrets !== undefined ? { ...currentOptions, projectSecrets } : currentOptions
+        await this.ensureWorkspaceServers(
+          projectSecrets !== undefined ? { ...currentOptions, projectSecrets } : currentOptions,
+          false
         );
       };
       const refreshed = await raceWithAbortAndTimeout(refresh(), {
