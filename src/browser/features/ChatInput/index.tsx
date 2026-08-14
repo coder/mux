@@ -3165,7 +3165,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,
-            result.data?.routedThinkingLevel ?? sendMessageOptions.thinkingLevel ?? "off"
+            // Fall back to what this send actually carried (sendOptions
+            // includes a composed one-shot's thinking), not the ambient
+            // workspace setting.
+            result.data?.routedThinkingLevel ?? sendOptions.thinkingLevel ?? "off"
           );
 
           if (oneShotOverride) {

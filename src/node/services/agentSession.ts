@@ -2803,12 +2803,25 @@ export class AgentSession {
           this.aiService.getProvidersConfig()
         );
 
+        // Rejections persist + surface like the pricing/routing gates: routable
+        // skill sends skip the browser PDF preflight and can arrive here from
+        // the queue drain, where a bare Err would silently discard the user's
+        // text and attachment (the composer already cleared on queue accept).
+        const rejectPdf = async (
+          errorMessage: string
+        ): Promise<Result<undefined, SendMessageError>> => {
+          const pdfError = createUnknownSendMessageError(errorMessage);
+          if (isManualUserMessage) {
+            const persisted = await this.preserveRejectedManualSend(message, options, pdfError);
+            if (persisted) {
+              await this.applyManualUserMessageGoalSafety({ policy: "pause" });
+            }
+          }
+          return Err(pdfError);
+        };
+
         if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(
-              `Model ${effectiveModelForGates} does not support PDF input.`
-            )
-          );
+          return rejectPdf(`Model ${effectiveModelForGates} does not support PDF input.`);
         }
 
         if (caps?.maxPdfSizeMb !== undefined) {
@@ -2818,10 +2831,8 @@ export class AgentSession {
             if (bytes !== null && bytes > maxBytes) {
               const actualMb = (bytes / (1024 * 1024)).toFixed(1);
               const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${effectiveModelForGates} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
+              return rejectPdf(
+                `${label} is ${actualMb}MB, but ${effectiveModelForGates} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
               );
             }
           }
@@ -3022,12 +3033,22 @@ export class AgentSession {
 
     // Routed sends report the class model (and any thinking level routing
     // replaced) back to the caller so successful-send telemetry attributes the
-    // invocation to what actually streams.
+    // invocation to what actually streams. The reported level goes through the
+    // same per-model floor enforcement the stream applies, so a class suffix
+    // below a configured minimum reports the clamped level actually used.
     const sendAccepted: SendMessageAccepted | undefined =
       skillModelOverride != null
         ? {
             routedModel: skillModelOverride.model,
-            ...(routedThinkingLevel != null ? { routedThinkingLevel } : {}),
+            ...(routedThinkingLevel != null
+              ? {
+                  routedThinkingLevel: this.enforceThinkingFloorsForModel(
+                    skillModelOverride.model,
+                    routedThinkingLevel,
+                    this.getProvidersConfigSafe()
+                  ),
+                }
+              : {}),
           }
         : undefined;
 
@@ -3637,6 +3658,52 @@ export class AgentSession {
 
   private getUsageState(): AutoCompactionUsageState | undefined {
     return this.lastUsageState;
+  }
+
+  /**
+   * Per-model thinking floor: the configured minThinkingLevelByModel override
+   * resolved against the model's policy. Tests may provide partial config
+   * mocks, so read overrides only when available. providersConfig lets mapped
+   * aliases (mappedToModel) resolve against the target model's policy.
+   */
+  private resolveThinkingFloorForModel(
+    modelString: string,
+    providersConfig: ProvidersConfigMap | null
+  ): ThinkingLevel {
+    const maybeConfig = this.config as Config & {
+      loadConfigOrDefault?: () => {
+        minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+      } | null;
+    };
+    // Gateway-preserving key first (an explicit coder:<instance>/<model>
+    // floor stays distinct from a direct model with the same ID), with a
+    // legacy name-canonical fallback for floors persisted by older versions.
+    const minThinkingOverride =
+      typeof maybeConfig.loadConfigOrDefault === "function"
+        ? lookupMinThinkingLevelOverride(
+            maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel,
+            modelString
+          )
+        : undefined;
+    return resolveMinimumThinkingLevel(modelString, minThinkingOverride, providersConfig);
+  }
+
+  /**
+   * Apply per-model thinking floors + policy clamping — the single definition
+   * used by streamWithHistory's request build AND the accepted-send payload,
+   * so telemetry can never report a level the stream doesn't run at.
+   */
+  private enforceThinkingFloorsForModel(
+    modelString: string,
+    thinkingLevel: ThinkingLevel,
+    providersConfig: ProvidersConfigMap | null
+  ): ThinkingLevel {
+    return enforceThinkingPolicy(
+      modelString,
+      thinkingLevel,
+      this.resolveThinkingFloorForModel(modelString, providersConfig),
+      providersConfig
+    );
   }
 
   private getProvidersConfigSafe(): ProvidersConfigMap | null {
@@ -4273,32 +4340,9 @@ export class AgentSession {
     this.activeStreamHadPostCompactionInjection =
       postCompactionAttachments !== null && postCompactionAttachments.length > 0;
 
-    // Apply per-model thinking floors once so desktop, mobile, and ACP requests match.
-    // Tests may provide partial config mocks, so read overrides only when available.
-    const maybeConfig = this.config as Config & {
-      loadConfigOrDefault?: () => {
-        minThinkingLevelByModel?: Record<string, ThinkingLevel>;
-      } | null;
-    };
-    // Gateway-preserving key first (an explicit coder:<instance>/<model>
-    // floor stays distinct from a direct model with the same ID), with a
-    // legacy name-canonical fallback for floors persisted by older versions.
-    const minThinkingOverride =
-      typeof maybeConfig.loadConfigOrDefault === "function"
-        ? lookupMinThinkingLevelOverride(
-            maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel,
-            modelString
-          )
-        : undefined;
-    // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
-    // clamp against the target model's policy — otherwise a capability level
-    // like native max would be stripped here before buildProviderOptions can
-    // resolve the alias.
-    const minThinkingLevel = resolveMinimumThinkingLevel(
-      modelString,
-      minThinkingOverride,
-      providersConfig
-    );
+    // Mid-turn thinking overrides clamp against the same floor as the
+    // send-time level (single source of truth for the floor).
+    const minThinkingLevel = this.resolveThinkingFloorForModel(modelString, providersConfig);
     const effectiveThinkingLevel = options?.thinkingLevel
       ? enforceThinkingPolicy(modelString, options.thinkingLevel, minThinkingLevel, providersConfig)
       : undefined;
