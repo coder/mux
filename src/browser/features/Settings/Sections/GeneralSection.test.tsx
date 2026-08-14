@@ -505,6 +505,69 @@ describe("GeneralSection", () => {
     });
   });
 
+  test("replays a config notification that arrived while a local write was in flight", async () => {
+    const setup = createMockAPI({ telemetryEnabled: true });
+    const { api, updateTelemetryEnabledMock } = setup;
+
+    let pushEvent: (() => void) | undefined;
+    api.config.onConfigChanged = (_input: undefined, _opts: { signal?: AbortSignal }) => {
+      const generator = (async function* () {
+        for (;;) {
+          await new Promise<void>((resolve) => {
+            pushEvent = resolve;
+          });
+          yield {};
+        }
+      })();
+      return Promise.resolve(generator);
+    };
+
+    let resolveUpdate: (() => void) | undefined;
+    api.config.updateTelemetryEnabled = updateTelemetryEnabledMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveUpdate = resolve;
+        })
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(pushEvent).toBeDefined();
+    });
+
+    // Local opt-out is in flight when another client re-enables telemetry.
+    fireEvent.click(toggle);
+    await waitFor(() => {
+      expect(resolveUpdate).toBeDefined();
+    });
+    api.config.getConfig = mock(() =>
+      Promise.resolve({
+        coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
+        worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
+        chatTranscriptFullWidth: false,
+        llmDebugLogs: false,
+        telemetryEnabled: true,
+        telemetryDisabledByEnv: false,
+      })
+    );
+    pushEvent?.();
+
+    // The notification must not be dropped: once the write settles, the pane
+    // reconciles against the shared config (the other client's enable won).
+    resolveUpdate?.();
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+  });
+
   test("disables the telemetry switch while the API is unavailable", () => {
     // Browser-mode outage: APIProvider keeps settings mounted with api: null.
     mockApi = null;

@@ -225,9 +225,32 @@ export function GeneralSection() {
   // while its own intent is still the latest.
   const telemetryEnabledIntentRef = useRef(0);
   // Writes still in flight (including their failure reconciliation). Config
-  // change notifications are ignored while > 0: our own settled write emits a
-  // final notification that reconciles against the true persisted state.
+  // change notifications are deferred while > 0 — NOT dropped: the backend
+  // emits onConfigChanged before the RPC resolves, so even our own final
+  // write's notification can arrive while this counter is positive, and an
+  // external change during the write window would otherwise be lost.
   const telemetryEnabledPendingWritesRef = useRef(0);
+  // Set when a notification was deferred; drained (with a refresh) when the
+  // pending-writes counter reaches zero.
+  const telemetryEnabledMissedNotificationRef = useRef(false);
+
+  // Re-read the persisted telemetry state and apply it unless a newer local
+  // action (toggle or later refresh) superseded this read.
+  const refreshTelemetryFromBackend = async () => {
+    if (!api?.config?.getConfig) {
+      return;
+    }
+    const nonce = ++telemetryEnabledLoadNonceRef.current;
+    try {
+      const cfg = await api.config.getConfig();
+      if (nonce === telemetryEnabledLoadNonceRef.current) {
+        setTelemetryEnabled(cfg.telemetryEnabled !== false);
+        setTelemetryDisabledByEnv(cfg.telemetryDisabledByEnv === true);
+      }
+    } catch {
+      // Keep the current state; the next notification retries.
+    }
+  };
 
   // updateCoderPrefs writes config.json on the backend. Serialize (and coalesce) updates so rapid
   // selections can't race and persist a stale value via out-of-order writes.
@@ -479,6 +502,16 @@ export function GeneralSection() {
       })
       .finally(() => {
         telemetryEnabledPendingWritesRef.current--;
+        // Replay a notification that arrived during the write window: the
+        // backend may have changed under us (another client, or our own write
+        // whose notification fired before the RPC resolved).
+        if (
+          telemetryEnabledPendingWritesRef.current === 0 &&
+          telemetryEnabledMissedNotificationRef.current
+        ) {
+          telemetryEnabledMissedNotificationRef.current = false;
+          void refreshTelemetryFromBackend();
+        }
       });
   };
 
@@ -493,22 +526,14 @@ export function GeneralSection() {
     const signal = abortController.signal;
     let iterator: AsyncIterator<unknown> | null = null;
 
-    const refreshTelemetry = async () => {
-      // Our own in-flight writes reconcile themselves; their settled write
-      // emits a final notification that lands here with the queue drained.
+    const refreshTelemetry = () => {
+      // Defer (never drop) while our own writes are in flight: the settle
+      // handler replays the refresh once the queue drains.
       if (telemetryEnabledPendingWritesRef.current > 0) {
+        telemetryEnabledMissedNotificationRef.current = true;
         return;
       }
-      const nonce = ++telemetryEnabledLoadNonceRef.current;
-      try {
-        const cfg = await api.config.getConfig();
-        if (nonce === telemetryEnabledLoadNonceRef.current) {
-          setTelemetryEnabled(cfg.telemetryEnabled !== false);
-          setTelemetryDisabledByEnv(cfg.telemetryDisabledByEnv === true);
-        }
-      } catch {
-        // Keep the current state; the next notification retries.
-      }
+      void refreshTelemetryFromBackend();
     };
 
     const subscription = (async () => {
@@ -537,6 +562,7 @@ export function GeneralSection() {
       const cleanup = iterator?.return?.(undefined);
       cleanup?.catch(() => undefined);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshTelemetryFromBackend only closes over `api` (already a dep) and stable refs/setters.
   }, [api]);
 
   // Load SSH host from server on mount (browser mode only)
