@@ -4191,6 +4191,77 @@ describe("AIService.streamMessage model parameter overrides", () => {
       },
     });
   });
+
+  it("builds options for the effective route when a Coder selection falls away to a passthrough gateway", async () => {
+    using muxHome = new DisposableTempDir("ai-service-coder-fallback-options");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-coder-fallback-options";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const { config, historyService, initStateManager, service } = createBasicAIService(
+      muxHome.path
+    );
+    const startStreamCalls: unknown[][] = [];
+    stubCommonStreamMessageDependencies({
+      service,
+      config,
+      historyService,
+      initStateManager,
+      metadata,
+      startStreamCalls,
+    });
+    // The google-typed instance metadata is present: resolving the RAW
+    // coder: selection against it yields the gateway's OpenAI-chat wire —
+    // but this request FELL AWAY to the passthrough mux-gateway, which
+    // forwards native Google bytes, so the options must use the google
+    // namespace (thinkingConfig), not OpenAI reasoning options.
+    spyOn(config, "loadProvidersConfig").mockReturnValue({
+      coder: {
+        deploymentUrl: "https://coder.example.com",
+        discoveredProviders: [{ name: "google", type: "google" }],
+      },
+    } as ReturnType<Config["loadProvidersConfig"]>);
+    const providerModelFactory = Reflect.get(service, "providerModelFactory") as
+      | ProviderModelFactory
+      | undefined;
+    if (!providerModelFactory) {
+      throw new Error("Expected AIService.providerModelFactory in test harness");
+    }
+    spyOn(providerModelFactory, "resolveAndCreateModel").mockImplementation(() =>
+      Promise.resolve({
+        success: true,
+        data: {
+          model: Object.create(null) as LanguageModel,
+          effectiveModelString: "mux-gateway:google/gemini-2.5-pro",
+          canonicalModelString: "coder:google/gemini-2.5-pro",
+          canonicalProviderName: "coder" as ProviderName,
+          canonicalModelId: "google/gemini-2.5-pro",
+          wireProviderName: "google" as ProviderName,
+          coderSelectedInstance: { name: "google", type: "google" },
+          routedThroughGateway: true,
+          routeProvider: "mux-gateway" as ProviderName,
+        },
+      })
+    );
+
+    const result = await service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "coder:google/gemini-2.5-pro",
+      thinkingLevel: "medium",
+    });
+    expect(result.success).toBe(true);
+    expect(startStreamCalls).toHaveLength(1);
+    const startStreamCall = startStreamCalls[0];
+    if (!startStreamCall) {
+      throw new Error("Expected streamManager.startStream call arguments");
+    }
+    const providerOptions = providerOptionsFromStartStreamCall(startStreamCall);
+    expect(providerOptions.google).toBeDefined();
+    expect(providerOptions.google).toHaveProperty("thinkingConfig");
+    expect(providerOptions.openai).toBeUndefined();
+  });
 });
 
 describe("normalizeAnthropicBaseURL", () => {

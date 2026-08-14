@@ -1352,6 +1352,19 @@ export class AIService extends EventEmitter {
         modelResult.data.coderWire
       );
       const toolsModelString = toolsIdentity.modelString;
+      // Option/header builder identity: raw selections resolve via the
+      // pinned instance config (coder-routed requests need the wire), but a
+      // Coder selection whose routing FELL AWAY from the gateway must build
+      // options for the EFFECTIVE route. Example: coder:google/gemini-* with
+      // Coder unavailable routes through the passthrough mux-gateway and
+      // sends native Google bytes — resolving the raw string against the
+      // pinned instance would emit the gateway wire's OpenAI options and
+      // drop Google settings such as thinkingConfig. Tool assembly
+      // (toolsModelString) already follows the effective route; reuse it.
+      const optionsModelString =
+        modelString.startsWith("coder:") && !effectiveModelString.startsWith("coder:")
+          ? toolsModelString
+          : modelString;
       // The user's own wireFormat, captured BEFORE wire injection: the
       // refusal-fallback prepare() must reset to it when swapping to a model
       // whose route is not an OpenAI-wire Coder instance.
@@ -2680,7 +2693,7 @@ export class AIService extends EventEmitter {
       const buildProviderOptionsStartedAt = Date.now();
       const promptCacheScope = derivePromptCacheScope(metadata);
       const providerOptions = buildProviderOptions(
-        modelString,
+        optionsModelString,
         effectiveThinkingLevel,
         providerRequestMessages,
         (id) => this.streamManager.isResponseIdLost(id),
@@ -2700,7 +2713,7 @@ export class AIService extends EventEmitter {
       // identically.
       const buildRequestConfigStartedAt = Date.now();
       let requestHeaders = buildRequestHeaders(
-        modelString,
+        optionsModelString,
         effectiveMuxProviderOptions,
         workspaceId,
         requestProvidersConfig,
@@ -2871,7 +2884,7 @@ export class AIService extends EventEmitter {
           return null;
         }
         const rebuilt = buildProviderOptions(
-          modelString,
+          optionsModelString,
           effective,
           providerRequestMessages,
           (id) => this.streamManager.isResponseIdLost(id),
@@ -3061,6 +3074,15 @@ export class AIService extends EventEmitter {
                   next.canonicalModelString,
                   next.coderWire
                 );
+                // Same effective-route rule as the main path's
+                // optionsModelString: a Coder fallback selection that itself
+                // fell away from the gateway must build options/headers for
+                // its effective route, not the pinned instance's wire.
+                const nextOptionsModelString =
+                  nextModelString.startsWith("coder:") &&
+                  !next.effectiveModelString.startsWith("coder:")
+                    ? nextToolsIdentity.modelString
+                    : nextModelString;
                 if (nextToolsIdentity.openaiWireFormat != null) {
                   // Same in-place injection as the main path: the primary
                   // stream is dead once a refusal fallback runs, so every
@@ -3208,7 +3230,7 @@ export class AIService extends EventEmitter {
                   });
 
                   const nextProviderOptions = buildProviderOptions(
-                    nextModelString,
+                    nextOptionsModelString,
                     nextThinkingLevel,
                     nextProviderRequestMessages,
                     (id) => this.streamManager.isResponseIdLost(id),
@@ -3224,7 +3246,7 @@ export class AIService extends EventEmitter {
                   // buildProviderOptions re-gates pro mode for each fallback model,
                   // so the native option never leaks onto unsupported fallbacks.
                   let nextHeaders = buildRequestHeaders(
-                    nextModelString,
+                    nextOptionsModelString,
                     effectiveMuxProviderOptions,
                     workspaceId,
                     nextProvidersConfig,
@@ -3315,7 +3337,7 @@ export class AIService extends EventEmitter {
                         return null;
                       }
                       const rebuilt = buildProviderOptions(
-                        nextModelString,
+                        nextOptionsModelString,
                         effective,
                         nextProviderRequestMessages,
                         (id) => this.streamManager.isResponseIdLost(id),
