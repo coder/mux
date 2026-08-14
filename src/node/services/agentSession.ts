@@ -58,7 +58,11 @@ import {
   coerceThinkingLevel,
   type ThinkingLevel,
 } from "@/common/types/thinking";
-import { enforceThinkingPolicy, resolveMinimumThinkingLevel } from "@/common/utils/thinking/policy";
+import {
+  enforceThinkingPolicy,
+  lookupMinThinkingLevelOverride,
+  resolveMinimumThinkingLevel,
+} from "@/common/utils/thinking/policy";
 import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverride";
 import {
   createMuxMessage,
@@ -4025,13 +4029,15 @@ export class AgentSession {
         minThinkingLevelByModel?: Record<string, ThinkingLevel>;
       } | null;
     };
+    // Gateway-preserving key first (an explicit coder:<instance>/<model>
+    // floor stays distinct from a direct model with the same ID), with a
+    // legacy name-canonical fallback for floors persisted by older versions.
     const minThinkingOverride =
       typeof maybeConfig.loadConfigOrDefault === "function"
-        ? maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel?.[
-            // Gateway-preserving key: an explicit coder:<instance>/<model>
-            // floor must stay distinct from a direct model with the same ID.
-            normalizeSelectedModel(modelString)
-          ]
+        ? lookupMinThinkingLevelOverride(
+            maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel,
+            modelString
+          )
         : undefined;
     // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
     // clamp against the target model's policy — otherwise a capability level

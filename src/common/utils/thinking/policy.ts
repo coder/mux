@@ -28,6 +28,7 @@ import {
   type ParsedThinkingInput,
 } from "@/common/types/thinking";
 import { resolveModelForMetadata } from "@/common/utils/providers/modelEntries";
+import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
 
 /**
  * Thinking policy is simply the set of allowed thinking levels for a model.
@@ -253,6 +254,33 @@ export function resolveMinimumThinkingLevel(
   providersConfig?: ProvidersConfigMap | null
 ): ThinkingLevel {
   return override ?? getDefaultMinimumThinkingLevel(modelString, providersConfig);
+}
+
+/**
+ * Look up the per-model minimum-thinking-level override for a model string.
+ *
+ * Reads the gateway-preserving key first (current write format, so an
+ * explicit coder:<instance>/<model> floor stays distinct from the direct
+ * provider's), then falls back to the legacy name-canonical key: older
+ * versions persisted floors through normalizeToCanonical, so a floor set for
+ * e.g. coder:openai/<model> lives under openai:<model> until the user edits
+ * it again. Without the fallback that configured floor silently stops
+ * applying after upgrade.
+ */
+export function lookupMinThinkingLevelOverride(
+  minThinkingLevelByModel: Record<string, ThinkingLevel> | undefined,
+  modelString: string
+): ThinkingLevel | undefined {
+  if (!minThinkingLevelByModel) {
+    return undefined;
+  }
+  const selectedKey = normalizeSelectedModel(modelString);
+  const selected = minThinkingLevelByModel[selectedKey];
+  if (selected !== undefined) {
+    return selected;
+  }
+  const legacyKey = normalizeToCanonical(modelString);
+  return legacyKey === selectedKey ? undefined : minThinkingLevelByModel[legacyKey];
 }
 
 /**

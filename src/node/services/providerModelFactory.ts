@@ -1077,11 +1077,9 @@ export class ProviderModelFactory {
       // Route resolution is centralized here so every caller gets identical,
       // provider-agnostic dispatch behavior. resolveGatewayModelString is idempotent,
       // so already-routed strings pass through unchanged.
-      const explicitGateway = getExplicitGatewayProvider(modelString);
-      modelString = this.resolveGatewayModelString(
+      modelString = this.resolveEffectiveModelString(
         modelString,
         opts?.routeContext,
-        explicitGateway,
         opts?.providersConfig
       );
 
@@ -2567,6 +2565,28 @@ export class ProviderModelFactory {
         );
       },
       isGatewayModelAccessible
+    );
+  }
+
+  /**
+   * The route-resolution preamble used by createModel, exposed so callers can
+   * recompute the EFFECTIVE model string the factory dispatched on (from the
+   * same providers-config snapshot). Needed for identity decisions such as
+   * headless usage metadata: a coder: selection can fall away to a direct
+   * provider when the gateway is unavailable, and identities derived from the
+   * raw selection would then diverge from the model actually created.
+   */
+  resolveEffectiveModelString(
+    modelString: string,
+    routeContext?: RouteContext,
+    providersConfig?: ProvidersConfig
+  ): string {
+    const explicitGateway = getExplicitGatewayProvider(modelString);
+    return this.resolveGatewayModelString(
+      modelString,
+      routeContext,
+      explicitGateway,
+      providersConfig
     );
   }
 

@@ -74,7 +74,7 @@ import { createAssistantMessageId } from "./utils/messageIds";
 import type { SessionUsageService } from "./sessionUsageService";
 import { sumUsageHistory, getTotalCost } from "@/common/utils/tokens/usageAggregator";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
-import { normalizeSelectedModel, normalizeToCanonical } from "@/common/utils/ai/models";
+import { normalizeToCanonical } from "@/common/utils/ai/models";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { readToolInstructions } from "./systemMessage";
 import {
@@ -130,6 +130,7 @@ import {
 import {
   enforceThinkingPolicy,
   isXaiGrokFastVariantSwap,
+  lookupMinThinkingLevelOverride,
   resolveEffectiveThinkingLevel,
   resolveMinimumThinkingLevel,
 } from "@/common/utils/thinking/policy";
@@ -1008,9 +1009,23 @@ export class AIService extends EventEmitter {
     if (!result.success) {
       return result;
     }
+    // The identity must follow the EFFECTIVE route (same snapshot, same
+    // resolution createModel dispatched on): a coder: selection whose gateway
+    // is unavailable falls away inside createModel (e.g. cross-typed
+    // coder:openai/<claude>, type anthropic, creates a direct OpenAI model),
+    // and pricing/bucketing from the raw selection would attribute that spend
+    // to the instance's type instead of the route that actually served it.
+    const effectiveModelString = this.providerModelFactory.resolveEffectiveModelString(
+      modelString,
+      undefined,
+      providersConfig
+    );
+    const metadataSeed = effectiveModelString.startsWith("coder:")
+      ? modelString
+      : normalizeToCanonical(effectiveModelString);
     return Ok({
       model: result.data,
-      metadataModel: resolveModelForMetadata(modelString, providersConfig),
+      metadataModel: resolveModelForMetadata(metadataSeed, providersConfig),
     });
   }
 
@@ -2391,11 +2406,28 @@ export class AIService extends EventEmitter {
                     advisorModelString,
                     modelCostsIncluded(advisorModel.data)
                   );
+                  // Same effective-route rule as createModelWithPinnedMetadata:
+                  // a coder: selection whose gateway is unavailable falls away
+                  // to a direct provider inside createModel, and identity or
+                  // options derived from the raw selection (instance type)
+                  // would diverge from the model actually created.
+                  const advisorEffectiveModelString =
+                    this.providerModelFactory.resolveEffectiveModelString(
+                      advisorModelString,
+                      undefined,
+                      advisorProvidersConfig
+                    );
+                  const advisorOnCoderRoute = advisorEffectiveModelString.startsWith("coder:");
                   // Creation-time identity from the SAME snapshot the model
                   // was created from (see map declaration).
                   toolModelMetadataModelByModelString.set(
                     advisorModelString,
-                    resolveModelForMetadata(advisorModelString, advisorProvidersConfig)
+                    resolveModelForMetadata(
+                      advisorOnCoderRoute
+                        ? advisorModelString
+                        : normalizeToCanonical(advisorEffectiveModelString),
+                      advisorProvidersConfig
+                    )
                   );
                   // Wire-resolved identity for option construction, same
                   // snapshot: a raw coder: string carries no wire info, so
@@ -2409,6 +2441,11 @@ export class AIService extends EventEmitter {
                     const coderSection = advisorProvidersConfig.coder;
                     if (isCustomOpenAICompatibleProviderConfig(coderSection)) {
                       return advisorModelString;
+                    }
+                    if (!advisorOnCoderRoute) {
+                      // Fallback-away: options must target the route that
+                      // actually serves the request, not the instance's wire.
+                      return normalizeToCanonical(advisorEffectiveModelString);
                     }
                     const wire = resolveCoderWireCanonicalModel(
                       advisorModelString.slice("coder:".length),
@@ -3159,9 +3196,10 @@ export class AIService extends EventEmitter {
                   requestedNextThinkingLevel,
                   resolveMinimumThinkingLevel(
                     nextModelString,
-                    this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
-                      normalizeSelectedModel(nextModelString)
-                    ],
+                    lookupMinThinkingLevelOverride(
+                      this.config.loadConfigOrDefault().minThinkingLevelByModel,
+                      nextModelString
+                    ),
                     this.providerService.getConfig()
                   ),
                   this.providerService.getConfig()
@@ -3203,9 +3241,10 @@ export class AIService extends EventEmitter {
                 // over the send-time level).
                 const nextMinThinkingLevel = resolveMinimumThinkingLevel(
                   nextModelString,
-                  this.config.loadConfigOrDefault().minThinkingLevelByModel?.[
-                    normalizeSelectedModel(nextModelString)
-                  ],
+                  lookupMinThinkingLevelOverride(
+                    this.config.loadConfigOrDefault().minThinkingLevelByModel,
+                    nextModelString
+                  ),
                   nextProvidersConfig
                 );
                 const nextThinkingLevel = enforceThinkingPolicy(

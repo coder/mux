@@ -5,6 +5,7 @@ import { normalizeSelectedModel } from "@/common/utils/ai/models";
 import {
   getAvailableThinkingLevels,
   getDefaultMinimumThinkingLevel,
+  lookupMinThinkingLevelOverride,
   resolveMinimumThinkingLevel,
 } from "@/common/utils/thinking/policy";
 import type { ThinkingLevel } from "@/common/types/thinking";
@@ -97,9 +98,11 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
     };
   }, [api, fetchConfig]);
 
+  // Lookups go through lookupMinThinkingLevelOverride so floors persisted by
+  // older versions under the name-canonical key keep applying (see helper).
   const getMinOverride = useCallback(
     (modelString: string): ThinkingLevel | undefined =>
-      minThinkingLevelByModel[normalizeSelectedModel(modelString)],
+      lookupMinThinkingLevelOverride(minThinkingLevelByModel, modelString),
     [minThinkingLevelByModel]
   );
 
@@ -107,7 +110,7 @@ export function useMinThinkingLevels(): MinThinkingLevelsState {
     (modelString: string): ThinkingLevel =>
       resolveMinimumThinkingLevel(
         modelString,
-        minThinkingLevelByModel[normalizeSelectedModel(modelString)],
+        lookupMinThinkingLevelOverride(minThinkingLevelByModel, modelString),
         providersConfig
       ),
     [minThinkingLevelByModel, providersConfig]

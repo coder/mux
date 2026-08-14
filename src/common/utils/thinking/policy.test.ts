@@ -6,6 +6,7 @@ import {
   resolveThinkingInput,
   isGeminiFlashThinkingLevelModelName,
   getDefaultMinimumThinkingLevel,
+  lookupMinThinkingLevelOverride,
   resolveMinimumThinkingLevel,
   resolveEffectiveThinkingLevel,
   getAvailableThinkingLevels,
@@ -894,6 +895,35 @@ describe("resolveMinimumThinkingLevel", () => {
     expect(resolveMinimumThinkingLevel("anthropic:claude-sonnet-4-6")).toBe("medium");
     // Fallback policy → off default.
     expect(resolveMinimumThinkingLevel("openai:gpt-4o")).toBe("off");
+  });
+});
+
+describe("lookupMinThinkingLevelOverride", () => {
+  test("prefers the gateway-preserving key over the legacy canonical key", () => {
+    const map = {
+      "coder:openai/gpt-5.5": "low",
+      "openai:gpt-5.5": "high",
+    } as const;
+    expect(lookupMinThinkingLevelOverride({ ...map }, "coder:openai/gpt-5.5")).toBe("low");
+  });
+
+  test("falls back to the legacy name-canonical key persisted by older versions", () => {
+    // Older versions keyed floors via normalizeToCanonical, collapsing
+    // coder:openai/<model> into openai:<model>.
+    const map = { "openai:gpt-5.5": "high" } as const;
+    expect(lookupMinThinkingLevelOverride({ ...map }, "coder:openai/gpt-5.5")).toBe("high");
+    // The direct selection still reads its own key.
+    expect(lookupMinThinkingLevelOverride({ ...map }, "openai:gpt-5.5")).toBe("high");
+  });
+
+  test("returns undefined when neither key is present", () => {
+    expect(
+      lookupMinThinkingLevelOverride(
+        { "anthropic:claude-opus-4-6": "high" },
+        "coder:openai/gpt-5.5"
+      )
+    ).toBeUndefined();
+    expect(lookupMinThinkingLevelOverride(undefined, "openai:gpt-5.5")).toBeUndefined();
   });
 });
 

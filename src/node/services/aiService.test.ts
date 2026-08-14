@@ -1115,6 +1115,30 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 });
 
+describe("AIService.createModelWithPinnedMetadata", () => {
+  it("derives the pinned identity from the effective route when a coder selection falls away", async () => {
+    using muxHome = new DisposableTempDir("pinned-metadata-fallback-away");
+
+    // Cross-typed canonical-named instance (name openai, type anthropic) with
+    // NO coder credential: the gateway is not routable, so createModel falls
+    // away to direct OpenAI. The pinned identity must follow that effective
+    // route — resolving the raw selection would price/bucket this spend as
+    // anthropic:<model> despite the request being served by OpenAI.
+    await writeProvidersConfig(muxHome.path, {
+      coder: { additionalProviders: [{ name: "openai", type: "anthropic" }] },
+      openai: { apiKey: "sk-test-key" },
+    });
+
+    const service = createBasicAIService(muxHome.path).service;
+    const result = await service.createModelWithPinnedMetadata("coder:openai/claude-opus-4-1");
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.metadataModel).toBe("openai:claude-opus-4-1");
+    }
+  });
+});
+
 describe("AIService.streamMessage compaction boundary slicing", () => {
   interface StreamMessageHarness {
     config: Config;
