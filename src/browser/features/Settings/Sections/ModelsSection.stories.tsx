@@ -128,3 +128,22 @@ export const ModelsConfigured: Story = {
     );
   },
 };
+
+/**
+ * Pinned phone-width snapshot of the configured state: the Model Classes rows
+ * wrap their label/select layout at narrow widths, and without an explicit
+ * Pixel phone variant CI would only ever snapshot the desktop layout the
+ * wrapping is meant to protect against. globals.viewport mirrors the Pixel
+ * matrix so local Storybook shows the same width.
+ */
+export const ModelsConfiguredPhone: Story = {
+  ...ModelsConfigured,
+  globals: {
+    viewport: { value: "mobile1", isRotated: false },
+  },
+  parameters: {
+    pixel: {
+      matrix: { themes: ["dark", "light"], viewports: ["phone"] },
+    },
+  },
+};

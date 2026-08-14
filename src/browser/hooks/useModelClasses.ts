@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useOptionalAPI } from "@/browser/contexts/API";
 
 export interface ModelClassesState {
@@ -30,32 +30,35 @@ export function useModelClasses(): ModelClassesState {
   const [loaded, setLoaded] = useState(false);
   // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
   const fetchVersionRef = useRef(0);
-
-  const fetchConfig = useCallback(async () => {
-    const getConfig = api?.config?.getConfig;
-    if (!getConfig) {
-      return;
-    }
-
-    const fetchVersion = ++fetchVersionRef.current;
-
-    try {
-      const config = await getConfig();
-      if (fetchVersion !== fetchVersionRef.current) {
-        return;
-      }
-      setMap(config.modelClasses ?? {});
-      setLoaded(true);
-    } catch {
-      // Best-effort only.
-    }
-  }, [api]);
+  // Populated by the subscription effect below; lets the write-failure revert
+  // in setModelClass reuse the same stale-guarded fetch. A ref (not a
+  // useCallback) keeps this within the repo's React Compiler conventions —
+  // no manual memoization for identity stabilization.
+  const refetchRef = useRef<() => void>(() => {
+    // No-op until the subscription effect installs the real fetch.
+  });
 
   useEffect(() => {
+    const getConfig = api?.config?.getConfig;
     const onConfigChanged = api?.config?.onConfigChanged;
-    if (!onConfigChanged) {
+    if (!getConfig || !onConfigChanged) {
       return;
     }
+
+    const fetchConfig = async () => {
+      const fetchVersion = ++fetchVersionRef.current;
+      try {
+        const config = await getConfig();
+        if (fetchVersion !== fetchVersionRef.current) {
+          return;
+        }
+        setMap(config.modelClasses ?? {});
+        setLoaded(true);
+      } catch {
+        // Best-effort only.
+      }
+    };
+    refetchRef.current = () => void fetchConfig();
 
     const abortController = new AbortController();
     const { signal } = abortController;
@@ -86,49 +89,46 @@ export function useModelClasses(): ModelClassesState {
       abortController.abort();
       void iterator?.return?.();
     };
-  }, [api, fetchConfig]);
+  }, [api]);
 
-  const setModelClass = useCallback(
-    (className: string, value: string | null) => {
-      const key = className.trim();
-      // Writes are full-map replacements from local state: refuse before the
-      // initial fetch lands, or an early edit would wipe every class the
-      // fetch would have revealed.
-      if (!key || !loaded) {
-        return;
-      }
+  const setModelClass = (className: string, value: string | null) => {
+    const key = className.trim();
+    // Writes are full-map replacements from local state: refuse before the
+    // initial fetch lands, or an early edit would wipe every class the
+    // fetch would have revealed.
+    if (!key || !loaded) {
+      return;
+    }
 
-      // Only the edited entry is touched. Deliberately no map-wide
-      // sanitization: hand-edited entries the current build cannot parse
-      // (custom models, future syntax) must survive edits made through the
-      // Settings editor — a bound-but-unparseable class already fails loudly
-      // at send time and is flagged inline by the editor.
-      const next = { ...modelClasses };
-      const trimmed = value?.trim() ?? "";
-      if (!trimmed) {
-        delete next[key];
-      } else {
-        next[key] = trimmed;
-      }
+    // Only the edited entry is touched. Deliberately no map-wide
+    // sanitization: hand-edited entries the current build cannot parse
+    // (custom models, future syntax) must survive edits made through the
+    // Settings editor — a bound-but-unparseable class already fails loudly
+    // at send time and is flagged inline by the editor.
+    const next = { ...modelClasses };
+    const trimmed = value?.trim() ?? "";
+    if (!trimmed) {
+      delete next[key];
+    } else {
+      next[key] = trimmed;
+    }
 
-      fetchVersionRef.current++;
-      setMap(next);
+    fetchVersionRef.current++;
+    setMap(next);
 
-      // Guarded lookup rather than a chained call: in partial-API environments
-      // (story mocks, tests) a missing route must not throw synchronously —
-      // the .catch below can only intercept async failures.
-      const updateModelClasses = api?.config?.updateModelClasses;
-      if (!updateModelClasses) {
-        return;
-      }
-      updateModelClasses({ modelClasses: next }).catch(() => {
-        // If the write fails, re-fetch so the UI reverts to the backend's
-        // actual map rather than displaying classes routing never applies.
-        void fetchConfig();
-      });
-    },
-    [api, fetchConfig, loaded, modelClasses]
-  );
+    // Guarded lookup rather than a chained call: in partial-API environments
+    // (story mocks, tests) a missing route must not throw synchronously —
+    // the .catch below can only intercept async failures.
+    const updateModelClasses = api?.config?.updateModelClasses;
+    if (!updateModelClasses) {
+      return;
+    }
+    updateModelClasses({ modelClasses: next }).catch(() => {
+      // If the write fails, re-fetch so the UI reverts to the backend's
+      // actual map rather than displaying classes routing never applies.
+      refetchRef.current();
+    });
+  };
 
   return {
     modelClasses,
