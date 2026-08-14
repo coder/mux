@@ -1780,8 +1780,14 @@ export class MCPServerManager {
     }
     this.markActivity(workspaceId);
     const result = await instance.getPrompt(promptName, args, options);
+    const text = flattenMcpPrompt(result);
+    if (text.trim().length === 0) {
+      // Providers can reject empty user content, so fail expansion up front
+      // rather than persisting an empty synthetic user message.
+      throw new Error(`MCP prompt '${serverName}/${promptName}' returned no text content`);
+    }
     return {
-      text: flattenMcpPrompt(result),
+      text,
       ...(result.description !== undefined ? { description: result.description } : {}),
     };
   }

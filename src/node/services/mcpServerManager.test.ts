@@ -1204,6 +1204,23 @@ describe("MCPServerManager", () => {
     expect(getPrompt).toHaveBeenCalledWith("review", { path: "src" }, undefined);
   });
 
+  test("rejects empty and whitespace-only prompt expansions", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        messages: [{ role: "user", content: { type: "text", text: "   \n\n  " } }],
+      })
+    );
+    access.workspaceServers.set("workspace", {
+      enabledServerNames: new Set(["coder"]),
+      instances: new Map([["coder", testInstance("coder", { getPrompt })]]),
+    });
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt("workspace", "coder", "review", {})).rejects.toThrow(
+      "MCP prompt 'coder/review' returned no text content"
+    );
+  });
+
   test("suffixes every member of a colliding prompt key group, independent of order", async () => {
     const getToolsSpy = spyOn(manager, "getToolsForWorkspace").mockResolvedValue({
       tools: {},

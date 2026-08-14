@@ -134,6 +134,40 @@ describe("parseCommandWithSkillInvocation", () => {
     );
   });
 
+  test("blocks a reserved mcp__ command that matches no available prompt", async () => {
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__deleted src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [promptDescriptor()],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.mcpPromptInvocation).toBeNull();
+    expect(result.error).toBe("'/mcp__coder__deleted' does not match any available MCP prompt.");
+  });
+
+  test("blocks a reserved mcp__ command when prompt discovery fails", async () => {
+    const api = {
+      workspace: {
+        mcp: { prompts: { list: () => Promise.reject(new Error("server down")) } },
+      },
+    } as unknown as Parameters<typeof parseCommandWithSkillInvocation>[0]["api"];
+
+    const result = await parseCommandWithSkillInvocation({
+      messageText: "/mcp__coder__review src",
+      agentSkillDescriptors: [],
+      mcpPromptDescriptors: [],
+      api,
+      discovery: { kind: "workspace", workspaceId: "ws-1" },
+    });
+
+    expect(result.mcpPromptInvocation).toBeNull();
+    expect(result.error).toBe(
+      "Could not load MCP prompts to resolve '/mcp__coder__review'; check the MCP server connection and try again."
+    );
+  });
+
   test("reports a missing required MCP prompt argument before send", async () => {
     const result = await parseCommandWithSkillInvocation({
       messageText: "/mcp__coder__review",

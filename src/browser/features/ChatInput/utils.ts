@@ -160,7 +160,15 @@ async function resolveMcpPromptInvocation(options: {
         error: `'/${command}' no longer matches an MCP prompt key; did you mean ${candidates}?`,
       };
     }
-    return { invocation: null };
+    // The mcp__ prefix is reserved, so an unresolvable command must block the
+    // send instead of falling through as literal text.
+    return {
+      invocation: null,
+      error:
+        descriptors === null
+          ? `Could not load MCP prompts to resolve '/${command}'; check the MCP server connection and try again.`
+          : `'/${command}' does not match any available MCP prompt.`,
+    };
   }
 
   const mapped = mapPromptArguments(descriptor, afterPrefix.trim());
