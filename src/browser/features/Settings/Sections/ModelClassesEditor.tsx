@@ -51,7 +51,7 @@ const THINKING_DEFAULT_OPTION = "default";
  * here.
  */
 export function ModelClassesEditor() {
-  const { modelClasses, loaded: classesLoaded, setModelClass } = useModelClasses();
+  const { modelClasses, loaded: classesLoaded, pendingWrites, setModelClass } = useModelClasses();
   const { models } = useModelsFromSettings();
   const { config: providersConfig } = useProvidersConfig();
   const routing = useRouting();
@@ -124,6 +124,11 @@ export function ModelClassesEditor() {
         routeOverrides: routing.routeOverrides,
         providersConfig,
       });
+    // State publishes on the write's ack, so a second edit made before the ack
+    // would compose against the still-old rendered value and overwrite the
+    // first edit. Disable the row's controls until its write settles.
+    const rowWritePending = (pendingWrites[className] ?? 0) > 0;
+    const rowDisabled = !classesLoaded || rowWritePending;
 
     return (
       <div
@@ -140,7 +145,7 @@ export function ModelClassesEditor() {
           onValueChange={(model) =>
             setModelClass(className, buildModelClassValue(model, carrySuffixTo(model)))
           }
-          disabled={!classesLoaded}
+          disabled={rowDisabled}
         >
           <SelectTrigger
             aria-label={`Model for class ${className}`}
@@ -164,7 +169,7 @@ export function ModelClassesEditor() {
               buildModelClassValue(selectedModel, level === THINKING_DEFAULT_OPTION ? null : level)
             )
           }
-          disabled={!selectedModel || !classesLoaded}
+          disabled={!selectedModel || rowDisabled}
         >
           <SelectTrigger
             aria-label={`Thinking level for class ${className}`}
@@ -188,7 +193,7 @@ export function ModelClassesEditor() {
             size="sm"
             aria-label={`Clear model class ${className}`}
             onClick={() => setModelClass(className, null)}
-            disabled={!classesLoaded}
+            disabled={rowDisabled}
             className="text-muted hover:text-error h-6 w-6 shrink-0 p-0"
           >
             <X className="h-3.5 w-3.5" />

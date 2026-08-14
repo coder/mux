@@ -1913,8 +1913,11 @@ export class AgentSession {
         return "completed";
       }
 
-      const { agentInitiated, goalKind, ...resumeOptions } = retryRequest;
-      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind);
+      // compactionBaseOptions is retry-state metadata, not a send option: it
+      // must feed the resume state's routed-compaction context, never ride
+      // inside the replayed SendMessageOptions themselves.
+      const { agentInitiated, goalKind, compactionBaseOptions, ...resumeOptions } = retryRequest;
+      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind, compactionBaseOptions);
     }
 
     // Disk reads above may race with user actions; retry once the current work settles
@@ -2684,7 +2687,10 @@ export class AgentSession {
     }
     if (skillModelOverride?.kind === "config-error") {
       const routingError = createUnknownSendMessageError(skillModelOverride.message);
-      if (isManualUserMessage) {
+      // Preservation exists for dequeued sends whose composer already cleared —
+      // a rejected EDIT must not append the edited text as a new tail turn
+      // (the original message is untouched and the browser restores the draft).
+      if (isManualUserMessage && options?.editMessageId == null) {
         const persisted = await this.preserveRejectedManualSend(message, options, routingError);
         if (persisted) {
           await this.applyManualUserMessageGoalSafety({ policy: "pause" });
@@ -2822,7 +2828,9 @@ export class AgentSession {
           errorMessage: string
         ): Promise<Result<undefined, SendMessageError>> => {
           const pdfError = createUnknownSendMessageError(errorMessage);
-          if (isManualUserMessage) {
+          // See the class-routing gate above: preservation is for dequeued
+          // sends, never for rejected edits (which would duplicate the turn).
+          if (isManualUserMessage && options?.editMessageId == null) {
             const persisted = await this.preserveRejectedManualSend(message, options, pdfError);
             if (persisted) {
               await this.applyManualUserMessageGoalSafety({ policy: "pause" });
@@ -3105,7 +3113,12 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
-        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
+        retrySendOptions: pickStartupRetrySendOptions(
+          optionsForStream,
+          agentInitiated,
+          goalKind,
+          compactionBaseOptionsForRoutedTurn
+        ),
         muxMetadata: muxMetadataForMessage, // Frontend metadata; requestedModel re-stamped when routing applied
         ...(acpPromptId != null ? { acpPromptId } : {}),
         ...(goalKind != null ? { kind: goalKind } : {}),

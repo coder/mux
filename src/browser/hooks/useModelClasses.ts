@@ -11,6 +11,13 @@ export interface ModelClassesState {
    * consumers must gate their controls on this.
    */
   loaded: boolean;
+  /**
+   * Classes with a write still in flight (state publishes on the write's
+   * ack). Editors must disable a pending row's controls: a second edit built
+   * from the still-unpublished rendered state would compose against the old
+   * value and overwrite the first edit.
+   */
+  pendingWrites: Record<string, number>;
   // Arrow-function property type so consumers can destructure without
   // tripping @typescript-eslint/unbound-method.
   /** Set (or clear, with null/empty) one class's model value. */
@@ -42,6 +49,8 @@ export function useModelClasses(): ModelClassesState {
   const pendingMapRef = useRef<Record<string, string> | null>(null);
   // Serializes writes so rapid edits persist in order and the last one wins.
   const writeChainRef = useRef<Promise<void>>(Promise.resolve());
+  // Per-class in-flight write counts; consumers disable pending rows.
+  const [pendingWrites, setPendingWrites] = useState<Record<string, number>>({});
 
   useEffect(() => {
     const getConfig = api?.config?.getConfig;
@@ -128,6 +137,8 @@ export function useModelClasses(): ModelClassesState {
       return;
     }
 
+    setPendingWrites((current) => ({ ...current, [key]: (current[key] ?? 0) + 1 }));
+
     // Persist BEFORE publishing: routing reads the backend map at send time,
     // so optimistically advertising the new mapping would let a quick
     // follow-up skill invocation stream on the OLD route while the editor
@@ -148,12 +159,21 @@ export function useModelClasses(): ModelClassesState {
         if (pendingMapRef.current === next) {
           pendingMapRef.current = null;
         }
+        setPendingWrites((current) => {
+          const count = (current[key] ?? 0) - 1;
+          if (count > 0) {
+            return { ...current, [key]: count };
+          }
+          const { [key]: _drop, ...rest } = current;
+          return rest;
+        });
       });
   };
 
   return {
     modelClasses,
     loaded,
+    pendingWrites,
     setModelClass,
   };
 }

@@ -128,6 +128,13 @@ export type StartupRetrySendOptions = Pick<
   agentInitiated?: boolean;
   /** Internal goal continuation classification for startup auto-retry accounting. */
   goalKind?: GoalSyntheticMessageKind;
+  /**
+   * Pre-skill-routing compaction context for routed turns (durable subset),
+   * restored on startup retry so the routed compaction policy survives a
+   * relaunch. One level deep by construction — the nested pick never
+   * receives a compactionBaseOptions of its own.
+   */
+  compactionBaseOptions?: Omit<StartupRetrySendOptions, "compactionBaseOptions">;
 };
 
 /**
@@ -137,7 +144,8 @@ export type StartupRetrySendOptions = Pick<
 export function pickStartupRetrySendOptions(
   options: SendMessageOptions,
   agentInitiated?: boolean,
-  goalKind?: GoalSyntheticMessageKind
+  goalKind?: GoalSyntheticMessageKind,
+  compactionBaseOptions?: SendMessageOptions
 ): StartupRetrySendOptions {
   const typedMuxMetadata = options.muxMetadata as MuxMessageMetadata | undefined;
   const workspaceTurnMuxMetadata =
@@ -157,6 +165,16 @@ export function pickStartupRetrySendOptions(
     ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
     ...(goalKind != null ? { goalKind } : {}),
+    // Routed turns persist their pre-routing compaction context (durable
+    // fields only) so a post-relaunch retry keeps the routed compaction
+    // policy instead of force-compacting at the workspace threshold against
+    // the routed window. Absent on non-routed turns and rows written by
+    // older versions — both fall back to today's behavior.
+    ...(compactionBaseOptions != null
+      ? {
+          compactionBaseOptions: pickStartupRetrySendOptions(compactionBaseOptions),
+        }
+      : {}),
   };
 }
 
