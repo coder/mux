@@ -5388,6 +5388,31 @@ export class AgentSession {
     return dispatching?.type === "bash-monitor-wake";
   }
 
+  /**
+   * Whether a queued or dispatching entry continues the exact workspace-turn correlation.
+   */
+  hasPendingWorkspaceTurnContinuation(
+    metadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+  ): boolean {
+    if (
+      this.messageQueue.hasNextWorkspaceTurnContinuation(
+        metadata.taskHandleId,
+        metadata.ownerWorkspaceId,
+        metadata.turnId
+      )
+    ) {
+      return true;
+    }
+
+    const dispatching = this.dispatchingQueuedEntryMuxMetadata as MuxMessageMetadata | undefined;
+    return (
+      dispatching?.type === "workspace-turn-task" &&
+      dispatching.taskHandleId === metadata.taskHandleId &&
+      dispatching.ownerWorkspaceId === metadata.ownerWorkspaceId &&
+      dispatching.turnId === metadata.turnId
+    );
+  }
+
   /** Whether a message queued with this dedupe key is still pending (see MessageQueue.addOnce). */
   hasQueuedDedupeKey(dedupeKey: string): boolean {
     assert(dedupeKey.length > 0, "hasQueuedDedupeKey requires a dedupeKey");

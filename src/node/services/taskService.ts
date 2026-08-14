@@ -6174,12 +6174,15 @@ export class TaskService {
       entry,
       defaultModel
     );
+    const workspaceTurnMuxMetadata =
+      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
 
     const sendOptions = {
       model: resumeOptions.model,
       agentId: resumeOptions.agentId,
       thinkingLevel: resumeOptions.thinkingLevel,
       reasoningMode: resumeOptions.reasoningMode,
+      ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
     };
     if (prompt.length === 0) {
       assert(agentNotifications.length > 0, "prompt-free terminal drain requires sub-agent work");
@@ -7078,6 +7081,8 @@ export class TaskService {
         parentEntry,
         defaultModel
       );
+      const workspaceTurnMuxMetadata =
+        await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
 
       // A progress report is itself the wake-up message. Unlike terminal attention, it must be
       // allowed through while this child is still active so review findings and other incremental
@@ -7090,6 +7095,7 @@ export class TaskService {
           agentId: resumeOptions.agentId,
           thinkingLevel: resumeOptions.thinkingLevel,
           reasoningMode: resumeOptions.reasoningMode,
+          ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
         },
         {
           skipAutoResumeReset: true,
@@ -10218,17 +10224,21 @@ export class TaskService {
   }
 
   /**
-   * Whether a bash-monitor-wake continuation of this exact delegated turn is
-   * pending or already streaming. Pending: the wake is queued next or
-   * mid-dispatch (AgentSession-owned state). Streaming: the active stream —
-   * necessarily newer than the ended one, since a stream leaves the
-   * STARTING/STREAMING states before its stream-end is emitted — inherited
-   * this turn's correlation metadata.
+   * Whether a continuation of this exact delegated turn is pending or streaming.
+   * Pending entries must carry the same correlation metadata as the ended stream.
    */
-  private hasSameTurnWakeContinuation(
+  private hasSameTurnContinuation(
     event: StreamEndEvent,
     correlation: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
   ): boolean {
+    if (
+      this.workspaceService.hasPendingWorkspaceTurnContinuation(event.workspaceId, {
+        type: "workspace-turn-task",
+        ...correlation,
+      })
+    ) {
+      return true;
+    }
     if (this.workspaceService.hasPendingBashMonitorWakeContinuation(event.workspaceId)) {
       return true;
     }
@@ -10283,17 +10293,16 @@ export class TaskService {
       return true;
     }
 
-    // A queued bash-monitor wake stops the in-flight stream at a tool boundary
-    // with finishReason "tool-calls" and immediately continues the same
-    // delegated turn in a follow-up stream that inherits this turn's
-    // correlation (see AgentSession.inheritOpenWorkspaceTurnMetadata). Defer
-    // settlement to the continuation's terminal stream-end instead of
-    // reporting a false "ended before completion" failure to the owner.
-    // Only wake continuations count: any other queued input (manual message,
-    // /compact) supersedes the turn and must settle the old outcome here.
+    // A queued continuation can stop the in-flight stream at a tool boundary with
+    // finishReason "tool-calls" and continue the same delegated turn. Report
+    // wake-ups carry the exact correlation explicitly; bash-monitor wakes inherit
+    // it from history. Defer settlement until the continuation's terminal
+    // stream-end instead of reporting a false completion failure to the owner.
+    // Any other queued input (manual message, /compact) supersedes the turn and
+    // must settle the old outcome here.
     if (
       event.metadata.finishReason === "tool-calls" &&
-      this.hasSameTurnWakeContinuation(event, metadata)
+      this.hasSameTurnContinuation(event, metadata)
     ) {
       await this.markWorkspaceTurnStreamEndDeferred(event);
       return true;
@@ -10774,7 +10783,7 @@ export class TaskService {
         active.ownerWorkspaceId,
         active.handleId
       );
-      if (record != null) {
+      if (record?.workspaceId === workspaceId && isActiveWorkspaceTurnTaskStatus(record.status)) {
         return record;
       }
       this.activeWorkspaceTurnHandleByWorkspaceId.delete(workspaceId);
@@ -10784,6 +10793,37 @@ export class TaskService {
       statuses: ["starting", "running"],
     });
     return records.toReversed().find((record) => record.workspaceId === workspaceId) ?? null;
+  }
+
+  private async getActiveWorkspaceTurnMuxMetadataForWorkspace(
+    workspaceId: string
+  ): Promise<WorkspaceTurnMuxMetadata | undefined> {
+    const candidate = await this.getActiveWorkspaceTurnRecordForWorkspace(workspaceId);
+    if (candidate == null) {
+      return undefined;
+    }
+
+    return await this.workspaceTurnSettlementLocks.withLock(candidate.handleId, async () => {
+      const current = await this.taskHandleStore.getWorkspaceTurn(
+        candidate.ownerWorkspaceId,
+        candidate.handleId
+      );
+      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(workspaceId);
+      if (
+        current?.workspaceId !== workspaceId ||
+        !isActiveWorkspaceTurnTaskStatus(current?.status)
+      ) {
+        if (
+          active?.handleId === candidate.handleId &&
+          active.ownerWorkspaceId === candidate.ownerWorkspaceId
+        ) {
+          this.activeWorkspaceTurnHandleByWorkspaceId.delete(workspaceId);
+        }
+        return undefined;
+      }
+
+      return this.buildWorkspaceTurnMuxMetadata(current);
+    });
   }
 
   private async hasRecoverableWorkspaceTurnRetryInFlight(

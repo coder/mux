@@ -385,6 +385,7 @@ function createWorkspaceServiceMocks(
     isBusyForMessage: ReturnType<typeof mock>;
     hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
     hasPendingBashMonitorWakeContinuation: ReturnType<typeof mock>;
+    hasPendingWorkspaceTurnContinuation: ReturnType<typeof mock>;
     hasPendingAutoRetry: ReturnType<typeof mock>;
     waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
     waitForIdle: ReturnType<typeof mock>;
@@ -417,6 +418,7 @@ function createWorkspaceServiceMocks(
   waitForIdleAndNoQueuedMessages: ReturnType<typeof mock>;
   waitForIdle: ReturnType<typeof mock>;
   hasPendingQueuedOrPreparingTurn: ReturnType<typeof mock>;
+  hasPendingWorkspaceTurnContinuation: ReturnType<typeof mock>;
   hasPendingAutoRetry: ReturnType<typeof mock>;
   waitForPendingCompactionCompletionDecision: ReturnType<typeof mock>;
   waitForPendingStreamErrorRecoveryDecision: ReturnType<typeof mock>;
@@ -450,6 +452,8 @@ function createWorkspaceServiceMocks(
     overrides?.hasPendingQueuedOrPreparingTurn ?? mock(() => false);
   const hasPendingBashMonitorWakeContinuation =
     overrides?.hasPendingBashMonitorWakeContinuation ?? mock(() => false);
+  const hasPendingWorkspaceTurnContinuation =
+    overrides?.hasPendingWorkspaceTurnContinuation ?? mock(() => false);
   const hasPendingAutoRetry = overrides?.hasPendingAutoRetry ?? mock(() => false);
   const waitForIdleAndNoQueuedMessages =
     overrides?.waitForIdleAndNoQueuedMessages ?? mock((): Promise<void> => Promise.resolve());
@@ -504,6 +508,7 @@ function createWorkspaceServiceMocks(
       hasQueuedMessages,
       hasPendingQueuedOrPreparingTurn,
       hasPendingBashMonitorWakeContinuation,
+      hasPendingWorkspaceTurnContinuation,
       hasPendingAutoRetry,
       waitForIdleAndNoQueuedMessages,
       waitForIdle,
@@ -533,6 +538,7 @@ function createWorkspaceServiceMocks(
     hasQueuedMessages,
     isBusyForMessage,
     hasPendingQueuedOrPreparingTurn,
+    hasPendingWorkspaceTurnContinuation,
     hasPendingAutoRetry,
     waitForIdleAndNoQueuedMessages,
     waitForIdle,
@@ -685,6 +691,7 @@ describe("TaskService", () => {
       hasQueuedMessages?: ReturnType<typeof mock>;
       hasPendingQueuedOrPreparingTurn?: ReturnType<typeof mock>;
       hasPendingBashMonitorWakeContinuation?: ReturnType<typeof mock>;
+      hasPendingWorkspaceTurnContinuation?: ReturnType<typeof mock>;
       hasPendingAutoRetry?: ReturnType<typeof mock>;
       waitForPendingStreamErrorRecoveryDecision?: ReturnType<typeof mock>;
     } = {}
@@ -727,6 +734,9 @@ describe("TaskService", () => {
         ? {
             hasPendingBashMonitorWakeContinuation: options.hasPendingBashMonitorWakeContinuation,
           }
+        : {}),
+      ...(options.hasPendingWorkspaceTurnContinuation != null
+        ? { hasPendingWorkspaceTurnContinuation: options.hasPendingWorkspaceTurnContinuation }
         : {}),
       ...(options.hasPendingAutoRetry != null
         ? { hasPendingAutoRetry: options.hasPendingAutoRetry }
@@ -3876,6 +3886,159 @@ describe("TaskService", () => {
       messageId: "msg_continuation_final",
       reportMarkdown: "Final review report",
     });
+  });
+
+  test("nested agent progress preserves workspace-turn correlation", async () => {
+    const hasPendingWorkspaceTurnContinuation = mock(
+      (
+        workspaceId: string,
+        metadata: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
+      ) =>
+        workspaceId === "childworkspace" &&
+        metadata.taskHandleId === "wst_handle" &&
+        metadata.turnId === "turn"
+    );
+    const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest({
+      hasPendingWorkspaceTurnContinuation,
+    });
+    const correlation = {
+      type: "workspace-turn-task",
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    } as const;
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-agent"),
+        id: "nested-agent",
+        name: "nested-agent",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+        taskModelString: "anthropic:claude-opus-4-6",
+      });
+      return cfg;
+    });
+
+    await taskService.reportAgentProgress("nested-agent", "progress-call", {
+      reportMarkdown: "The nested agent found the issue.",
+    });
+    expect(workspaceMocks.sendMessage).toHaveBeenCalledTimes(2);
+    expect(workspaceMocks.sendMessage.mock.calls[1]?.[2]).toMatchObject({
+      muxMetadata: correlation,
+    });
+
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_nested_report_cut",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "tool-calls",
+        muxMetadata: correlation,
+      },
+      parts: [{ type: "text", text: "Nested report interrupted the turn" }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+    });
+
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      const nestedAgent = project.workspaces.find((workspace) => workspace.id === "nested-agent");
+      assert(nestedAgent, "nested agent must exist");
+      nestedAgent.taskStatus = "reported";
+      nestedAgent.reportedAt = "2026-06-19T00:00:01.000Z";
+      return cfg;
+    });
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_nested_report_final",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: correlation,
+      },
+      parts: [{ type: "text", text: "Nested report continuation completed" }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "completed",
+      reportMarkdown: "Nested report continuation completed",
+    });
+  });
+
+  test("terminal nested agent report resumes a workspace turn with correlation", async () => {
+    const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest();
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-terminal-agent"),
+        id: "nested-terminal-agent",
+        name: "nested-terminal-agent",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+        taskModelString: "anthropic:claude-opus-4-6",
+      });
+      return cfg;
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: "nested-terminal-agent",
+      messageId: "assistant-nested-terminal-agent",
+      metadata: { model: "anthropic:claude-opus-4-6", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "nested-report-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "The nested terminal report is complete." },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "The nested terminal report is complete." },
+          },
+        },
+        { type: "text", text: "The nested terminal report is complete." },
+      ],
+    });
+
+    await Promise.all([
+      ...(taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> })
+        .pendingTerminalAttentionDrains,
+    ]);
+
+    expect(workspaceMocks.resumeStream).toHaveBeenCalledWith(
+      "childworkspace",
+      expect.objectContaining({
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      }),
+      { agentInitiated: true }
+    );
   });
 
   test("workspace-turn tool-calls stream-end with superseding queued input settles error", async () => {

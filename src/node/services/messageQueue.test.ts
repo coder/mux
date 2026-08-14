@@ -444,6 +444,23 @@ describe("MessageQueue", () => {
       expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
     });
 
+    it("should detect only the next entry with the exact workspace-turn correlation", () => {
+      queue.add("Normal message");
+      queue.add("Follow up", { model: "gpt-4", agentId: "exec", muxMetadata: metadata });
+
+      expect(
+        queue.hasNextWorkspaceTurnContinuation("wst_followup", "parent-workspace", "turn-1")
+      ).toBe(false);
+
+      queue.dequeueNext();
+      expect(
+        queue.hasNextWorkspaceTurnContinuation("wst_followup", "parent-workspace", "turn-1")
+      ).toBe(true);
+      expect(
+        queue.hasNextWorkspaceTurnContinuation("wst_other", "parent-workspace", "turn-1")
+      ).toBe(false);
+    });
+
     it("should preserve internal workspace-turn callbacks", () => {
       const onAccepted = () => undefined;
       const onAcceptedPreStreamFailure = () => undefined;

@@ -9499,6 +9499,17 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
+   * Whether a queued or dispatching entry continues the exact workspace-turn correlation.
+   */
+  hasPendingWorkspaceTurnContinuation(
+    workspaceId: string,
+    metadata: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>
+  ): boolean {
+    const session = this.sessions.get(workspaceId.trim());
+    return session?.hasPendingWorkspaceTurnContinuation(metadata) ?? false;
+  }
+
+  /**
    * Narrow check for an actual scheduled/starting auto-retry, excluding queued
    * manual messages and preparing turns. Callers that must distinguish "the
    * same turn will resume on its own" from "some other queued work exists"

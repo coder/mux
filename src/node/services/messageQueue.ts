@@ -177,6 +177,23 @@ export class MessageQueue {
   }
 
   /**
+   * Whether the next entry continues the exact workspace turn correlation.
+   */
+  hasNextWorkspaceTurnContinuation(
+    taskHandleId: string,
+    ownerWorkspaceId: string,
+    turnId: string
+  ): boolean {
+    const metadata = this.entries[0]?.muxMetadata;
+    return (
+      isWorkspaceTurnMetadata(metadata) &&
+      metadata.taskHandleId === taskHandleId &&
+      metadata.ownerWorkspaceId === ownerWorkspaceId &&
+      metadata.turnId === turnId
+    );
+  }
+
+  /**
    * Whether the next entry to dispatch is a bash-monitor wake. Wake sends are
    * the only queued input that continues an open delegated workspace turn
    * (see AgentSession.inheritOpenWorkspaceTurnMetadata); any other head entry
