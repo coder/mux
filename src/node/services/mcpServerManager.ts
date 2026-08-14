@@ -868,6 +868,13 @@ export class MCPServerManager {
   // Survives idle cleanup so an explicit prompt invocation can revive reaped
   // servers at send time; forgotten only on workspace removal.
   private readonly lastWorkspaceRequestOptions = new Map<string, MCPWorkspaceRequestOptions>();
+  /**
+   * Bumped whenever a mutation replaces a workspace's recorded options.
+   * getPrompt compares it (plus the global config generation) across its
+   * refresh so a mutation completing after the refresh cannot pass the
+   * pre-dispatch enablement checks with stale state.
+   */
+  private readonly workspaceOptionsMutationCounts = new Map<string, number>();
   private readonly workspaceRestartLocks = new MutexMap<string>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
@@ -1846,6 +1853,7 @@ export class MCPServerManager {
     const recorded = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (recorded) {
       this.lastWorkspaceRequestOptions.set(workspaceId, { ...recorded, overrides });
+      this.bumpWorkspaceOptionsMutationCount(workspaceId);
     }
     const entry = this.workspaceServers.get(workspaceId);
     if (!entry || !recorded) return;
@@ -1874,7 +1882,15 @@ export class MCPServerManager {
       const trusted = trustByPath.get(stripTrailingSlashes(options.projectPath));
       if (trusted === undefined || (options.trusted ?? false) === trusted) continue;
       this.lastWorkspaceRequestOptions.set(workspaceId, { ...options, trusted });
+      this.bumpWorkspaceOptionsMutationCount(workspaceId);
     }
+  }
+
+  private bumpWorkspaceOptionsMutationCount(workspaceId: string): void {
+    this.workspaceOptionsMutationCounts.set(
+      workspaceId,
+      (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) + 1
+    );
   }
 
   async getPrompt(
@@ -1910,11 +1926,26 @@ export class MCPServerManager {
           false
         );
       };
-      const refreshed = await raceWithAbortAndTimeout(refresh(), {
-        ...(options?.signal !== undefined ? { signal: options.signal } : {}),
-      });
-      if (refreshed.kind === "aborted") {
-        throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
+      // A mutation completing after a refresh resolves would pass the stale
+      // enablement checks below, so refresh until both mutation counters are
+      // stable across one refresh: only synchronous code then separates the
+      // checks from dispatch. A mutation landing after that is concurrent
+      // with the in-flight request, which no dispatch-side check can prevent.
+      for (;;) {
+        const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
+        const generationBefore = this.configService.configGeneration;
+        const refreshed = await raceWithAbortAndTimeout(refresh(), {
+          ...(options?.signal !== undefined ? { signal: options.signal } : {}),
+        });
+        if (refreshed.kind === "aborted") {
+          throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
+        }
+        if (
+          (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) === optionsMutationsBefore &&
+          this.configService.configGeneration === generationBefore
+        ) {
+          break;
+        }
       }
     }
     const entry = this.workspaceServers.get(workspaceId);
