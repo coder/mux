@@ -275,9 +275,9 @@ Bind skills to classes in either of two places:
 
 Routing applies to the slash invocation's send only: the workspace's selected model is untouched, and your next message streams on it again. If auto-compaction triggers, the threshold is computed against the routed model's context window, while the compaction request itself keeps your model (it must fit the uncompacted history).
 
-Broken bindings fail loudly: when a skill is bound to a class that isn't configured, the class value is malformed, or no configured provider route can serve the class's model (a retired model, a removed provider or key), the send fails with an error naming the mapping to fix — and the Model Classes editor shows the same "no configured route" warning inline. Two deliberate exceptions keep skills portable and resilient: frontmatter bindings are ignored entirely while you have no model classes configured at all, and infrastructure hiccups (an unreadable skill or config) fall back to the workspace model instead of failing the send.
+Broken bindings fail loudly: when a bound class exists but its value is malformed, or no configured provider route can serve its model (a retired model, a removed provider or key), the send fails with an error naming the mapping to fix — and the Model Classes editor shows the same "no configured route" warning inline. A dangling `skillModelClasses` table entry (naming a class you deleted) also errors, since the table is your own explicit routing intent. Frontmatter bindings to a class you never defined are simply ignored, so skills you don't own can ship `model-class` metadata without ever breaking your sends; infrastructure hiccups (an unreadable skill or config) likewise fall back to the workspace model instead of failing the send.
 
-To override routing for one invocation, compose a one-shot prefix with the skill: `/sonnet+high /done` runs the skill on Sonnet regardless of its class. Explicit one-shots always win over class routing.
+To override routing for one invocation, compose a one-shot prefix with the skill: `/sonnet+high /done` runs the skill on Sonnet regardless of its class. A model-carrying one-shot always wins over class routing; a thinking-only one-shot (`/+2 /done`) layers on top of it — the skill still routes to its class model, at the overridden thinking level.
 
 ## Dynamic context injection (experiment)
 

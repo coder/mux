@@ -90,28 +90,6 @@ export function buildModelClassValue(model: string, thinkingSuffix: string | nul
  */
 export const CANONICAL_MODEL_CLASSES = ["large", "medium", "small"] as const;
 
-/**
- * Strict-on-write sanitization for the modelClasses map (mirrors
- * sanitizeModelFallbacks): trim class names, drop empty names and values that
- * don't parse as `model[+thinking]`, so the send path never reads a class it
- * cannot resolve. Reads stay lenient/fail-open.
- */
-export function sanitizeModelClasses(map: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [rawName, rawValue] of Object.entries(map)) {
-    const name = rawName.trim();
-    if (!name) {
-      continue;
-    }
-    const value = typeof rawValue === "string" ? rawValue.trim() : "";
-    if (!value || parseModelClassValue(value) == null) {
-      continue;
-    }
-    out[name] = value;
-  }
-  return out;
-}
-
 export type SkillModelClassBinding =
   | { status: "unbound" }
   | { status: "unknown-class"; className: string }
@@ -154,7 +132,15 @@ export function resolveSkillModelClassBinding(args: {
   const modelClasses = args.modelClasses ?? {};
   const classValue = modelClasses[className];
   if (typeof classValue !== "string") {
-    if (!boundViaTable && Object.keys(modelClasses).length === 0) {
+    // A frontmatter binding to a class the user never defined stays inert:
+    // skills the user does not own must not start failing sends just because
+    // some other class got configured (partial configuration is the normal
+    // state of the three-slot editor). A config-table binding is the user's
+    // own explicit routing intent, so a dangling table entry errors loudly.
+    // Bindings to a class that EXISTS but is broken (invalid value,
+    // unavailable model) always error — that is the churn signal this
+    // feature exists to surface.
+    if (!boundViaTable) {
       return { status: "unbound" };
     }
     return { status: "unknown-class", className };

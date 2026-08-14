@@ -43,6 +43,15 @@ export interface UserMessageContent {
 export interface CompactionFollowUpInput extends UserMessageContent {
   /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
   muxMetadata?: MuxMessageMetadata;
+  /**
+   * Explicit model override reconstructed from the original send (a composed
+   * "/model /skill" one-shot). Without it, a compact-and-retry rebuild would
+   * re-dispatch the skill through class routing even though the user
+   * explicitly overrode the model for that invocation.
+   */
+  model?: string;
+  /** Rides with `model`: an explicit one-shot must keep bypassing class routing on re-dispatch. */
+  skipSkillModelRouting?: boolean;
 }
 
 /**

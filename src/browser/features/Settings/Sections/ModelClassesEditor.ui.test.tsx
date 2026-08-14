@@ -104,6 +104,25 @@ describe("ModelClassesEditor", () => {
     });
   });
 
+  test("edits preserve custom classes this build cannot parse", async () => {
+    // "my-local-llm" has no provider prefix, so parseModelClassValue rejects
+    // it — the write must still carry it verbatim rather than deleting the
+    // user's hand-edited entry as a side effect of clearing another row.
+    apiMock = createApiMock({
+      small: "anthropic:claude-haiku-4-5+0",
+      tiny: "my-local-llm",
+    });
+    const { getByLabelText, queryByLabelText } = render(<ModelClassesEditor />);
+
+    await waitFor(() => expect(queryByLabelText("Clear model class small")).not.toBeNull());
+    fireEvent.click(getByLabelText("Clear model class small"));
+
+    await waitFor(() => expect(apiMock?.config.updateModelClasses).toHaveBeenCalled());
+    expect(apiMock?.config.updateModelClasses).toHaveBeenCalledWith({
+      modelClasses: { tiny: "my-local-llm" },
+    });
+  });
+
   test("lists custom classes as config-managed instead of hiding them", async () => {
     apiMock = createApiMock({ "my-custom": "anthropic:claude-fable-5+max" });
     const { findByText } = render(<ModelClassesEditor />);

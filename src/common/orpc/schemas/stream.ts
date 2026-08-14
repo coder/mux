@@ -788,6 +788,13 @@ export const SendMessageOptionsSchema = z.object({
    * When true, skip persisting AI settings (e.g., for one-shot or compaction sends).
    */
   skipAiSettingsPersistence: z.boolean().optional(),
+  /**
+   * Explicit model override marker: suppresses per-skill model-class routing
+   * for this send. Deliberately decoupled from skipAiSettingsPersistence —
+   * several internal senders (heartbeats, compaction, continuations) set that
+   * flag for persistence reasons only and must not silently lose routing.
+   */
+  skipSkillModelRouting: z.boolean().optional(),
   experiments: ExperimentsSchema.optional(),
   /**
    * When true, workspace-specific agent definitions are disabled.

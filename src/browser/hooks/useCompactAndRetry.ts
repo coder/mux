@@ -15,6 +15,7 @@ import {
   type CompactionSuggestion,
 } from "@/browser/utils/compaction/suggestion";
 import { executeCompaction } from "@/browser/utils/chatCommands";
+import { parseCommand } from "@/browser/utils/slashCommands/parser";
 import { CUSTOM_EVENTS, createCustomEvent } from "@/common/constants/events";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { FilePart, ProvidersConfigMap } from "@/common/orpc/types";
@@ -59,6 +60,16 @@ export function buildFollowUpFromSource(
   source: Extract<DisplayedMessage, { type: "user" }>
 ): CompactionFollowUpInput {
   const slashMcpPromptRef = source.mcpPromptRefs?.find((ref) => ref.source === "slash");
+  // A composed one-shot skill send ("/haiku+0 /done args") stores the full
+  // typed text as content; re-parse it so the rebuilt follow-up keeps the
+  // explicit model override instead of falling back to class routing.
+  // (The one-shot thinking level is not carried: it re-resolves from the
+  // preserved workspace settings on dispatch.)
+  const parsedOneShot =
+    source.agentSkill && source.content.startsWith("/") ? parseCommand(source.content) : null;
+  const oneShotModel =
+    parsedOneShot?.type === "model-oneshot" ? parsedOneShot.modelString : undefined;
+
   const skillMetadata =
     source.agentSkill && source.agentSkill.skillName !== slashMcpPromptRef?.commandKey
       ? buildAgentSkillMetadata({
@@ -96,6 +107,7 @@ export function buildFollowUpFromSource(
     text,
     fileParts: source.fileParts,
     reviews: source.reviews,
+    ...(oneShotModel != null ? { model: oneShotModel, skipSkillModelRouting: true } : {}),
     // Inline skill refs must survive alongside prompt refs; withAgentSkillRefs
     // dedupes against the slash ref that buildAgentSkillMetadata already added.
     muxMetadata: withAgentSkillRefs(

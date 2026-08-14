@@ -2879,11 +2879,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
 
+      // Composed one-shot sends highlight the full "/haiku+0 /done" prefix:
+      // the transcript badge check requires rawCommand.startsWith(commandPrefix),
+      // and the combined prefix also keeps the explicit override visible.
+      const composedPrefixMatch = skillInvocation?.oneShot
+        ? new RegExp(`^\\S+\\s+/${skillInvocation.descriptor.name}(?=\\s|$)`).exec(
+            messageText.trim()
+          )
+        : null;
       const skillMuxMetadata = skillInvocation
         ? buildSkillInvocationMetadata(
             appendStagedAttachmentNotice(messageText, sendAttachments),
             skillInvocation.descriptor,
-            skillInvocation.argumentText
+            skillInvocation.argumentText,
+            composedPrefixMatch?.[0]
           )
         : undefined;
       const promptMuxMetadata: MuxMessageMetadata | undefined = mcpPromptInvocation
@@ -3092,6 +3101,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
           ...(oneShotOverride ? { skipAiSettingsPersistence: true } : {}),
+          // Only a model-carrying one-shot bypasses class routing; a
+          // thinking-only override (/+2 /skill) layers on top of routing.
+          ...(modelOverride ? { skipSkillModelRouting: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }

@@ -15,12 +15,28 @@ const USER_MODEL = "anthropic:claude-fable-5";
 
 describe("AgentSession.sendMessage (per-skill model routing)", () => {
   let historyCleanup: (() => Promise<void>) | undefined;
+  const tempDirs: string[] = [];
+  const sessions: Array<{ dispose: () => void }> = [];
   afterEach(async () => {
+    // Safety net: a failed assertion above a test's own dispose() must not
+    // leak a live session into the rest of the file, and temp skill trees
+    // must not accumulate in the OS temp dir.
+    for (const session of sessions.splice(0)) {
+      try {
+        session.dispose();
+      } catch {
+        // Already disposed by the test body.
+      }
+    }
     await historyCleanup?.();
+    for (const dir of tempDirs.splice(0)) {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   async function createWorkspaceWithSkill(args: { skillName: string; metadataYaml?: string }) {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "mux-skill-routing-"));
+    tempDirs.push(tmp);
     const skillDir = path.join(tmp, ".mux", "skills", args.skillName);
     await fs.mkdir(skillDir, { recursive: true });
     const skillMarkdown = `---\nname: ${args.skillName}\ndescription: Test skill\n${args.metadataYaml ?? ""}---\n\nDo the thing.\n`;
@@ -72,6 +88,7 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
       } as unknown as Partial<AIService>,
     });
     historyCleanup = cleanup;
+    sessions.push(session);
     return { session, streamed };
   }
 
@@ -144,7 +161,7 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
     session.dispose();
   });
 
-  it("never re-routes sends that carry an explicit override (skipAiSettingsPersistence)", async () => {
+  it("never re-routes sends that carry an explicit model override (skipSkillModelRouting)", async () => {
     const workspacePath = await createWorkspaceWithSkill({
       skillName: "done",
       metadataYaml: "metadata:\n  model-class: small\n",
@@ -156,7 +173,7 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
 
     const result = await session.sendMessage(
       "Use skill done",
-      skillSendOptions({ skipAiSettingsPersistence: true })
+      skillSendOptions({ skipSkillModelRouting: true })
     );
     expect(result.success).toBe(true);
     expect(streamed[0].modelString).toBe(USER_MODEL);
@@ -164,7 +181,30 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
     session.dispose();
   });
 
-  it("fails the send with an actionable error when the bound class is not configured", async () => {
+  it("still routes sends that only skip settings persistence (thinking-only one-shots)", async () => {
+    const workspacePath = await createWorkspaceWithSkill({
+      skillName: "done",
+      metadataYaml: "metadata:\n  model-class: small\n",
+    });
+    const { session, streamed } = await createRoutingHarness({
+      workspacePath,
+      configValues: { modelClasses: { small: "haiku+0" } },
+    });
+
+    // "/+2 /done" sets skipAiSettingsPersistence (to protect preferences) with
+    // no model override — class routing must still apply to the model while
+    // the explicit thinking level wins over the class default.
+    const result = await session.sendMessage(
+      "Use skill done",
+      skillSendOptions({ skipAiSettingsPersistence: true, thinkingLevel: "medium" })
+    );
+    expect(result.success).toBe(true);
+    expect(streamed[0].modelString).toBe(KNOWN_MODELS.HAIKU.id);
+    expect(streamed[0].thinkingLevel).toBe("medium");
+    session.dispose();
+  });
+
+  it("leaves frontmatter bindings to an undefined class inert (streams the caller's model)", async () => {
     const workspacePath = await createWorkspaceWithSkill({
       skillName: "done",
       metadataYaml: "metadata:\n  model-class: tiny\n",
@@ -174,12 +214,47 @@ describe("AgentSession.sendMessage (per-skill model routing)", () => {
       configValues: { modelClasses: { small: "haiku+0" } },
     });
 
+    // Skills the user does not own must not fail sends just because some
+    // other class is configured — an undefined frontmatter class is inert.
+    const result = await session.sendMessage("Use skill done", skillSendOptions());
+    expect(result.success).toBe(true);
+    expect(streamed[0].modelString).toBe(USER_MODEL);
+    session.dispose();
+  });
+
+  it("fails the send with an actionable error on a dangling table binding", async () => {
+    const workspacePath = await createWorkspaceWithSkill({ skillName: "done" });
+    const { session, streamed } = await createRoutingHarness({
+      workspacePath,
+      // The table is the user's own routing intent: naming a class that no
+      // longer exists must error loudly, not silently unroute.
+      configValues: { modelClasses: { small: "haiku+0" }, skillModelClasses: { done: "tiny" } },
+    });
+
     const result = await session.sendMessage("Use skill done", skillSendOptions());
     expect(result.success).toBe(false);
     // The error must name the class so the user knows which mapping to fix.
     const raw = !result.success && result.error.type === "unknown" ? result.error.raw : "";
     expect(raw).toContain('"tiny"');
     expect(streamed).toHaveLength(0);
+    session.dispose();
+  });
+
+  it("honors frontmatter routing when a hand-edited table entry is blank", async () => {
+    const workspacePath = await createWorkspaceWithSkill({
+      skillName: "done",
+      metadataYaml: "metadata:\n  model-class: small\n",
+    });
+    const { session, streamed } = await createRoutingHarness({
+      workspacePath,
+      // A blank table value (hand-edit meaning "no override") must not
+      // suppress the frontmatter read and silently unroute the skill.
+      configValues: { modelClasses: { small: "haiku+0" }, skillModelClasses: { done: "  " } },
+    });
+
+    const result = await session.sendMessage("Use skill done", skillSendOptions());
+    expect(result.success).toBe(true);
+    expect(streamed[0].modelString).toBe(KNOWN_MODELS.HAIKU.id);
     session.dispose();
   });
 

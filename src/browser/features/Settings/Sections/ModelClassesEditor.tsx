@@ -8,11 +8,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/browser/components/SelectPrimitive/SelectPrimitive";
+import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { useModelClasses } from "@/browser/hooks/useModelClasses";
 import { useModelsFromSettings } from "@/browser/hooks/useModelsFromSettings";
 import { useProvidersConfig } from "@/browser/hooks/useProvidersConfig";
 import { useRouting } from "@/browser/hooks/useRouting";
-import { getThinkingOptionLabel, type ThinkingLevel } from "@/common/types/thinking";
+import {
+  getThinkingOptionLabel,
+  parseThinkingInput,
+  type ThinkingLevel,
+} from "@/common/types/thinking";
 import { isModelServableWithProvidersConfig } from "@/common/utils/ai/modelAvailability";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import {
@@ -46,7 +51,7 @@ const THINKING_DEFAULT_OPTION = "default";
  * here.
  */
 export function ModelClassesEditor() {
-  const { modelClasses, setModelClass } = useModelClasses();
+  const { modelClasses, loaded: classesLoaded, setModelClass } = useModelClasses();
   const { models } = useModelsFromSettings();
   const { config: providersConfig } = useProvidersConfig();
   const routing = useRouting();
@@ -67,11 +72,36 @@ export function ModelClassesEditor() {
     const selectedModel = parsed?.model ?? "";
     // Show numeric (model-relative) suffixes as the level they resolve to for
     // the selected model; re-saving through the select writes the named level.
+    // providersConfig resolves mappedToModel aliases — the send-path resolver
+    // passes it too, so the ladder shown here matches what routing will use.
     const selectedThinking: ThinkingLevel | null =
       parsed?.thinkingLevel != null && parsed.model
-        ? resolveThinkingInput(parsed.thinkingLevel, parsed.model)
+        ? resolveThinkingInput(parsed.thinkingLevel, parsed.model, providersConfig)
         : null;
-    const thinkingOptions = selectedModel ? getThinkingPolicyForModel(selectedModel) : [];
+    const thinkingOptions = selectedModel
+      ? getThinkingPolicyForModel(selectedModel, providersConfig)
+      : [];
+    // On a model switch, carry the raw thinking suffix only when it stays
+    // meaningful: numeric suffixes are model-relative by design, named levels
+    // must exist in the new model's ladder, and an unparseable suffix (the
+    // "invalid value" repair case) is dropped so picking a model actually
+    // fixes the row instead of re-persisting a value sanitization-era builds
+    // would have deleted.
+    const carrySuffixTo = (nextModel: string): string | null => {
+      if (parsed == null || thinkingSuffix == null) {
+        return null;
+      }
+      const parsedSuffix = parseThinkingInput(thinkingSuffix);
+      if (parsedSuffix == null) {
+        return null;
+      }
+      if (typeof parsedSuffix === "number") {
+        return thinkingSuffix;
+      }
+      return getThinkingPolicyForModel(nextModel, providersConfig).includes(parsedSuffix)
+        ? thinkingSuffix
+        : null;
+    };
     // Ensure the selected model is offerable even if hidden from the picker
     // list (e.g. a hand-configured custom model).
     const rowModelCandidates =
@@ -80,10 +110,14 @@ export function ModelClassesEditor() {
         : modelCandidates;
     // Proactive churn warning: the class points at a model no configured
     // route can serve (skill sends bound to it will fail with the same
-    // verdict). Null providersConfig = still loading — say nothing yet.
+    // verdict). Null providersConfig = still loading — say nothing yet. The
+    // verdict also waits for routing.loaded: judging against the default
+    // ["direct"] priority would flash a false warning on gateway-routed
+    // setups every time Settings opens.
     const modelUnavailable =
       parsed != null &&
       providersConfig != null &&
+      routing.loaded &&
       !isModelServableWithProvidersConfig({
         canonicalModel: parsed.model,
         routePriority: routing.routePriority,
@@ -104,8 +138,9 @@ export function ModelClassesEditor() {
         <Select
           value={selectedModel}
           onValueChange={(model) =>
-            setModelClass(className, buildModelClassValue(model, thinkingSuffix))
+            setModelClass(className, buildModelClassValue(model, carrySuffixTo(model)))
           }
+          disabled={!classesLoaded}
         >
           <SelectTrigger
             aria-label={`Model for class ${className}`}
@@ -129,7 +164,7 @@ export function ModelClassesEditor() {
               buildModelClassValue(selectedModel, level === THINKING_DEFAULT_OPTION ? null : level)
             )
           }
-          disabled={!selectedModel}
+          disabled={!selectedModel || !classesLoaded}
         >
           <SelectTrigger
             aria-label={`Thinking level for class ${className}`}
@@ -153,15 +188,16 @@ export function ModelClassesEditor() {
             size="sm"
             aria-label={`Clear model class ${className}`}
             onClick={() => setModelClass(className, null)}
+            disabled={!classesLoaded}
             className="text-muted hover:text-error h-6 w-6 shrink-0 p-0"
           >
             <X className="h-3.5 w-3.5" />
           </Button>
         )}
         {rawValue !== undefined && parsed == null && (
-          <span className="text-error truncate text-xs" title={rawValue}>
-            invalid value: {rawValue}
-          </span>
+          <TooltipIfPresent tooltip={rawValue}>
+            <span className="text-error truncate text-xs">invalid value: {rawValue}</span>
+          </TooltipIfPresent>
         )}
         {modelUnavailable && (
           <span className="text-warning min-w-0 text-xs">

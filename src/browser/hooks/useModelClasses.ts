@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOptionalAPI } from "@/browser/contexts/API";
-import { sanitizeModelClasses } from "@/common/utils/ai/skillModelClasses";
 
 export interface ModelClassesState {
   /** Class name → model value in one-shot syntax ("haiku+0"). */
   modelClasses: Record<string, string>;
+  /**
+   * True once the first config fetch has landed. Writes are full-map
+   * replacements built from local state, so editing before the initial load
+   * would persist a near-empty map and wipe every not-yet-fetched class —
+   * consumers must gate their controls on this.
+   */
+  loaded: boolean;
   // Arrow-function property type so consumers can destructure without
   // tripping @typescript-eslint/unbound-method.
   /** Set (or clear, with null/empty) one class's model value. */
@@ -21,6 +27,7 @@ export interface ModelClassesState {
 export function useModelClasses(): ModelClassesState {
   const api = useOptionalAPI()?.api ?? null;
   const [modelClasses, setMap] = useState<Record<string, string>>({});
+  const [loaded, setLoaded] = useState(false);
   // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
   const fetchVersionRef = useRef(0);
 
@@ -38,6 +45,7 @@ export function useModelClasses(): ModelClassesState {
         return;
       }
       setMap(config.modelClasses ?? {});
+      setLoaded(true);
     } catch {
       // Best-effort only.
     }
@@ -83,10 +91,18 @@ export function useModelClasses(): ModelClassesState {
   const setModelClass = useCallback(
     (className: string, value: string | null) => {
       const key = className.trim();
-      if (!key) {
+      // Writes are full-map replacements from local state: refuse before the
+      // initial fetch lands, or an early edit would wipe every class the
+      // fetch would have revealed.
+      if (!key || !loaded) {
         return;
       }
 
+      // Only the edited entry is touched. Deliberately no map-wide
+      // sanitization: hand-edited entries the current build cannot parse
+      // (custom models, future syntax) must survive edits made through the
+      // Settings editor — a bound-but-unparseable class already fails loudly
+      // at send time and is flagged inline by the editor.
       const next = { ...modelClasses };
       const trimmed = value?.trim() ?? "";
       if (!trimmed) {
@@ -94,12 +110,9 @@ export function useModelClasses(): ModelClassesState {
       } else {
         next[key] = trimmed;
       }
-      // Mirror the backend's strict-on-write sanitization locally so the UI
-      // immediately reflects what will actually persist.
-      const sanitized = sanitizeModelClasses(next);
 
       fetchVersionRef.current++;
-      setMap(sanitized);
+      setMap(next);
 
       // Guarded lookup rather than a chained call: in partial-API environments
       // (story mocks, tests) a missing route must not throw synchronously —
@@ -108,17 +121,18 @@ export function useModelClasses(): ModelClassesState {
       if (!updateModelClasses) {
         return;
       }
-      updateModelClasses({ modelClasses: sanitized }).catch(() => {
+      updateModelClasses({ modelClasses: next }).catch(() => {
         // If the write fails, re-fetch so the UI reverts to the backend's
         // actual map rather than displaying classes routing never applies.
         void fetchConfig();
       });
     },
-    [api, fetchConfig, modelClasses]
+    [api, fetchConfig, loaded, modelClasses]
   );
 
   return {
     modelClasses,
+    loaded,
     setModelClass,
   };
 }

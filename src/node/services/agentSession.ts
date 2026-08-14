@@ -659,6 +659,14 @@ export class AgentSession {
     providersConfig: ProvidersConfigMap | null;
     goalKind?: GoalSyntheticMessageKind;
     workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+    /**
+     * Pre-skill-routing options for compaction requests spawned off this
+     * stream. A turn routed to a small class model must never compact on that
+     * model — the compaction model has to fit the full uncompacted history —
+     * so both the on-send and mid-stream compaction sites build their request
+     * from these options when present.
+     */
+    compactionBaseOptions?: SendMessageOptions;
   };
 
   private activeCompactionRequest?: {
@@ -2646,10 +2654,38 @@ export class AgentSession {
     // PRRT_kwDOPxxmWM5_s-jo). For synthetic sends (compaction, goal
     // continuation, etc.) the user did not type the message, so we just
     // return Err and let the synthetic caller log/handle it.
+    // Resolve per-skill model routing before any gate or mutation below: the
+    // pricing gate and PDF preflight must judge the model that will actually
+    // stream, and a broken class binding must reject the send BEFORE the edit
+    // path truncates history (see the invariant comment on the edit branch).
+    // Mirroring the pricing gate: a manual send rejected here is persisted and
+    // surfaced as a stream-error — a bare Err would let sendQueuedMessages()
+    // drop the user's queued input with no visible feedback.
+    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const skillModelOverride = options
+      ? await this.resolveSkillModelClassOverride(typedMuxMetadata, options)
+      : null;
+    if (await cancelBeforeAcceptance()) {
+      return Ok(undefined);
+    }
+    if (skillModelOverride?.kind === "config-error") {
+      const routingError = createUnknownSendMessageError(skillModelOverride.message);
+      if (isManualUserMessage) {
+        const persisted = await this.preserveRejectedManualSend(message, options, routingError);
+        if (persisted) {
+          await this.applyManualUserMessageGoalSafety({ policy: "pause" });
+        }
+      }
+      return Err(routingError);
+    }
+    // The model every downstream gate must validate: the routed class model
+    // when routing applies, else the caller's model.
+    const effectiveModelForGates = skillModelOverride?.model ?? options?.model;
+
     if (this.workspaceGoalService) {
       const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
         this.workspaceId,
-        options?.model
+        effectiveModelForGates
       );
       if (await cancelBeforeAcceptance()) {
         return Ok(undefined);
@@ -2756,15 +2792,19 @@ export class AgentSession {
         (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
       );
 
-      if (pdfParts.length > 0) {
+      if (pdfParts.length > 0 && effectiveModelForGates != null) {
+        // Judge the routed class model when skill routing applies — the
+        // workspace model's PDF support is irrelevant to what will stream.
         const caps = getModelCapabilitiesResolved(
-          options.model,
+          effectiveModelForGates,
           this.aiService.getProvidersConfig()
         );
 
         if (caps && !caps.supportsPdfInput) {
           return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
+            createUnknownSendMessageError(
+              `Model ${effectiveModelForGates} does not support PDF input.`
+            )
           );
         }
 
@@ -2777,7 +2817,7 @@ export class AgentSession {
               const label = part.filename ?? "PDF";
               return Err(
                 createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
+                  `${label} is ${actualMb}MB, but ${effectiveModelForGates} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
                 )
               );
             }
@@ -2908,8 +2948,7 @@ export class AgentSession {
 
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;
-    // muxMetadata is z.any() in schema - cast to proper type
-    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    // typedMuxMetadata was hoisted above the routing/pricing gates.
     const acpPromptId =
       normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedMuxMetadata);
     const delegatedToolNames =
@@ -2928,29 +2967,25 @@ export class AgentSession {
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     });
 
-    // Per-skill model routing. Applied before the user message is created so
-    // startup retries (retrySendOptions) replay the routed model, and before
-    // the compaction threshold check so context-limit math uses the model that
-    // will actually stream. preRoutingOptions feeds the compaction REQUEST
-    // below: a turn routed to a small model must never compact on that small
-    // model — the compaction model has to fit the full uncompacted history.
+    // Apply the per-skill routing override resolved at the top of sendMessage
+    // (before the gates and the edit branch). Applied before the user message
+    // is created so startup retries (retrySendOptions) replay the routed
+    // model, and before the compaction threshold check so context-limit math
+    // uses the model that will actually stream. preRoutingOptions feeds the
+    // compaction REQUEST below: a turn routed to a small model must never
+    // compact on that small model — the compaction model has to fit the full
+    // uncompacted history.
     const preRoutingOptions = optionsForStream;
-    const skillModelOverride = await this.resolveSkillModelClassOverride(
-      typedMuxMetadata,
-      optionsForStream
-    );
-    // A bound-but-broken class mapping fails the send before anything is
-    // persisted: the user gets an actionable error (update the mapping or
-    // bypass with a one-shot) instead of a silent run on the wrong model.
-    if (skillModelOverride?.kind === "config-error") {
-      return Err(createUnknownSendMessageError(skillModelOverride.message));
-    }
     if (skillModelOverride != null) {
       modelForStream = skillModelOverride.model;
       optionsForStream = {
         ...optionsForStream,
         model: skillModelOverride.model,
-        ...(skillModelOverride.thinkingLevel != null
+        // The class's thinking level yields to an explicit per-send override:
+        // skipAiSettingsPersistence marks one-shot sends, so "/+2 /skill"
+        // routes to the class model at the user's thinking level, not the
+        // class default.
+        ...(skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
           ? { thinkingLevel: skillModelOverride.thinkingLevel }
           : {}),
       };
@@ -3022,8 +3057,16 @@ export class AgentSession {
       // before dispatching a risky user turn near the context limit.
       // `shouldForceCompact` remains a stricter (threshold + buffer) signal for
       // mid-stream forcing where we want to avoid abrupt interruptions too early.
+      //
+      // Skill-routed sends compact only when the content genuinely cannot fit
+      // the routed model's window: applying the threshold to the (smaller)
+      // routed window would let a one-off cheap-skill invocation force an
+      // unrequested, irreversible, workspace-wide compaction of a session far
+      // under its own model's limit.
       const shouldCompactBeforeSend =
-        compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
+        skillModelOverride != null
+          ? compactionResult.usagePercentage >= 100
+          : compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
       if (shouldCompactBeforeSend) {
         const followUpFileParts = effectiveFileParts?.map((part) => ({
           url: part.url,
@@ -3049,10 +3092,15 @@ export class AgentSession {
           }
         }
 
+        // Pre-routing options/model: the deferred follow-up re-enters
+        // sendMessage with the same skill metadata and re-resolves routing at
+        // dispatch time. Persisting the routed model here would pin a stale
+        // decision — if the binding is gone by dispatch, the user's prompt
+        // would stream on the routed model with no routing decision behind it.
         const followUpContent = this.buildAutoCompactionFollowUp({
           messageText: message,
-          options: optionsForStream,
-          modelForStream,
+          options: preRoutingOptions,
+          modelForStream: preRoutingOptions.model,
           fileParts: followUpFileParts,
           agentInitiated,
           goalKind,
@@ -3352,7 +3400,8 @@ export class AgentSession {
           agentInitiated,
           preparedTurnAbortController.signal,
           goalKind,
-          turnThinkingOverride
+          turnThinkingOverride,
+          skillModelOverride != null ? preRoutingOptions : undefined
         );
         if (streamResult.success && preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -3918,7 +3967,10 @@ export class AgentSession {
       });
       const autoCompactionRequest = this.buildAutoCompactionRequest({
         followUpContent,
-        baseOptions: streamContext.options,
+        // Pre-routing options when the stream was skill-routed: the compaction
+        // request must never inherit a routed small model (it has to read the
+        // full uncompacted history) — mirrors the on-send compaction site.
+        baseOptions: streamContext.compactionBaseOptions ?? streamContext.options,
         reason: "mid-stream",
       });
 
@@ -4027,7 +4079,11 @@ export class AgentSession {
     // Session-owned per-turn holder for mid-turn thinking changes. Passed
     // explicitly (not read from the field) so a preempted turn can never pick
     // up its replacement's holder. Absent for internal retry paths.
-    activeTurnThinkingOverride?: ActiveTurnThinkingOverride
+    activeTurnThinkingOverride?: ActiveTurnThinkingOverride,
+    // Pre-skill-routing options for compaction requests spawned off this
+    // stream (see activeStreamContext.compactionBaseOptions). Passed
+    // explicitly like the thinking holder so retry paths stay unaffected.
+    compactionBaseOptions?: SendMessageOptions
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -4051,6 +4107,7 @@ export class AgentSession {
       openaiTruncationModeOverride,
       ...(goalKind != null ? { goalKind } : {}),
       providersConfig,
+      ...(compactionBaseOptions != null ? { compactionBaseOptions } : {}),
     };
     this.activeStreamUserMessageId = undefined;
 
@@ -6051,6 +6108,8 @@ export class AgentSession {
       allowAgentSetGoal: followUp.allowAgentSetGoal,
       disableWorkspaceAgents: followUp.disableWorkspaceAgents,
       skipAiSettingsPersistence: followUp.skipAiSettingsPersistence,
+      // An explicit one-shot carried through compaction keeps bypassing class routing.
+      skipSkillModelRouting: followUp.skipSkillModelRouting,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {
@@ -6536,7 +6595,11 @@ export class AgentSession {
     | { kind: "config-error"; message: string }
     | null
   > {
-    if (options.skipAiSettingsPersistence === true) {
+    // Only an explicit model override suppresses routing. This must NOT key
+    // off skipAiSettingsPersistence: thinking-only one-shots (/+2 /skill) and
+    // several internal senders set that flag purely to protect persisted
+    // preferences and still want class routing to apply.
+    if (options.skipSkillModelRouting === true) {
       return null;
     }
     if (muxMetadata?.type !== "agent-skill") {
@@ -6568,9 +6631,13 @@ export class AgentSession {
 
       // Fast path: with no classes configured and no table binding for this
       // skill, routing can never apply — skip the (possibly remote) SKILL.md
-      // frontmatter read entirely.
+      // frontmatter read entirely. The non-empty-after-trim requirement must
+      // match resolveSkillModelClassBinding's boundViaTable exactly: a blank
+      // hand-edited table entry ({done: ""}) must not suppress the frontmatter
+      // read and then fail the table lookup, silently unrouting the skill.
       const hasModelClasses = modelClasses != null && Object.keys(modelClasses).length > 0;
-      const hasTableBinding = typeof skillModelClasses?.[skillName] === "string";
+      const tableClassRaw = skillModelClasses?.[skillName];
+      const hasTableBinding = typeof tableClassRaw === "string" && tableClassRaw.trim().length > 0;
       if (!hasModelClasses && !hasTableBinding) {
         return null;
       }

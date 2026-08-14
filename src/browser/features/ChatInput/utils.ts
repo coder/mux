@@ -100,11 +100,17 @@ function isUnknownSlashCommand(value: ParsedCommand): value is UnknownSlashComma
 export function buildSkillInvocationMetadata(
   rawCommand: string,
   descriptor: AgentSkillDescriptor,
-  argumentText: string
+  argumentText: string,
+  /**
+   * Overrides the default `/${name}` prefix for composed one-shot invocations
+   * ("/haiku+0 /done"): the transcript badge only renders when rawCommand
+   * starts with commandPrefix, so the prefix must include the one-shot token.
+   */
+  commandPrefixOverride?: string
 ): MuxMessageMetadata {
   return buildAgentSkillMetadata({
     rawCommand,
-    commandPrefix: `/${descriptor.name}`,
+    commandPrefix: commandPrefixOverride ?? `/${descriptor.name}`,
     skillName: descriptor.name,
     scope: descriptor.scope,
     arguments: argumentText,

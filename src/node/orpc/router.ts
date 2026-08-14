@@ -78,7 +78,6 @@ import { normalizeUserPreferences } from "@/common/config/schemas/userPreference
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
-import { sanitizeModelClasses } from "@/common/utils/ai/skillModelClasses";
 import {
   DEFAULT_TASK_SETTINGS,
   deriveLegacySubagentAiDefaultsFromAgentDefaults,
@@ -1068,6 +1067,7 @@ export const router = (authToken?: string) => {
             minThinkingLevelByModel: config.minThinkingLevelByModel,
             modelFallbacks: config.modelFallbacks,
             modelClasses: config.modelClasses,
+            skillModelClasses: config.skillModelClasses,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
@@ -1246,12 +1246,15 @@ export const router = (authToken?: string) => {
         .input(schemas.config.updateModelClasses.input)
         .output(schemas.config.updateModelClasses.output)
         .handler(async ({ context, input }) => {
-          // Full-map replacement. Strict-on-write: unparseable class values are
-          // dropped so skill routing never reads a class it cannot resolve.
-          const sanitized = sanitizeModelClasses(input.modelClasses);
+          // Full-map replacement, stored verbatim: entries this build cannot
+          // parse (hand-edited custom models, future syntax) must survive
+          // Settings edits. Broken values already fail loudly at send time
+          // and are flagged inline by the editor — silently dropping them
+          // here would delete user config as a side effect of unrelated edits.
           await context.config.editConfig((config) => ({
             ...config,
-            modelClasses: Object.keys(sanitized).length > 0 ? sanitized : undefined,
+            modelClasses:
+              Object.keys(input.modelClasses).length > 0 ? input.modelClasses : undefined,
           }));
         }),
       updateModelPreferences: t

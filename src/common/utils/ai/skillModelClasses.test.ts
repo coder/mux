@@ -5,7 +5,6 @@ import {
   buildModelClassValue,
   parseModelClassValue,
   resolveSkillModelClassBinding,
-  sanitizeModelClasses,
   splitModelClassValue,
 } from "./skillModelClasses";
 
@@ -63,32 +62,6 @@ describe("splitModelClassValue / buildModelClassValue", () => {
   });
 });
 
-describe("sanitizeModelClasses", () => {
-  test("keeps parseable entries and drops unparseable ones", () => {
-    expect(
-      sanitizeModelClasses({
-        small: "haiku+0",
-        broken: "not-a-model",
-        badThinking: "haiku+bogus",
-        "": "haiku",
-        "  spaced  ": " sonnet+high ",
-      })
-    ).toEqual({
-      small: "haiku+0",
-      spaced: "sonnet+high",
-    });
-  });
-
-  test("preserves custom class names alongside canonical ones", () => {
-    expect(
-      sanitizeModelClasses({ small: "haiku", "my-custom": "anthropic:claude-opus-5+high" })
-    ).toEqual({
-      small: "haiku",
-      "my-custom": "anthropic:claude-opus-5+high",
-    });
-  });
-});
-
 describe("resolveSkillModelClassBinding", () => {
   const modelClasses = {
     small: "haiku+0",
@@ -135,12 +108,22 @@ describe("resolveSkillModelClassBinding", () => {
     expect(binding).toMatchObject({ status: "resolved", model: KNOWN_MODELS.HAIKU.id });
   });
 
-  test("reports an unknown class name instead of swallowing it", () => {
+  test("frontmatter bindings to an undefined class stay inert (skills the user does not own)", () => {
     expect(
       resolveSkillModelClassBinding({
         skillName: "done",
         frontmatterMetadata: { "model-class": "tiny" },
         modelClasses,
+      })
+    ).toEqual({ status: "unbound" });
+  });
+
+  test("a dangling table binding reports unknown-class (user's own routing intent)", () => {
+    expect(
+      resolveSkillModelClassBinding({
+        skillName: "done",
+        modelClasses,
+        skillModelClasses: { done: "tiny" },
       })
     ).toEqual({ status: "unknown-class", className: "tiny" });
   });

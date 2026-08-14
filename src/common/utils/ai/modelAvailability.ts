@@ -3,6 +3,36 @@ import { isModelAvailable } from "@/common/routing";
 import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
 
 /**
+ * Provider-configured predicate shared by the routing UI (useRouting) and the
+ * send-path availability check below. One definition, two consumers — the
+ * Settings picker and the skill-routing verdict must never disagree.
+ */
+export function isRouteProviderConfigured(
+  providersConfig: ProvidersConfigMap,
+  provider: string
+): boolean {
+  return (
+    providersConfig[provider]?.isConfigured === true &&
+    providersConfig[provider]?.isEnabled !== false
+  );
+}
+
+/** Gateway-catalog accessibility predicate; see isRouteProviderConfigured. */
+export function isRouteGatewayModelAccessible(
+  providersConfig: ProvidersConfigMap,
+  gateway: string,
+  modelId: string
+): boolean {
+  return isGatewayModelAccessibleFromAuthoritativeCatalog(
+    gateway,
+    modelId,
+    providersConfig[gateway]?.models,
+    providersConfig[gateway]?.discoveredModels,
+    providersConfig[gateway]?.removedModels
+  );
+}
+
+/**
  * Can the current routing state actually serve this model?
  *
  * Wraps the routing layer's isModelAvailable with the same provider
@@ -15,6 +45,12 @@ import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils
  * Callers that cannot obtain a ProvidersConfigMap (degraded state, minimal
  * test mocks) must skip the check rather than pass an empty map:
  * "cannot determine" is not "unavailable".
+ *
+ * Known one-directional gap: enforced-policy model gating (policyService
+ * isModelAllowed, applied inside the node-side gateway checker) is not
+ * consulted here, so this can over-report availability for policy-blocked
+ * gateway models — the send then fails with the provider's own error rather
+ * than the actionable class message. It can never spuriously block.
  */
 export function isModelServableWithProvidersConfig(args: {
   canonicalModel: string;
@@ -27,16 +63,7 @@ export function isModelServableWithProvidersConfig(args: {
     args.canonicalModel,
     args.routePriority ?? ["direct"],
     args.routeOverrides ?? {},
-    (provider) =>
-      providersConfig[provider]?.isConfigured === true &&
-      providersConfig[provider]?.isEnabled !== false,
-    (gateway, modelId) =>
-      isGatewayModelAccessibleFromAuthoritativeCatalog(
-        gateway,
-        modelId,
-        providersConfig[gateway]?.models,
-        providersConfig[gateway]?.discoveredModels,
-        providersConfig[gateway]?.removedModels
-      )
+    (provider) => isRouteProviderConfigured(providersConfig, provider),
+    (gateway, modelId) => isRouteGatewayModelAccessible(providersConfig, gateway, modelId)
   );
 }

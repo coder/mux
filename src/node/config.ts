@@ -1243,8 +1243,9 @@ export class Config {
 
         const modelFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
 
-        // Values validated at use time (resolveSkillModelClass fails open), so a
-        // malformed entry never breaks config load — self-healing on read.
+        // Lenient on read: malformed entries never break config load. Values
+        // are judged at send time by resolveSkillModelClassBinding — a bound
+        // class with a bad value fails that send with an actionable error.
         const modelClasses = parseOptionalStringRecord(parsed.modelClasses);
         const skillModelClasses = parseOptionalStringRecord(parsed.skillModelClasses);
 
