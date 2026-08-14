@@ -213,7 +213,12 @@ export function isAnthropic1MEffectivelyEnabled(
   // instance keeps its gateway-scoped string, and only the config-aware gate
   // rejects it conclusively instead of name-normalizing it to anthropic:*.
   const { capabilityModel } = resolveAnthropic1MCapabilityModel(modelString, providersConfig);
-  if (!supports1MContext(capabilityModel, providersConfig)) {
+  // Coder strings go through the gate RAW: getAnthropic1MContextMode resolves
+  // the instance conclusively AND rejects wires that cannot carry the
+  // anthropic-beta header (vercel/google-typed instances fronting Claude).
+  // The pre-resolved capabilityModel (anthropic:*) would bypass that wire gate.
+  const gateModel = modelString.startsWith("coder:") ? modelString : capabilityModel;
+  if (!supports1MContext(gateModel, providersConfig)) {
     return false;
   }
 

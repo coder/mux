@@ -268,6 +268,32 @@ describe("supports1MContext for Coder gateway instances", () => {
     };
     expect(supports1MContext("ollama:custom", config)).toBe(false);
   });
+
+  test("the 1M beta requires an Anthropic-capable wire", () => {
+    const config = {
+      coder: {
+        discoveredProviders: [
+          { name: "vercel", type: "vercel" },
+          { name: "bedrock", type: "bedrock" },
+        ],
+      },
+    };
+    // A vercel-typed instance maps Claude vendor models to anthropic:* for
+    // pricing/metadata, but speaks openai-chat on the wire: the anthropic-beta
+    // header cannot be attached, so the beta must not be conferred.
+    expect(getAnthropic1MContextMode("coder:vercel/anthropic/claude-sonnet-4-5", config)).toBe(
+      "none"
+    );
+    expect(supports1MContext("coder:vercel/anthropic/claude-sonnet-4-5", config)).toBe(false);
+    // Bedrock-typed instances speak the Anthropic wire and carry the header.
+    expect(getAnthropic1MContextMode("coder:bedrock/anthropic.claude-sonnet-4-5", config)).toBe(
+      "beta"
+    );
+    // Native 1M is standard model metadata (no header) and is not wire-gated.
+    expect(getAnthropic1MContextMode("coder:vercel/anthropic/claude-sonnet-4-6", config)).toBe(
+      "native"
+    );
+  });
 });
 
 describe("isValidModelFormat", () => {

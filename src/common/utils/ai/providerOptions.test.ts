@@ -472,6 +472,30 @@ describe("Coder gateway-scoped models (wire-canonical option building)", () => {
     expect(headers).toEqual({ "anthropic-beta": ANTHROPIC_1M_CONTEXT_HEADER });
   });
 
+  test("non-Anthropic wires never get the 1M beta header", () => {
+    // A vercel-typed instance maps Claude vendor models to anthropic:* for
+    // metadata, but speaks openai-chat on the wire: the anthropic-beta header
+    // cannot be carried, so 1M intent must not attach it.
+    const config: ProvidersConfigMap = {
+      coder: {
+        apiKeySet: false,
+        isEnabled: true,
+        isConfigured: true,
+        discoveredProviders: [{ name: "vercel", type: "vercel" }],
+      },
+    };
+    const headers = buildRequestHeaders(
+      "coder:vercel/anthropic/claude-sonnet-4-5",
+      {
+        anthropic: { use1MContextModels: ["coder:vercel/anthropic/claude-sonnet-4-5"] },
+      },
+      undefined,
+      config,
+      "coder"
+    );
+    expect(headers).toBeUndefined();
+  });
+
   // Discovered metadata must win over the instance NAME: a valid instance can
   // use a canonical route name with a different type, and normalizing the name
   // before consulting metadata would emit options for the wrong wire.

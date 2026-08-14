@@ -11,6 +11,7 @@ import type {
   ToolCallExecutionStartEvent,
   WorkflowRunAttachedEvent,
 } from "@/common/types/stream";
+import type { MuxMessage } from "@/common/types/message";
 import { Ok, Err } from "@/common/types/result";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
@@ -703,6 +704,44 @@ describe("StreamManager - refusal usage attribution", () => {
     expect(outcome.kind).toBe("terminal");
     // The ledger key resolved through instance metadata (type anthropic).
     expect(recordedKeys).toEqual(["anthropic:claude-opus-4-5"]);
+  });
+
+  test("message metadata preserves the raw Coder identity", () => {
+    // WorkspaceStore live deltas and SessionUsageService history rebuilds
+    // re-key usage from metadata.model via normalizeUsageModelKey, which
+    // needs the raw identity to resolve the instance type — the canonical
+    // openai:<claude> form would accumulate under a second, wrongly priced
+    // key that diverges from the backend's ledger.
+    const streamManager = new StreamManager(historyService);
+    const buildPartial = Reflect.get(streamManager, "buildPartialAssistantMessage") as (
+      streamInfo: Record<string, unknown>,
+      options?: Record<string, unknown>
+    ) => MuxMessage;
+    expect(typeof buildPartial).toBe("function");
+
+    const message = buildPartial.call(streamManager, {
+      messageId: "msg-raw-coder",
+      historySequence: 3,
+      startTime: Date.now(),
+      model: "coder:openai/claude-opus-4-5",
+      metadataModel: "anthropic:claude-opus-4-5",
+      initialMetadata: undefined,
+      parts: [],
+      toolModelUsages: [],
+    });
+    expect(message.metadata?.model).toBe("coder:openai/claude-opus-4-5");
+    // Non-Coder gateway strings still canonicalize for display.
+    const canonicalMessage = buildPartial.call(streamManager, {
+      messageId: "msg-canonical",
+      historySequence: 4,
+      startTime: Date.now(),
+      model: "mux-gateway:anthropic/claude-opus-4-5",
+      metadataModel: "anthropic:claude-opus-4-5",
+      initialMetadata: undefined,
+      parts: [],
+      toolModelUsages: [],
+    });
+    expect(canonicalMessage.metadata?.model).toBe("anthropic:claude-opus-4-5");
   });
 });
 

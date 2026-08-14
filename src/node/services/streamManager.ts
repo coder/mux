@@ -290,6 +290,21 @@ function isKnownProviderName(provider: string): provider is keyof typeof PROVIDE
   return Object.hasOwn(PROVIDER_DEFINITIONS, provider);
 }
 
+/**
+ * Model identity persisted/emitted in message and stream metadata. Gateway
+ * strings canonicalize for display EXCEPT Coder identities, which stay RAW:
+ * name-based canonicalization rewrites a cross-typed instance
+ * (coder:openai/<claude>, type anthropic) to openai:<claude>, and usage
+ * recovery (WorkspaceStore live deltas, SessionUsageService history rebuilds)
+ * re-keys from this metadata via normalizeUsageModelKey — which needs the raw
+ * identity to resolve the instance type. Custom-named instances already stay
+ * gateway-scoped under normalizeToCanonical, so this only makes
+ * canonical-named instances consistent with them.
+ */
+function metadataModelIdentity(model: string): string {
+  return model.startsWith("coder:") ? model : normalizeToCanonical(model);
+}
+
 function getStreamProviderDisplayName(model: string): string {
   const canonicalModel = normalizeToCanonical(model);
   const providerSeparatorIndex = canonicalModel.indexOf(":");
@@ -2268,7 +2283,7 @@ export class StreamManager extends EventEmitter {
   ): void {
     const streamStartAgentId = streamInfo.initialMetadata?.agentId;
     const streamStartMode = this.getStreamMode(streamInfo.initialMetadata);
-    const canonicalModel = normalizeToCanonical(streamInfo.model);
+    const canonicalModel = metadataModelIdentity(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
       streamInfo.model.startsWith("mux-gateway:");
@@ -2468,7 +2483,7 @@ export class StreamManager extends EventEmitter {
     streamInfo: WorkspaceStreamInfo,
     options: { metadata?: Partial<MuxMetadata>; parts?: MuxMessage["parts"] } = {}
   ): MuxMessage {
-    const canonicalModel = normalizeToCanonical(streamInfo.model);
+    const canonicalModel = metadataModelIdentity(streamInfo.model);
     const routedThroughGateway =
       streamInfo.initialMetadata?.routedThroughGateway ??
       streamInfo.model.startsWith("mux-gateway:");
@@ -3398,7 +3413,7 @@ export class StreamManager extends EventEmitter {
               await this.getAggregatedProviderMetadata(streamInfo),
               streamInfo.initialMetadata?.costsIncluded
             );
-            const canonicalModel = normalizeToCanonical(streamInfo.model);
+            const canonicalModel = metadataModelIdentity(streamInfo.model);
             const routedThroughGateway =
               streamInfo.initialMetadata?.routedThroughGateway ??
               streamInfo.model.startsWith("mux-gateway:");

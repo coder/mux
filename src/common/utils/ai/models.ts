@@ -6,6 +6,7 @@ import { DEFAULT_MODEL, MODEL_ABBREVIATIONS } from "@/common/constants/knownMode
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import { formatCompactModelDisplayName, formatModelDisplayName } from "./modelDisplay";
 import { resolveCoderGatewayMetadataModel } from "@/common/utils/providers/coderGatewayMetadata";
+import { resolveCoderWireCanonicalModel } from "@/common/constants/coderOAuth";
 
 export const defaultModel = DEFAULT_MODEL;
 
@@ -227,12 +228,27 @@ export function getAnthropic1MContextMode(
   // grant the beta to coder:anthropic/<claude> fronting a non-Anthropic
   // upstream.
   let capabilityModel = modelString;
+  // The beta requires the opt-in anthropic-beta HEADER, which only an
+  // Anthropic wire can carry (anthropic/bedrock instance types). A
+  // vercel/google-typed instance fronting a Claude model maps to anthropic:*
+  // for pricing/metadata but speaks openai-chat on the wire — conferring the
+  // beta would grow sessions past the model's effective non-beta limit and
+  // fail with context errors. Native 1M is standard model metadata (no
+  // header), so it is not wire-gated.
+  let wireCarriesAnthropicBeta = true;
   if (providersConfig != null && modelString.startsWith("coder:")) {
     const mapped = resolveCoderGatewayMetadataModel(modelString, providersConfig);
     if (mapped == null) {
       return "none";
     }
     capabilityModel = mapped;
+    const wire = resolveCoderWireCanonicalModel(
+      modelString.slice("coder:".length),
+      providersConfig.coder as
+        | { discoveredProviders?: unknown; additionalProviders?: unknown }
+        | undefined
+    );
+    wireCarriesAnthropicBeta = wire?.origin === "anthropic";
   }
   const normalized = normalizeToCanonical(capabilityModel);
   const [provider, modelName] = normalized.split(":", 2);
@@ -247,7 +263,7 @@ export function getAnthropic1MContextMode(
   }
 
   if (matchesAnthropicPattern(normalizedModelName, ANTHROPIC_BETA_1M_PATTERNS)) {
-    return "beta";
+    return wireCarriesAnthropicBeta ? "beta" : "none";
   }
 
   return "none";
