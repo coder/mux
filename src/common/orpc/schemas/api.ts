@@ -2286,6 +2286,7 @@ export const config = {
       routeOverrides: z.record(z.string(), z.string()).optional(),
       minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
       modelFallbacks: ModelFallbacksSchema.optional(),
+      modelClasses: z.record(z.string(), z.string()).optional(),
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
@@ -2368,6 +2369,16 @@ export const config = {
       // sanitizes (canonical keys, drop self/dupes, cap chain length, drop
       // empty chains) before persisting.
       modelFallbacks: ModelFallbacksSchema,
+    }),
+    output: z.void(),
+  },
+  updateModelClasses: {
+    input: z.object({
+      // Full-map replacement keyed by class name (canonical slots are
+      // large/medium/small; hand-edited custom names are preserved). Values
+      // use the one-shot syntax ("haiku+0"); the backend drops unparseable
+      // entries before persisting.
+      modelClasses: z.record(z.string(), z.string()),
     }),
     output: z.void(),
   },

@@ -70,6 +70,13 @@ export const ModelsConfigured: Story = {
         );
 
         return setupSettingsStory({
+          modelClasses: {
+            large: "anthropic:claude-opus-4-8+max",
+            // xai is deliberately unconfigured in this story: exercises the
+            // "no configured route" warning on the medium row.
+            medium: "xai:grok-beta",
+            small: "anthropic:claude-sonnet-4-20250514+0",
+          },
           providersConfig: {
             anthropic: {
               apiKeySet: true,

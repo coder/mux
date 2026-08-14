@@ -14,6 +14,7 @@ import {
   isMcpPromptCommandKey,
 } from "@/common/utils/tools/mcpPromptCommandKey";
 import type { ParsedRuntime } from "@/common/types/runtime";
+import type { ParsedThinkingInput } from "@/common/types/thinking";
 import {
   buildAgentSkillMetadata,
   dedupeAgentSkillRefs,
@@ -38,6 +39,16 @@ export interface SkillInvocation {
   userText: string;
   /** Trimmed text after the slash command (e.g. "123 high" for "/fix-issue 123 high"). */
   argumentText: string;
+  /**
+   * One-shot model/thinking override composed with the invocation
+   * ("/haiku+0 /done args"). Applies to this send only; carrying
+   * skipAiSettingsPersistence also bypasses backend per-skill class routing
+   * (an explicit override wins over the skill's model class).
+   */
+  oneShot?: {
+    modelString?: string;
+    thinkingLevel?: ParsedThinkingInput;
+  };
 }
 
 export interface MCPPromptInvocation {
@@ -288,6 +299,8 @@ export async function parseCommandWithSkillInvocation(options: {
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
   signal?: AbortSignal;
+  /** Allow "/model+thinking /skill args" composition (workspace sends only). */
+  composeOneShot?: boolean;
 }): Promise<{
   parsed: ParsedCommand;
   skillInvocation: SkillInvocation | null;
@@ -312,13 +325,42 @@ export async function parseCommandWithSkillInvocation(options: {
     };
   }
 
-  const skillInvocation = await resolveSkillInvocation({
+  let skillInvocation = await resolveSkillInvocation({
     messageText: options.messageText,
     parsed,
     agentSkillDescriptors: options.agentSkillDescriptors,
     api: options.api,
     discovery: options.discovery,
   });
+
+  // Compose one-shot model overrides with skill invocations: "/haiku+0 /done args"
+  // runs the done skill on Haiku for this send only. Re-running parseCommand on the
+  // one-shot's message keeps registered commands ("/haiku+0 /compact") and nested
+  // one-shots out of skill resolution — only unknown-command remainders are
+  // candidate skills, exactly like a bare "/done args".
+  if (
+    options.composeOneShot === true &&
+    skillInvocation == null &&
+    parsed?.type === "model-oneshot"
+  ) {
+    const innerParsed = parseCommand(parsed.message);
+    const innerInvocation = await resolveSkillInvocation({
+      messageText: parsed.message,
+      parsed: innerParsed,
+      agentSkillDescriptors: options.agentSkillDescriptors,
+      api: options.api,
+      discovery: options.discovery,
+    });
+    if (innerInvocation != null) {
+      skillInvocation = {
+        ...innerInvocation,
+        oneShot: {
+          ...(parsed.modelString != null ? { modelString: parsed.modelString } : {}),
+          ...(parsed.thinkingLevel != null ? { thinkingLevel: parsed.thinkingLevel } : {}),
+        },
+      };
+    }
+  }
 
   return {
     parsed: skillInvocation == null ? parsed : null,

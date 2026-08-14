@@ -139,6 +139,11 @@ import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import {
+  describeSkillModelClassRoutingProblem,
+  resolveSkillModelClassBinding,
+} from "@/common/utils/ai/skillModelClasses";
+import { isModelServableWithProvidersConfig } from "@/common/utils/ai/modelAvailability";
+import {
   createLoadedSkillSnapshot,
   extractLoadedSkillSnapshotsFromMessages,
   mergeLoadedSkillSnapshots,
@@ -2923,6 +2928,34 @@ export class AgentSession {
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     });
 
+    // Per-skill model routing. Applied before the user message is created so
+    // startup retries (retrySendOptions) replay the routed model, and before
+    // the compaction threshold check so context-limit math uses the model that
+    // will actually stream. preRoutingOptions feeds the compaction REQUEST
+    // below: a turn routed to a small model must never compact on that small
+    // model — the compaction model has to fit the full uncompacted history.
+    const preRoutingOptions = optionsForStream;
+    const skillModelOverride = await this.resolveSkillModelClassOverride(
+      typedMuxMetadata,
+      optionsForStream
+    );
+    // A bound-but-broken class mapping fails the send before anything is
+    // persisted: the user gets an actionable error (update the mapping or
+    // bypass with a one-shot) instead of a silent run on the wrong model.
+    if (skillModelOverride?.kind === "config-error") {
+      return Err(createUnknownSendMessageError(skillModelOverride.message));
+    }
+    if (skillModelOverride != null) {
+      modelForStream = skillModelOverride.model;
+      optionsForStream = {
+        ...optionsForStream,
+        model: skillModelOverride.model,
+        ...(skillModelOverride.thinkingLevel != null
+          ? { thinkingLevel: skillModelOverride.thinkingLevel }
+          : {}),
+      };
+    }
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -3029,7 +3062,11 @@ export class AgentSession {
 
         const autoCompactionRequest = this.buildAutoCompactionRequest({
           followUpContent,
-          baseOptions: optionsForStream,
+          // Pre-routing options: the compaction request must inherit the user's
+          // model (able to read the full history), never a per-skill routed
+          // small model. The deferred follow-up re-enters sendMessage with the
+          // same skill metadata and re-routes itself.
+          baseOptions: preRoutingOptions,
           reason: "on-send",
         });
 
@@ -6408,6 +6445,230 @@ export class AgentSession {
     return snapshots.filter((snapshot): snapshot is MuxMessage => snapshot !== null);
   }
 
+  /**
+   * Build a reader that resolves a skill package with the same roots and
+   * precedence as skill discovery for this workspace. Shared by snapshot
+   * materialization and per-skill model routing so both resolve identically.
+   */
+  private buildSkillReader(args: {
+    metadata: WorkspaceMetadata;
+    runtime: Runtime;
+    workspacePath: string;
+    disableWorkspaceAgents: boolean | undefined;
+  }): (skillName: string) => Promise<Awaited<ReturnType<typeof readAgentSkill>>> {
+    // When workspace agents are disabled, resolve skills from the project path instead of
+    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
+    const skillDiscoveryPath = args.disableWorkspaceAgents
+      ? args.metadata.projectPath
+      : args.workspacePath;
+
+    // claude-skills-compat experiment: resolve slash-invoked skills with the same
+    // roots as discovery. Guard for test mocks that may not implement the gate.
+    const includeClaudeSkills =
+      typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
+      this.aiService.isClaudeSkillsCompatEnabled();
+    // agent-plugins experiment: same treatment for plugin-provided skills.
+    const includeAgentPlugins =
+      typeof this.aiService.isAgentPluginsEnabled === "function" &&
+      this.aiService.isAgentPluginsEnabled();
+    // agent-plugins experiment: resolve host-local project workspaces through
+    // the same storage context as the skill read tool so checkout-level
+    // plugin containers stay reachable — for subProjectPath workspaces the
+    // execution path is a subdirectory of the checkout and default
+    // discovery misses them. disableWorkspaceAgents keeps default
+    // discovery: it anchors at projectPath, which is already the
+    // checkout-level root the UI lists in that mode.
+    const muxScope =
+      !args.disableWorkspaceAgents &&
+      typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
+        ? this.aiService.resolveMuxToolScopeForWorkspace(
+            args.metadata,
+            args.runtime,
+            args.workspacePath
+          )
+        : null;
+    const skillCtx =
+      muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
+        ? resolveSkillStorageContext({
+            runtime: args.runtime,
+            workspacePath: skillDiscoveryPath,
+            muxScope,
+            includeClaudeSkills,
+            includeAgentPlugins,
+          })
+        : null;
+    return (skillName: string) =>
+      readAgentSkill(
+        skillCtx?.runtime ?? args.runtime,
+        skillCtx?.workspacePath ?? skillDiscoveryPath,
+        skillName,
+        {
+          ...(skillCtx != null ? { roots: skillCtx.roots, containment: skillCtx.containment } : {}),
+          includeClaudeSkills,
+          includeAgentPlugins,
+        }
+      );
+  }
+
+  /**
+   * Per-skill model routing: a slash-invoked skill bound to a model class
+   * (config `skillModelClasses` table, else skill frontmatter metadata
+   * "model-class") streams on the class's model for this send only.
+   *
+   * Explicit overrides win: sends carrying skipAiSettingsPersistence (one-shot
+   * /model commands, compaction requests) are never re-routed. Workspace AI
+   * settings are untouched: persistence happens in WorkspaceService (with the
+   * user's model) before this runs.
+   *
+   * Error posture: a *bound* skill whose routing cannot be delivered — unknown
+   * class, malformed class value, or a class model no configured route can
+   * serve — returns a config-error so the send fails with an actionable
+   * message instead of silently streaming on an unintended (often expensive)
+   * model. Unbound skills route nothing, and infrastructure failures (config
+   * or skill unreadable, providers state unavailable) still fail open: those
+   * are not user mapping mistakes, and a skill send must survive them.
+   */
+  private async resolveSkillModelClassOverride(
+    muxMetadata: MuxMessageMetadata | undefined,
+    options: SendMessageOptions
+  ): Promise<
+    | { kind: "override"; className: string; model: string; thinkingLevel?: ThinkingLevel }
+    | { kind: "config-error"; message: string }
+    | null
+  > {
+    if (options.skipAiSettingsPersistence === true) {
+      return null;
+    }
+    if (muxMetadata?.type !== "agent-skill") {
+      return null;
+    }
+
+    try {
+      // Defensive config access mirroring getPreferredCompactionSettings: test
+      // harnesses may provide a partial Config.
+      const maybeConfig = this.config as Config & {
+        loadConfigOrDefault?: () => {
+          modelClasses?: Record<string, string>;
+          skillModelClasses?: Record<string, string>;
+          routePriority?: string[];
+          routeOverrides?: Record<string, string>;
+        } | null;
+      };
+      if (typeof maybeConfig.loadConfigOrDefault !== "function") {
+        return null;
+      }
+      const cfg = maybeConfig.loadConfigOrDefault();
+      const modelClasses = cfg?.modelClasses;
+      const skillModelClasses = cfg?.skillModelClasses;
+
+      const skillName = muxMetadata.skillName;
+      if (!SkillNameSchema.safeParse(skillName).success) {
+        return null;
+      }
+
+      // Fast path: with no classes configured and no table binding for this
+      // skill, routing can never apply — skip the (possibly remote) SKILL.md
+      // frontmatter read entirely.
+      const hasModelClasses = modelClasses != null && Object.keys(modelClasses).length > 0;
+      const hasTableBinding = typeof skillModelClasses?.[skillName] === "string";
+      if (!hasModelClasses && !hasTableBinding) {
+        return null;
+      }
+
+      // Read frontmatter only when the config table doesn't already bind the
+      // skill — skips a (possibly remote) SKILL.md read when unnecessary.
+      let frontmatterMetadata: Record<string, string> | undefined;
+      if (!hasTableBinding) {
+        if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+          return null;
+        }
+        const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+        if (!metadataResult.success) {
+          return null;
+        }
+        const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadataResult.data);
+        const resolved = await this.buildSkillReader({
+          metadata: metadataResult.data,
+          runtime,
+          workspacePath,
+          disableWorkspaceAgents: options.disableWorkspaceAgents,
+        })(skillName);
+        frontmatterMetadata = resolved.package.frontmatter.metadata;
+      }
+
+      const providersConfig = this.getProvidersConfigSafe();
+      const binding = resolveSkillModelClassBinding({
+        skillName,
+        frontmatterMetadata,
+        modelClasses,
+        skillModelClasses,
+        providersConfig,
+      });
+
+      switch (binding.status) {
+        case "unbound":
+          return null;
+        case "unknown-class":
+          return {
+            kind: "config-error",
+            message: describeSkillModelClassRoutingProblem({
+              kind: "unknown-class",
+              skillName,
+              className: binding.className,
+            }),
+          };
+        case "invalid-value":
+          return {
+            kind: "config-error",
+            message: describeSkillModelClassRoutingProblem({
+              kind: "invalid-value",
+              skillName,
+              className: binding.className,
+              value: binding.value,
+            }),
+          };
+        case "resolved": {
+          // Availability is a routing-state question (gateways count: a model
+          // can be servable via OpenRouter without a direct provider key).
+          // Null providersConfig means "cannot determine", never "unavailable".
+          if (
+            providersConfig != null &&
+            !isModelServableWithProvidersConfig({
+              canonicalModel: binding.model,
+              routePriority: cfg?.routePriority,
+              routeOverrides: cfg?.routeOverrides,
+              providersConfig,
+            })
+          ) {
+            return {
+              kind: "config-error",
+              message: describeSkillModelClassRoutingProblem({
+                kind: "model-unavailable",
+                skillName,
+                className: binding.className,
+                model: binding.model,
+              }),
+            };
+          }
+
+          log.debug(
+            `skill model routing: /${skillName} → class "${binding.className}" → ${binding.model}` +
+              (binding.thinkingLevel != null ? `+${binding.thinkingLevel}` : "")
+          );
+          return {
+            kind: "override",
+            className: binding.className,
+            model: binding.model,
+            ...(binding.thinkingLevel != null ? { thinkingLevel: binding.thinkingLevel } : {}),
+          };
+        }
+      }
+    } catch (error) {
+      log.debug(`skill model routing: fail-open for skill send: ${getErrorMessage(error)}`);
+      return null;
+    }
+  }
+
   private async materializeAgentSkillSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
@@ -6433,10 +6694,6 @@ export class AgentSession {
 
     const metadata = metadataResult.data;
     const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-
-    // When workspace agents are disabled, resolve skills from the project path instead of
-    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
-    const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
 
     // Dedupe per skill against recent persisted snapshots. A wider window keeps multi-skill
     // turns from reloading snapshots that were persisted together on the previous turn.
@@ -6466,49 +6723,12 @@ export class AgentSession {
 
       let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
       try {
-        // claude-skills-compat experiment: resolve slash-invoked skills with the same
-        // roots as discovery. Guard for test mocks that may not implement the gate.
-        const includeClaudeSkills =
-          typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
-          this.aiService.isClaudeSkillsCompatEnabled();
-        // agent-plugins experiment: same treatment for plugin-provided skills.
-        const includeAgentPlugins =
-          typeof this.aiService.isAgentPluginsEnabled === "function" &&
-          this.aiService.isAgentPluginsEnabled();
-        // agent-plugins experiment: resolve host-local project workspaces through
-        // the same storage context as the skill read tool so checkout-level
-        // plugin containers stay reachable — for subProjectPath workspaces the
-        // execution path is a subdirectory of the checkout and default
-        // discovery misses them. disableWorkspaceAgents keeps default
-        // discovery: it anchors at projectPath, which is already the
-        // checkout-level root the UI lists in that mode.
-        const muxScope =
-          !disableWorkspaceAgents &&
-          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
-            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
-            : null;
-        const skillCtx =
-          muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
-            ? resolveSkillStorageContext({
-                runtime,
-                workspacePath: skillDiscoveryPath,
-                muxScope,
-                includeClaudeSkills,
-                includeAgentPlugins,
-              })
-            : null;
-        resolved = await readAgentSkill(
-          skillCtx?.runtime ?? runtime,
-          skillCtx?.workspacePath ?? skillDiscoveryPath,
-          parsedName.data,
-          {
-            ...(skillCtx != null
-              ? { roots: skillCtx.roots, containment: skillCtx.containment }
-              : {}),
-            includeClaudeSkills,
-            includeAgentPlugins,
-          }
-        );
+        resolved = await this.buildSkillReader({
+          metadata,
+          runtime,
+          workspacePath,
+          disableWorkspaceAgents,
+        })(parsedName.data);
       } catch (error) {
         if (ref.source === "slash") {
           throw error;

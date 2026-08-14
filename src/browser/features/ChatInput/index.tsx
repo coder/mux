@@ -2662,6 +2662,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         api,
         discovery: skillDiscovery,
         signal: resolutionSignal,
+        // One-shot × skill composition ("/haiku+0 /done") ships for workspace
+        // sends; the creation composer has no one-shot support to compose with.
+        composeOneShot: variant === "workspace",
       });
       if (!isSendScopeCurrent()) return;
       parsed = resolution.parsed;
@@ -2812,6 +2815,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
+      // Model/thinking override from either a bare one-shot ("/haiku+0 msg")
+      // or one composed with a skill invocation ("/haiku+0 /done args").
+      const oneShotOverride = modelOneShot ?? skillInvocation?.oneShot ?? null;
       // Mirror the creation-composer /goal bypass: with attachments present,
       // send the raw text as a normal message instead of processing the
       // command, which would drop the files. Transferred staging-failure
@@ -2834,7 +2840,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // the composer, it must not restore stale command text over the newer turn.
       asyncCommandTokenRef.current++;
 
-      const modelOverride = modelOneShot?.modelString;
+      const modelOverride = oneShotOverride?.modelString;
 
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend =
@@ -3068,7 +3074,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // One-shot models/thinking shouldn't update the persisted session defaults.
         // Resolve thinking level: numeric indices are model-relative (0 = model's lowest allowed level)
-        const rawThinkingOverride = modelOneShot?.thinkingLevel;
+        const rawThinkingOverride = oneShotOverride?.thinkingLevel;
         const thinkingOverride =
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
@@ -3085,7 +3091,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : {}),
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
-          ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(oneShotOverride ? { skipAiSettingsPersistence: true } : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
@@ -3134,7 +3140,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             sendMessageOptions.thinkingLevel ?? "off"
           );
 
-          if (modelOneShot) {
+          if (oneShotOverride) {
             trackCommandUsed("model");
           }
 
