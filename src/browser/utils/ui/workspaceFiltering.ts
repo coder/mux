@@ -394,11 +394,7 @@ export interface WorkspaceSubAgentsSummary {
   workflowRunIds: ReadonlySet<string>;
   /** Name of the first running workflow run, or first queued run when none run. */
   workflowName?: string;
-  /**
-   * Workflow display names keyed by run ID, remembered from every
-   * workflow-owned descendant (active or not) so a run between steps with no
-   * live worker can still be labeled.
-   */
+  /** Names retained after workers finish so active runs between steps remain labeled. */
   workflowNamesByRunId: ReadonlyMap<string, string>;
   /** Title of the first running workflow worker, the run's current step. */
   runningWorkflowStepTitle?: string;
@@ -549,8 +545,6 @@ export function computeSubAgentsSummaryByWorkspaceId(
       let queuedWorkflowName: string | undefined;
       let runningWorkflowStepTitle: string | undefined;
       for (const [runId, run] of summary.workflowRunsById) {
-        // A run tracked only through its owner (no live worker) has no rollup
-        // name; fall back to the name remembered from its finished workers.
         const runName = run.name ?? summary.workflowNamesByRunId.get(runId);
         if (run.hasRunning) {
           runningWorkflowRunCount += 1;

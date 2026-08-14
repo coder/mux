@@ -263,9 +263,8 @@ function formatHiddenSubAgentsPresentation(
     const hasRunningRun = runningRunCount > 0;
     const verb = hasRunningRun ? "running" : "queued";
     const runCount = hasRunningRun ? runningRunCount : summary.queuedWorkflowRunCount;
-    // With no running worker, summary.workflowName is a queued run's name; a
-    // gap-only running label must not borrow it, but the sole gap run's own
-    // remembered name may label it.
+    // When only gap runs are active, summary.workflowName may belong to a queued run.
+    // Only a single gap run has an unambiguous remembered name.
     const workflowName =
       hasRunningRun && summary.runningWorkflowRunCount === 0
         ? gapRunIds.length === 1
