@@ -44,7 +44,6 @@ import { createReplayBufferedStreamMessageRelay } from "./replayBufferedStreamMe
 import { createRuntime, checkRuntimeAvailability } from "@/node/runtime/runtimeFactory";
 import {
   appendSubProjectRelativePath,
-  createRuntimeContextForWorkspace,
   createRuntimeForWorkspace,
   resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
@@ -122,6 +121,7 @@ import {
   type SubagentTranscriptArtifactIndexEntry,
 } from "@/node/services/subagentTranscriptArtifacts";
 import { getErrorMessage } from "@/common/utils/errors";
+import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { workflowRunStreamHub } from "@/node/services/workflows/workflowRunStreamHub";
@@ -5585,7 +5585,17 @@ export const router = (authToken?: string) => {
               );
               if (!metadataResult.success) throw new Error(metadataResult.error);
               const metadata = metadataResult.data;
-              const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
+              // Build the exact runtime context stream startup uses (including the
+              // multi-project shared root) so servers started here match the start
+              // signature streams later reuse.
+              const runtimeContextResult = context.aiService.createWorkspaceRuntimeContext(
+                input.workspaceId,
+                metadata
+              );
+              if (!runtimeContextResult.success) {
+                throw new Error(formatSendMessageError(runtimeContextResult.error).message);
+              }
+              const { runtime, workspacePath } = runtimeContextResult.data;
               // Fresh non-local runtimes (devcontainer, docker) reject exec until
               // per-instance readiness completes, and cold prompt discovery starts
               // stdio servers through runtime.exec (mirrors streamMessage).
