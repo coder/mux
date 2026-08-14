@@ -3,6 +3,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { Err, Ok } from "@/common/types/result";
 import type { WorkspaceGoalService } from "./workspaceGoalService";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
+import type { AIService } from "./aiService";
 
 const TEST_MODEL = "anthropic:claude-sonnet-4-5";
 
@@ -53,6 +54,39 @@ async function waitForCondition(condition: () => boolean, timeoutMs = 500): Prom
 }
 
 describe("AgentSession queued message tool-call dispatch", () => {
+  test("counts a direct preparing send as a superseding predecessor", async () => {
+    const sessionHolder: {
+      current?: { hasQueuedOrDispatchingEntry(): boolean };
+    } = {};
+    let preparingSeen = false;
+    const streamMessage = mock(() => {
+      preparingSeen = sessionHolder.current?.hasQueuedOrDispatchingEntry() === true;
+      return Promise.resolve(Ok(undefined));
+    });
+    const { session, cleanup } = await createAgentSessionHarness({
+      workspaceId: "queue-dispatch-preparing-predecessor",
+      aiServiceOverrides: {
+        streamMessage: streamMessage as unknown as AIService["streamMessage"],
+      },
+    });
+    sessionHolder.current = session;
+
+    try {
+      expect(session.hasQueuedOrDispatchingEntry()).toBe(false);
+      const result = await session.sendMessage("direct send", {
+        model: TEST_MODEL,
+        agentId: "exec",
+      });
+
+      expect(result.success).toBe(true);
+      expect(preparingSeen).toBe(true);
+      expect(session.hasQueuedOrDispatchingEntry()).toBe(false);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("waits for stream-end instead of interrupting between sibling tool results", async () => {
     const workspaceId = "queue-dispatch-full-step";
     const { session, cleanup, aiEmitter, aiService } = await createAgentSessionHarness({

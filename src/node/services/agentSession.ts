@@ -5384,13 +5384,17 @@ export class AgentSession {
   }
 
   /**
-   * Whether a queued entry or a dequeued entry is still preparing.
+   * Whether a queued entry, a dequeued entry, or a direct send is still preparing.
    *
    * This distinguishes a report queued behind another entry from a report queued
    * directly behind the active stream.
    */
   hasQueuedOrDispatchingEntry(): boolean {
-    return this.dispatchingQueuedEntry || !this.messageQueue.isEmpty();
+    return (
+      this.turnPhase === TurnPhase.PREPARING ||
+      this.dispatchingQueuedEntry ||
+      !this.messageQueue.isEmpty()
+    );
   }
 
   /**
