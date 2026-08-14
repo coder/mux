@@ -5919,9 +5919,17 @@ export class TaskService {
           const existingCorrelation = this.getWorkspaceTurnMetadataFromValue(
             existingMessage.metadata?.muxMetadata
           );
-          // A report can outlive its original turn. Only repair reports without correlation;
-          // replacing a valid correlation could deliver an old result to a later turn.
-          if (existingCorrelation == null) {
+          if (existingCorrelation != null) {
+            const matchesActiveTurn =
+              existingCorrelation.taskHandleId === workspaceTurnMuxMetadata.taskHandleId &&
+              existingCorrelation.ownerWorkspaceId === workspaceTurnMuxMetadata.ownerWorkspaceId &&
+              existingCorrelation.turnId === workspaceTurnMuxMetadata.turnId;
+            if (!matchesActiveTurn) {
+              // Keep the old report visible, but do not let it wake or settle a later turn.
+              await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+              continue;
+            }
+          } else {
             const updatedMessage: MuxMessage = {
               ...existingMessage,
               metadata: {
@@ -7146,6 +7154,7 @@ export class TaskService {
           synthetic: true,
           agentInitiated: true,
           startStreamInBackground: true,
+          workspaceTurnContinuation: workspaceTurnMuxMetadata != null,
           queueDedupeKey: `agent-report:${childWorkspaceId}:${toolCallId}`,
           removableQueueDedupeKey: true,
           ...(workspaceTurnMuxMetadata != null

@@ -605,6 +605,7 @@ export class AgentSession {
    * Lets hasPendingBashMonitorWakeContinuation see a wake continuation during
    * the dequeue→stream-start window without consulting stale stream context.
    */
+  private dispatchingQueuedEntry = false;
   private dispatchingQueuedEntryMuxMetadata?: unknown;
 
   /** Context needed to retry the current stream (cleared on stream end/abort/error). */
@@ -4638,6 +4639,8 @@ export class AgentSession {
 
     forward("stream-start", (payload) => {
       if (payload.type === "stream-start") {
+        this.dispatchingQueuedEntry = false;
+        this.dispatchingQueuedEntryMuxMetadata = undefined;
         this.activeStreamStartedAtMs = payload.startTime;
         this.queuedProviderToolEndAbortInFlight = false;
         this.activeToolCallIds.clear();
@@ -5131,6 +5134,8 @@ export class AgentSession {
     this.emitStreamLifecycleIfChanged();
 
     if (next === TurnPhase.IDLE) {
+      this.dispatchingQueuedEntry = false;
+      this.dispatchingQueuedEntryMuxMetadata = undefined;
       // Turn ended: expire any mid-turn thinking override. Safe unconditionally
       // because a replacement turn (e.g. an edit) only creates its holder after
       // the preempted turn has already been transitioned to IDLE.
@@ -5379,6 +5384,16 @@ export class AgentSession {
   }
 
   /**
+   * Whether a queued entry or a dequeued entry is still preparing.
+   *
+   * This distinguishes a report queued behind another entry from a report queued
+   * directly behind the active stream.
+   */
+  hasQueuedOrDispatchingEntry(): boolean {
+    return this.dispatchingQueuedEntry || !this.messageQueue.isEmpty();
+  }
+
+  /**
    * Whether a bash-monitor-wake continuation is pending dispatch: the next
    * queued entry is a wake, or a dequeued wake is mid-dispatch (dequeue →
    * stream start). Wake sends are the only input that inherits an open
@@ -5603,6 +5618,7 @@ export class AgentSession {
       // skills, workspace-turn follow-ups) own their turn, and anything queued
       // behind them dispatches on a later drain instead of batching into them.
       const { message, options, internal } = this.messageQueue.dequeueNext();
+      this.dispatchingQueuedEntry = true;
       this.dispatchingQueuedEntryMuxMetadata = options?.muxMetadata;
       this.emitQueuedMessageChanged();
 
@@ -5621,10 +5637,9 @@ export class AgentSession {
 
       void this.sendMessage(message, options, internal)
         .then(async (result) => {
-          // Dispatch settled: on success the stream is registered (TaskService
-          // switches to matching the active stream's correlation), on failure
-          // there is no continuation to wait for.
-          this.dispatchingQueuedEntryMuxMetadata = undefined;
+          // Keep the dispatch marker through the dequeue-to-stream-start window. A background
+          // send can resolve before startup emits stream-start, and later reports must not claim
+          // that window as the next continuation.
           // If sendMessage fails before it can start streaming, ensure we don't
           // leave the session stuck in PREPARING and notify correlated internal callers.
           if (!result.success) {
@@ -5648,6 +5663,7 @@ export class AgentSession {
           }
         })
         .catch(() => {
+          this.dispatchingQueuedEntry = false;
           this.dispatchingQueuedEntryMuxMetadata = undefined;
           if (this.turnPhase === TurnPhase.PREPARING) {
             this.setTurnPhase(TurnPhase.IDLE);

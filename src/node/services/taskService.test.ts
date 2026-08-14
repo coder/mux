@@ -4297,9 +4297,15 @@ describe("TaskService", () => {
       ensureAgentTerminalMessages: (
         ownerWorkspaceId: string,
         notifications: ReadonlyArray<typeof notification>
-      ) => Promise<unknown>;
+      ) => Promise<{ deliverableNotificationIds: Set<string> }>;
     };
-    await internal.ensureAgentTerminalMessages(workspaceTurnId, [notification]);
+    const ensureResult = await internal.ensureAgentTerminalMessages(workspaceTurnId, [
+      notification,
+    ]);
+    expect(ensureResult.deliverableNotificationIds.has(notification.id)).toBe(false);
+    expect(await terminalAttentionStore.get(workspaceTurnId, notification.id)).toMatchObject({
+      status: "superseded",
+    });
 
     const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceTurnId);
     expect(historyResult.success).toBe(true);

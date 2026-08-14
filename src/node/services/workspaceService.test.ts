@@ -5323,6 +5323,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
   let fakeSession: {
     isBusy: ReturnType<typeof mock>;
     hasQueuedMessages: ReturnType<typeof mock>;
+    hasQueuedOrDispatchingEntry: ReturnType<typeof mock>;
     dropQueuedMessageWithOnlyDedupeKey: ReturnType<typeof mock>;
     queueMessage: ReturnType<typeof mock>;
     sendMessage: ReturnType<typeof mock>;
@@ -5395,6 +5396,7 @@ describe("WorkspaceService sendMessage status clearing", () => {
     fakeSession = {
       isBusy: mock(() => true),
       hasQueuedMessages: mock(() => false),
+      hasQueuedOrDispatchingEntry: mock(() => false),
       dropQueuedMessageWithOnlyDedupeKey: mock(() => false),
       queueMessage: mock(() => "tool-end" as const),
       sendMessage: mock(() => Promise.resolve(Ok(undefined))),
@@ -5680,6 +5682,73 @@ describe("WorkspaceService sendMessage status clearing", () => {
     expect(result.success).toBe(true);
     expect(fakeSession.queueMessage).toHaveBeenCalled();
     expect(resetAutoResumeCount).not.toHaveBeenCalled();
+  });
+
+  test("strips stale workspace-turn correlation behind an earlier queued entry", async () => {
+    fakeSession.hasQueuedOrDispatchingEntry.mockReturnValue(true);
+    const onCanceled = mock(() => undefined);
+    const onAcceptedPreStreamFailure = mock(() => undefined);
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_stale_progress",
+      ownerWorkspaceId: "owner-workspace",
+      turnId: "turn-stale-progress",
+    };
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "nested progress",
+      { model: "openai:gpt-4o-mini", agentId: "exec", muxMetadata },
+      {
+        synthetic: true,
+        agentInitiated: true,
+        workspaceTurnContinuation: true,
+        onCanceled,
+        onAcceptedPreStreamFailure,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalledWith(
+      "nested progress",
+      expect.not.objectContaining({ muxMetadata }),
+      expect.objectContaining({
+        onCanceled: undefined,
+        onAcceptedPreStreamFailure: undefined,
+      })
+    );
+  });
+
+  test("keeps workspace-turn correlation for the next queued continuation", async () => {
+    fakeSession.hasQueuedOrDispatchingEntry.mockReturnValue(false);
+    const onCanceled = mock(() => undefined);
+    const onAcceptedPreStreamFailure = mock(() => undefined);
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_next_progress",
+      ownerWorkspaceId: "owner-workspace",
+      turnId: "turn-next-progress",
+    };
+
+    const result = await workspaceService.sendMessage(
+      "test-workspace",
+      "nested progress",
+      { model: "openai:gpt-4o-mini", agentId: "exec", muxMetadata },
+      {
+        synthetic: true,
+        agentInitiated: true,
+        workspaceTurnContinuation: true,
+        onCanceled,
+        onAcceptedPreStreamFailure,
+      }
+    );
+
+    expect(result.success).toBe(true);
+    expect(fakeSession.queueMessage).toHaveBeenCalledWith(
+      "nested progress",
+      expect.objectContaining({ muxMetadata }),
+      expect.objectContaining({ onCanceled, onAcceptedPreStreamFailure })
+    );
   });
 
   test("synthetic queued sends leave a pending interactive question intact", async () => {
