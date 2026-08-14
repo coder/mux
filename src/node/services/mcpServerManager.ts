@@ -1737,9 +1737,16 @@ export class MCPServerManager {
       const entry = this.workspaceServers.get(workspaceId);
       if (!entry) return [];
 
-      // Disabled clients can remain cached until a leased restart, so filter prompts.
+      // Disabled clients can remain cached until a leased restart, so filter
+      // prompts. Lease-deferred reconfigured servers stay stale until they
+      // restart; skip them so discovery neither queries the old endpoint nor
+      // returns its outdated catalog.
       enabledInstances = new Map(
-        [...entry.instances].filter(([serverName]) => entry.enabledServerNames.has(serverName))
+        [...entry.instances].filter(
+          ([serverName]) =>
+            entry.enabledServerNames.has(serverName) &&
+            !entry.stalePromptServerNames?.has(serverName)
+        )
       );
       await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
       if (

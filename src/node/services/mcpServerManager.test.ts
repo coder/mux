@@ -1176,6 +1176,43 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("excludes servers reconfigured while leased from prompt discovery", async () => {
+    const workspaceId = "ws-stale-prompt-discovery";
+    let command = "cmd-1";
+    configService.listServers = mock(() =>
+      Promise.resolve({
+        server: { transport: "stdio", command, disabled: false },
+        stable: stdioConfig("cmd-stable"),
+      })
+    );
+
+    const refreshPrompts = mock(() => Promise.resolve());
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { prompts: [{ name: "review" }], refreshPrompts }],
+          ["stable", { prompts: [{ name: "status" }], refreshPrompts }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    manager.acquireLease(workspaceId);
+    command = "cmd-2";
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    try {
+      refreshPrompts.mockClear();
+      const descriptors = await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
+      expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
+      // The stale instance still points at the old endpoint; discovery must
+      // not send prompts/list there with potentially obsolete credentials.
+      expect(refreshPrompts).toHaveBeenCalledTimes(1);
+    } finally {
+      manager.releaseLease(workspaceId);
+    }
+  });
+
   test("excludes a server when trust is revoked while its prompt catalog refresh is pending", async () => {
     const workspaceId = "ws-refresh-window-trust";
     configService.listServers = mock((_projectPath: string, trusted: boolean) =>
