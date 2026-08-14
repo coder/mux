@@ -264,7 +264,7 @@ describe("resolveInlineSkillRefsForSend", () => {
 describe("resolveMcpPromptRefsForSend", () => {
   test("resolves inline no-required-argument prompts and drops required prompts", async () => {
     const noArgs = { ...promptDescriptor(), arguments: [] };
-    const refs = await resolveMcpPromptRefsForSend({
+    const result = await resolveMcpPromptRefsForSend({
       messageText: "Use $mcp__coder__review and $mcp__coder__required",
       slashInvocation: null,
       descriptors: [
@@ -280,7 +280,8 @@ describe("resolveMcpPromptRefsForSend", () => {
       discovery: null,
     });
 
-    expect(refs).toEqual([
+    expect(result.error).toBeUndefined();
+    expect(result.refs).toEqual([
       {
         serverName: "coder",
         promptName: "review",
@@ -288,6 +289,51 @@ describe("resolveMcpPromptRefsForSend", () => {
         source: "inline",
       },
     ]);
+  });
+
+  test("blocks an inline unsuffixed key orphaned by a new collision", async () => {
+    const result = await resolveMcpPromptRefsForSend({
+      messageText: "Use $mcp__coder__review please",
+      slashInvocation: null,
+      descriptors: [
+        { ...promptDescriptor(), arguments: [], commandKey: "mcp__coder__review_11111111" },
+        {
+          ...promptDescriptor(),
+          arguments: [],
+          commandKey: "mcp__coder__review_22222222",
+          stableKey: "mcp__coder__review_22222222",
+          serverName: "Coder",
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.refs).toEqual([]);
+    expect(result.error).toBe(
+      "'$mcp__coder__review' no longer matches an MCP prompt key; did you mean $mcp__coder__review_11111111 or $mcp__coder__review_22222222?"
+    );
+  });
+
+  test("still drops orphaned inline keys whose base matches only required-argument prompts", async () => {
+    const result = await resolveMcpPromptRefsForSend({
+      messageText: "Use $mcp__coder__review please",
+      slashInvocation: null,
+      descriptors: [
+        { ...promptDescriptor(), commandKey: "mcp__coder__review_11111111" },
+        {
+          ...promptDescriptor(),
+          commandKey: "mcp__coder__review_22222222",
+          stableKey: "mcp__coder__review_22222222",
+          serverName: "Coder",
+        },
+      ],
+      api: null,
+      discovery: null,
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.refs).toEqual([]);
   });
 });
 

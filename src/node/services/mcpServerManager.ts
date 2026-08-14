@@ -864,7 +864,7 @@ export class MCPServerManager {
   // Survives idle cleanup so an explicit prompt invocation can revive reaped
   // servers at send time; forgotten only on workspace removal.
   private readonly lastWorkspaceRequestOptions = new Map<string, MCPWorkspaceRequestOptions>();
-  private readonly workspaceColdStartLocks = new MutexMap<string>();
+  private readonly workspaceRestartLocks = new MutexMap<string>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
    * Cached per-server protocol era verdicts, keyed by server config
@@ -1237,22 +1237,6 @@ export class MCPServerManager {
   async getToolsForWorkspace(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPToolsForWorkspaceResult> {
-    // Cold start can race: composer prompt discovery and stream tool startup
-    // may both observe no cached entry, start duplicate servers, and the
-    // loser's entry would be overwritten without closing its instances.
-    // Serialize only that case; entry-present flows keep their existing
-    // concurrency semantics (leased deferred restarts, mid-retry replacement).
-    if (!this.workspaceServers.has(options.workspaceId)) {
-      return this.workspaceColdStartLocks.withLock(options.workspaceId, () =>
-        this.getToolsForWorkspaceImpl(options)
-      );
-    }
-    return this.getToolsForWorkspaceImpl(options);
-  }
-
-  private async getToolsForWorkspaceImpl(
-    options: MCPWorkspaceRequestOptions
-  ): Promise<MCPToolsForWorkspaceResult> {
     const {
       workspaceId,
       projectPath,
@@ -1586,53 +1570,78 @@ export class MCPServerManager {
       };
     }
 
-    // Config changed, instance closed, or not started yet -> restart
-    if (enabledEntries.length > 0) {
-      log.info("[MCP] Starting servers", {
-        workspaceId,
-        servers: enabledEntries.map(([name]) => name),
+    // Config changed, instance closed, or not started yet -> restart.
+    //
+    // Serialized per workspace: concurrent callers (composer prompt discovery,
+    // stream tool startup, multi-ref getPrompt refreshes) could otherwise each
+    // stop/start the same servers and overwrite workspaceServers without
+    // closing the loser's instances. The cached same-signature retry path
+    // above intentionally stays outside this lock; it is guarded by
+    // retryingTimedOutServerNames and the mid-retry replacement reconciliation.
+    return this.workspaceRestartLocks.withLock(workspaceId, async () => {
+      // A queued caller may find the restart already done by the lock holder.
+      const current = this.workspaceServers.get(workspaceId);
+      if (current !== undefined) {
+        const currentHasClosedInstance = [...current.instances.values()].some(
+          (instance) => instance.isClosed
+        );
+        if (current.configSignature === signature && !currentHasClosedInstance) {
+          current.lastActivity = Date.now();
+          await this.refreshModernInstanceTools(current.instances);
+          return {
+            tools: this.collectTools(current.instances, fullServerInfo, overrides),
+            stats: current.stats,
+          };
+        }
+      }
+
+      if (enabledEntries.length > 0) {
+        log.info("[MCP] Starting servers", {
+          workspaceId,
+          servers: enabledEntries.map(([name]) => name),
+        });
+      }
+
+      if (existing && hasClosedInstance) {
+        log.info("[MCP] Restarting servers due to closed client", { workspaceId });
+      }
+
+      // Internal restart: retain the recorded request options so getPrompt can
+      // still revive servers reaped later; only workspace removal forgets them.
+      await this.stopServers(workspaceId, { retainRestartOptions: true });
+
+      const {
+        instances,
+        failedServerNames: startFailedNames,
+        timedOutServerNames: startTimedOutNames = [],
+      } = await this.startServers(
+        enabledServers,
+        runtime,
+        projectPath,
+        workspacePath,
+        projectSecrets,
+        () => this.markActivity(workspaceId),
+        workspaceId
+      );
+
+      const allFailedNames = [...restartFailedNames, ...startFailedNames];
+      const stats = this.createWorkspaceStats(enabledEntries.length, instances, allFailedNames);
+
+      this.workspaceServers.set(workspaceId, {
+        configSignature: signature,
+        instances,
+        enabledServerNames,
+        stats,
+        timedOutServerNames: startTimedOutNames,
+        retryingTimedOutServerNames: new Set(),
+        lastActivity: Date.now(),
       });
-    }
 
-    if (existing && hasClosedInstance) {
-      log.info("[MCP] Restarting servers due to closed client", { workspaceId });
-    }
-
-    // Internal restart: retain the recorded request options so getPrompt can
-    // still revive servers reaped later; only workspace removal forgets them.
-    await this.stopServers(workspaceId, { retainRestartOptions: true });
-
-    const {
-      instances,
-      failedServerNames: startFailedNames,
-      timedOutServerNames: startTimedOutNames = [],
-    } = await this.startServers(
-      enabledServers,
-      runtime,
-      projectPath,
-      workspacePath,
-      projectSecrets,
-      () => this.markActivity(workspaceId),
-      workspaceId
-    );
-
-    const allFailedNames = [...restartFailedNames, ...startFailedNames];
-    const stats = this.createWorkspaceStats(enabledEntries.length, instances, allFailedNames);
-
-    this.workspaceServers.set(workspaceId, {
-      configSignature: signature,
-      instances,
-      enabledServerNames,
-      stats,
-      timedOutServerNames: startTimedOutNames,
-      retryingTimedOutServerNames: new Set(),
-      lastActivity: Date.now(),
+      return {
+        tools: this.collectTools(instances, fullServerInfo, overrides),
+        stats,
+      };
     });
-
-    return {
-      tools: this.collectTools(instances, fullServerInfo, overrides),
-      stats,
-    };
   }
 
   async getPromptsForWorkspace(

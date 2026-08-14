@@ -1292,6 +1292,31 @@ describe("MCPServerManager", () => {
     expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("not connected");
   });
 
+  test("serializes config-change restarts across concurrent workspace requests", async () => {
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd-a") }));
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    const startServersMock = mock(async () => {
+      if (startServersMock.mock.calls.length > 1) await startGate;
+      return startResult([["coder"]]);
+    });
+    access.startServers = startServersMock;
+
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    expect(startServersMock).toHaveBeenCalledTimes(1);
+
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd-b") }));
+    const first = manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    const second = manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    releaseStart();
+    await Promise.all([first, second]);
+
+    // One restart for the config change; the queued caller reuses its result.
+    expect(startServersMock).toHaveBeenCalledTimes(2);
+  });
+
   test("serializes cold-start server startup across concurrent workspace requests", async () => {
     configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
     let releaseStart!: () => void;

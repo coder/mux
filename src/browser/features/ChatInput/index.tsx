@@ -2632,7 +2632,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       return;
     }
     const inlineReferenceCandidates = extractInlineSkillReferenceCandidates(messageText);
-    const [combinedSkillRefs, combinedMcpPromptRefs] = await Promise.all([
+    const [combinedSkillRefs, mcpPromptRefsResult] = await Promise.all([
       resolveInlineSkillRefsForSend({
         messageText,
         slashInvocation: skillInvocation,
@@ -2650,6 +2650,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         candidates: inlineReferenceCandidates,
       }),
     ]);
+    if (mcpPromptRefsResult.error) {
+      pushToast({ type: "error", message: mcpPromptRefsResult.error });
+      return;
+    }
+    const combinedMcpPromptRefs = mcpPromptRefsResult.refs;
 
     // Route to creation handler for creation variant
     if (variant === "creation") {

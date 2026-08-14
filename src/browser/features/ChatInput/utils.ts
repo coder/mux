@@ -339,7 +339,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   api: APIClient | null;
   discovery: SkillResolutionTarget | null;
   candidates?: InlineSkillCandidate[];
-}): Promise<MCPPromptReference[]> {
+}): Promise<{ refs: MCPPromptReference[]; error?: string }> {
   const refs: MCPPromptReference[] = [];
   if (options.slashInvocation) {
     const invocation = options.slashInvocation;
@@ -355,7 +355,7 @@ export async function resolveMcpPromptRefsForSend(options: {
   const candidates = (
     options.candidates ?? extractInlineSkillReferenceCandidates(options.messageText)
   ).filter((candidate) => isMcpPromptCommandKey(candidate.skillName));
-  if (candidates.length === 0) return refs;
+  if (candidates.length === 0) return { refs };
 
   const descriptors = await loadMcpPromptDescriptors({
     descriptors: options.descriptors,
@@ -363,15 +363,34 @@ export async function resolveMcpPromptRefsForSend(options: {
     discovery: options.discovery,
     commandKeys: candidates.map((candidate) => candidate.skillName),
   });
-  if (!descriptors) return refs;
+  if (!descriptors) return { refs };
 
+  const isInlineInvocable = (descriptor: MCPPromptDescriptor) =>
+    !(descriptor.arguments ?? []).some((argument) => argument.required);
   for (const candidate of candidates) {
     const prompt = descriptors.find(
       (descriptor) =>
-        matchesPromptCommandKey(descriptor, candidate.skillName) &&
-        !(descriptor.arguments ?? []).some((argument) => argument.required)
+        matchesPromptCommandKey(descriptor, candidate.skillName) && isInlineInvocable(descriptor)
     );
-    if (!prompt) continue;
+    if (!prompt) {
+      // Same orphaned-key ambiguity as the slash path: a new collision
+      // suffixed the keys, so block the send instead of dropping the ref.
+      const baseMatches = descriptors.filter(
+        (descriptor) =>
+          buildMcpPromptBaseKey(descriptor.serverName, descriptor.promptName) ===
+            candidate.skillName && isInlineInvocable(descriptor)
+      );
+      if (baseMatches.length > 0) {
+        const suggestions = baseMatches
+          .map((descriptor) => `$${descriptor.commandKey}`)
+          .join(" or ");
+        return {
+          refs: [],
+          error: `'$${candidate.skillName}' no longer matches an MCP prompt key; did you mean ${suggestions}?`,
+        };
+      }
+      continue;
+    }
     refs.push({
       serverName: prompt.serverName,
       promptName: prompt.promptName,
@@ -379,7 +398,7 @@ export async function resolveMcpPromptRefsForSend(options: {
       source: "inline",
     });
   }
-  return dedupeMcpPromptRefs(refs);
+  return { refs: dedupeMcpPromptRefs(refs) };
 }
 
 /** Returns true when any ref's scope is "project" (used by creation flow to force disableWorkspaceAgents). */
