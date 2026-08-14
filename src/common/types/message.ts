@@ -314,6 +314,40 @@ export function buildMcpPromptUserText(
   return argumentText ? `${base}: ${argumentText}` : base;
 }
 
+export function isMcpPromptReference(value: unknown): value is MCPPromptReference {
+  if (value === null || typeof value !== "object") return false;
+  const ref = value as Partial<MCPPromptReference>;
+  return (
+    typeof ref.serverName === "string" &&
+    typeof ref.promptName === "string" &&
+    typeof ref.commandKey === "string" &&
+    (ref.source === "slash" || ref.source === "inline")
+  );
+}
+
+/**
+ * muxMetadata persists as z.any(), so one corrupted history line (e.g. [null])
+ * must be filtered at read time rather than crashing aggregation (self-healing rule).
+ */
+export function sanitizeMcpPromptRefs(value: unknown): MCPPromptReference[] {
+  return Array.isArray(value) ? value.filter(isMcpPromptReference) : [];
+}
+
+export function isAgentSkillReference(value: unknown): value is AgentSkillReference {
+  if (value === null || typeof value !== "object") return false;
+  const ref = value as Partial<AgentSkillReference>;
+  return (
+    typeof ref.skillName === "string" &&
+    typeof ref.scope === "string" &&
+    (ref.source === "slash" || ref.source === "inline")
+  );
+}
+
+/** Same read-time filtering as sanitizeMcpPromptRefs for the peer refs field. */
+export function sanitizeAgentSkillRefs(value: unknown): AgentSkillReference[] {
+  return Array.isArray(value) ? value.filter(isAgentSkillReference) : [];
+}
+
 export function dedupeMcpPromptRefs(refs: MCPPromptReference[]): MCPPromptReference[] {
   const deduped = new Map<string, MCPPromptReference>();
   for (const ref of refs) {
@@ -330,7 +364,7 @@ export function withMcpPromptRefs(
   metadata: MuxMessageMetadata | undefined,
   refs: MCPPromptReference[]
 ): MuxMessageMetadata | undefined {
-  const existingRefs = Array.isArray(metadata?.mcpPromptRefs) ? metadata.mcpPromptRefs : [];
+  const existingRefs = sanitizeMcpPromptRefs(metadata?.mcpPromptRefs);
   if (existingRefs.length === 0 && refs.length === 0) {
     return metadata;
   }

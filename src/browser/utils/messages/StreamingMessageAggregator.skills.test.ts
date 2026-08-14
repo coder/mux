@@ -4,6 +4,7 @@ import {
   createMuxMessage,
   type AgentSkillReference,
   type DisplayedUserMessage,
+  type MCPPromptReference,
 } from "@/common/types/message";
 import { StreamingMessageAggregator } from "./StreamingMessageAggregator";
 
@@ -591,6 +592,51 @@ describe("Agent skill snapshot association", () => {
     expect(inlineMessage.inlineSkillSnapshots?.mcp__coder__review?.snapshot.body).toBe(
       "Expanded prompt body"
     );
+  });
+
+  it("filters malformed persisted refs instead of crashing aggregation", () => {
+    const aggregator = createAggregator();
+    // Simulates corrupted chat.jsonl rows; muxMetadata persists untyped.
+    const corruptMcpRefs: unknown = [null, {}, { serverName: "coder" }, 42];
+    const corruptSkillRefs: unknown = [null, { skillName: "tdd" }];
+    const corrupted = createMuxMessage("prompt-corrupted", "user", "Corrupted refs", {
+      historySequence: 1,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        mcpPromptRefs: corruptMcpRefs as MCPPromptReference[],
+        agentSkillRefs: corruptSkillRefs as AgentSkillReference[],
+      },
+    });
+    const mixedRefs: unknown = [
+      null,
+      {
+        serverName: "coder",
+        promptName: "review",
+        commandKey: "mcp__coder__review",
+        source: "slash",
+      },
+    ];
+    const valid = createMuxMessage("prompt-valid", "user", "Using MCP prompt coder/review", {
+      historySequence: 2,
+      timestamp: 0,
+      muxMetadata: {
+        type: "normal",
+        mcpPromptRefs: mixedRefs as MCPPromptReference[],
+      },
+    });
+
+    aggregator.loadHistoricalMessages([corrupted, valid]);
+    const displayed = aggregator.getDisplayedMessages();
+    expect(displayed).toHaveLength(2);
+
+    const corruptedMessage = displayed[0];
+    const validMessage = displayed[1];
+    if (corruptedMessage?.type !== "user" || validMessage?.type !== "user") {
+      throw new Error("Expected displayed user messages");
+    }
+    expect(corruptedMessage.mcpPromptRefs).toBeUndefined();
+    expect(validMessage.mcpPromptRefs).toHaveLength(1);
   });
 
   it("does not attach an older turn's prompt snapshot when materialization failed", () => {

@@ -4,13 +4,13 @@ import type {
   DisplayedMessage,
   CompactionRequestData,
   InlineSkillSnapshotMap,
-  AgentSkillReference,
-  MCPPromptReference,
 } from "@/common/types/message";
 import {
   createMuxMessage,
   getMcpPromptReferenceKey,
   isCompactionSummaryMetadata,
+  sanitizeAgentSkillRefs,
+  sanitizeMcpPromptRefs,
 } from "@/common/types/message";
 
 import {
@@ -410,59 +410,43 @@ function maybeCollectAgentSkillSnapshot(
   });
 }
 
-function isAgentSkillReferenceArray(
-  refs: readonly AgentSkillReference[] | undefined
-): refs is readonly AgentSkillReference[] {
-  return Array.isArray(refs);
-}
-
-function isMcpPromptReferenceArray(
-  refs: readonly MCPPromptReference[] | undefined
-): refs is readonly MCPPromptReference[] {
-  return Array.isArray(refs);
-}
-
 function deriveInlineSkillSnapshotDisplayState(
-  refs: readonly AgentSkillReference[] | undefined,
+  rawRefs: unknown,
   latestAgentSkillSnapshotByKey: ReadonlyMap<string, AgentSkillSnapshotContent>,
-  mcpRefs: readonly MCPPromptReference[] | undefined,
+  rawMcpRefs: unknown,
   latestMcpPromptSnapshotByKey: ReadonlyMap<string, MCPPromptSnapshotContent>
 ): InlineSkillSnapshotDisplayState {
   const snapshotsBySkillName: InlineSkillSnapshotMap = {};
   const cacheEntryBySkillName = new Map<string, string>();
 
-  if (isAgentSkillReferenceArray(refs)) {
-    for (const ref of refs) {
-      if (ref.source !== "inline") continue;
-      const snapshot = latestAgentSkillSnapshotByKey.get(
-        getAgentSkillSnapshotKey(ref.scope, ref.skillName)
-      );
-      if (!snapshot || (snapshot.frontmatterYaml === undefined && snapshot.body === undefined)) {
-        continue;
-      }
-      snapshotsBySkillName[ref.skillName] = {
-        skillName: ref.skillName,
-        scope: ref.scope,
-        snapshot: { frontmatterYaml: snapshot.frontmatterYaml, body: snapshot.body },
-      };
-      cacheEntryBySkillName.set(ref.skillName, getAgentSkillSnapshotDisplayCacheKey(snapshot));
+  for (const ref of sanitizeAgentSkillRefs(rawRefs)) {
+    if (ref.source !== "inline") continue;
+    const snapshot = latestAgentSkillSnapshotByKey.get(
+      getAgentSkillSnapshotKey(ref.scope, ref.skillName)
+    );
+    if (!snapshot || (snapshot.frontmatterYaml === undefined && snapshot.body === undefined)) {
+      continue;
     }
+    snapshotsBySkillName[ref.skillName] = {
+      skillName: ref.skillName,
+      scope: ref.scope,
+      snapshot: { frontmatterYaml: snapshot.frontmatterYaml, body: snapshot.body },
+    };
+    cacheEntryBySkillName.set(ref.skillName, getAgentSkillSnapshotDisplayCacheKey(snapshot));
   }
 
-  if (isMcpPromptReferenceArray(mcpRefs)) {
-    for (const ref of mcpRefs) {
-      if (ref.source !== "inline") continue;
-      const snapshot = latestMcpPromptSnapshotByKey.get(
-        getMcpPromptReferenceKey(ref.serverName, ref.promptName)
-      );
-      if (!snapshot) continue;
-      snapshotsBySkillName[ref.commandKey] = {
-        skillName: ref.commandKey,
-        scope: "built-in",
-        snapshot: { body: snapshot.body },
-      };
-      cacheEntryBySkillName.set(ref.commandKey, snapshot.body);
-    }
+  for (const ref of sanitizeMcpPromptRefs(rawMcpRefs)) {
+    if (ref.source !== "inline") continue;
+    const snapshot = latestMcpPromptSnapshotByKey.get(
+      getMcpPromptReferenceKey(ref.serverName, ref.promptName)
+    );
+    if (!snapshot) continue;
+    snapshotsBySkillName[ref.commandKey] = {
+      skillName: ref.commandKey,
+      scope: "built-in",
+      snapshot: { body: snapshot.body },
+    };
+    cacheEntryBySkillName.set(ref.commandKey, snapshot.body);
   }
 
   if (cacheEntryBySkillName.size === 0) return {};
@@ -3586,8 +3570,8 @@ export class StreamingMessageAggregator {
           ? latestAgentSkillSnapshotByKey.get(agentSkillSnapshotKey)
           : undefined;
         const slashMcpPromptRef =
-          message.role === "user" && Array.isArray(muxMeta?.mcpPromptRefs)
-            ? muxMeta.mcpPromptRefs.find((ref) => ref.source === "slash")
+          message.role === "user"
+            ? sanitizeMcpPromptRefs(muxMeta?.mcpPromptRefs).find((ref) => ref.source === "slash")
             : undefined;
         const mcpPromptSnapshot = slashMcpPromptRef
           ? blockMcpPromptSnapshotByKey.get(

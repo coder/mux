@@ -66,6 +66,8 @@ import {
   createMuxMessage,
   dedupeAgentSkillRefs,
   dedupeMcpPromptRefs,
+  sanitizeAgentSkillRefs,
+  sanitizeMcpPromptRefs,
   isCompactionSummaryMetadata,
   pickPreservedSendOptions,
   pickStartupRetrySendOptions,
@@ -222,7 +224,7 @@ const ACP_DELEGATED_TOOLS_METADATA_KEY = "acpDelegatedTools";
 function extractAgentSkillRefs(metadata: MuxMessageMetadata | undefined): AgentSkillReference[] {
   if (!metadata) return [];
 
-  const refs = Array.isArray(metadata.agentSkillRefs) ? [...metadata.agentSkillRefs] : [];
+  const refs = sanitizeAgentSkillRefs(metadata.agentSkillRefs);
   if (metadata.type === "agent-skill") {
     const hasLegacySlashRef = refs.some(
       (ref) => ref.skillName === metadata.skillName && ref.source === "slash"
@@ -6185,9 +6187,10 @@ export class AgentSession {
     cancelSignal: AbortSignal | undefined
   ): Promise<MuxMessage[]> {
     const mcpServerManager = this.mcpServerManager;
-    if (!mcpServerManager || !Array.isArray(muxMetadata?.mcpPromptRefs)) return [];
+    if (!mcpServerManager) return [];
 
-    const refs = dedupeMcpPromptRefs(muxMetadata.mcpPromptRefs);
+    // Corrupted persisted refs must not fail the send (self-healing rule).
+    const refs = dedupeMcpPromptRefs(sanitizeMcpPromptRefs(muxMetadata?.mcpPromptRefs));
     const snapshots = await Promise.all(
       refs.map(async (ref): Promise<MuxMessage | null> => {
         try {
