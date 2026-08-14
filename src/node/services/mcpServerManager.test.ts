@@ -1308,7 +1308,6 @@ describe("MCPServerManager", () => {
     releaseStart();
     await Promise.all([first, second]);
 
-    // One restart for the config change; the queued caller reuses its result.
     expect(startServersMock).toHaveBeenCalledTimes(2);
   });
 

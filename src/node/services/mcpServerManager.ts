@@ -1578,16 +1578,10 @@ export class MCPServerManager {
       };
     }
 
-    // Config changed, instance closed, or not started yet -> restart.
-    //
-    // Serialized per workspace: concurrent callers (composer prompt discovery,
-    // stream tool startup, multi-ref getPrompt refreshes) could otherwise each
-    // stop/start the same servers and overwrite workspaceServers without
-    // closing the loser's instances. The cached same-signature retry path
-    // above intentionally stays outside this lock; it is guarded by
-    // retryingTimedOutServerNames and the mid-retry replacement reconciliation.
+    // Serialize restarts so concurrent callers cannot overwrite cached servers
+    // without closing discarded instances. Same-signature retries remain outside
+    // this lock because their replacement path reconciles concurrent changes.
     return this.workspaceRestartLocks.withLock(workspaceId, async () => {
-      // A queued caller may find the restart already done by the lock holder.
       const current = this.workspaceServers.get(workspaceId);
       if (current !== undefined) {
         const currentHasClosedInstance = [...current.instances.values()].some(
@@ -1730,14 +1724,7 @@ export class MCPServerManager {
     }
   }
 
-  /**
-   * Sync a project trust change into recorded workspace request options.
-   * getPrompt refreshes from those options before invoking, so a revoked
-   * project must not keep serving repo-local prompts from a stale
-   * trusted=true snapshot. Callers pass every affected project path (the
-   * trust owner plus children inheriting via parentProjectPath); scratch
-   * workspaces are untouched because their paths never match.
-   */
+  /** Updates recorded options so prompt refreshes cannot reuse stale project trust. */
   applyProjectTrust(projectPaths: string[], trusted: boolean): void {
     const affected = new Set(projectPaths.map((projectPath) => stripTrailingSlashes(projectPath)));
     for (const [workspaceId, options] of this.lastWorkspaceRequestOptions) {
