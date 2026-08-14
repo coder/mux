@@ -100,6 +100,10 @@ function buildFollowUpFromSource(
     source.agentSkill && source.agentSkill.skillName !== slashMcpPromptRef?.commandKey
       ? buildAgentSkillMetadata({
           rawCommand: source.content,
+          // Preserve the displayed prefix (composed one-shots render
+          // "/haiku+0 /done") — without it the rebuilt transcript loses the
+          // command badge, which keys its highlighting on this value.
+          commandPrefix: source.commandPrefix,
           skillName: source.agentSkill.skillName,
           scope: source.agentSkill.scope,
           arguments: source.agentSkill.arguments,
