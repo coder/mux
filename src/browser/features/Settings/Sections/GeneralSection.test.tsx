@@ -20,6 +20,7 @@ interface MockConfig {
   chatTranscriptFullWidth: boolean;
   llmDebugLogs: boolean;
   telemetryEnabled: boolean;
+  telemetryDisabledByEnv: boolean;
 }
 
 interface MockAPIClient {
@@ -174,6 +175,7 @@ interface RenderGeneralSectionOptions {
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
   chatTranscriptFullWidth?: boolean;
   telemetryEnabled?: boolean;
+  telemetryDisabledByEnv?: boolean;
 }
 
 interface MockAPISetup {
@@ -202,6 +204,7 @@ function createMockAPI(configOverrides: Partial<MockConfig> = {}): MockAPISetup 
     chatTranscriptFullWidth: false,
     llmDebugLogs: false,
     telemetryEnabled: true,
+    telemetryDisabledByEnv: false,
     ...configOverrides,
   };
 
@@ -289,6 +292,9 @@ describe("GeneralSection", () => {
       worktreeArchiveBehavior: options.worktreeArchiveBehavior,
       ...(options.telemetryEnabled !== undefined
         ? { telemetryEnabled: options.telemetryEnabled }
+        : {}),
+      ...(options.telemetryDisabledByEnv !== undefined
+        ? { telemetryDisabledByEnv: options.telemetryDisabledByEnv }
         : {}),
     });
     mockApi = api;
@@ -397,6 +403,52 @@ describe("GeneralSection", () => {
     await waitFor(() => {
       expect(toggle.getAttribute("aria-checked")).toBe("true");
       expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: true });
+    });
+  });
+
+  test("renders the telemetry switch hard-disabled when the environment overrides it", async () => {
+    const { updateTelemetryEnabledMock, view } = renderGeneralSection({
+      telemetryEnabled: true,
+      telemetryDisabledByEnv: true,
+    });
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    // Env override wins over the config value: switch shows off and cannot be flipped.
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect(toggle.hasAttribute("disabled")).toBe(true);
+    });
+    expect(view.getByText(/Disabled by the environment/i)).toBeTruthy();
+
+    fireEvent.click(toggle);
+    expect(updateTelemetryEnabledMock).not.toHaveBeenCalled();
+  });
+
+  test("reverts the telemetry switch when persisting the change fails", async () => {
+    const { api, updateTelemetryEnabledMock } = createMockAPI({ telemetryEnabled: true });
+    api.config.updateTelemetryEnabled = updateTelemetryEnabledMock.mockImplementation(() =>
+      Promise.reject(new Error("write failed"))
+    );
+    mockApi = api;
+
+    const view = render(
+      <ThemeProvider forcedTheme="dark">
+        <GeneralSection />
+      </ThemeProvider>
+    );
+
+    const toggle = view.getByRole("switch", { name: "Toggle Usage Telemetry" });
+    await waitFor(() => {
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+    });
+
+    fireEvent.click(toggle);
+
+    // A privacy control must not read "off" while the backend still collects:
+    // the failed write flips the optimistic state back to enabled.
+    await waitFor(() => {
+      expect(updateTelemetryEnabledMock).toHaveBeenCalledWith({ enabled: false });
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
     });
   });
 

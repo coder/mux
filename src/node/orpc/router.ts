@@ -1087,6 +1087,7 @@ export const router = (authToken?: string) => {
             chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
             llmDebugLogs: config.llmDebugLogs === true,
             telemetryEnabled: config.telemetryEnabled !== false,
+            telemetryDisabledByEnv: context.telemetryService.isDisabledByEnv(),
             heartbeatDefaultPrompt: config.heartbeatDefaultPrompt ?? undefined,
             heartbeatDefaultIntervalMs: config.heartbeatDefaultIntervalMs ?? undefined,
             goalDefaults: normalizeGoalDefaults(config.goalDefaults ?? DEFAULT_GOAL_DEFAULTS),

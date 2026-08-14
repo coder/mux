@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { shouldEnableTelemetry, type TelemetryEnablementContext } from "./telemetryService";
+import {
+  shouldEnableTelemetry,
+  TelemetryService,
+  type TelemetryEnablementContext,
+} from "./telemetryService";
 
 function createContext(overrides: Partial<TelemetryEnablementContext>): TelemetryEnablementContext {
   return {
@@ -133,6 +137,17 @@ describe("TelemetryService enablement", () => {
     );
 
     expect(enabled).toBe(true);
+  });
+
+  test("isExplicitlyDisabled reflects the config opt-out like the env var", () => {
+    // Features gated on explicit opt-out (e.g. link sharing) must treat the
+    // Settings toggle the same as MUX_DISABLE_TELEMETRY=1.
+    let disabled = false;
+    const service = new TelemetryService(undefined, () => disabled);
+
+    expect(service.isExplicitlyDisabled()).toBe(false);
+    disabled = true;
+    expect(service.isExplicitlyDisabled()).toBe(true);
   });
 
   test("dev opt-in does not bypass test env disable", () => {

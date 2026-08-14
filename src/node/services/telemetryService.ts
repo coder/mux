@@ -142,6 +142,8 @@ export class TelemetryService {
   private featureFlagVariants: Record<string, string | boolean> = {};
   private readonly muxHome: string;
   private readonly isDisabledByConfig?: () => boolean;
+  private initInFlight: Promise<void> | null = null;
+  private configApplyChain: Promise<void> = Promise.resolve();
 
   /**
    * Check if telemetry is enabled.
@@ -152,13 +154,19 @@ export class TelemetryService {
   }
 
   /**
-   * Check if telemetry was explicitly disabled by the user via MUX_DISABLE_TELEMETRY=1.
-   * This is different from isEnabled() which also returns false in dev mode.
-   * Used to gate features like link sharing that should only be hidden when
-   * the user explicitly opts out of mux services.
+   * Check if telemetry was explicitly disabled by the user — either via
+   * MUX_DISABLE_TELEMETRY=1 or the Settings → General opt-out. This is
+   * different from isEnabled() which also returns false in test/CI contexts.
+   * Consumers gating on explicit opt-out must treat both switches the same;
+   * the docs present them as equivalent.
    */
   isExplicitlyDisabled(): boolean {
-    return process.env.MUX_DISABLE_TELEMETRY === "1";
+    return process.env.MUX_DISABLE_TELEMETRY === "1" || this.isDisabledByConfig?.() === true;
+  }
+
+  /** The environment gate alone (env var, CI, tests) — surfaced to the UI so the Settings toggle can render as hard-disabled. */
+  isDisabledByEnv(): boolean {
+    return isTelemetryDisabledByEnv(process.env);
   }
 
   /**
@@ -197,20 +205,43 @@ export class TelemetryService {
    * Apply the Settings → General telemetry toggle at runtime: disabling shuts
    * the PostHog client down (capture() no-ops on a null client), enabling
    * re-runs initialize(), which re-checks every enablement gate.
+   *
+   * Applies are serialized across ALL callers: the desktop Settings pane and
+   * API-server clients drive the same router in one process with no shared
+   * frontend chain, and an unserialized shutdown/initialize interleaving can
+   * resurrect a capturing client after an opt-out, kill telemetry while the
+   * switch shows on, or orphan an unflushed client.
    */
   async setConfigEnabled(enabled: boolean): Promise<void> {
-    if (!enabled) {
-      await this.shutdown();
-      return;
-    }
-    await this.initialize();
+    const next = this.configApplyChain.then(() => (enabled ? this.initialize() : this.shutdown()));
+    // Keep the chain usable after a failed apply.
+    this.configApplyChain = next.then(
+      () => undefined,
+      () => undefined
+    );
+    return next;
   }
 
   /**
    * Initialize the PostHog client.
    * Should be called once on app startup.
+   *
+   * Re-entrancy-safe: the null-client guard and the client assignment are
+   * separated by awaits, so two concurrent initializes would otherwise both
+   * pass the guard and orphan a live client.
    */
   async initialize(): Promise<void> {
+    if (this.initInFlight) {
+      return this.initInFlight;
+    }
+    const run = this.initializeOnce().finally(() => {
+      this.initInFlight = null;
+    });
+    this.initInFlight = run;
+    return run;
+  }
+
+  private async initializeOnce(): Promise<void> {
     if (this.client) {
       return;
     }
@@ -292,7 +323,17 @@ export class TelemetryService {
    * Events are silently ignored when disabled.
    */
   capture(payload: TelemetryEventPayload): void {
-    if (isTelemetryDisabledByEnv(process.env) || !this.client || !this.distinctId) {
+    // The config opt-out is re-checked per event, not just at initialize():
+    // a second mux process sharing ~/.mux/config.json (mux server alongside
+    // the desktop app) must stop capturing when the user opts out in the
+    // other process. Event volume is low (discrete user actions), so the
+    // config read is acceptable here for a privacy control.
+    if (
+      isTelemetryDisabledByEnv(process.env) ||
+      this.isDisabledByConfig?.() === true ||
+      !this.client ||
+      !this.distinctId
+    ) {
       return;
     }
 
@@ -314,16 +355,19 @@ export class TelemetryService {
    * Should be called on app close.
    */
   async shutdown(): Promise<void> {
-    if (!this.client) {
+    // Null BEFORE flushing: capture() must no-op the instant a shutdown
+    // begins, and a concurrent initialize() must never observe the stale
+    // client and skip re-initialization.
+    const client = this.client;
+    this.client = null;
+    if (!client) {
       return;
     }
 
     try {
-      await this.client.shutdown();
+      await client.shutdown();
     } catch {
       // Silently ignore shutdown errors
     }
-
-    this.client = null;
   }
 }
