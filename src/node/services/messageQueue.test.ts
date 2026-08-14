@@ -485,6 +485,7 @@ describe("MessageQueue", () => {
         {
           synthetic: true,
           agentInitiated: true,
+          workspaceTurnContinuation: true,
           onCanceled,
           onAcceptedPreStreamFailure,
         }
@@ -501,6 +502,28 @@ describe("MessageQueue", () => {
       expect(second.options?.muxMetadata).toBeUndefined();
       expect(second.internal?.onCanceled).toBeUndefined();
       expect(second.internal?.onAcceptedPreStreamFailure).toBeUndefined();
+    });
+
+    it("should preserve an original queued workspace-turn prompt during reordering", () => {
+      const onAccepted = () => undefined;
+      const onCanceled = () => undefined;
+      queue.add(
+        "Original workspace-turn prompt",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        { agentInitiated: true, onAccepted, onCanceled }
+      );
+      queue.add("User send now", { model: "gpt-4", agentId: "exec" });
+
+      expect(queue.setVisibleQueueDispatchMode("tool-end")).toBe(true);
+
+      const first = queue.dequeueNext();
+      expect(first.message).toBe("User send now");
+
+      const second = queue.dequeueNext();
+      expect(second.message).toBe("Original workspace-turn prompt");
+      expect(second.options?.muxMetadata).toEqual(metadata);
+      expect(second.internal?.onAccepted).toBe(onAccepted);
+      expect(second.internal?.onCanceled).toBe(onCanceled);
     });
 
     it("should preserve internal workspace-turn callbacks", () => {

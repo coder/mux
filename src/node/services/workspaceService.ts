@@ -8721,6 +8721,7 @@ export class WorkspaceService extends EventEmitter {
           {
             synthetic: internal?.synthetic,
             agentInitiated: internal?.agentInitiated,
+            workspaceTurnContinuation: internal?.workspaceTurnContinuation,
             dedupeKey: internal?.queueDedupeKey,
             removableDedupeKey: internal?.removableQueueDedupeKey,
             cancelState: internal?.cancelState,

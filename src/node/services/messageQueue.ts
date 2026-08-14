@@ -71,6 +71,8 @@ type QueueDispatchMode = NonNullable<SendMessageOptions["queueDispatchMode"]>;
 interface QueuedMessageInternalOptions {
   synthetic?: boolean;
   agentInitiated?: boolean;
+  /** True only for a report that continues an existing workspace turn. */
+  workspaceTurnContinuation?: boolean;
   /** Keep this queued add isolated so its dedupe key can be removed without affecting siblings. */
   sealed?: boolean;
   /** Dedupe-keyed maintenance sends are removable by prefix without changing global queue rules. */
@@ -114,6 +116,8 @@ interface QueueEntry {
   sealed: boolean;
   /** User-originated entries are the only ones exposed to/restored into the composer. */
   userAuthored: boolean;
+  /** True only for a report that continues an existing workspace turn. */
+  workspaceTurnContinuation: boolean;
   addCount: number;
   syntheticCount: number;
   agentInitiatedCount: number;
@@ -255,33 +259,31 @@ export class MessageQueue {
    * the superseded workspace turn when it later dispatches.
    */
   private revalidateWorkspaceTurnCorrelations(): void {
-    let hasPriorEntries = false;
-    let allPriorEntriesShareCorrelation = true;
+    let hasUnrelatedPredecessor = false;
     let priorCorrelation: WorkspaceTurnMetadata | undefined;
 
     for (const entry of this.entries) {
       const metadata = isWorkspaceTurnMetadata(entry.muxMetadata) ? entry.muxMetadata : undefined;
-      const preservesCorrelation =
+      const matchesPriorCorrelation =
         metadata != null &&
-        (!hasPriorEntries ||
-          (allPriorEntriesShareCorrelation &&
-            priorCorrelation != null &&
-            metadata.taskHandleId === priorCorrelation.taskHandleId &&
+        !hasUnrelatedPredecessor &&
+        (priorCorrelation == null ||
+          (metadata.taskHandleId === priorCorrelation.taskHandleId &&
             metadata.ownerWorkspaceId === priorCorrelation.ownerWorkspaceId &&
             metadata.turnId === priorCorrelation.turnId));
 
-      if (metadata != null && !preservesCorrelation) {
-        entry.muxMetadata = undefined;
-        entry.onCanceled = undefined;
-        entry.onAcceptedPreStreamFailure = undefined;
-        allPriorEntriesShareCorrelation = false;
-      } else if (metadata == null) {
-        allPriorEntriesShareCorrelation = false;
-      } else if (!hasPriorEntries) {
-        priorCorrelation = metadata;
+      if (metadata == null) {
+        hasUnrelatedPredecessor = true;
+      } else if (!matchesPriorCorrelation) {
+        hasUnrelatedPredecessor = true;
+        if (entry.workspaceTurnContinuation) {
+          entry.muxMetadata = undefined;
+          entry.onCanceled = undefined;
+          entry.onAcceptedPreStreamFailure = undefined;
+        }
+      } else {
+        priorCorrelation ??= metadata;
       }
-
-      hasPriorEntries = true;
     }
   }
 
@@ -422,6 +424,7 @@ export class MessageQueue {
         dispatchMode: incomingMode,
         sealed: incomingIsSealed,
         userAuthored: incomingIsUserAuthored,
+        workspaceTurnContinuation: internal?.workspaceTurnContinuation === true,
         addCount: 0,
         syntheticCount: 0,
         agentInitiatedCount: 0,

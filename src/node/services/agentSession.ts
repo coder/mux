@@ -5283,6 +5283,8 @@ export class AgentSession {
     internal?: {
       synthetic?: boolean;
       agentInitiated?: boolean;
+      /** True only for a report that continues an existing workspace turn. */
+      workspaceTurnContinuation?: boolean;
       /** Coalescing: drop the message when an entry with the same key is already queued. */
       dedupeKey?: string;
       /** Isolate this keyed message so it can be selectively superseded later. */
