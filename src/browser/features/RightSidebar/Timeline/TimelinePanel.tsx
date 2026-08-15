@@ -35,6 +35,7 @@ import {
   getTimelineEventKind,
   getTimelineEventTitle,
   getTimelinePresentation,
+  isMachineryKind,
   type TimelineCategory,
 } from "./timelinePresentation";
 
@@ -83,6 +84,15 @@ function isRuleKind(kind: string): boolean {
   return kind === TURN_END_KIND || BOUNDARY_KINDS.has(kind);
 }
 
+// Rules a machinery turn produces itself (its completion, auto-compaction cycles) would otherwise
+// split machinery stretches apart. Deliberate boundaries (context.reset, history.cleared) stay out
+// so they always break a group.
+const ABSORBED_RULE_KINDS = new Set([
+  TURN_END_KIND,
+  "compaction.triggered",
+  "compaction.completed",
+]);
+
 const FILTERS: Array<{ value: TimelineFilter; label: string }> = [
   { value: "all", label: "All" },
   ...TIMELINE_CATEGORIES.map((category) => ({
@@ -114,13 +124,73 @@ function groupEventsByDay(events: TimelineEvent[]): DayGroup[] {
   return Array.from(groups.values());
 }
 
-function collapseConsecutiveEvents(events: TimelineEvent[]): DayItem[] {
+// An interruption abandons the in-flight retry, so both rows tell the same story. Dropping the
+// retry row only when its interruption renders next to it keeps it visible under the Errors
+// filter, where the interruption row is filtered out.
+function isRedundantAbandonedRetry(event: TimelineEvent, next: TimelineEvent | undefined): boolean {
+  return (
+    getTimelineEventKind(event) === "retry.abandoned" &&
+    event.data?.reason === "aborted" &&
+    next != null &&
+    getTimelineEventKind(next) === "turn.interrupted"
+  );
+}
+
+function dominantMachineryKind(run: TimelineEvent[]): string {
+  const counts = new Map<string, number>();
+  let dominant = getTimelineEventKind(run[0]);
+  for (const event of run) {
+    const kind = getTimelineEventKind(event);
+    if (!isMachineryKind(kind)) continue;
+    const count = (counts.get(kind) ?? 0) + 1;
+    counts.set(kind, count);
+    if (count > (counts.get(dominant) ?? 0)) dominant = kind;
+  }
+  return dominant;
+}
+
+// Timeline pages render newest-first, but the scan reasons chronologically: a machinery turn's
+// completion rule lands after the event that dispatched it. Reverse in and back out instead of
+// teaching every rule the inverted direction.
+function collapseConsecutiveEvents(newestFirst: TimelineEvent[]): DayItem[] {
+  const chronological = newestFirst.toReversed();
+  const events = chronological.filter(
+    (event, index) => !isRedundantAbandonedRetry(event, chronological[index + 1])
+  );
   const items: DayItem[] = [];
   let index = 0;
 
   while (index < events.length) {
     const event = events[index];
     const kind = getTimelineEventKind(event);
+
+    if (isMachineryKind(kind)) {
+      const run: TimelineEvent[] = [event];
+      let machineryCount = 1;
+      let end = index + 1;
+      while (end < events.length) {
+        const nextKind = getTimelineEventKind(events[end]);
+        if (isMachineryKind(nextKind)) {
+          machineryCount++;
+        } else if (!ABSORBED_RULE_KINDS.has(nextKind)) {
+          break;
+        }
+        run.push(events[end]);
+        end++;
+      }
+      if (machineryCount >= 2) {
+        items.push({
+          key: `${event.id}:machinery`,
+          kind: dominantMachineryKind(run),
+          events: run.reverse(),
+        });
+      } else {
+        items.push(...run);
+      }
+      index = end;
+      continue;
+    }
+
     if (isRuleKind(kind)) {
       items.push(event);
       index++;
@@ -134,14 +204,14 @@ function collapseConsecutiveEvents(events: TimelineEvent[]): DayItem[] {
 
     const run = events.slice(index, end);
     if (run.length >= 3) {
-      items.push({ key: `${event.id}:${kind}`, kind, events: run });
+      items.push({ key: `${event.id}:${kind}`, kind, events: run.reverse() });
     } else {
       items.push(...run);
     }
     index = end;
   }
 
-  return items;
+  return items.reverse();
 }
 
 function isCollapsedRun(item: DayItem): item is CollapsedRun {
@@ -308,6 +378,11 @@ function CollapsedEventRun(props: {
 }) {
   const presentation = getTimelinePresentation(props.run.kind);
   const Icon = presentation.icon;
+  // Count only machinery events (absorbed rules are decoration) and use a neutral label when no
+  // single kind represents the group.
+  const counted = props.run.events.filter((event) => !isRuleKind(getTimelineEventKind(event)));
+  const mixed = new Set(counted.map((event) => getTimelineEventKind(event))).size > 1;
+  const label = mixed ? "automatic" : presentation.label;
 
   if (props.expanded) {
     return (
@@ -316,22 +391,31 @@ function CollapsedEventRun(props: {
           type="button"
           aria-expanded="true"
           data-timeline-collapsed-kind={props.run.kind}
-          data-timeline-collapsed-count={props.run.events.length}
+          data-timeline-collapsed-count={counted.length}
           onClick={() => props.onToggle(props.run.key)}
           className="text-muted hover:bg-hover focus-visible:ring-accent flex min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-[11px] focus-visible:ring-1 focus-visible:outline-none"
         >
           <ChevronDown className="h-3.5 w-3.5 shrink-0" />
-          <span className="counter-nums shrink-0">{props.run.events.length}</span>
-          <span className="min-w-0 truncate">{presentation.label} events</span>
+          <span className="counter-nums shrink-0">{counted.length}</span>
+          <span className="min-w-0 truncate">{label} events</span>
         </button>
-        {props.run.events.map((event) => (
-          <TimelineEventRow
-            key={event.id}
-            event={event}
-            selected={props.selectedEventId === event.id}
-            onSelect={props.onSelect}
-          />
-        ))}
+        {props.run.events.map((event) =>
+          isRuleKind(getTimelineEventKind(event)) ? (
+            <TimelineRuleRow
+              key={event.id}
+              event={event}
+              selected={props.selectedEventId === event.id}
+              onSelect={props.onSelect}
+            />
+          ) : (
+            <TimelineEventRow
+              key={event.id}
+              event={event}
+              selected={props.selectedEventId === event.id}
+              onSelect={props.onSelect}
+            />
+          )
+        )}
       </div>
     );
   }
@@ -341,7 +425,7 @@ function CollapsedEventRun(props: {
       type="button"
       aria-expanded="false"
       data-timeline-collapsed-kind={props.run.kind}
-      data-timeline-collapsed-count={props.run.events.length}
+      data-timeline-collapsed-count={counted.length}
       onClick={() => props.onToggle(props.run.key)}
       className="border-border bg-surface-secondary/50 hover:bg-hover focus-visible:ring-accent grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 rounded-md border px-2 py-2 text-left focus-visible:ring-1 focus-visible:outline-none"
     >
@@ -349,8 +433,7 @@ function CollapsedEventRun(props: {
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="text-content-secondary min-w-0 truncate text-xs">
-        <span className="counter-nums font-medium">{props.run.events.length}</span>{" "}
-        {presentation.label} events
+        <span className="counter-nums font-medium">{counted.length}</span> {label} events
       </span>
       <ChevronRight className="text-muted h-3.5 w-3.5 shrink-0" />
     </button>

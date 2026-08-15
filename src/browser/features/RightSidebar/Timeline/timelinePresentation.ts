@@ -97,6 +97,24 @@ const TIMELINE_PRESENTATION: Record<TimelineEventKind, TimelinePresentation> = {
   "agent.notified": { label: "Notification sent", icon: Bell, category: "agent" },
 };
 
+/**
+ * Scheduler machinery rather than narrative: wakes, dispatch churn, and heartbeats record how the
+ * loop kept moving, not what the work accomplished, so the panel collapses contiguous stretches
+ * into one expandable group instead of rendering each row.
+ */
+const MACHINERY_KINDS: ReadonlySet<string> = new Set<TimelineEventKind>([
+  "turn.monitor_wake",
+  "turn.background_wake",
+  "turn.synthetic",
+  "goal.continuation_dispatched",
+  "heartbeat.dispatched",
+  "heartbeat.skipped",
+]);
+
+export function isMachineryKind(kind: string): boolean {
+  return MACHINERY_KINDS.has(kind);
+}
+
 const knownKinds = new Set<string>(TIMELINE_EVENT_KINDS);
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {

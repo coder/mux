@@ -303,6 +303,94 @@ describe("TimelinePanel", () => {
     ).toBe("true");
   });
 
+  // Production timeline pages are newest-first, so these fixtures list descending seq.
+  test("collapses wake/turn-completed churn into one expandable group", () => {
+    const events = [
+      makeEvent("report", "task.reported", 5, { source: { system: "task" } }),
+      makeEvent("turn-2", "turn.completed", 4),
+      makeEvent("wake-2", "turn.monitor_wake", 3),
+      makeEvent("turn-1", "turn.completed", 2),
+      makeEvent("wake-1", "turn.monitor_wake", 1),
+    ];
+
+    const view = renderTimeline({ events });
+    const collapsedRun = view.container.querySelector<HTMLElement>(
+      '[data-timeline-collapsed-kind="turn.monitor_wake"][data-timeline-collapsed-count="2"]'
+    );
+
+    expect(collapsedRun).not.toBeNull();
+    expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(0);
+    expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
+
+    fireEvent.click(collapsedRun!);
+
+    expect(
+      view.container.querySelectorAll('[data-timeline-event-kind="turn.monitor_wake"]')
+    ).toHaveLength(2);
+    expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(2);
+  });
+
+  test("keeps a lone machinery event as a plain row with its turn rule", () => {
+    const events = [
+      makeEvent("report", "task.reported", 3, { source: { system: "task" } }),
+      makeEvent("turn", "turn.completed", 2),
+      makeEvent("wake", "turn.monitor_wake", 1),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector("[data-timeline-collapsed-kind]")).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="wake"]')).not.toBeNull();
+    expect(view.container.querySelectorAll('[role="separator"]')).toHaveLength(1);
+  });
+
+  test("groups adjacent machinery events across different kinds", () => {
+    const events = [
+      makeEvent("report", "task.reported", 3, { source: { system: "task" } }),
+      makeEvent("continuation", "goal.continuation_dispatched", 2, {
+        source: { system: "goal" },
+      }),
+      makeEvent("wake", "turn.monitor_wake", 1),
+    ];
+
+    const view = renderTimeline({ events });
+    const collapsedRun = view.container.querySelector<HTMLElement>(
+      '[data-timeline-collapsed-count="2"]'
+    );
+
+    expect(collapsedRun).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="wake"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="continuation"]')).toBeNull();
+
+    fireEvent.click(collapsedRun!);
+
+    expect(view.container.querySelector('[data-timeline-event-id="wake"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="continuation"]')).not.toBeNull();
+  });
+
+  test("drops the abandoned-retry row that duplicates an adjacent interruption", () => {
+    const events = [
+      makeEvent("retry-real", "retry.abandoned", 3, { data: { reason: "max retries" } }),
+      makeEvent("stop", "turn.interrupted", 2, { status: "interrupted" }),
+      makeEvent("retry", "retry.abandoned", 1, { data: { reason: "aborted" } }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="retry"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="stop"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="retry-real"]')).not.toBeNull();
+
+    // Under the Errors filter the interruption row is gone, so the retry row must come back.
+    const errorsFilter = Array.from(view.container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Errors"
+    );
+    if (!errorsFilter) throw new Error("Expected the errors filter control");
+    fireEvent.click(errorsFilter);
+
+    expect(view.container.querySelector('[data-timeline-event-id="retry"]')).not.toBeNull();
+  });
+
   test("stops reveal pagination at the page cap when the target remains unavailable", async () => {
     const loadOlderHistory = jest.fn<Promise<"loaded">, [string]>().mockResolvedValue("loaded");
     const event = makeEvent("anchored", "turn.completed", 1, {
