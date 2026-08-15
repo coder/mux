@@ -1204,6 +1204,33 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("prompt discovery refreshes with resolver-provided secrets and retries on mid-flight rotation", async () => {
+    const request = workspaceRequest("workspace", { projectSecrets: { TOKEN: "recorded" } });
+    access.lastWorkspaceRequestOptions.set("workspace", request);
+    // First resolution returns the pre-rotation token; every later one returns
+    // the rotated token, so the post-refresh recheck must force one retry.
+    let resolveCount = 0;
+    manager.setSecretsResolver(() => {
+      resolveCount += 1;
+      return Promise.resolve({ TOKEN: resolveCount === 1 ? "old" : "new" });
+    });
+    const ensureSpy = spyOn(access, "ensureWorkspaceServers").mockImplementation((options) => {
+      access.workspaceServers.set((options as { workspaceId: string }).workspaceId, {
+        enabledServerNames: new Set(["coder"]),
+        instances: new Map([["coder", testInstance("coder", { prompts: [{ name: "status" }] })]]),
+      });
+      return Promise.resolve({ tools: {}, stats: cachedStats() });
+    });
+
+    const descriptors = await manager.getPromptsForWorkspace(workspaceRequest("workspace"));
+
+    expect(descriptors.map((descriptor) => descriptor.promptName)).toEqual(["status"]);
+    expect(ensureSpy).toHaveBeenCalledTimes(2);
+    expect(ensureSpy.mock.calls[0]?.[0]).toEqual({ ...request, projectSecrets: { TOKEN: "old" } });
+    expect(ensureSpy.mock.calls[1]?.[0]).toEqual({ ...request, projectSecrets: { TOKEN: "new" } });
+    ensureSpy.mockRestore();
+  });
+
   test("forgotten project trust no longer overrides a re-registered project's snapshot", async () => {
     const workspaceId = "ws-forgotten-trust";
     configService.listServers = mock((_projectPath: string, trusted: boolean) =>

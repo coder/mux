@@ -237,6 +237,16 @@ type ResolvedHeaders = Record<string, string> | undefined;
 
 type ResolvedTransport = "stdio" | "http" | "sse";
 
+function secretRecordsEqual(
+  a: Record<string, string> | undefined,
+  b: Record<string, string> | undefined
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  const aKeys = Object.keys(a);
+  return aKeys.length === Object.keys(b).length && aKeys.every((key) => b[key] === a[key]);
+}
+
 function resolveHeaders(
   headers: Record<string, MCPHeaderValue> | undefined,
   projectSecrets: Record<string, string> | undefined
@@ -1712,16 +1722,28 @@ export class MCPServerManager {
     callOptions?: { signal?: AbortSignal }
   ): Promise<MCPPromptDescriptor[]> {
     const workspaceId = options.workspaceId;
-    // Keep refreshing until both mutation counters remain stable across catalog fetch,
-    // preventing a pre-mutation instance copy from leaking descriptors. Abort returns
-    // promptly while a losing startup may finish into the cache for idle cleanup.
+    // Keep refreshing until both mutation counters and resolved secrets remain
+    // stable across the catalog fetch, preventing a pre-mutation instance copy
+    // from leaking descriptors. Secrets are resolved fresh each attempt and
+    // participate in the check because rotation bumps neither counter. Abort
+    // returns promptly while a losing startup may finish into the cache for
+    // idle cleanup.
     let enabledInstances: Map<string, MCPServerInstance>;
     for (;;) {
       const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
       const generationBefore = this.configService.configGeneration;
       const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? options;
+      const secretsUsed = await this.resolveSecretsForRefresh(
+        workspaceId,
+        currentOptions.projectPath
+      );
       const refreshed = await raceWithAbortAndTimeout(
-        this.ensureWorkspaceServers(currentOptions, false),
+        this.ensureWorkspaceServers(
+          secretsUsed !== undefined
+            ? { ...currentOptions, projectSecrets: secretsUsed }
+            : currentOptions,
+          false
+        ),
         {
           ...(callOptions?.signal !== undefined ? { signal: callOptions.signal } : {}),
         }
@@ -1743,9 +1765,14 @@ export class MCPServerManager {
         )
       );
       await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
+      const secretsNow = await this.resolveSecretsForRefresh(
+        workspaceId,
+        currentOptions.projectPath
+      );
       if (
         (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) === optionsMutationsBefore &&
-        this.configService.configGeneration === generationBefore
+        this.configService.configGeneration === generationBefore &&
+        secretRecordsEqual(secretsUsed, secretsNow)
       ) {
         break;
       }
@@ -1959,6 +1986,23 @@ export class MCPServerManager {
     );
   }
 
+  /** Rotated header credentials must change the signature so stale clients are replaced. */
+  private async resolveSecretsForRefresh(
+    workspaceId: string,
+    projectPath: string
+  ): Promise<Record<string, string> | undefined> {
+    if (!this.secretsResolver) return undefined;
+    try {
+      return await this.secretsResolver(workspaceId, projectPath);
+    } catch (error) {
+      log.debug("[MCP] Failed to re-resolve secrets for prompt refresh", {
+        workspaceId,
+        error: getErrorMessage(error),
+      });
+      return undefined;
+    }
+  }
+
   async getPrompt(
     workspaceId: string,
     serverName: string,
@@ -1971,42 +2015,40 @@ export class MCPServerManager {
     // so idle cleanup can close it.
     const lastOptions = this.lastWorkspaceRequestOptions.get(workspaceId);
     if (lastOptions) {
-      const refresh = async (): Promise<void> => {
-        // Rotated header credentials must change the signature so stale clients are replaced.
-        let projectSecrets: Record<string, string> | undefined;
-        if (this.secretsResolver) {
-          try {
-            projectSecrets = await this.secretsResolver(workspaceId, lastOptions.projectPath);
-          } catch (error) {
-            log.debug("[MCP] Failed to re-resolve secrets for prompt refresh", {
-              workspaceId,
-              error: getErrorMessage(error),
-            });
-          }
-        }
-        // Re-read after the await: a settings mutation recorded while secrets
-        // resolved must not be clobbered by the pre-await options snapshot.
+      const refresh = async (projectSecrets: Record<string, string> | undefined): Promise<void> => {
+        // Re-read after the resolver await: a settings mutation recorded while
+        // secrets resolved must not be clobbered by a pre-await options snapshot.
         const currentOptions = this.lastWorkspaceRequestOptions.get(workspaceId) ?? lastOptions;
         await this.ensureWorkspaceServers(
           projectSecrets !== undefined ? { ...currentOptions, projectSecrets } : currentOptions,
           false
         );
       };
-      // Refresh until both mutation counters remain stable so no mutation completes
-      // between refresh and the synchronous dispatch checks. Later mutations race
-      // with the in-flight request and cannot be prevented here.
+      // Refresh until both mutation counters and resolved secrets remain stable
+      // so neither a settings mutation nor a secret rotation completing during
+      // the refresh leaves this dispatch on pre-mutation state. Later mutations
+      // race with the in-flight request and cannot be prevented here.
       for (;;) {
         const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
         const generationBefore = this.configService.configGeneration;
-        const refreshed = await raceWithAbortAndTimeout(refresh(), {
+        const secretsUsed = await this.resolveSecretsForRefresh(
+          workspaceId,
+          lastOptions.projectPath
+        );
+        const refreshed = await raceWithAbortAndTimeout(refresh(secretsUsed), {
           ...(options?.signal !== undefined ? { signal: options.signal } : {}),
         });
         if (refreshed.kind === "aborted") {
           throw new Error(`MCP prompt request for '${serverName}/${promptName}' was aborted`);
         }
+        const secretsNow = await this.resolveSecretsForRefresh(
+          workspaceId,
+          lastOptions.projectPath
+        );
         if (
           (this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0) === optionsMutationsBefore &&
-          this.configService.configGeneration === generationBefore
+          this.configService.configGeneration === generationBefore &&
+          secretRecordsEqual(secretsUsed, secretsNow)
         ) {
           break;
         }
