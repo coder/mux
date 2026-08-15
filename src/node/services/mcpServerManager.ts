@@ -894,6 +894,12 @@ export class MCPServerManager {
   private readonly latestWorkspaceOverrides = new Map<string, WorkspaceMCPOverrides | undefined>();
   private readonly latestProjectTrust = new Map<string, boolean>();
   private readonly workspaceRestartLocks = new MutexMap<string>();
+  // Bumped by removal-style stops (stopServers without retainRestartOptions).
+  // Startups run outside any lock shared with removal, so an abort-abandoned
+  // startup can finish after the workspace is gone; the epoch check makes it
+  // close its clients instead of caching them. Never pruned: a stale capture
+  // reading a reset baseline would close legitimately started servers.
+  private readonly workspaceStopEpochs = new Map<string, number>();
   private readonly workspaceLeases = new Map<string, number>();
   /**
    * Cached per-server protocol era verdicts, keyed by server config
@@ -1637,6 +1643,7 @@ export class MCPServerManager {
     // without closing discarded instances. Same-signature retries remain outside
     // this lock because their replacement path reconciles concurrent changes.
     return this.workspaceRestartLocks.withLock(workspaceId, async () => {
+      const stopEpochBefore = this.workspaceStopEpochs.get(workspaceId) ?? 0;
       const current = this.workspaceServers.get(workspaceId);
       if (current !== undefined) {
         const currentHasClosedInstance = [...current.instances.values()].some(
@@ -1692,6 +1699,23 @@ export class MCPServerManager {
 
       const allFailedNames = [...restartFailedNames, ...startFailedNames];
       const stats = this.createWorkspaceStats(enabledEntries.length, instances, allFailedNames);
+
+      // A removal-style stop landing mid-startup found no cache entry to
+      // close, so caching now would leave the removed workspace's processes
+      // alive until idle cleanup. Close the late clients instead.
+      if ((this.workspaceStopEpochs.get(workspaceId) ?? 0) !== stopEpochBefore) {
+        for (const instance of instances.values()) {
+          try {
+            await instance.close();
+          } catch (error) {
+            log.warn("Failed to stop late MCP server for removed workspace", {
+              error,
+              name: instance.name,
+            });
+          }
+        }
+        return { tools: {}, stats };
+      }
 
       const entry: WorkspaceServers = {
         configSignature: signature,
@@ -2086,6 +2110,10 @@ export class MCPServerManager {
     options?: { retainRestartOptions?: boolean }
   ): Promise<void> {
     if (options?.retainRestartOptions !== true) {
+      this.workspaceStopEpochs.set(
+        workspaceId,
+        (this.workspaceStopEpochs.get(workspaceId) ?? 0) + 1
+      );
       this.lastWorkspaceRequestOptions.delete(workspaceId);
       this.workspaceOptionsMutationCounts.delete(workspaceId);
       this.latestWorkspaceOverrides.delete(workspaceId);

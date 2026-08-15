@@ -1204,6 +1204,24 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("closes late-started servers instead of caching them for a removed workspace", async () => {
+    const workspaceId = "ws-removed-mid-startup";
+    const close = mock(() => Promise.resolve());
+    access.startServers = mock(async () => {
+      // Workspace removal lands while startup is in flight: abort-abandoned
+      // discovery keeps the startup running, and removal's stopServers finds
+      // no cache entry to close.
+      await manager.stopServers(workspaceId);
+      return startResult([["server", { close }]]);
+    });
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(Object.keys(result.tools)).toEqual([]);
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(access.workspaceServers.has(workspaceId)).toBe(false);
+  });
+
   test("prompt discovery refreshes with resolver-provided secrets and retries on mid-flight rotation", async () => {
     const request = workspaceRequest("workspace", { projectSecrets: { TOKEN: "recorded" } });
     access.lastWorkspaceRequestOptions.set("workspace", request);
