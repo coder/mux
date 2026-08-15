@@ -1866,6 +1866,26 @@ exit 1
       expect(result.error.type).toBe("project_not_found");
     });
 
+    it("reports cascade-removed sub-project paths so callers can drop per-path state", async () => {
+      // Retained MCP trust is keyed by path; omitting a cascaded child here
+      // would let a re-registered path inherit the removed project's grant.
+      const parentPath = "/fake/parent";
+      const childPath = "/fake/parent/packages/api";
+      const cfg = config.loadConfigOrDefault();
+      cfg.projects.set(parentPath, { workspaces: [] });
+      cfg.projects.set(childPath, { workspaces: [], parentProjectPath: parentPath });
+      await config.editConfig(() => cfg);
+
+      const result = await service.remove(parentPath);
+
+      expect(result.success).toBe(true);
+      if (!result.success) throw new Error("Expected success");
+      expect(result.data.removedProjectPaths.sort()).toEqual([parentPath, childPath]);
+      const after = config.loadConfigOrDefault();
+      expect(after.projects.has(parentPath)).toBe(false);
+      expect(after.projects.has(childPath)).toBe(false);
+    });
+
     const forceRemovalCases = [
       {
         name: "with force=true cascade-deletes archived workspaces then removes project",

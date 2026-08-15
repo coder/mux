@@ -3379,10 +3379,13 @@ export const router = (authToken?: string) => {
             input.projectPath,
             input.force ?? false
           );
-          if (result.success) {
-            context.mcpServerManager.forgetProjectTrust(input.projectPath);
+          if (!result.success) return result;
+          // Removal cascades to child projects, whose retained trust must also
+          // be forgotten or a re-registered path would inherit the old grant.
+          for (const removedPath of result.data.removedProjectPaths) {
+            context.mcpServerManager.forgetProjectTrust(removedPath);
           }
-          return result;
+          return Ok(undefined);
         }),
       secrets: {
         get: t

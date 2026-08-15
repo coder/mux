@@ -1059,7 +1059,11 @@ export class ProjectService {
     return Err("Clone did not return a completion event");
   }
 
-  async remove(projectPath: string, force = false): Promise<Result<void, ProjectRemoveError>> {
+  /** Success carries every removed path (cascade included) so callers can drop per-path state. */
+  async remove(
+    projectPath: string,
+    force = false
+  ): Promise<Result<{ removedProjectPaths: string[] }, ProjectRemoveError>> {
     try {
       const normalizedPath = stripTrailingSlashes(projectPath);
       let config = this.config.loadConfigOrDefault();
@@ -1092,7 +1096,7 @@ export class ProjectService {
           freshConfig.projects.delete(normalizedPath);
           return freshConfig;
         });
-        return Ok(undefined);
+        return Ok({ removedProjectPaths: [normalizedPath] });
       }
 
       // Self-healing: purge workspace entries whose backing directories no longer exist.
@@ -1267,7 +1271,7 @@ export class ProjectService {
         log.error(`Failed to clean up secrets for project ${normalizedPath}:`, error);
       }
 
-      return Ok(undefined);
+      return Ok({ removedProjectPaths: [normalizedPath, ...removedSubProjectPaths] });
     } catch (error) {
       const message = getErrorMessage(error);
       return Err({ type: "unknown" as const, message: `Failed to remove project: ${message}` });
