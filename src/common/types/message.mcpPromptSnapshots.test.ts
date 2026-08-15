@@ -101,6 +101,25 @@ describe("filterOrphanedMcpPromptSnapshots", () => {
     expect(filterOrphanedMcpPromptSnapshots([corrupted])).toEqual([]);
   });
 
+  test("drops a prefixed expansion row whose snapshot field is entirely absent", () => {
+    const corrupted = createMuxMessage("mcp-prompt-snapshot-456-def", "user", "Expanded", {
+      historySequence: 0,
+      synthetic: true,
+    });
+
+    expect(
+      filterOrphanedMcpPromptSnapshots([corrupted, invokingUser("user-1", ["review"])]).map(
+        (m) => m.id
+      )
+    ).toEqual(["user-1"]);
+  });
+
+  test("drops a prefixed expansion row with no metadata at all", () => {
+    const bare = createMuxMessage("mcp-prompt-snapshot-789-ghi", "user", "Expanded");
+
+    expect(filterOrphanedMcpPromptSnapshots([bare])).toEqual([]);
+  });
+
   test("keeps ordinary rows with a corrupted snapshot field, stripped", () => {
     const authored = createMuxMessage("user-authored", "user", "Real user text", {
       historySequence: 0,

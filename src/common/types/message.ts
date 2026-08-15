@@ -373,15 +373,15 @@ function isMcpPromptSnapshotBaseShape(
  * exists and still references the same prompt.
  */
 export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMessage[] {
-  // Drop only genuine expansion rows, identified by the ID prefix or valid
-  // snapshot shape. Other rows may be corrupted with this field and must
-  // survive after it is stripped.
+  // Drop only genuine expansion rows: the reserved ID prefix marks one even
+  // when corruption removed its metadata, and synthetic rows with a valid
+  // snapshot shape cover legacy IDs. Other rows may be corrupted with this
+  // field and must survive after it is stripped.
   const isMcpSnapshotRow = (message: MuxMessage): boolean =>
     message.role === "user" &&
-    message.metadata?.synthetic === true &&
-    message.metadata.mcpPromptSnapshot !== undefined &&
     (message.id.startsWith(MCP_PROMPT_SNAPSHOT_MESSAGE_ID_PREFIX) ||
-      isMcpPromptSnapshotBaseShape(message.metadata.mcpPromptSnapshot));
+      (message.metadata?.synthetic === true &&
+        isMcpPromptSnapshotBaseShape(message.metadata.mcpPromptSnapshot)));
 
   const promptRefKeysByMessageId = new Map<string, Set<string>>();
   for (const message of messages) {
@@ -395,13 +395,13 @@ export function filterOrphanedMcpPromptSnapshots(messages: MuxMessage[]): MuxMes
   }
   return messages.flatMap((message): MuxMessage[] => {
     const snapshot: unknown = message.metadata?.mcpPromptSnapshot;
-    if (snapshot === undefined || message.metadata === undefined) return [message];
     if (!isMcpSnapshotRow(message)) {
+      if (snapshot === undefined || message.metadata === undefined) return [message];
       const { mcpPromptSnapshot: _stripped, ...metadata } = message.metadata;
       return [{ ...message, metadata }];
     }
-    // Raw chat.jsonl bypasses oRPC sanitization. Malformed expansion snapshots
-    // and legacy snapshots without an invoking ID are crash orphans.
+    // Raw chat.jsonl bypasses oRPC sanitization. Absent or malformed expansion
+    // snapshots and legacy snapshots without an invoking ID are crash orphans.
     if (!isMcpPromptSnapshotBaseShape(snapshot) || snapshot.invokingMessageId === undefined) {
       return [];
     }

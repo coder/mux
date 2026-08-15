@@ -3375,7 +3375,14 @@ export const router = (authToken?: string) => {
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)
         .handler(async ({ context, input }) => {
-          return context.projectService.remove(input.projectPath, input.force ?? false);
+          const result = await context.projectService.remove(
+            input.projectPath,
+            input.force ?? false
+          );
+          if (result.success) {
+            context.mcpServerManager.forgetProjectTrust(input.projectPath);
+          }
+          return result;
         }),
       secrets: {
         get: t

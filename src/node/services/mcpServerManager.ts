@@ -1926,6 +1926,14 @@ export class MCPServerManager {
     }
   }
 
+  /**
+   * Trust is retained by path, so removing a project must forget its entry or
+   * a later re-registration of the same path would inherit the old decision.
+   */
+  forgetProjectTrust(projectPath: string): void {
+    this.latestProjectTrust.delete(stripTrailingSlashes(projectPath));
+  }
+
   /** Updates recorded options so prompt refreshes cannot reuse stale project trust. */
   applyProjectTrust(updates: Array<{ projectPath: string; trusted: boolean }>): void {
     const trustByPath = new Map(

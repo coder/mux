@@ -1204,6 +1204,35 @@ describe("MCPServerManager", () => {
     expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
   });
 
+  test("forgotten project trust no longer overrides a re-registered project's snapshot", async () => {
+    const workspaceId = "ws-forgotten-trust";
+    configService.listServers = mock((_projectPath: string, trusted: boolean) =>
+      Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      )
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { prompts: [{ name: "review" }] }],
+          ["stable", { prompts: [{ name: "status" }] }],
+        ])
+      )
+    );
+
+    // A trust grant retained past project removal must not resurrect on the
+    // same path's next registration, which starts untrusted.
+    manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: true }]);
+    manager.forgetProjectTrust(PROJECT_PATH);
+
+    const descriptors = await manager.getPromptsForWorkspace(
+      workspaceRequest(workspaceId, { trusted: false })
+    );
+    expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
+  });
+
   test("excludes servers reconfigured while leased from prompt discovery", async () => {
     const workspaceId = "ws-stale-prompt-discovery";
     let command = "cmd-1";
