@@ -50,6 +50,7 @@ import {
   MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS,
   MCP_PROMPT_MAX_DESCRIPTION_CHARS,
   MCP_PROMPT_MAX_NAME_CHARS,
+  MCP_PROMPT_MAX_SERVER_NAME_CHARS,
   MCP_PROMPT_MAX_TEXT_BYTES,
   MCP_PROMPT_TRUNCATION_MARKER,
 } from "@/common/constants/toolLimits";
@@ -865,6 +866,15 @@ function clampDescription(description: string | undefined): string | undefined {
  * arrays keep their positional shape), and clamps catalog descriptions.
  */
 export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
+  // The server name prefixes every prompt key, so descriptor building would
+  // rerun Unicode and regex normalization over an oversized name per prompt.
+  if (serverName.length > MCP_PROMPT_MAX_SERVER_NAME_CHARS) {
+    log.debug("[MCP] Dropping prompt catalog for server with oversized name", {
+      server: serverName.slice(0, MCP_PROMPT_MAX_SERVER_NAME_CHARS),
+      promptCount: prompts.length,
+    });
+    return [];
+  }
   const normalized: MCPPrompt[] = [];
   for (const prompt of prompts) {
     // Gate length before key normalization, which runs Unicode normalization

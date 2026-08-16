@@ -812,6 +812,30 @@ describe("MCPServerManager", () => {
     expect(wordy?.arguments?.[0]?.description?.length).toBe(MCP_PROMPT_MAX_DESCRIPTION_CHARS);
   });
 
+  test("getToolsForWorkspace advertises no prompts for a server whose name cannot round-trip", async () => {
+    const workspaceId = "ws-oversized-server-name";
+    const hugeName = "s".repeat(1024 * 1024);
+    configService.listServers = mock(() =>
+      Promise.resolve({ [hugeName]: stdioConfig("cmd-huge"), coder: stdioConfig("cmd") })
+    );
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          [hugeName, { prompts: [{ name: "hidden" }] }],
+          ["coder", { prompts: [{ name: "visible" }] }],
+        ])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    // The oversized server name would otherwise prefix every prompt key and
+    // rerun Unicode/regex normalization over it per prompt.
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
+      "visible",
+    ]);
+  });
+
   test("prompt catalogs are normalized once at refresh, off the per-send rebuild path", async () => {
     const workspaceId = "ws-hostile-arg-count";
     let rawElementReads = 0;

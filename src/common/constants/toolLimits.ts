@@ -32,6 +32,9 @@ export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";
 // Prompt names feed key normalization (Unicode + regex over the raw name), so
 // oversized names are rejected before any key building can process them.
 export const MCP_PROMPT_MAX_NAME_CHARS = 200;
+// Server names prefix every prompt key, so an oversized name disables the
+// server's prompt catalog before key building can process it per prompt.
+export const MCP_PROMPT_MAX_SERVER_NAME_CHARS = 200;
 // Argument names must fit bounded discovery and error text; a prompt with an
 // oversized name is dropped so the advertised list always matches the server's.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
