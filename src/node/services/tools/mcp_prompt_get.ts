@@ -21,6 +21,10 @@ const MAX_NAME_TAIL_CHARS = 2_000;
 // substring filtering keeps oversized catalogs searchable.
 const MAX_ERROR_KEYS_CHARS = 20_000;
 const MAX_ERROR_TEXT_CHARS = 2_000;
+// Server names come from user config record keys and are unbounded; clamp
+// before interpolating so one huge name cannot evict its prompts from the
+// index or copy megabytes per send.
+const MAX_SERVER_NAME_CHARS = 100;
 
 function clampText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
@@ -111,7 +115,7 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
         descriptor.description ?? "MCP prompt",
         MAX_PROMPT_DESCRIPTION_CHARS
       );
-      const line = `- ${descriptor.commandKey}${formatArgumentHint(descriptor)}: ${description} (server: ${descriptor.serverName})`;
+      const line = `- ${descriptor.commandKey}${formatArgumentHint(descriptor)}: ${description} (server: ${clampText(descriptor.serverName, MAX_SERVER_NAME_CHARS)})`;
       if (indexChars + line.length <= MAX_INDEX_CHARS) {
         promptLines.push(line);
         indexChars += line.length;

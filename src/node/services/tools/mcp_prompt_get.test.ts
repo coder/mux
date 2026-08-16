@@ -71,6 +71,19 @@ describe("createMcpPromptGetTool", () => {
     expect(tool.description).not.toContain("more not shown");
   });
 
+  it("clamps unbounded server names so they cannot evict their prompts from the index", () => {
+    const tool = createTool({
+      prompts: [{ ...REVIEW_PROMPT, serverName: "s".repeat(50_000) }],
+      getPrompt: mock(() => Promise.resolve({ text: "" })),
+    });
+
+    // Unclamped, the 50k name would blow the 10k index budget and demote the
+    // prompt to the names-only tail, losing its description and hints.
+    expect(tool.description).toContain("Review a pull request");
+    expect(tool.description).not.toContain("names only:");
+    expect(tool.description!.length).toBeLessThan(15_000);
+  });
+
   it("builds argument hints incrementally instead of materializing huge argument arrays", () => {
     let elementReads = 0;
     const hugeArguments = new Proxy(
