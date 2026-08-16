@@ -8,6 +8,21 @@ import { getErrorMessage } from "@/common/utils/errors";
 
 // Same disclosure budget as the skills index in agent_skill_read.
 const MAX_PROMPTS = 50;
+// Prompt/argument descriptions are server-controlled; clamp them so one
+// hostile or verbose server cannot inflate every request's tool schema.
+const MAX_PROMPT_DESCRIPTION_CHARS = 200;
+const MAX_ARGUMENT_DESCRIPTION_CHARS = 100;
+const MAX_ARGUMENT_HINT_CHARS = 300;
+// Total budget for fully rendered index entries; prompts past it fall into
+// the names-only tail below.
+const MAX_INDEX_CHARS = 10_000;
+// Names-only tail: keys past the full-entry budget stay discoverable and
+// invocable (the missing-required-argument error recovers argument names).
+const MAX_NAME_TAIL_CHARS = 2_000;
+
+function clampText(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
+}
 
 function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
   const args = descriptor.arguments ?? [];
@@ -18,9 +33,9 @@ function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
     const marker = argument.required === true ? "" : "?";
     return argument.description == null
       ? `${argument.name}${marker}`
-      : `${argument.name}${marker}: ${argument.description}`;
+      : `${argument.name}${marker}: ${clampText(argument.description, MAX_ARGUMENT_DESCRIPTION_CHARS)}`;
   });
-  return ` (args: ${parts.join("; ")})`;
+  return clampText(` (args: ${parts.join("; ")})`, MAX_ARGUMENT_HINT_CHARS);
 }
 
 /**
@@ -35,15 +50,43 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
     return baseDescription;
   }
 
-  const shown = prompts.slice(0, MAX_PROMPTS);
-  const omitted = prompts.length - shown.length;
+  const promptLines: string[] = [];
+  const tailKeys: string[] = [];
+  let indexChars = 0;
+  for (const descriptor of prompts) {
+    if (promptLines.length < MAX_PROMPTS) {
+      const description = clampText(
+        descriptor.description ?? "MCP prompt",
+        MAX_PROMPT_DESCRIPTION_CHARS
+      );
+      const line = `- ${descriptor.commandKey}${formatArgumentHint(descriptor)}: ${description} (server: ${descriptor.serverName})`;
+      if (indexChars + line.length <= MAX_INDEX_CHARS) {
+        promptLines.push(line);
+        indexChars += line.length;
+        continue;
+      }
+    }
+    tailKeys.push(descriptor.commandKey);
+  }
 
-  const promptLines = shown.map((descriptor) => {
-    const description = descriptor.description ?? "MCP prompt";
-    return `- ${descriptor.commandKey}${formatArgumentHint(descriptor)}: ${description} (server: ${descriptor.serverName})`;
-  });
-  if (omitted > 0) {
-    promptLines.push(`(+${omitted} more not shown)`);
+  if (tailKeys.length > 0) {
+    // Never cut a key mid-name; a partial key is not invocable.
+    const shownKeys: string[] = [];
+    let tailChars = 0;
+    for (const key of tailKeys) {
+      if (tailChars + key.length + 2 > MAX_NAME_TAIL_CHARS) {
+        break;
+      }
+      shownKeys.push(key);
+      tailChars += key.length + 2;
+    }
+    if (shownKeys.length > 0) {
+      promptLines.push(`(more prompts, names only: ${shownKeys.join(", ")})`);
+    }
+    const omitted = tailKeys.length - shownKeys.length;
+    if (omitted > 0) {
+      promptLines.push(`(+${omitted} more not shown)`);
+    }
   }
 
   return `${baseDescription}\n\nAvailable MCP prompts:\n${promptLines.join("\n")}`;

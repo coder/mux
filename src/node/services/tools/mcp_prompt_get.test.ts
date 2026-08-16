@@ -53,7 +53,7 @@ describe("createMcpPromptGetTool", () => {
     expect(tool.description).toContain("mcp__coder__status");
   });
 
-  it("caps the advertised prompt list and reports the omitted count", () => {
+  it("keeps prompts past the full-entry cap discoverable via a names-only tail", () => {
     const prompts = Array.from({ length: 60 }, (_, index) => ({
       ...STATUS_PROMPT,
       commandKey: `mcp__coder__p${index}`,
@@ -64,7 +64,68 @@ describe("createMcpPromptGetTool", () => {
 
     expect(tool.description).toContain("mcp__coder__p49");
     expect(tool.description).not.toContain("mcp__coder__p50:");
-    expect(tool.description).toContain("(+10 more not shown)");
+    expect(tool.description).toContain("names only:");
+    // Every prompt past the cap stays discoverable by exact key.
+    for (let index = 50; index < 60; index++) {
+      expect(tool.description).toContain(`mcp__coder__p${index}`);
+    }
+    expect(tool.description).not.toContain("more not shown");
+  });
+
+  it("clamps server-supplied prompt and argument descriptions", () => {
+    const tool = createTool({
+      prompts: [
+        {
+          ...STATUS_PROMPT,
+          description: "d".repeat(5_000),
+          arguments: [{ name: "arg", description: "a".repeat(5_000), required: true }],
+        },
+      ],
+      getPrompt: mock(() => Promise.resolve({ text: "" })),
+    });
+
+    expect(tool.description!.length).toBeLessThan(2_000);
+    expect(tool.description).toContain("d".repeat(100));
+    expect(tool.description).not.toContain("d".repeat(300));
+    expect(tool.description).not.toContain("a".repeat(300));
+  });
+
+  it("moves prompts past the total index budget into the names-only tail", () => {
+    // Max clamped entry (~535 chars: 300 arg hint + 200 description); the
+    // 10k index budget fits ~18 of 30 as full entries.
+    const prompts = Array.from({ length: 30 }, (_, index) => ({
+      ...STATUS_PROMPT,
+      commandKey: `mcp__coder__q${index}`,
+      stableKey: `mcp__coder__q${index}__hash`,
+      promptName: `q${index}`,
+      description: "x".repeat(600),
+      arguments: [{ name: "arg", description: "y".repeat(600), required: true }],
+    }));
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+
+    expect(tool.description!.length).toBeLessThan(15_000);
+    expect(tool.description).toContain("names only:");
+    // The last prompt is still discoverable even though its full entry did not fit.
+    expect(tool.description).toContain("mcp__coder__q29");
+  });
+
+  it("bounds the names-only tail and reports the truly omitted count", () => {
+    const prompts = Array.from({ length: 400 }, (_, index) => ({
+      ...STATUS_PROMPT,
+      commandKey: `mcp__coder__long_prompt_name_${index}`,
+      stableKey: `mcp__coder__long_prompt_name_${index}__hash`,
+      promptName: `long_prompt_name_${index}`,
+    }));
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+
+    expect(tool.description!.length).toBeLessThan(20_000);
+    expect(tool.description).toMatch(/\(\+\d+ more not shown\)/);
+    // Keys are never cut mid-name: every advertised tail key is complete.
+    const tail = /\(more prompts, names only: ([^)]+)\)/.exec(tool.description as string);
+    expect(tail).not.toBeNull();
+    for (const key of tail![1].split(", ")) {
+      expect(key).toMatch(/^mcp__coder__long_prompt_name_\d+$/);
+    }
   });
 
   it("fetches a prompt and forwards resolved server/prompt names and arguments", async () => {
