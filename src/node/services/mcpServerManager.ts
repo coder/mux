@@ -1032,6 +1032,11 @@ export class MCPServerManager {
   private readonly latestWorkspaceOverrides = new Map<string, WorkspaceMCPOverrides | undefined>();
   private readonly latestProjectTrust = new Map<string, boolean>();
   private readonly workspaceRestartLocks = new MutexMap<string>();
+  /** Orders racing prompt refresh completions per instance; see refreshInstancePrompts. */
+  private readonly promptRefreshSequences = new WeakMap<
+    MCPServerInstance,
+    { started: number; applied: number }
+  >();
   // Bumped by removal-style stops (stopServers without retainRestartOptions).
   // Startups run outside any lock shared with removal, so an abort-abandoned
   // startup can finish after the workspace is gone; the epoch check makes it
@@ -1148,10 +1153,23 @@ export class MCPServerManager {
     await Promise.all(
       [...instances.values()].map(async (instance) => {
         if (instance.isClosed || !instance.refreshPrompts) return;
+        // promptRefreshInFlight dedupes only background refreshes; discovery
+        // calls this directly, so two fetches can race. Tokens are issued at
+        // fetch start and a completion applies only if no later-started fetch
+        // has landed, so an older, slower fetch never overwrites a newer
+        // catalog.
+        let sequence = this.promptRefreshSequences.get(instance);
+        if (!sequence) {
+          sequence = { started: 0, applied: 0 };
+          this.promptRefreshSequences.set(instance, sequence);
+        }
+        const token = ++sequence.started;
         try {
           const fetched = await instance.refreshPrompts(
             signal !== undefined ? { signal } : undefined
           );
+          if (token <= sequence.applied) return;
+          sequence.applied = token;
           instance.prompts = normalizePromptCatalog(fetched, instance.name);
         } catch (error) {
           log.debug("[MCP] Prompt list refresh failed; keeping cached prompts", {

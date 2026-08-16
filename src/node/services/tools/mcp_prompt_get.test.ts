@@ -304,6 +304,32 @@ describe("createMcpPromptGetTool", () => {
     expect(result).toEqual({ success: false, error: "server exploded" });
   });
 
+  it("builds the tool description without scanning a huge catalog", () => {
+    let keyReads = 0;
+    const prompts = Array.from({ length: 100_000 }, (_, index) => {
+      const descriptor = {
+        ...STATUS_PROMPT,
+        stableKey: `mcp__coder__p${index}__hash`,
+        promptName: `p${index}`,
+      };
+      Object.defineProperty(descriptor, "commandKey", {
+        get() {
+          keyReads++;
+          return `mcp__coder__p${index}`;
+        },
+      });
+      return descriptor;
+    });
+
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+
+    expect(tool.description).toMatch(/\(\+\d+ more not shown; call this tool/);
+    // Full-entry mode reads at most MAX_PROMPTS keys and the tail reads only
+    // keys that fit its 2,000-char budget plus the one that misses it; the
+    // omitted remainder is derived from prompts.length, not scanned.
+    expect(keyReads).toBeLessThanOrEqual(500);
+  });
+
   it("scans the catalog once when building the unknown-name error", async () => {
     let keyReads = 0;
     const prompts = Array.from({ length: 100 }, (_, index) => {

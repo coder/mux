@@ -946,6 +946,41 @@ describe("MCPServerManager", () => {
     ]);
   });
 
+  test("an older prompt refresh completing late never overwrites a newer catalog", async () => {
+    const workspaceId = "ws-refresh-race";
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    let calls = 0;
+    let resolveStale!: (prompts: Array<{ name: string }>) => void;
+    const refreshPrompts = mock(() => {
+      calls += 1;
+      // Call 1: awaited cold start. Call 2: background SWR refresh held open.
+      // Call 3: composer discovery, lands first. Later calls hang so the
+      // final send observes the stored catalog.
+      if (calls === 1) return Promise.resolve([{ name: "initial" }]);
+      if (calls === 2)
+        return new Promise<Array<{ name: string }>>((resolve) => {
+          resolveStale = resolve;
+        });
+      if (calls === 3) return Promise.resolve([{ name: "newer" }]);
+      return new Promise<Array<{ name: string }>>(() => undefined);
+    });
+    access.startServers = mock(() => Promise.resolve(startResult([["coder", { refreshPrompts }]])));
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Cached send starts the detached background refresh (call 2, held open).
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Discovery refreshes directly (call 3) and applies the newer catalog.
+    const discovered = await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
+    expect(discovered.map((descriptor) => descriptor.promptName)).toEqual(["newer"]);
+
+    // The older fetch resolves last; its completion must be discarded.
+    resolveStale([{ name: "stale" }]);
+    await Bun.sleep(0);
+
+    const final = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(final.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["newer"]);
+  });
+
   test("getToolsForWorkspace does not block sends on a hung prompt refresh", async () => {
     const workspaceId = "ws-hung-prompt-refresh";
     configService.listServers = mock(() => Promise.resolve({ hung: stdioConfig("cmd") }));

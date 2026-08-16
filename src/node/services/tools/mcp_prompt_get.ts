@@ -73,13 +73,13 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
   // construction (which touches server-controlled text) never repeats for
   // every remaining descriptor of a large catalog.
   let indexBudgetExhausted = false;
-  // Tail keys accumulate only while they fit the display budget; the rest are
-  // just counted, so a hostile catalog never allocates a catalog-sized array
-  // on the send path. A key is never cut mid-name: a partial key is not
-  // invocable.
+  // Tail keys accumulate only while they fit the display budget. The first
+  // key that misses the budget ends the scan outright and the remainder is
+  // derived from prompts.length, so a hostile catalog costs neither a
+  // catalog-sized allocation nor an O(n) scan on the send path. A key is
+  // never cut mid-name: a partial key is not invocable.
   const tailShown: string[] = [];
   let tailChars = 0;
-  let tailFull = false;
   let tailOmitted = 0;
   for (const descriptor of prompts) {
     if (promptLines.length < MAX_PROMPTS && !indexBudgetExhausted) {
@@ -96,13 +96,12 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
       indexBudgetExhausted = true;
     }
     const key = descriptor.commandKey;
-    if (!tailFull && tailChars + key.length + 2 <= MAX_NAME_TAIL_CHARS) {
-      tailShown.push(key);
-      tailChars += key.length + 2;
-    } else {
-      tailFull = true;
-      tailOmitted++;
+    if (tailChars + key.length + 2 > MAX_NAME_TAIL_CHARS) {
+      tailOmitted = prompts.length - promptLines.length - tailShown.length;
+      break;
     }
+    tailShown.push(key);
+    tailChars += key.length + 2;
   }
 
   if (tailShown.length > 0) {
