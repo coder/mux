@@ -1504,7 +1504,6 @@ export class MCPServerManager {
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-        this.refreshInstancePromptsInBackground(existing);
         await this.refreshModernInstanceTools(existing.instances);
       }
 
@@ -1517,6 +1516,12 @@ export class MCPServerManager {
         existing,
         configGenerationUsed
       );
+
+      // Spawned after the repair: a detached refresh cannot be cancelled, so
+      // it must never target servers a concurrent mutation just revoked.
+      if (refreshToolCatalogs) {
+        this.refreshInstancePromptsInBackground(existing);
+      }
 
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
@@ -1680,7 +1685,6 @@ export class MCPServerManager {
         if (current.configSignature === signature && !currentHasClosedInstance) {
           current.lastActivity = Date.now();
           if (refreshToolCatalogs) {
-            this.refreshInstancePromptsInBackground(current);
             await this.refreshModernInstanceTools(current.instances);
           }
           // Repair again in case a mutation landed after the concurrent starter's check.
@@ -1690,6 +1694,11 @@ export class MCPServerManager {
             current,
             configGenerationUsed
           );
+          // Spawned after the repair so the uncancellable detached refresh
+          // cannot target servers a concurrent mutation just revoked.
+          if (refreshToolCatalogs) {
+            this.refreshInstancePromptsInBackground(current);
+          }
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,

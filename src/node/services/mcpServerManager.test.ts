@@ -1278,6 +1278,46 @@ describe("MCPServerManager", () => {
     expect(await manager.getPrompt(workspaceId, "stable", "review", {})).toEqual({ text: "hi" });
   });
 
+  test("background prompt refresh never targets servers revoked by a concurrent mutation", async () => {
+    const workspaceId = "ws-refresh-after-repair";
+    // Revocation lands inside the cached send's config derivation, after the
+    // trust overlay was read but before enablement repair runs.
+    let revokeOnNextTrustedList = false;
+    configService.listServers = mock((_projectPath: string, trusted: boolean) => {
+      if (revokeOnNextTrustedList && trusted) {
+        revokeOnNextTrustedList = false;
+        manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+      }
+      return Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      );
+    });
+    const revokedRefresh = mock(() => Promise.resolve());
+    const stableRefresh = mock(() => Promise.resolve());
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          ["server", { refreshPrompts: revokedRefresh }],
+          ["stable", { refreshPrompts: stableRefresh }],
+        ])
+      )
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+    expect(revokedRefresh).toHaveBeenCalledTimes(1);
+
+    revokeOnNextTrustedList = true;
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+    await Bun.sleep(0);
+
+    // The uncancellable detached refresh started from repaired enablement, so
+    // it never queried the just-revoked server.
+    expect(revokedRefresh).toHaveBeenCalledTimes(1);
+    expect(stableRefresh).toHaveBeenCalledTimes(2);
+  });
+
   test("applies overrides recorded before the first workspace request (cold mutation)", async () => {
     const workspaceId = "ws-cold-overrides";
     configService.listServers = mock(() =>
