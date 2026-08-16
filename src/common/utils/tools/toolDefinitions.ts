@@ -3183,7 +3183,8 @@ export type BridgeableToolName =
   | "task_stop"
   | "task_remove"
   | "heartbeat"
-  | "memory";
+  | "memory"
+  | "mcp_prompt_get";
 
 /**
  * Lookup map for result schemas by tool name.
@@ -3213,6 +3214,7 @@ export const RESULT_SCHEMAS: Record<BridgeableToolName, z.ZodType> = {
   task_remove: TaskRemoveToolResultSchema,
   heartbeat: HeartbeatToolResultSchema,
   memory: MemoryToolResultSchema,
+  mcp_prompt_get: MCPPromptGetToolResultSchema,
 };
 
 /**

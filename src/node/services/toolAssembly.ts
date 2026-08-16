@@ -134,7 +134,15 @@ export async function applyToolPolicyAndExperiments(
         // tools. The experiment flag is the opt-in; policy cannot disable it here since
         // that would leave no way to access tools. nonBridgeable is already policy-filtered.
         const nonBridgeable = toolBridge.getNonBridgeableTools();
-        toolsForModel = { ...nonBridgeable, code_execution: codeExecutionTool };
+        // mcp_prompt_get advertises the prompt catalog in its description, and
+        // sandbox type declarations keep only a description's first line. Keep
+        // it directly visible so exclusive mode does not hide every prompt name.
+        const promptGet = policyFilteredTools.mcp_prompt_get;
+        toolsForModel = {
+          ...nonBridgeable,
+          ...(promptGet !== undefined ? { mcp_prompt_get: promptGet } : {}),
+          code_execution: codeExecutionTool,
+        };
       } else {
         // Supplement mode: add code_execution, then apply policy to determine final set.
         // This correctly handles all policy combinations (require, enable, disable).

@@ -134,6 +134,21 @@ describe("generateMuxTypes", () => {
     expect(types).not.toContain("MCPCallToolResult");
   });
 
+  test("generates a typed result for mcp_prompt_get", async () => {
+    const promptGetTool = createMockTool(
+      z.object({
+        name: z.string(),
+        arguments: z.record(z.string(), z.string()).nullish(),
+      })
+    );
+
+    const types = await generateMuxTypes({ mcp_prompt_get: promptGetTool });
+
+    expect(types).toContain("type McpPromptGetResult =");
+    expect(types).toContain("mcp_prompt_get(args: McpPromptGetArgs): McpPromptGetResult");
+    expect(types).not.toContain("mcp_prompt_get(args: McpPromptGetArgs): unknown");
+  });
+
   test("handles tools without known result type (returns unknown)", async () => {
     const customTool = createMockTool(
       z.object({
