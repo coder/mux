@@ -28,3 +28,7 @@ export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl
 
 // MCP prompt expansions are server-controlled; bound them like web_fetch output.
 export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
+// Argument names must round-trip exactly through hints, errors, and calls;
+// a prompt whose argument name exceeds this can never be invoked reliably,
+// so it is dropped at descriptor build instead of advertised in a stuck state.
+export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;

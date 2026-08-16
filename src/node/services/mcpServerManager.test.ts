@@ -736,6 +736,30 @@ describe("MCPServerManager", () => {
     expect(names).toContain("mcp_other_tool");
   });
 
+  test("getToolsForWorkspace drops prompts whose argument names cannot round-trip", async () => {
+    const workspaceId = "ws-oversized-arg-name";
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          [
+            "coder",
+            {
+              prompts: [
+                { name: "usable", arguments: [{ name: "pr", required: true }] },
+                { name: "stuck", arguments: [{ name: "a".repeat(5_000), required: true }] },
+              ],
+            },
+          ],
+        ])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["usable"]);
+  });
+
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
     const workspaceId = "ws-tool-prompts";
     configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));

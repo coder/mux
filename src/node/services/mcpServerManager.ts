@@ -45,6 +45,7 @@ import {
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
+import { MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS } from "@/common/constants/toolLimits";
 import { getErrorMessage } from "@/common/utils/errors";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
@@ -1860,6 +1861,19 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
+        // Oversized argument names cannot round-trip through bounded hints and
+        // errors, leaving the prompt permanently uninvocable; drop it instead.
+        if (
+          (prompt.arguments ?? []).some(
+            (argument) => argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
+          )
+        ) {
+          log.debug("[MCP] Skipping prompt with oversized argument name", {
+            server: instance.name,
+            prompt: prompt.name,
+          });
+          continue;
+        }
         descriptors.push({
           commandKey: command.toolName,
           stableKey,
