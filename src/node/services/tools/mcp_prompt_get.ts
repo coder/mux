@@ -194,7 +194,12 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       let missingChars = 0;
       let missingOmitted = 0;
       for (const argument of descriptor.arguments ?? []) {
-        if (argument.required !== true || argumentValues[argument.name] != null) {
+        // Own-property check: an argument named after an inherited
+        // Object.prototype member (constructor, toString, __proto__) must not
+        // count as provided via prototype lookup.
+        const provided =
+          Object.hasOwn(argumentValues, argument.name) && argumentValues[argument.name] != null;
+        if (argument.required !== true || provided) {
           continue;
         }
         if (missingChars + argument.name.length + 2 <= MAX_ERROR_TEXT_CHARS) {

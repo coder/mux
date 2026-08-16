@@ -331,6 +331,29 @@ describe("createMcpPromptGetTool", () => {
     expect(keyReads).toBeLessThanOrEqual(250);
   });
 
+  it("treats required arguments named after Object.prototype members as missing when omitted", async () => {
+    const prompt: MCPPromptDescriptor = {
+      ...STATUS_PROMPT,
+      arguments: [
+        { name: "toString", required: true },
+        { name: "constructor", required: true },
+        { name: "__proto__", required: true },
+      ],
+    };
+    const getPrompt = mock(() => Promise.resolve({ text: "unreachable" }));
+    const tool = createTool({ prompts: [prompt], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("toString");
+      expect(result.error).toContain("constructor");
+      expect(result.error).toContain("__proto__");
+    }
+    expect(getPrompt).not.toHaveBeenCalled();
+  });
+
   it("bounds the missing-argument error against hostile argument lists", async () => {
     const prompt: MCPPromptDescriptor = {
       ...STATUS_PROMPT,
