@@ -32,3 +32,7 @@ export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
 // a prompt whose argument name exceeds this can never be invoked reliably,
 // so it is dropped at descriptor build instead of advertised in a stuck state.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
+// Bounded hints and errors can only ever surface a handful of arguments, so a
+// prompt with more than this is uninvocable anyway; dropping it before the
+// descriptor copy keeps hostile argument arrays off the per-send path.
+export const MCP_PROMPT_MAX_ARGUMENTS = 64;

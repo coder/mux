@@ -3,6 +3,7 @@ import { createServer } from "http";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
+import { MCP_PROMPT_MAX_ARGUMENTS } from "@/common/constants/toolLimits";
 import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
@@ -774,6 +775,50 @@ describe("MCPServerManager", () => {
       (descriptor) => descriptor.promptName === "partial"
     );
     expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
+  });
+
+  test("getToolsForWorkspace drops prompts with hostile argument counts without traversing them", async () => {
+    const workspaceId = "ws-hostile-arg-count";
+    let elementReads = 0;
+    const hostileArguments = new Proxy(
+      Array.from({ length: 100_000 }, (_, index) => ({ name: `arg_${index}`, required: false })),
+      {
+        get(target, property, receiver): unknown {
+          if (typeof property === "string" && /^\d+$/.test(property)) {
+            elementReads++;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          [
+            "coder",
+            {
+              prompts: [
+                { name: "hostile", arguments: hostileArguments },
+                {
+                  name: "at_cap",
+                  arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS }, (_, index) => ({
+                    name: `arg_${index}`,
+                    required: false,
+                  })),
+                },
+              ],
+            },
+          ],
+        ])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["at_cap"]);
+    // The count check is O(1); the hostile array is never visited or copied.
+    expect(elementReads).toBe(0);
   });
 
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {

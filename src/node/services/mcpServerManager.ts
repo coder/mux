@@ -45,7 +45,10 @@ import {
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
-import { MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS } from "@/common/constants/toolLimits";
+import {
+  MCP_PROMPT_MAX_ARGUMENTS,
+  MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS,
+} from "@/common/constants/toolLimits";
 import { getErrorMessage } from "@/common/utils/errors";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
@@ -1884,6 +1887,16 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
+        // Length check first: it is O(1), so a hostile argument array is
+        // never traversed or copied into the per-send descriptor set.
+        if ((prompt.arguments?.length ?? 0) > MCP_PROMPT_MAX_ARGUMENTS) {
+          log.debug("[MCP] Skipping prompt with too many arguments", {
+            server: instance.name,
+            prompt: prompt.name,
+            argumentCount: prompt.arguments?.length,
+          });
+          continue;
+        }
         // Oversized argument names cannot round-trip through bounded hints
         // and errors. A required one leaves the prompt permanently
         // uninvocable, so the prompt is dropped; oversized optional arguments
