@@ -17,6 +17,20 @@ export interface SubagentReportEnvelope {
 
 export const SUBAGENT_FAILURE_ENVELOPE_TAG = "<mux_subagent_failure>";
 
+// Fallback titles for untitled reports; the matcher lives here so consumers (timeline dedupe) can
+// treat them as absent titles without drifting from the builders.
+export function subagentUpdateFallbackTitle(agentType: string): string {
+  return `Subagent (${agentType}) update`;
+}
+
+export function subagentReportFallbackTitle(agentType: string): string {
+  return `Subagent (${agentType}) report`;
+}
+
+export function isSubagentFallbackTitle(title: string): boolean {
+  return /^Subagent \(.+\) (?:update|report)$/.test(title);
+}
+
 const ROOT_OPEN = "<mux_subagent_report>";
 const ROOT_CLOSE = "</mux_subagent_report>";
 const STRUCTURED_OUTPUT_START = "\n<structured_output_json>\n";

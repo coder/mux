@@ -24,10 +24,12 @@ import { formatDuration } from "@/common/utils/formatDuration";
 import {
   TIMELINE_ROW_DIGEST_MAX_LENGTH,
   TIMELINE_TEXT_MAX_LENGTH,
+  truncateTimelineRowDigest,
   type TimelineAnchor,
   type TimelineEvent,
   type TimelinePreview,
 } from "@/common/orpc/schemas/timeline";
+import { isSubagentFallbackTitle } from "@/common/utils/subagentReportEnvelope";
 
 import {
   TIMELINE_CATEGORIES,
@@ -230,10 +232,17 @@ const TASK_LIFECYCLE_KINDS = new Set([
   "task.interrupted",
 ]);
 
-// Untitled agent_report calls from the same task share a default title while the distinct finding
-// lives in the digest, so the dedupe key must include both fields.
+// Mapper and TaskService rows encode untitled reports and digest lengths differently, so
+// canonicalize both fields before cross-producer dedupe; the digest distinguishes untitled
+// updates because they share a fallback title. Comparing capped previews is a deliberate
+// tradeoff: rows store only the capped digest, so reports that diverge past the cap collapse
+// into one row while their full text stays in the transcript.
 function taskRowContentKey(event: TimelineEvent): string {
-  return `${event.data?.title ?? ""}\u0000${event.data?.digest ?? ""}`;
+  const title = event.data?.title;
+  const canonicalTitle = title == null || isSubagentFallbackTitle(title) ? "" : title;
+  const digest = event.data?.digest;
+  const canonicalDigest = digest == null ? "" : truncateTimelineRowDigest(digest);
+  return `${canonicalTitle}\u0000${canonicalDigest}`;
 }
 
 // A newer lifecycle row makes task.created redundant, but its transcript anchor may still be the

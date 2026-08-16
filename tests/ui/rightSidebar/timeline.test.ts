@@ -466,6 +466,53 @@ describe("TimelinePanel", () => {
     expect(view.container.querySelector('[data-timeline-event-id="update-early"]')).not.toBeNull();
   });
 
+  test("drops an untitled update when the terminal report repeats its content", () => {
+    // Mapper update rows carry the producer fallback title; TaskService terminal rows omit it.
+    const events = [
+      makeEvent("report", "task.reported", 2, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { digest: "All timeline suites pass" },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update", "task.progress", 1, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Subagent (explore) update", digest: "All timeline suites pass" },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="update"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
+  });
+
+  test("drops an update whose report repeats it beyond the row digest cap", () => {
+    const reportMarkdown = "finding detail ".repeat(20).trim();
+    const rowCapped = `${reportMarkdown.slice(0, 117)}...`;
+    const events = [
+      makeEvent("report", "task.reported", 2, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { title: "Audit result", digest: reportMarkdown },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update", "task.progress", 1, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Audit result", digest: rowCapped },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="update"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
+  });
+
   test("collapses duplicate update rows while keeping distinct checkpoints", () => {
     const events = [
       makeEvent("update-late", "task.progress", 4, {

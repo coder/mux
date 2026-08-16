@@ -1,7 +1,4 @@
-import {
-  TIMELINE_ROW_DIGEST_MAX_LENGTH,
-  subagentReportSourceKey,
-} from "@/common/orpc/schemas/timeline";
+import { subagentReportSourceKey, truncateTimelineRowDigest } from "@/common/orpc/schemas/timeline";
 import type {
   TimelineAnchor,
   TimelineEventData,
@@ -49,13 +46,6 @@ function eventKey(...parts: Array<string | number | undefined>): string {
 
 function streamKey(workspaceId: string, messageId: string): string {
   return eventKey(workspaceId, messageId);
-}
-
-function truncateDigest(value: string): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= TIMELINE_ROW_DIGEST_MAX_LENGTH
-    ? normalized
-    : `${normalized.slice(0, TIMELINE_ROW_DIGEST_MAX_LENGTH - 3)}...`;
 }
 
 function messageTimestamp(
@@ -216,7 +206,7 @@ function classifyMachineTurn(
       ...(completed ? { key: subagentReportSourceKey(report.taskId) } : {}),
       status: completed ? "completed" : "started",
       anchor: { taskId: report.taskId, childWorkspaceId: report.taskId },
-      data: { title: report.title, digest: truncateDigest(report.reportMarkdown) },
+      data: { title: report.title, digest: truncateTimelineRowDigest(report.reportMarkdown) },
     };
   }
 
@@ -271,7 +261,7 @@ function mapMessage(
       .join("\n");
 
     if (!machineAuthored) {
-      const digest = truncateDigest(text);
+      const digest = truncateTimelineRowDigest(text);
       return [
         {
           ts,
@@ -287,7 +277,7 @@ function mapMessage(
     // An unrecognized machine turn still belongs on the feed: its prompt is the only record of what
     // was dispatched on the agent's behalf.
     const row = classifyMachineTurn(event, text) ?? { kind: "turn.synthetic" };
-    const digest = row.data?.digest ?? truncateDigest(text);
+    const digest = row.data?.digest ?? truncateTimelineRowDigest(text);
     const data: TimelineEventData = { ...row.data, ...(digest !== "" ? { digest } : {}) };
     return [
       {

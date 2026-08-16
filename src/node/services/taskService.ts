@@ -22,6 +22,8 @@ import {
   SUBAGENT_FAILURE_ENVELOPE_TAG,
   formatSubagentReportEnvelope,
   parseSubagentReportEnvelope,
+  subagentReportFallbackTitle,
+  subagentUpdateFallbackTitle,
 } from "@/common/utils/subagentReportEnvelope";
 import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
@@ -7119,7 +7121,7 @@ export class TaskService {
       }
 
       const agentType = coerceNonEmptyString(childEntry.workspace.agentType) ?? "agent";
-      const title = coerceNonEmptyString(report.title) ?? `Subagent (${agentType}) update`;
+      const title = coerceNonEmptyString(report.title) ?? subagentUpdateFallbackTitle(agentType);
       const reportContent = formatSubagentReportUserMessage({
         childWorkspaceId,
         agentType,
@@ -12976,7 +12978,7 @@ export class TaskService {
     const titlePrefix =
       typeof report.title === "string" && report.title.trim().length > 0
         ? report.title
-        : `Subagent (${agentType}) report`;
+        : subagentReportFallbackTitle(agentType);
     const reportContent = formatSubagentReportUserMessage({
       childWorkspaceId,
       agentType,
