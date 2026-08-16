@@ -257,6 +257,22 @@ describe("createMcpPromptGetTool", () => {
     expect(getPrompt).toHaveBeenCalledWith("coder", "status", {}, { signal: controller.signal });
   });
 
+  it("truncates oversized prompt expansions and clamps the result description", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({ text: "x".repeat(200_000), description: "y".repeat(5_000) })
+    );
+    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.text.length).toBeLessThan(70_000);
+      expect(result.text).toEndWith("[Prompt text truncated]");
+      expect(result.description!.length).toBeLessThan(300);
+    }
+  });
+
   it("returns a failure result when the prompt fetch throws", async () => {
     const getPrompt = mock(() => Promise.reject(new Error("server exploded")));
     const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });

@@ -1,5 +1,6 @@
 import { tool } from "ai";
 
+import { MCP_PROMPT_MAX_TEXT_CHARS } from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -167,10 +168,18 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
           argumentValues,
           abortSignal !== undefined ? { signal: abortSignal } : undefined
         );
+        // Expansions are server-controlled; bound them so one verbose or
+        // hostile server cannot flood the next model request.
+        const text =
+          result.text.length <= MCP_PROMPT_MAX_TEXT_CHARS
+            ? result.text
+            : `${result.text.slice(0, MCP_PROMPT_MAX_TEXT_CHARS)}\n\n[Prompt text truncated]`;
         return {
           success: true,
-          text: result.text,
-          ...(result.description !== undefined ? { description: result.description } : {}),
+          text,
+          ...(result.description !== undefined
+            ? { description: clampText(result.description, MAX_PROMPT_DESCRIPTION_CHARS) }
+            : {}),
         };
       } catch (error) {
         return { success: false, error: getErrorMessage(error) };

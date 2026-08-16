@@ -25,3 +25,6 @@ export const INIT_HOOK_MAX_LINES = 500;
 export const WEB_FETCH_TIMEOUT_SECS = 15; // curl timeout
 export const WEB_FETCH_MAX_OUTPUT_BYTES = 64 * 1024; // 64KB markdown output
 export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl --max-filesize)
+
+// MCP prompt expansions are server-controlled; bound them like web_fetch output.
+export const MCP_PROMPT_MAX_TEXT_CHARS = 64 * 1024;
