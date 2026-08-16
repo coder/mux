@@ -29,40 +29,48 @@ export function downloadViaAnchor(href: string, filename: string): void {
 }
 
 /**
+ * "blocked" is retryable within a fresh user gesture; "unshareable" is
+ * permanent for the file in the current environment.
+ */
+export type DownloadBlobResult = "delivered" | "blocked" | "unshareable";
+
+/**
  * Trigger a download of a blob, using the share sheet on iOS home-screen web
  * apps. Runs synchronously up to the share-sheet call, so invoking it inside
  * a click handler keeps the share within the gesture's transient activation.
  *
- * Resolves false when the file was not delivered: the share sheet was blocked
- * (WebKit rejects with NotAllowedError once transient activation expires,
- * e.g. after a slow fetch), or iOS standalone mode cannot share this file at
- * all (anchor downloads silently abort there, so there is no fallback).
- * Callers that fetch bytes asynchronously can cache them and retry within a
- * fresh user gesture (see createDownloadRetryCache).
+ * Both failure branches alert the user here, at the shared boundary, so
+ * fire-and-forget callers cannot silently drop a failed download; the result
+ * exists for callers that manage retries (see createDownloadRetryCache).
  */
-export async function downloadBlob(blob: Blob, filename: string): Promise<boolean> {
+export async function downloadBlob(blob: Blob, filename: string): Promise<DownloadBlobResult> {
   if (isIosStandaloneWebApp()) {
     const file = new File([blob], filename, { type: blob.type });
     if (!canShareFile(file)) {
-      console.error(`iOS home-screen web app cannot share or download ${blob.type} files.`);
-      return false;
+      // Anchor downloads silently abort in iOS standalone mode, so there is
+      // no usable fallback for unshareable files.
+      window.alert(`This file type (${blob.type || "unknown"}) can't be saved from this app.`);
+      return "unshareable";
     }
     try {
       await navigator.share({ files: [file] });
     } catch (err) {
       // AbortError means the user dismissed the share sheet.
-      if (err instanceof DOMException && err.name === "AbortError") return true;
+      if (err instanceof DOMException && err.name === "AbortError") return "delivered";
+      // Typically NotAllowedError: WebKit blocks share() once the gesture's
+      // transient activation expires (e.g. after a slow fetch).
       console.error("Failed to share file:", err);
-      return false;
+      window.alert("Saving was interrupted. Tap the download again to save.");
+      return "blocked";
     }
-    return true;
+    return "delivered";
   }
 
   const objectUrl = URL.createObjectURL(blob);
   downloadViaAnchor(objectUrl, filename);
   // Delay revocation so the browser can start the download first.
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-  return true;
+  return "delivered";
 }
 
 interface FetchedFile {
@@ -75,7 +83,9 @@ interface FetchedFile {
  * after the user gesture. If the fetch outlives iOS's transient-activation
  * window, the share sheet is blocked; the fetched bytes are cached so the
  * user's retry tap shares synchronously within its own activation window
- * instead of repeating the fetch and failing again.
+ * instead of repeating the fetch and failing again. Only "blocked" failures
+ * are cached: unshareable files can never succeed, so retaining their bytes
+ * would only grow renderer memory.
  */
 export function createDownloadRetryCache() {
   const cache = new Map<string, FetchedFile>();
@@ -83,13 +93,13 @@ export function createDownloadRetryCache() {
     async download(key: string, fetchFile: () => Promise<FetchedFile | null>): Promise<void> {
       const cached = cache.get(key);
       if (cached) {
-        if (await downloadBlob(cached.blob, cached.filename)) {
+        if ((await downloadBlob(cached.blob, cached.filename)) !== "blocked") {
           cache.delete(key);
         }
         return;
       }
       const fetched = await fetchFile();
-      if (fetched && !(await downloadBlob(fetched.blob, fetched.filename))) {
+      if (fetched && (await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {
         cache.set(key, fetched);
       }
     },

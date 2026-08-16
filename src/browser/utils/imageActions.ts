@@ -143,8 +143,8 @@ export function downloadDataUrl(dataUrl: string, filename: string): void {
   if (isIosStandaloneWebApp()) {
     const blob = dataUrlToBlob(dataUrl);
     if (blob) {
-      // In-gesture call with in-memory bytes: the share path cannot be blocked
-      // by expired activation, so the result needs no handling.
+      // downloadBlob alerts the user on failure itself, so fire-and-forget
+      // cannot silently drop the download.
       void downloadBlob(blob, filename);
       return;
     }

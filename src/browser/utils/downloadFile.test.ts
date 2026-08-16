@@ -13,6 +13,8 @@ interface AnchorStub {
 
 let originalNavigator: typeof globalThis.navigator;
 let originalDocument: typeof globalThis.document;
+let originalWindow: typeof globalThis.window;
+let alertMock: ReturnType<typeof mock>;
 let originalCreateObjectURL: typeof URL.createObjectURL;
 let originalRevokeObjectURL: typeof URL.revokeObjectURL;
 let anchor: AnchorStub;
@@ -29,6 +31,9 @@ function installNavigator(nav: {
 beforeEach(() => {
   originalNavigator = globalThis.navigator;
   originalDocument = globalThis.document;
+  originalWindow = globalThis.window;
+  alertMock = mock(() => undefined);
+  globalThis.window = { alert: alertMock } as unknown as Window & typeof globalThis;
   originalCreateObjectURL = URL.createObjectURL.bind(URL);
   originalRevokeObjectURL = URL.revokeObjectURL.bind(URL);
 
@@ -50,6 +55,7 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.navigator = originalNavigator;
   globalThis.document = originalDocument;
+  globalThis.window = originalWindow;
   URL.createObjectURL = originalCreateObjectURL;
   URL.revokeObjectURL = originalRevokeObjectURL;
 });
@@ -59,7 +65,9 @@ describe("downloadBlob", () => {
     const share = mock((_data: { files: File[] }) => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => true, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(true);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "delivered"
+    );
 
     expect(share).toHaveBeenCalledTimes(1);
     const [{ files }] = share.mock.calls[0];
@@ -73,16 +81,20 @@ describe("downloadBlob", () => {
     const share = mock(() => Promise.reject(new DOMException("dismissed", "AbortError")));
     installNavigator({ standalone: true, canShare: () => true, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(true);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "delivered"
+    );
+    expect(alertMock).not.toHaveBeenCalled();
     expect(createElement).not.toHaveBeenCalled();
   });
 
-  it("reports a blocked share sheet without falling back to an anchor", async () => {
+  it("reports a blocked share sheet, alerting instead of falling back to an anchor", async () => {
     // WebKit rejects with NotAllowedError when transient activation expired.
     const share = mock(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
     installNavigator({ standalone: true, canShare: () => true, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(false);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe("blocked");
+    expect(alertMock).toHaveBeenCalledTimes(1);
     expect(createElement).not.toHaveBeenCalled();
   });
 
@@ -90,7 +102,9 @@ describe("downloadBlob", () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ canShare: () => true, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(true);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "delivered"
+    );
 
     expect(share).not.toHaveBeenCalled();
     expect(anchor.href).toBe("blob:test");
@@ -98,13 +112,16 @@ describe("downloadBlob", () => {
     expect(anchor.click).toHaveBeenCalledTimes(1);
   });
 
-  it("reports failure instead of an unusable anchor when iOS standalone cannot share the file", async () => {
+  it("alerts and reports unshareable instead of an unusable anchor when iOS standalone cannot share the file", async () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => false, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(false);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "unshareable"
+    );
 
     expect(share).not.toHaveBeenCalled();
+    expect(alertMock).toHaveBeenCalledTimes(1);
     expect(anchor.click).not.toHaveBeenCalled();
   });
 });
@@ -174,6 +191,21 @@ describe("createDownloadRetryCache", () => {
     await downloads.download("key", fetchFile);
 
     expect(fetchFile).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache unshareable files, since no retry can succeed", async () => {
+    const share = mock(() => Promise.resolve());
+    installNavigator({ standalone: true, canShare: () => false, share });
+    const fetchFile = mock(() => Promise.resolve(fetchedFile()));
+    const downloads = createDownloadRetryCache();
+
+    await downloads.download("key", fetchFile);
+    await downloads.download("key", fetchFile);
+
+    // Each tap refetches: nothing was cached for the unshareable file.
+    expect(fetchFile).toHaveBeenCalledTimes(2);
+    expect(share).not.toHaveBeenCalled();
+    expect(alertMock).toHaveBeenCalledTimes(2);
   });
 
   it("skips the download when the fetch fails", async () => {
