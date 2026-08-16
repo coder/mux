@@ -130,10 +130,15 @@ export function createDownloadRetryCache() {
         return;
       }
       const fetched = await fetchFile();
-      // A fetch superseded by a later tap or an abandoned context must not
-      // open the share sheet (it could hijack the newer tap's activation or
-      // alert without owning the slot); drop it before any side effect.
-      if (!fetched || call !== latestCall || stillWanted?.() === false) {
+      if (!fetched) {
+        return;
+      }
+      // Only the iOS share-sheet path is side-effect sensitive: a fetch
+      // superseded by a later tap or an abandoned context must not open the
+      // sheet (hijacking the newer tap's activation) or alert without owning
+      // the slot. Ordinary anchor downloads elsewhere are independent and
+      // must all be delivered, even concurrently.
+      if (isIosStandaloneWebApp() && (call !== latestCall || stillWanted?.() === false)) {
         return;
       }
       if ((await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {

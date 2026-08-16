@@ -284,6 +284,22 @@ describe("createDownloadRetryCache", () => {
     expect(alertMock).not.toHaveBeenCalled();
   });
 
+  it("delivers concurrent downloads independently outside iOS standalone", async () => {
+    installNavigator({});
+    let resolveA: (file: FetchedFileForTest) => void = () => undefined;
+    const fetchA = mock(() => new Promise<FetchedFileForTest>((resolve) => (resolveA = resolve)));
+    const fetchB = mock(() => Promise.resolve(fetchedFile()));
+    const downloads = createDownloadRetryCache();
+
+    // Tap A (fetch hangs), then tap B; both must reach the anchor.
+    const pendingA = downloads.download("a", fetchA);
+    await downloads.download("b", fetchB);
+    resolveA(fetchedFile());
+    await pendingA;
+
+    expect(anchor.click).toHaveBeenCalledTimes(2);
+  });
+
   it("does not cache unshareable files, since no retry can succeed", async () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => false, share });
