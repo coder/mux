@@ -10,7 +10,7 @@
  * launched from a Home Screen icon, so this never matches desktop PWAs or
  * Android, where anchor downloads work.
  */
-function isIosStandaloneWebApp(): boolean {
+export function isIosStandaloneWebApp(): boolean {
   return (navigator as Navigator & { standalone?: unknown }).standalone === true;
 }
 
@@ -18,39 +18,48 @@ function canShareFile(file: File): boolean {
   return typeof navigator.share === "function" && navigator.canShare?.({ files: [file] }) === true;
 }
 
+/** Trigger a plain anchor download. Unusable in iOS standalone mode. */
+export function downloadViaAnchor(href: string, filename: string): void {
+  const anchor = document.createElement("a");
+  anchor.href = href;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
 /**
  * Trigger a download of a blob, using the share sheet on iOS home-screen web
  * apps. Runs synchronously up to the share-sheet call, so invoking it inside
  * a click handler keeps the share within the gesture's transient activation.
  *
- * Resolves false only when the share sheet was blocked (WebKit rejects with
- * NotAllowedError once transient activation expires, e.g. after a slow
- * fetch); callers that fetch bytes asynchronously can cache them and retry
- * within a fresh user gesture (see createDownloadRetryCache).
+ * Resolves false when the file was not delivered: the share sheet was blocked
+ * (WebKit rejects with NotAllowedError once transient activation expires,
+ * e.g. after a slow fetch), or iOS standalone mode cannot share this file at
+ * all (anchor downloads silently abort there, so there is no fallback).
+ * Callers that fetch bytes asynchronously can cache them and retry within a
+ * fresh user gesture (see createDownloadRetryCache).
  */
 export async function downloadBlob(blob: Blob, filename: string): Promise<boolean> {
   if (isIosStandaloneWebApp()) {
     const file = new File([blob], filename, { type: blob.type });
-    if (canShareFile(file)) {
-      try {
-        await navigator.share({ files: [file] });
-      } catch (err) {
-        // AbortError means the user dismissed the share sheet.
-        if (err instanceof DOMException && err.name === "AbortError") return true;
-        console.error("Failed to share file:", err);
-        return false;
-      }
-      return true;
+    if (!canShareFile(file)) {
+      console.error(`iOS home-screen web app cannot share or download ${blob.type} files.`);
+      return false;
     }
+    try {
+      await navigator.share({ files: [file] });
+    } catch (err) {
+      // AbortError means the user dismissed the share sheet.
+      if (err instanceof DOMException && err.name === "AbortError") return true;
+      console.error("Failed to share file:", err);
+      return false;
+    }
+    return true;
   }
 
   const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = objectUrl;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
+  downloadViaAnchor(objectUrl, filename);
   // Delay revocation so the browser can start the download first.
   setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
   return true;

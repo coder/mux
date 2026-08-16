@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
 import { createDownloadRetryCache, downloadBlob } from "./downloadFile";
+import { downloadDataUrl } from "./imageActions";
+
+const PNG_DATA_URL = `data:image/png;base64,${btoa("x")}`;
 
 interface AnchorStub {
   href: string;
@@ -95,14 +98,39 @@ describe("downloadBlob", () => {
     expect(anchor.click).toHaveBeenCalledTimes(1);
   });
 
-  it("falls back to an anchor download when the environment cannot share the file", async () => {
+  it("reports failure instead of an unusable anchor when iOS standalone cannot share the file", async () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => false, share });
 
-    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(true);
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(false);
 
     expect(share).not.toHaveBeenCalled();
+    expect(anchor.click).not.toHaveBeenCalled();
+  });
+});
+
+describe("downloadDataUrl", () => {
+  it("uses the data URL directly as anchor href outside iOS standalone, without decoding", () => {
+    const share = mock(() => Promise.resolve());
+    installNavigator({ canShare: () => true, share });
+
+    downloadDataUrl(PNG_DATA_URL, "shot.png");
+
+    expect(share).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(anchor.href).toBe(PNG_DATA_URL);
+    expect(anchor.download).toBe("shot.png");
     expect(anchor.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("decodes and shares in iOS standalone mode", () => {
+    const share = mock((_data: { files: File[] }) => Promise.resolve());
+    installNavigator({ standalone: true, canShare: () => true, share });
+
+    downloadDataUrl(PNG_DATA_URL, "shot.png");
+
+    expect(share).toHaveBeenCalledTimes(1);
+    expect(anchor.click).not.toHaveBeenCalled();
   });
 });
 

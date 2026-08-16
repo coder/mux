@@ -46,7 +46,7 @@ describe("AttachFileToolCall", () => {
     URL.revokeObjectURL = originalRevokeObjectURL;
   });
 
-  test("renders display-only markdown files with preview and download", async () => {
+  test("renders display-only markdown files with preview and download", () => {
     const markdown = "# Release Notes\n\n- Added **markdown** preview.\n";
     const data = Buffer.from(markdown).toString("base64");
 
@@ -79,9 +79,10 @@ describe("AttachFileToolCall", () => {
     fireEvent.click(view.getByRole("button", { name: /Download/ }));
     expect(clickedAnchors).toHaveLength(1);
     expect(clickedAnchors[0].getAttribute("download")).toBe("release-notes.md");
-    expect(downloadedBlobs).toHaveLength(1);
-    expect(downloadedBlobs[0].type).toBe("text/markdown");
-    expect(await downloadedBlobs[0].text()).toBe(markdown);
+    // Outside iOS standalone mode the anchor uses the data URL directly, so
+    // no Blob/object URL is created.
+    expect(downloadedBlobs).toHaveLength(0);
+    expect(clickedAnchors[0].getAttribute("href")).toBe(`data:text/markdown;base64,${data}`);
   });
 
   test("renders image attachments with a filename caption", () => {
@@ -137,7 +138,7 @@ describe("AttachFileToolCall", () => {
     fireEvent.click(view.getByRole("button", { name: /Download/ }));
     expect(clickedAnchors).toHaveLength(1);
     expect(clickedAnchors[0].getAttribute("download")).toBe("report.pdf");
-    expect(downloadedBlobs).toHaveLength(1);
-    expect(downloadedBlobs[0].type).toBe("application/pdf");
+    expect(downloadedBlobs).toHaveLength(0);
+    expect(clickedAnchors[0].getAttribute("href")).toBe(`data:application/pdf;base64,${data}`);
   });
 });

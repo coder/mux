@@ -1,7 +1,11 @@
 import type React from "react";
 import { normalizeAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
-import { downloadBlob } from "@/browser/utils/downloadFile";
+import {
+  downloadBlob,
+  downloadViaAnchor,
+  isIosStandaloneWebApp,
+} from "@/browser/utils/downloadFile";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 
 /**
@@ -130,23 +134,21 @@ export function handleImageActionKeyDown(
 }
 
 /**
- * Trigger a download of a data URL. Routed through downloadBlob so iOS
- * home-screen web apps (which drop anchor downloads) get the share sheet.
+ * Trigger a download of a data URL. iOS home-screen web apps drop anchor
+ * downloads, so only there the payload is decoded into a Blob for the share
+ * sheet; everywhere else the anchor uses the data URL directly, avoiding a
+ * synchronous base64 decode of potentially multi-MB attachments.
  */
 export function downloadDataUrl(dataUrl: string, filename: string): void {
-  const blob = dataUrlToBlob(dataUrl);
-  if (blob) {
-    // In-gesture call with in-memory bytes: the share path cannot be blocked
-    // by expired activation, so the result needs no handling.
-    void downloadBlob(blob, filename);
-    return;
+  if (isIosStandaloneWebApp()) {
+    const blob = dataUrlToBlob(dataUrl);
+    if (blob) {
+      // In-gesture call with in-memory bytes: the share path cannot be blocked
+      // by expired activation, so the result needs no handling.
+      void downloadBlob(blob, filename);
+      return;
+    }
   }
 
-  // Non-base64 sources: fall back to a direct anchor download.
-  const anchor = document.createElement("a");
-  anchor.href = dataUrl;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
+  downloadViaAnchor(dataUrl, filename);
 }
