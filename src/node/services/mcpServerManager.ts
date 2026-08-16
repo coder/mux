@@ -843,7 +843,12 @@ export function flattenMcpPrompt(result: MCPGetPromptResult): string {
     }
   }
   const flattened = parts.join("\n\n");
-  return truncated ? flattened + MCP_PROMPT_TRUNCATION_MARKER : flattened;
+  // Skip the marker when the accumulated text is whitespace-only: the marker
+  // would otherwise be the only content and let an oversized meaningless
+  // expansion slip past getPrompt's emptiness rejection.
+  return truncated && flattened.trim().length > 0
+    ? flattened + MCP_PROMPT_TRUNCATION_MARKER
+    : flattened;
 }
 
 /**

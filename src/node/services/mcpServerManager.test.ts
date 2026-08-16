@@ -2384,6 +2384,27 @@ describe("MCPServerManager", () => {
     expect(result.text).not.toContain("\uFFFD");
   });
 
+  test("getPrompt rejects an oversized whitespace-only expansion instead of passing the marker off as content", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: " ".repeat(2 * MCP_PROMPT_MAX_TEXT_BYTES) },
+          },
+        ],
+      })
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() => Promise.resolve(startResult([["coder", { getPrompt }]])));
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow(
+      "returned no text content"
+    );
+  });
+
   test("getPrompt never encodes more than the byte budget for a huge expansion", async () => {
     const getPrompt = mock(() =>
       Promise.resolve({
