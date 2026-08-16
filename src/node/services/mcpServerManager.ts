@@ -871,6 +871,8 @@ interface WorkspaceServers {
   retryingTimedOutServerNames: Set<string>;
   /** Blocks prompt invocation on stale clients while an active lease defers restart. */
   stalePromptServerNames?: Set<string>;
+  /** Dedupes send-path background prompt refreshes so streams never stack them. */
+  promptRefreshInFlight?: Promise<void>;
   lastActivity: number;
 }
 
@@ -987,6 +989,24 @@ export class MCPServerManager {
         }
       })
     );
+  }
+
+  /**
+   * Send-path prompt freshness is stale-while-revalidate: prompts/list can
+   * hang for its full timeout on servers that ignore prompt requests, and a
+   * message send must never wait on it. Streams serve the cached catalog and
+   * the refreshed one lands for the next stream.
+   */
+  private refreshInstancePromptsInBackground(entry: WorkspaceServers): void {
+    if (entry.promptRefreshInFlight !== undefined) {
+      return;
+    }
+    const refresh = this.refreshInstancePrompts(this.promptEligibleInstances(entry)).finally(() => {
+      if (entry.promptRefreshInFlight === refresh) {
+        entry.promptRefreshInFlight = undefined;
+      }
+    });
+    entry.promptRefreshInFlight = refresh;
   }
 
   private async refreshInstancePrompts(
@@ -1484,10 +1504,8 @@ export class MCPServerManager {
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-        await Promise.all([
-          this.refreshModernInstanceTools(existing.instances),
-          this.refreshInstancePrompts(this.promptEligibleInstances(existing)),
-        ]);
+        this.refreshInstancePromptsInBackground(existing);
+        await this.refreshModernInstanceTools(existing.instances);
       }
 
       // A trust or settings mutation can land while getAllServers() runs above;
@@ -1638,10 +1656,8 @@ export class MCPServerManager {
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-        await Promise.all([
-          this.refreshModernInstanceTools(instancesForTools),
-          this.refreshInstancePrompts(this.promptEligibleInstances(existing)),
-        ]);
+        this.refreshInstancePromptsInBackground(existing);
+        await this.refreshModernInstanceTools(instancesForTools);
       }
 
       return {
@@ -1664,10 +1680,8 @@ export class MCPServerManager {
         if (current.configSignature === signature && !currentHasClosedInstance) {
           current.lastActivity = Date.now();
           if (refreshToolCatalogs) {
-            await Promise.all([
-              this.refreshModernInstanceTools(current.instances),
-              this.refreshInstancePrompts(this.promptEligibleInstances(current)),
-            ]);
+            this.refreshInstancePromptsInBackground(current);
+            await this.refreshModernInstanceTools(current.instances);
           }
           // Repair again in case a mutation landed after the concurrent starter's check.
           await this.repairEnablementAfterConcurrentMutation(
@@ -1861,26 +1875,33 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
-        // Oversized argument names cannot round-trip through bounded hints and
-        // errors, leaving the prompt permanently uninvocable; drop it instead.
+        // Oversized argument names cannot round-trip through bounded hints
+        // and errors. A required one leaves the prompt permanently
+        // uninvocable, so the prompt is dropped; oversized optional arguments
+        // are omitted from the descriptor while the prompt stays callable.
         if (
           (prompt.arguments ?? []).some(
-            (argument) => argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
+            (argument) =>
+              argument.required === true &&
+              argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
           )
         ) {
-          log.debug("[MCP] Skipping prompt with oversized argument name", {
+          log.debug("[MCP] Skipping prompt with oversized required argument name", {
             server: instance.name,
             prompt: prompt.name,
           });
           continue;
         }
+        const advertisedArguments = prompt.arguments?.filter(
+          (argument) => argument.name.length <= MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
+        );
         descriptors.push({
           commandKey: command.toolName,
           stableKey,
           serverName: instance.name,
           promptName: prompt.name,
           ...(prompt.description !== undefined ? { description: prompt.description } : {}),
-          ...(prompt.arguments !== undefined ? { arguments: prompt.arguments } : {}),
+          ...(advertisedArguments !== undefined ? { arguments: advertisedArguments } : {}),
         });
       }
     }

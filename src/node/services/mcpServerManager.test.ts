@@ -748,6 +748,13 @@ describe("MCPServerManager", () => {
               prompts: [
                 { name: "usable", arguments: [{ name: "pr", required: true }] },
                 { name: "stuck", arguments: [{ name: "a".repeat(5_000), required: true }] },
+                {
+                  name: "partial",
+                  arguments: [
+                    { name: "ok", required: true },
+                    { name: "b".repeat(5_000), required: false },
+                  ],
+                },
               ],
             },
           ],
@@ -757,7 +764,16 @@ describe("MCPServerManager", () => {
 
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["usable"]);
+    // A prompt with an oversized required argument is dropped outright; an
+    // oversized optional argument is omitted while the prompt stays callable.
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
+      "partial",
+      "usable",
+    ]);
+    const partial = result.promptDescriptors.find(
+      (descriptor) => descriptor.promptName === "partial"
+    );
+    expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
   });
 
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
@@ -828,8 +844,8 @@ describe("MCPServerManager", () => {
     const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // Legacy servers re-poll too: prompt catalogs can change after the first
-    // listing even when the instance has no refreshTools.
+    // Every cached send revalidates prompt catalogs, legacy included; the
+    // hung-refresh test below guards that this never blocks the send.
     expect(legacyRefresh).toHaveBeenCalledTimes(2);
     expect(modernRefresh).toHaveBeenCalledTimes(2);
     expect(first.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
@@ -840,6 +856,37 @@ describe("MCPServerManager", () => {
       "legacy-v2",
       "modern-v2",
     ]);
+  });
+
+  test("getToolsForWorkspace does not block sends on a hung prompt refresh", async () => {
+    const workspaceId = "ws-hung-prompt-refresh";
+    configService.listServers = mock(() => Promise.resolve({ hung: stdioConfig("cmd") }));
+    const hung = testInstance("hung", { prompts: [{ name: "cached" }] });
+    let refreshCalls = 0;
+    const neverSettles = mock(() => {
+      refreshCalls += 1;
+      // First call happens at cold start (awaited); later ones hang forever.
+      return refreshCalls === 1 ? Promise.resolve() : new Promise<void>(() => undefined);
+    });
+    (hung as { refreshPrompts?: typeof neverSettles }).refreshPrompts = neverSettles;
+    access.startServers = mock(() =>
+      Promise.resolve({
+        instances: new Map([["hung", hung]]),
+        failedServerNames: [],
+        timedOutServerNames: [],
+      })
+    );
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Cached sends resolve immediately with the cached catalog even though
+    // the background refresh never settles, and in-flight dedup keeps later
+    // sends from stacking further refreshes.
+    const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(second.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["cached"]);
+    expect(third.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["cached"]);
+    expect(refreshCalls).toBe(2);
   });
 
   test("getToolsForWorkspace retries timed-out servers from cached workspace state", async () => {

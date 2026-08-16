@@ -184,16 +184,27 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       }
 
       const argumentValues = args ?? {};
-      const missingRequired = (descriptor.arguments ?? [])
-        .filter((argument) => argument.required === true && argumentValues[argument.name] == null)
-        .map((argument) => argument.name);
-      if (missingRequired.length > 0) {
-        // Argument names are server-controlled; bound them like the catalog.
-        const missing = joinKeysWithinBudget(missingRequired, MAX_ERROR_TEXT_CHARS);
+      // Single pass over the server-controlled arguments array, accumulating
+      // only names that fit the error budget; the rest are just counted.
+      const missingNames: string[] = [];
+      let missingChars = 0;
+      let missingOmitted = 0;
+      for (const argument of descriptor.arguments ?? []) {
+        if (argument.required !== true || argumentValues[argument.name] != null) {
+          continue;
+        }
+        if (missingChars + argument.name.length + 2 <= MAX_ERROR_TEXT_CHARS) {
+          missingNames.push(argument.name);
+          missingChars += argument.name.length + 2;
+        } else {
+          missingOmitted++;
+        }
+      }
+      if (missingNames.length > 0 || missingOmitted > 0) {
         return {
           success: false,
-          error: `Missing required argument(s) for '${descriptor.commandKey}': ${missing.text}${
-            missing.omitted > 0 ? ` (+${missing.omitted} more)` : ""
+          error: `Missing required argument(s) for '${descriptor.commandKey}': ${missingNames.join(", ")}${
+            missingOmitted > 0 ? ` (+${missingOmitted} more)` : ""
           }`,
         };
       }
