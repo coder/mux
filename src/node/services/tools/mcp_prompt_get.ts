@@ -26,6 +26,39 @@ function clampText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
 }
 
+interface PromptLookup {
+  byCommandKey: Map<string, MCPPromptDescriptor>;
+  byStableKey: Map<string, MCPPromptDescriptor>;
+}
+
+// The manager memoizes descriptor arrays per catalog snapshot, so keying on
+// the array reference builds each lookup once per refresh instead of scanning
+// the whole catalog on every valid invocation.
+const promptLookups = new WeakMap<MCPPromptDescriptor[], PromptLookup>();
+
+function promptLookupFor(prompts: MCPPromptDescriptor[]): PromptLookup {
+  let lookup = promptLookups.get(prompts);
+  if (!lookup) {
+    const byCommandKey = new Map<string, MCPPromptDescriptor>();
+    const byStableKey = new Map<string, MCPPromptDescriptor>();
+    // First-wins inserts preserve the earlier linear scan's precedence
+    // between duplicate keys.
+    for (const descriptor of prompts) {
+      const commandKey = descriptor.commandKey;
+      if (!byCommandKey.has(commandKey)) {
+        byCommandKey.set(commandKey, descriptor);
+      }
+      const stableKey = descriptor.stableKey;
+      if (!byStableKey.has(stableKey)) {
+        byStableKey.set(stableKey, descriptor);
+      }
+    }
+    lookup = { byCommandKey, byStableKey };
+    promptLookups.set(prompts, lookup);
+  }
+  return lookup;
+}
+
 function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
   const args = descriptor.arguments ?? [];
   if (args.length === 0) {
@@ -128,20 +161,9 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       }
 
       // Exact commandKey takes precedence so a stableKey alias cannot shadow
-      // a prompt's current key, matching composer resolution. One traversal
-      // resolves both.
-      let exactMatch: MCPPromptDescriptor | undefined;
-      let aliasMatch: MCPPromptDescriptor | undefined;
-      for (const candidate of prompts) {
-        if (candidate.commandKey === name) {
-          exactMatch = candidate;
-          break;
-        }
-        if (aliasMatch === undefined && candidate.stableKey === name) {
-          aliasMatch = candidate;
-        }
-      }
-      const descriptor = exactMatch ?? aliasMatch;
+      // a prompt's current key, matching composer resolution.
+      const lookup = promptLookupFor(prompts);
+      const descriptor = lookup.byCommandKey.get(name) ?? lookup.byStableKey.get(name);
       // Model-provided, so clamp its echo in error text.
       const shownName = clampText(name, MAX_ERROR_TEXT_CHARS);
       if (!descriptor) {

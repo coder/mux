@@ -395,6 +395,45 @@ describe("createMcpPromptGetTool", () => {
     expect(keyReads).toBeLessThanOrEqual(250);
   });
 
+  it("resolves valid prompt calls in constant time after the first lookup per catalog snapshot", async () => {
+    let elementReads = 0;
+    const prompts = new Proxy(
+      Array.from({ length: 5_000 }, (_, index) => ({
+        ...STATUS_PROMPT,
+        commandKey: `mcp__coder__p${index}`,
+        stableKey: `mcp__coder__p${index}__hash`,
+        promptName: `p${index}`,
+      })),
+      {
+        get(target, property, receiver): unknown {
+          if (typeof property === "string" && /^\d+$/.test(property)) {
+            elementReads++;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }
+    );
+    const getPrompt = mock(() => Promise.resolve({ text: "hi" }));
+    const tool = createTool({ prompts, getPrompt });
+
+    const first = await execute(tool, { name: "mcp__coder__p4999" });
+    expect(first).toEqual({ text: "hi", success: true });
+
+    // Later invocations reuse the memoized lookup instead of rescanning.
+    elementReads = 0;
+    const second = await execute(tool, { name: "mcp__coder__p4999" });
+    expect(second).toEqual({ text: "hi", success: true });
+    expect(elementReads).toBe(0);
+
+    // The lookup is keyed on the catalog snapshot, so a new tool instance for
+    // the same memoized descriptor array must not rebuild it either.
+    const nextSendTool = createTool({ prompts, getPrompt });
+    elementReads = 0;
+    const alias = await execute(nextSendTool, { name: "mcp__coder__p4999__hash" });
+    expect(alias).toEqual({ text: "hi", success: true });
+    expect(elementReads).toBe(0);
+  });
+
   it("treats required arguments named after Object.prototype members as missing when omitted", async () => {
     const prompt: MCPPromptDescriptor = {
       ...STATUS_PROMPT,
