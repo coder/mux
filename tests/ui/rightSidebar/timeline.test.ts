@@ -422,9 +422,37 @@ describe("TimelinePanel", () => {
     expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
   });
 
-  test("keeps only the newest update row for an in-flight task", () => {
+  test("keeps earlier updates with distinct findings after the report lands", () => {
     const events = [
-      makeEvent("update-late", "task.progress", 3, {
+      makeEvent("report", "task.reported", 2, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { title: "Final summary", digest: "All checks pass" },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("finding", "task.progress", 1, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Important finding", digest: "Found a race in the loader" },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="finding"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
+  });
+
+  test("collapses duplicate update rows while keeping distinct checkpoints", () => {
+    const events = [
+      makeEvent("update-late", "task.progress", 4, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Second checkpoint" },
+        anchor: { taskId: "task-a", messageId: "msg-3", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update-dupe", "task.progress", 3, {
         source: { system: "task" },
         status: "started",
         data: { title: "Second checkpoint" },
@@ -446,7 +474,8 @@ describe("TimelinePanel", () => {
     const view = renderTimeline({ events });
 
     expect(view.container.querySelector('[data-timeline-event-id="update-late"]')).not.toBeNull();
-    expect(view.container.querySelector('[data-timeline-event-id="update-early"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="update-dupe"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="update-early"]')).not.toBeNull();
     expect(view.container.querySelector('[data-timeline-event-id="start"]')).toBeNull();
   });
 

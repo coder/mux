@@ -230,12 +230,18 @@ const TASK_LIFECYCLE_KINDS = new Set([
   "task.interrupted",
 ]);
 
-// Started and progress rows are provisional: an in-progress update repeats what the terminal
-// report will say, so once the same task has a newer lifecycle row on the feed they add no unique
-// information and only the newest row per task survives. Terminal rows always stay, since a
-// reawakened sub-agent can report more than once. The started row is the only one anchored to the
-// spawning tool call, so rows that cannot reveal a transcript target themselves inherit that
-// anchor before the started row is dropped.
+// Keep the dedupe key's field order aligned with getEventDetail: title before digest.
+function taskRowContentKey(event: TimelineEvent): string {
+  return event.data?.title ?? event.data?.digest ?? "";
+}
+
+// Started rows are provisional: once the same task has a newer lifecycle row on the feed they add
+// no unique information. Update rows dedupe by content key: a checkpoint whose key reappears on a
+// newer lifecycle row for the task is redundant, while updates with distinct keys stay visible
+// because a child may report several times with different findings. Terminal rows always stay,
+// since a reawakened sub-agent can report more than once. The started row is the only one
+// anchored to the spawning tool call, so rows that cannot reveal a transcript target themselves
+// inherit that anchor before the started row is dropped.
 function dropSupersededTaskRows(newestFirst: TimelineEvent[]): TimelineEvent[] {
   const startAnchors = new Map<string, TimelineAnchor>();
   for (const event of newestFirst) {
@@ -250,6 +256,7 @@ function dropSupersededTaskRows(newestFirst: TimelineEvent[]): TimelineEvent[] {
   }
 
   const supersededTaskIds = new Set<string>();
+  const newerRowKeys = new Set<string>();
   const events: TimelineEvent[] = [];
   for (const event of newestFirst) {
     const taskId = event.anchor?.taskId;
@@ -258,11 +265,16 @@ function dropSupersededTaskRows(newestFirst: TimelineEvent[]): TimelineEvent[] {
       continue;
     }
     const kind = getTimelineEventKind(event);
-    if ((kind === "task.created" || kind === "task.progress") && supersededTaskIds.has(taskId)) {
+    if (kind === "task.created" && supersededTaskIds.has(taskId)) {
+      continue;
+    }
+    const contentKey = `${taskId}:${taskRowContentKey(event)}`;
+    if (kind === "task.progress" && newerRowKeys.has(contentKey)) {
       continue;
     }
     if (TASK_LIFECYCLE_KINDS.has(kind)) {
       supersededTaskIds.add(taskId);
+      newerRowKeys.add(contentKey);
       const start = startAnchors.get(taskId);
       if (kind !== "task.created" && start != null && !hasTranscriptAnchor(event.anchor)) {
         events.push({
