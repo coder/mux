@@ -10,16 +10,21 @@ import {
   CircleX,
   ClipboardCheck,
   Forward,
+  Handshake,
   HeartPulse,
   Inbox,
   Layers,
   ListTodo,
   Map,
   MessageSquare,
+  Milestone,
+  OctagonAlert,
   PackageCheck,
+  PackageOpen,
   Radar,
   RefreshCcw,
   RotateCcw,
+  Scale,
   Send,
   Settings2,
   Sparkles,
@@ -154,6 +159,20 @@ const AGENT_EVENT_TINTS: Partial<Record<string, TimelineRowTint>> = {
 
 export function getAgentEventTint(category: string | undefined): TimelineRowTint {
   return (category != null ? AGENT_EVENT_TINTS[category] : undefined) ?? DEFAULT_AGENT_TINT;
+}
+
+// Category glyphs pair with the tints above; events without a recognized category keep the
+// generic agent.event icon.
+const AGENT_EVENT_ICONS: Partial<Record<string, LucideIcon>> = {
+  milestone: Milestone,
+  decision: Scale,
+  blocker: OctagonAlert,
+  handoff: Handshake,
+  picked_up: PackageOpen,
+};
+
+export function getAgentEventIcon(category: string | undefined): LucideIcon | undefined {
+  return category != null ? AGENT_EVENT_ICONS[category] : undefined;
 }
 
 const knownKinds = new Set<string>(TIMELINE_EVENT_KINDS);

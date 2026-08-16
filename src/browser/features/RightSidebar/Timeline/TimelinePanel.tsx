@@ -35,6 +35,7 @@ import {
   getTimelineDayLabel,
   getTimelineEventCategories,
   getTimelineEventKind,
+  getAgentEventIcon,
   getAgentEventTint,
   getTimelineEventTitle,
   getTimelinePresentation,
@@ -351,12 +352,14 @@ function TimelineEventRow(props: {
   onSelect: (eventId: string) => void;
 }) {
   const presentation = getTimelinePresentation(getTimelineEventKind(props.event));
-  const Icon = presentation.icon;
   const title = getTimelineEventTitle(props.event);
   const detail = getEventDetail(props.event);
   const agentAuthored = props.event.source.system === "agent";
   const badge = props.event.data?.category?.replace(/_/g, " ") ?? "Agent";
   const tint = getAgentEventTint(props.event.data?.category);
+  const Icon =
+    (agentAuthored ? getAgentEventIcon(props.event.data?.category) : undefined) ??
+    presentation.icon;
   const failed = props.event.status === "failed";
   const interrupted = props.event.status === "interrupted";
 
