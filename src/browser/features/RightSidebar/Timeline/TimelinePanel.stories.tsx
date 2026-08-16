@@ -142,7 +142,7 @@ const MIXED_EVENTS: TimelineEvent[] = [
 ];
 
 const CATEGORY_EVENTS: TimelineEvent[] = [
-  makeEvent("agent-blocker", "agent.event", 25, {
+  makeEvent("agent-blocker", "agent.event", 36, {
     source: { system: "agent", key: "timeline-event:blocker" },
     data: {
       description: "PR #87 checks reached terminal state with six failures matching the baseline",
@@ -150,7 +150,11 @@ const CATEGORY_EVENTS: TimelineEvent[] = [
     },
     anchor: { toolCallId: "tool-timeline-event-blocker" },
   }),
-  makeEvent("agent-milestone", "agent.event", 24, {
+  makeEvent("rule-blocker", "turn.completed", 35, {
+    status: "completed",
+    data: { durationMs: 60_000 },
+  }),
+  makeEvent("agent-milestone", "agent.event", 34, {
     source: { system: "agent", key: "timeline-event:milestone" },
     data: {
       description: "Landed the retry backoff refactor with green checks",
@@ -158,7 +162,11 @@ const CATEGORY_EVENTS: TimelineEvent[] = [
     },
     anchor: { toolCallId: "tool-timeline-event-milestone" },
   }),
-  makeEvent("agent-decision", "agent.event", 23, {
+  makeEvent("rule-milestone", "turn.completed", 33, {
+    status: "completed",
+    data: { durationMs: 60_000 },
+  }),
+  makeEvent("agent-decision", "agent.event", 32, {
     source: { system: "agent", key: "timeline-event:decision" },
     data: {
       description: "Chose client-side grouping over rewriting the append-only log",
@@ -166,7 +174,11 @@ const CATEGORY_EVENTS: TimelineEvent[] = [
     },
     anchor: { toolCallId: "tool-timeline-event-decision" },
   }),
-  makeEvent("agent-handoff-2", "agent.event", 22, {
+  makeEvent("rule-decision", "turn.completed", 31, {
+    status: "completed",
+    data: { durationMs: 60_000 },
+  }),
+  makeEvent("agent-handoff-2", "agent.event", 30, {
     source: { system: "agent", key: "timeline-event:handoff-2" },
     data: {
       description: "Pushed mike/timeline and opened PR #4821",
@@ -174,7 +186,11 @@ const CATEGORY_EVENTS: TimelineEvent[] = [
     },
     anchor: { toolCallId: "tool-timeline-event-handoff-2" },
   }),
-  makeEvent("agent-picked-up-2", "agent.event", 21, {
+  makeEvent("rule-handoff-2", "turn.completed", 29, {
+    status: "completed",
+    data: { durationMs: 60_000 },
+  }),
+  makeEvent("agent-picked-up-2", "agent.event", 28, {
     source: { system: "agent", key: "timeline-event:picked-up-2" },
     data: {
       description: "Picked up review feedback on the retry backoff",
@@ -182,7 +198,11 @@ const CATEGORY_EVENTS: TimelineEvent[] = [
     },
     anchor: { toolCallId: "tool-timeline-event-picked-up-2" },
   }),
-  makeEvent("agent-uncategorized", "agent.event", 20, {
+  makeEvent("rule-picked-up-2", "turn.completed", 27, {
+    status: "completed",
+    data: { durationMs: 60_000 },
+  }),
+  makeEvent("agent-uncategorized", "agent.event", 26, {
     source: { system: "agent", key: "timeline-event:uncategorized" },
     data: { description: "Recorded a note without a category" },
     anchor: { toolCallId: "tool-timeline-event-uncategorized" },
@@ -196,7 +216,18 @@ const STORY_STORE: TimelineWorkspaceStore = {
   retryTimeline: () => undefined,
 };
 
-const STORY_API = createMockORPCClient();
+// The shared mock resolves previews to null; return a transcript excerpt that extends the
+// user-turn digest so selecting that row exercises the digest-vs-excerpt dedupe path.
+const STORY_API = (() => {
+  const api = createMockORPCClient();
+  api.workspace.timeline.preview = () =>
+    Promise.resolve({
+      role: "user",
+      textExcerpt:
+        "Add Timeline behavior coverage and responsive stories so the panel is validated at phone widths as well as desktop.",
+    });
+  return api;
+})();
 
 const meta = {
   title: "Features/RightSidebar/TimelinePanel",
