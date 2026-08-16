@@ -837,6 +837,9 @@ describe("MCPServerManager", () => {
     // The cached send rebuilds descriptors from the normalized catalog and
     // never touches the raw server-controlled array again.
     expect(rawElementReads).toBe(0);
+    // Unchanged catalogs reuse the memoized descriptor array outright, so
+    // the full sort/re-key rebuild stays off the send-critical path.
+    expect(second.promptDescriptors).toBe(first.promptDescriptors);
     for (const result of [first, second]) {
       // A prompt whose required arguments alone exceed the cap is dropped;
       // the hostile-but-callable prompt stays discoverable with a bounded

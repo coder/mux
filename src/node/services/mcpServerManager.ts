@@ -997,6 +997,14 @@ interface WorkspaceServers {
   stalePromptServerNames?: Set<string>;
   /** Dedupes send-path background prompt refreshes so streams never stack them. */
   promptRefreshInFlight?: Promise<void>;
+  /**
+   * Memoized model-facing descriptors keyed by the exact (instance, prompts)
+   * references they were built from; see promptDescriptorsFor.
+   */
+  promptDescriptorCache?: {
+    sources: Array<{ instance: MCPServerInstance; prompts: MCPPrompt[] }>;
+    descriptors: MCPPromptDescriptor[];
+  };
   lastActivity: number;
 }
 
@@ -1653,7 +1661,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
         stats: existing.stats,
-        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(existing)),
+        promptDescriptors: this.promptDescriptorsFor(existing),
       };
     }
 
@@ -1795,7 +1803,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
         stats: leasedStats,
-        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(existing)),
+        promptDescriptors: this.promptDescriptorsFor(existing),
       };
     }
 
@@ -1829,7 +1837,7 @@ export class MCPServerManager {
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,
-            promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(current)),
+            promptDescriptors: this.promptDescriptorsFor(current),
           };
         }
       }
@@ -1909,7 +1917,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(instances, fullServerInfo, overrides),
         stats,
-        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(entry)),
+        promptDescriptors: this.promptDescriptorsFor(entry),
       };
     });
   }
@@ -1925,7 +1933,7 @@ export class MCPServerManager {
     // participate in the check because rotation bumps neither counter. Abort
     // returns promptly while a losing startup may finish into the cache for
     // idle cleanup.
-    let enabledInstances: Map<string, MCPServerInstance>;
+    let latestEntry: WorkspaceServers;
     for (;;) {
       const optionsMutationsBefore = this.workspaceOptionsMutationCounts.get(workspaceId) ?? 0;
       const generationBefore = this.configService.configGeneration;
@@ -1951,8 +1959,8 @@ export class MCPServerManager {
       const entry = this.workspaceServers.get(workspaceId);
       if (!entry) return [];
 
-      enabledInstances = this.promptEligibleInstances(entry);
-      await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
+      latestEntry = entry;
+      await this.refreshInstancePrompts(this.promptEligibleInstances(entry), callOptions?.signal);
       const secretsNow = await this.resolveSecretsForRefresh(
         workspaceId,
         currentOptions.projectPath
@@ -1965,7 +1973,7 @@ export class MCPServerManager {
         break;
       }
     }
-    return this.buildPromptDescriptors(enabledInstances);
+    return this.promptDescriptorsFor(latestEntry);
   }
 
   /**
@@ -1980,6 +1988,38 @@ export class MCPServerManager {
           entry.enabledServerNames.has(serverName) && !entry.stalePromptServerNames?.has(serverName)
       )
     );
+  }
+
+  /**
+   * Rebuilding descriptors sorts and re-keys the whole catalog, so the
+   * send-critical path memoizes the result per workspace entry. Reference
+   * revalidation is sound because refreshInstancePrompts is the single
+   * writer of instance.prompts and always replaces the array wholesale;
+   * eligibility changes surface as instance-set mismatches.
+   */
+  private promptDescriptorsFor(entry: WorkspaceServers): MCPPromptDescriptor[] {
+    const eligible = this.promptEligibleInstances(entry);
+    const cached = entry.promptDescriptorCache;
+    if (cached && cached.sources.length === eligible.size) {
+      let index = 0;
+      let valid = true;
+      for (const instance of eligible.values()) {
+        const source = cached.sources[index++];
+        if (source?.instance !== instance || source.prompts !== instance.prompts) {
+          valid = false;
+          break;
+        }
+      }
+      if (valid) {
+        return cached.descriptors;
+      }
+    }
+    const descriptors = this.buildPromptDescriptors(eligible);
+    entry.promptDescriptorCache = {
+      sources: [...eligible.values()].map((instance) => ({ instance, prompts: instance.prompts })),
+      descriptors,
+    };
+    return descriptors;
   }
 
   private buildPromptDescriptors(
