@@ -265,6 +265,25 @@ describe("createDownloadRetryCache", () => {
     expect(fetchB).toHaveBeenCalledTimes(1);
   });
 
+  it("drops a resolved fetch without sharing when the caller's context is gone", async () => {
+    const share = mock(() => Promise.resolve());
+    installNavigator({ standalone: true, canShare: () => true, share });
+    let resolveFetch: (file: FetchedFileForTest) => void = () => undefined;
+    const fetchFile = mock(
+      () => new Promise<FetchedFileForTest>((resolve) => (resolveFetch = resolve))
+    );
+    const downloads = createDownloadRetryCache();
+
+    let contextAlive = true;
+    const pending = downloads.download("key", fetchFile, () => contextAlive);
+    contextAlive = false;
+    resolveFetch(fetchedFile());
+    await pending;
+
+    expect(share).not.toHaveBeenCalled();
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
   it("does not cache unshareable files, since no retry can succeed", async () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => false, share });

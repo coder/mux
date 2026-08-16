@@ -111,7 +111,17 @@ export function createDownloadRetryCache() {
   let entry: { key: string; file: FetchedFile } | null = null;
   let latestCall = 0;
   return {
-    async download(key: string, fetchFile: () => Promise<FetchedFile | null>): Promise<void> {
+    /**
+     * stillWanted is re-checked after the fetch resolves; callers should
+     * return false once their originating context is gone (e.g. the user
+     * navigated to another workspace) so a slow fetch cannot fire a share
+     * sheet or alert about a context the user already left.
+     */
+    async download(
+      key: string,
+      fetchFile: () => Promise<FetchedFile | null>,
+      stillWanted?: () => boolean
+    ): Promise<void> {
       const call = ++latestCall;
       if (entry?.key === key) {
         if ((await downloadBlob(entry.file.blob, entry.file.filename)) !== "blocked") {
@@ -120,10 +130,10 @@ export function createDownloadRetryCache() {
         return;
       }
       const fetched = await fetchFile();
-      // A fetch superseded by a later tap must not open the share sheet (it
-      // could hijack the newer tap's activation or alert without owning the
-      // slot); drop it before any side effect.
-      if (!fetched || call !== latestCall) {
+      // A fetch superseded by a later tap or an abandoned context must not
+      // open the share sheet (it could hijack the newer tap's activation or
+      // alert without owning the slot); drop it before any side effect.
+      if (!fetched || call !== latestCall || stillWanted?.() === false) {
         return;
       }
       if ((await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {

@@ -107,30 +107,45 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
 
+  // Tracks the workspace this message currently renders for (null once
+  // unmounted), so an in-flight download fetch can detect that the user
+  // navigated away and must not fire a share sheet for the old workspace.
+  const activeWorkspaceIdRef = React.useRef<string | null>(workspaceId);
+  React.useEffect(() => {
+    activeWorkspaceIdRef.current = workspaceId;
+    return () => {
+      activeWorkspaceIdRef.current = null;
+    };
+  }, [workspaceId]);
+
   // Forked workspaces copy staged attachments under the same relative path,
   // so the cache key needs the workspaceId to avoid serving another
   // workspace's bytes after navigation.
   const handleDownloadStagedAttachment = (attachment: DisplayStagedAttachment) =>
-    stagedDownloads.download(`${workspaceId ?? ""}:${attachment.stagedPath}`, async () => {
-      if (api == null || workspaceId == null) {
-        console.warn("Cannot download staged attachment without an active workspace connection.");
-        return null;
-      }
+    stagedDownloads.download(
+      `${workspaceId ?? ""}:${attachment.stagedPath}`,
+      async () => {
+        if (api == null || workspaceId == null) {
+          console.warn("Cannot download staged attachment without an active workspace connection.");
+          return null;
+        }
 
-      const result = await api.workspace.downloadStagedAttachment({
-        workspaceId,
-        stagedPath: attachment.stagedPath,
-      });
-      if (!result.success) {
-        console.error("Failed to download staged attachment:", result.error);
-        return null;
-      }
+        const result = await api.workspace.downloadStagedAttachment({
+          workspaceId,
+          stagedPath: attachment.stagedPath,
+        });
+        if (!result.success) {
+          console.error("Failed to download staged attachment:", result.error);
+          return null;
+        }
 
-      return {
-        blob: base64ToBlob(result.data.dataBase64, result.data.mediaType),
-        filename: result.data.filename || attachment.filename,
-      };
-    });
+        return {
+          blob: base64ToBlob(result.data.dataBase64, result.data.mediaType),
+          filename: result.data.filename || attachment.filename,
+        };
+      },
+      () => activeWorkspaceIdRef.current === workspaceId
+    );
 
   console.assert(
     typeof clipboardWriteText === "function",
