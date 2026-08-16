@@ -619,6 +619,16 @@ describe("TOOL_DEFINITIONS", () => {
     expect(subAgentTools).not.toContain("review_pane_get");
   });
 
+  it("only includes mcp_prompt_get when enableMcpPromptGet is set", () => {
+    expect(getAvailableTools("openai:gpt-4o")).not.toContain("mcp_prompt_get");
+    expect(getAvailableTools("openai:gpt-4o", { enableMcpPromptGet: false })).not.toContain(
+      "mcp_prompt_get"
+    );
+    expect(getAvailableTools("openai:gpt-4o", { enableMcpPromptGet: true })).toContain(
+      "mcp_prompt_get"
+    );
+  });
+
   it("only includes tool_catalog_search when enableToolSearch is set", () => {
     // Off by default: the tool-search experiment must not leak into normal assembly.
     expect(getAvailableTools("openai:gpt-4o")).not.toContain("tool_catalog_search");

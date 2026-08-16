@@ -855,6 +855,8 @@ export type MCPWorkspaceSecretsResolver = (
 interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
   stats: MCPWorkspaceStats;
+  /** Prompt descriptors for model-facing discovery, from the same enabled/stale gates as getPromptsForWorkspace. */
+  promptDescriptors: MCPPromptDescriptor[];
 }
 interface WorkspaceServers {
   configSignature: string;
@@ -982,6 +984,22 @@ export class MCPServerManager {
           });
         }
       })
+    );
+  }
+
+  /**
+   * Modern instances refresh every stream. Legacy instances refresh until the
+   * first non-empty catalog; repeated checks for unsupported servers stay local.
+   */
+  private async refreshPromptCatalogsForStream(
+    instances: Map<string, MCPServerInstance>
+  ): Promise<void> {
+    await this.refreshInstancePrompts(
+      new Map(
+        [...instances].filter(
+          ([, instance]) => instance.refreshTools !== undefined || instance.prompts.length === 0
+        )
+      )
     );
   }
 
@@ -1480,7 +1498,10 @@ export class MCPServerManager {
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-        await this.refreshModernInstanceTools(existing.instances);
+        await Promise.all([
+          this.refreshModernInstanceTools(existing.instances),
+          this.refreshPromptCatalogsForStream(this.promptEligibleInstances(existing)),
+        ]);
       }
 
       // A trust or settings mutation can land while getAllServers() runs above;
@@ -1496,6 +1517,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(existing.instances, fullServerInfo, overrides),
         stats: existing.stats,
+        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(existing)),
       };
     }
 
@@ -1630,12 +1652,16 @@ export class MCPServerManager {
 
       if (refreshToolCatalogs) {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
-        await this.refreshModernInstanceTools(instancesForTools);
+        await Promise.all([
+          this.refreshModernInstanceTools(instancesForTools),
+          this.refreshPromptCatalogsForStream(this.promptEligibleInstances(existing)),
+        ]);
       }
 
       return {
         tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
         stats: leasedStats,
+        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(existing)),
       };
     }
 
@@ -1652,7 +1678,10 @@ export class MCPServerManager {
         if (current.configSignature === signature && !currentHasClosedInstance) {
           current.lastActivity = Date.now();
           if (refreshToolCatalogs) {
-            await this.refreshModernInstanceTools(current.instances);
+            await Promise.all([
+              this.refreshModernInstanceTools(current.instances),
+              this.refreshPromptCatalogsForStream(this.promptEligibleInstances(current)),
+            ]);
           }
           // Repair again in case a mutation landed after the concurrent starter's check.
           await this.repairEnablementAfterConcurrentMutation(
@@ -1664,6 +1693,7 @@ export class MCPServerManager {
           return {
             tools: this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,
+            promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(current)),
           };
         }
       }
@@ -1714,7 +1744,7 @@ export class MCPServerManager {
             });
           }
         }
-        return { tools: {}, stats };
+        return { tools: {}, stats, promptDescriptors: [] };
       }
 
       const entry: WorkspaceServers = {
@@ -1727,6 +1757,12 @@ export class MCPServerManager {
         lastActivity: Date.now(),
       };
       this.workspaceServers.set(workspaceId, entry);
+
+      // Refresh before enablement repair so mutations during loading cannot leak stale descriptors.
+      if (refreshToolCatalogs) {
+        await this.refreshPromptCatalogsForStream(this.promptEligibleInstances(entry));
+      }
+
       await this.repairEnablementAfterConcurrentMutation(
         workspaceId,
         options,
@@ -1737,6 +1773,7 @@ export class MCPServerManager {
       return {
         tools: this.collectTools(instances, fullServerInfo, overrides),
         stats,
+        promptDescriptors: this.buildPromptDescriptors(this.promptEligibleInstances(entry)),
       };
     });
   }
@@ -1778,16 +1815,7 @@ export class MCPServerManager {
       const entry = this.workspaceServers.get(workspaceId);
       if (!entry) return [];
 
-      // Disabled clients may remain cached during leased restarts. Skip disabled and
-      // reconfigured instances so discovery neither queries stale endpoints nor
-      // returns outdated catalogs.
-      enabledInstances = new Map(
-        [...entry.instances].filter(
-          ([serverName]) =>
-            entry.enabledServerNames.has(serverName) &&
-            !entry.stalePromptServerNames?.has(serverName)
-        )
-      );
+      enabledInstances = this.promptEligibleInstances(entry);
       await this.refreshInstancePrompts(enabledInstances, callOptions?.signal);
       const secretsNow = await this.resolveSecretsForRefresh(
         workspaceId,
@@ -1801,6 +1829,26 @@ export class MCPServerManager {
         break;
       }
     }
+    return this.buildPromptDescriptors(enabledInstances);
+  }
+
+  /**
+   * Disabled clients may remain cached during leased restarts. Skip disabled and
+   * reconfigured instances so prompt discovery neither queries stale endpoints
+   * nor returns outdated catalogs.
+   */
+  private promptEligibleInstances(entry: WorkspaceServers): Map<string, MCPServerInstance> {
+    return new Map(
+      [...entry.instances].filter(
+        ([serverName]) =>
+          entry.enabledServerNames.has(serverName) && !entry.stalePromptServerNames?.has(serverName)
+      )
+    );
+  }
+
+  private buildPromptDescriptors(
+    enabledInstances: Map<string, MCPServerInstance>
+  ): MCPPromptDescriptor[] {
     const descriptors: MCPPromptDescriptor[] = [];
     const usedNames = new Set<string>();
     const instances = [...enabledInstances.values()].sort((a, b) => a.name.localeCompare(b.name));

@@ -29,6 +29,7 @@ import { createCompleteGoalTool } from "@/node/services/tools/complete_goal";
 import { createNotifyTool } from "@/node/services/tools/notify";
 import { createTimelineEventTool } from "@/node/services/tools/timeline_event";
 import { createToolSearchTool } from "@/node/services/tools/toolSearch";
+import { createMcpPromptGetTool } from "@/node/services/tools/mcp_prompt_get";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
 import type { MuxToolScope } from "@/common/types/toolScope";
@@ -66,6 +67,7 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { sanitizeMCPToolsForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import type { ToolSearchRuntime } from "@/common/utils/tools/toolCatalog";
+import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 
 import type { Result } from "@/common/types/result";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -340,8 +342,25 @@ export interface ToolConfiguration {
    * `state` is assigned by aiService after policy filtering builds the catalog.
    */
   toolSearchRuntime?: ToolSearchRuntime;
+  /**
+   * Runtime for the mcp_prompt_get tool (present only when connected MCP
+   * servers advertise prompts for this stream). `prompts` is the descriptor
+   * snapshot advertised in the tool description; `getPrompt` dispatches
+   * through MCPServerManager so trust and refresh gates apply.
+   */
+  mcpPromptRuntime?: MCPPromptRuntime;
   /** Desktop session manager for desktop automation tools */
   desktopSessionManager?: DesktopSessionManager;
+}
+
+export interface MCPPromptRuntime {
+  prompts: MCPPromptDescriptor[];
+  getPrompt: (
+    serverName: string,
+    promptName: string,
+    args: Record<string, string>,
+    options?: { signal?: AbortSignal }
+  ) => Promise<{ text: string; description?: string }>;
 }
 
 /**
@@ -802,6 +821,7 @@ export async function getToolsForModel(
     skills_catalog_read: createSkillsCatalogReadTool(config),
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
     ...(config.toolSearchRuntime ? { tool_catalog_search: createToolSearchTool(config) } : {}),
+    ...(config.mcpPromptRuntime ? { mcp_prompt_get: createMcpPromptGetTool(config) } : {}),
     ...(config.timelineService && config.experiments?.timeline
       ? { timeline_event: createTimelineEventTool(config) }
       : {}),
@@ -966,6 +986,7 @@ export async function getToolsForModel(
       enableMemory: Boolean(config.memoryService && config.experiments?.memory),
       enableTimelineEvent: Boolean(config.timelineService && config.experiments?.timeline),
       enableToolSearch: Boolean(config.toolSearchRuntime),
+      enableMcpPromptGet: Boolean(config.mcpPromptRuntime),
       // The Review pane belongs to the user-facing parent workspace. config
       // .enableAgentReport is the canonical "is sub-agent" signal (set true iff
       // the workspace has a parentWorkspaceId), so withhold the review_pane_*

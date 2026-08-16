@@ -717,6 +717,84 @@ describe("MCPServerManager", () => {
     expect(result.stats.failedServerNames).toContain("broken-server");
   });
 
+  test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
+    const workspaceId = "ws-tool-prompts";
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          [
+            "coder",
+            {
+              prompts: [
+                {
+                  name: "review",
+                  description: "Review a PR",
+                  arguments: [{ name: "pr", required: true }],
+                },
+              ],
+            },
+          ],
+        ])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(result.promptDescriptors).toHaveLength(1);
+    expect(result.promptDescriptors[0]).toMatchObject({
+      serverName: "coder",
+      promptName: "review",
+      description: "Review a PR",
+      arguments: [{ name: "pr", required: true }],
+    });
+  });
+
+  test("getToolsForWorkspace fetches legacy prompt catalogs once and re-polls modern instances", async () => {
+    const workspaceId = "ws-prompt-freshness";
+    configService.listServers = mock(() =>
+      Promise.resolve({ legacy: stdioConfig("cmd-legacy"), modern: stdioConfig("cmd-modern") })
+    );
+    const legacy = testInstance("legacy");
+    const legacyRefresh = mock(() => {
+      legacy.prompts = [{ name: "legacy-prompt" }];
+      return Promise.resolve();
+    });
+    (legacy as { refreshPrompts?: typeof legacyRefresh }).refreshPrompts = legacyRefresh;
+    const modern = testInstance("modern", { refreshTools: mock(() => Promise.resolve()) });
+    let modernFetches = 0;
+    const modernRefresh = mock(() => {
+      modernFetches += 1;
+      modern.prompts = [{ name: `modern-v${modernFetches}` }];
+      return Promise.resolve();
+    });
+    (modern as { refreshPrompts?: typeof modernRefresh }).refreshPrompts = modernRefresh;
+    access.startServers = mock(() =>
+      Promise.resolve({
+        instances: new Map([
+          ["legacy", legacy],
+          ["modern", modern],
+        ]),
+        failedServerNames: [],
+        timedOutServerNames: [],
+      })
+    );
+
+    const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(legacyRefresh).toHaveBeenCalledTimes(1);
+    expect(modernRefresh).toHaveBeenCalledTimes(2);
+    expect(first.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
+      "legacy-prompt",
+      "modern-v1",
+    ]);
+    expect(second.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
+      "legacy-prompt",
+      "modern-v2",
+    ]);
+  });
+
   test("getToolsForWorkspace retries timed-out servers from cached workspace state", async () => {
     const workspaceId = "ws-timeout-retry";
     configService.listServers = mock(() =>
@@ -802,6 +880,7 @@ describe("MCPServerManager", () => {
         slow: { transport: "stdio", command: "cmd-slow", args: null, env: null, cwd: null },
       }),
       instances: new Map(),
+      enabledServerNames: new Set(["slow"]),
       stats: cachedStats(),
       timedOutServerNames: ["slow"],
       lastActivity: Date.now(),
@@ -2248,6 +2327,7 @@ describe("MCPServerManager", () => {
         resolvedTransport: "stdio" as const,
         autoFallbackUsed: false,
         tools,
+        prompts: [],
         isClosed: false,
         close: mock(() => Promise.resolve(undefined)),
       };

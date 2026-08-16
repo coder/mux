@@ -30,6 +30,7 @@ import {
   getForcedXaiSearchToolNames,
   getToolsForModel,
   type AdvisorStepCaptureRef,
+  type MCPPromptRuntime,
   type ToolConfiguration,
 } from "@/common/utils/tools/tools";
 import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
@@ -2009,12 +2010,14 @@ export class AIService extends EventEmitter {
 
       let mcpTools: Record<string, Tool> | undefined;
       let mcpStats: MCPWorkspaceStats | undefined;
+      let mcpPromptRuntime: MCPPromptRuntime | undefined;
       let mcpSetupDurationMs = 0;
 
       if (this.mcpServerManager) {
+        const mcpServerManager = this.mcpServerManager;
         const mcpToolSetupStartedAt = Date.now();
         try {
-          const result = await this.mcpServerManager.getToolsForWorkspace({
+          const result = await mcpServerManager.getToolsForWorkspace({
             workspaceId,
             projectPath: metadata.projectPath,
             runtime,
@@ -2027,6 +2030,14 @@ export class AIService extends EventEmitter {
 
           mcpTools = result.tools;
           mcpStats = result.stats;
+          // Omit the tool when no prompts exist to avoid adding unused schema context.
+          if (result.promptDescriptors.length > 0) {
+            mcpPromptRuntime = {
+              prompts: result.promptDescriptors,
+              getPrompt: (serverName, promptName, args, options) =>
+                mcpServerManager.getPrompt(workspaceId, serverName, promptName, args, options),
+            };
+          }
         } catch (error) {
           workspaceLog.error("Failed to start MCP servers", { error });
         } finally {
@@ -2617,6 +2628,7 @@ export class AIService extends EventEmitter {
         // Dynamic context for tool descriptions (moved from system prompt for better model attention)
         availableSubagents: agentDefinitions,
         availableSkills,
+        mcpPromptRuntime,
         // Session-segment memory index advertised in the memory tool
         // description (same disclosure mechanic as skills).
         memoryIndexEntries: memoryContext?.indexEntries,

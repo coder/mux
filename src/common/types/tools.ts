@@ -8,6 +8,7 @@ import type { AgentSkillDescriptor, AgentSkillFrontmatter } from "@/common/types
 import type {
   AgentReportToolResultSchema,
   AgentSkillReadFileToolResultSchema,
+  MCPPromptGetToolResultSchema,
   AgentSkillReadToolResultSchema,
   AskUserQuestionQuestionSchema,
   AskUserQuestionToolResultSchema,
@@ -62,6 +63,9 @@ export type AgentSkillReadFileToolArgs = z.infer<
   typeof TOOL_DEFINITIONS.agent_skill_read_file.schema
 >;
 export type AgentSkillReadFileToolResult = z.infer<typeof AgentSkillReadFileToolResultSchema>;
+
+export type MCPPromptGetToolArgs = z.infer<typeof TOOL_DEFINITIONS.mcp_prompt_get.schema>;
+export type MCPPromptGetToolResult = z.infer<typeof MCPPromptGetToolResultSchema>;
 
 // agent_skill_list args + result
 export type AgentSkillListToolArgs = z.infer<typeof TOOL_DEFINITIONS.agent_skill_list.schema>;
