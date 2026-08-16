@@ -88,7 +88,14 @@ function testInstance(
     prompts: options.prompts ?? [],
     getPrompt: options.getPrompt ?? mock(() => Promise.resolve({ messages: [] })),
     ...(options.refreshTools !== undefined ? { refreshTools: options.refreshTools } : {}),
-    ...(options.refreshPrompts !== undefined ? { refreshPrompts: options.refreshPrompts } : {}),
+    // refreshInstancePrompts is the single writer of instance.prompts, so
+    // prompt-carrying instances need a refresher for the manager to
+    // normalize and store the catalog like production connections do.
+    ...(options.refreshPrompts !== undefined
+      ? { refreshPrompts: options.refreshPrompts }
+      : options.prompts !== undefined
+        ? { refreshPrompts: mock(() => Promise.resolve(options.prompts)) }
+        : {}),
     isClosed: options.isClosed ?? false,
     close: options.close ?? mock(() => Promise.resolve(undefined)),
   };
@@ -781,49 +788,70 @@ describe("MCPServerManager", () => {
     expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
   });
 
-  test("getToolsForWorkspace caps advertised arguments while preserving every required one", async () => {
+  test("prompt catalogs are normalized once at refresh, off the per-send rebuild path", async () => {
     const workspaceId = "ws-hostile-arg-count";
-    const hostileArguments = Array.from({ length: 100_000 }, (_, index) => ({
-      name: `arg_${index}`,
-      // One required argument buried deep past the cap must survive so
-      // composer and tool missing-argument validation still see it.
-      required: index === 90_000,
-    }));
+    let rawElementReads = 0;
+    const hostileArguments = new Proxy(
+      Array.from({ length: 100_000 }, (_, index) => ({
+        name: `arg_${index}`,
+        // One required argument buried deep past the cap must survive so
+        // composer and tool missing-argument validation still see it.
+        required: index === 90_000,
+      })),
+      {
+        get(target, property, receiver): unknown {
+          if (typeof property === "string" && /^\d+$/.test(property)) {
+            rawElementReads++;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }
+    );
+    let refreshCalls = 0;
+    const oneShotRefresh = mock(() => {
+      refreshCalls += 1;
+      // First call happens at cold start (awaited); later background SWR
+      // refreshes hang so the raw catalog is deterministically fetched once.
+      return refreshCalls === 1
+        ? Promise.resolve([
+            { name: "hostile", arguments: hostileArguments },
+            {
+              name: "unusable",
+              arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS + 1 }, (_, index) => ({
+                name: `req_${index}`,
+                required: true,
+              })),
+            },
+          ])
+        : new Promise<never>(() => undefined);
+    });
     configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
     access.startServers = mock(() =>
-      Promise.resolve(
-        startResult([
-          [
-            "coder",
-            {
-              prompts: [
-                { name: "hostile", arguments: hostileArguments },
-                {
-                  name: "unusable",
-                  arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS + 1 }, (_, index) => ({
-                    name: `req_${index}`,
-                    required: true,
-                  })),
-                },
-              ],
-            },
-          ],
-        ])
-      )
+      Promise.resolve(startResult([["coder", { refreshPrompts: oneShotRefresh }]]))
     );
 
-    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    rawElementReads = 0;
+    const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // A prompt whose required arguments alone exceed the cap is dropped; the
-    // hostile-but-callable prompt stays discoverable with a bounded copy.
-    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
-      "hostile",
-    ]);
-    const advertised = result.promptDescriptors[0]?.arguments ?? [];
-    expect(advertised).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
-    expect(advertised.filter((argument) => argument.required === true)).toEqual([
-      { name: "arg_90000", required: true },
-    ]);
+    // The cached send rebuilds descriptors from the normalized catalog and
+    // never touches the raw server-controlled array again.
+    expect(rawElementReads).toBe(0);
+    for (const result of [first, second]) {
+      // A prompt whose required arguments alone exceed the cap is dropped;
+      // the hostile-but-callable prompt stays discoverable with a bounded
+      // copy in server-advertised order (composer argument mapping is
+      // positional, so required-first reordering would swap values).
+      expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
+        "hostile",
+      ]);
+      const advertised = result.promptDescriptors[0]?.arguments ?? [];
+      expect(advertised).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
+      expect(advertised.map((argument) => argument.name)).toEqual([
+        ...Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS - 1 }, (_, index) => `arg_${index}`),
+        "arg_90000",
+      ]);
+    }
   });
 
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
@@ -868,16 +896,14 @@ describe("MCPServerManager", () => {
     let legacyFetches = 0;
     const legacyRefresh = mock(() => {
       legacyFetches += 1;
-      legacy.prompts = [{ name: `legacy-v${legacyFetches}` }];
-      return Promise.resolve();
+      return Promise.resolve([{ name: `legacy-v${legacyFetches}` }]);
     });
     (legacy as { refreshPrompts?: typeof legacyRefresh }).refreshPrompts = legacyRefresh;
     const modern = testInstance("modern", { refreshTools: mock(() => Promise.resolve()) });
     let modernFetches = 0;
     const modernRefresh = mock(() => {
       modernFetches += 1;
-      modern.prompts = [{ name: `modern-v${modernFetches}` }];
-      return Promise.resolve();
+      return Promise.resolve([{ name: `modern-v${modernFetches}` }]);
     });
     (modern as { refreshPrompts?: typeof modernRefresh }).refreshPrompts = modernRefresh;
     access.startServers = mock(() =>
@@ -893,16 +919,25 @@ describe("MCPServerManager", () => {
 
     const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    // Let the second send's background refresh land before the third send.
+    await Bun.sleep(0);
+    const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     // Every cached send revalidates prompt catalogs, legacy included; the
-    // hung-refresh test below guards that this never blocks the send.
-    expect(legacyRefresh).toHaveBeenCalledTimes(2);
-    expect(modernRefresh).toHaveBeenCalledTimes(2);
+    // hung-refresh test below guards that this never blocks the send. The
+    // revalidation is stale-while-revalidate: a cached send serves the
+    // previous catalog and the refreshed one arrives for the next send.
+    expect(legacyRefresh).toHaveBeenCalledTimes(3);
+    expect(modernRefresh).toHaveBeenCalledTimes(3);
     expect(first.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
       "legacy-v1",
       "modern-v1",
     ]);
     expect(second.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
+      "legacy-v1",
+      "modern-v1",
+    ]);
+    expect(third.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
       "legacy-v2",
       "modern-v2",
     ]);
@@ -916,7 +951,9 @@ describe("MCPServerManager", () => {
     const neverSettles = mock(() => {
       refreshCalls += 1;
       // First call happens at cold start (awaited); later ones hang forever.
-      return refreshCalls === 1 ? Promise.resolve() : new Promise<void>(() => undefined);
+      return refreshCalls === 1
+        ? Promise.resolve([{ name: "cached" }])
+        : new Promise<Array<{ name: string }>>(() => undefined);
     });
     (hung as { refreshPrompts?: typeof neverSettles }).refreshPrompts = neverSettles;
     access.startServers = mock(() =>
@@ -1344,8 +1381,8 @@ describe("MCPServerManager", () => {
           : { stable: stdioConfig("cmd-stable") }
       );
     });
-    const revokedRefresh = mock(() => Promise.resolve());
-    const stableRefresh = mock(() => Promise.resolve());
+    const revokedRefresh = mock(() => Promise.resolve([]));
+    const stableRefresh = mock(() => Promise.resolve([]));
     access.startServers = mock(() =>
       Promise.resolve(
         startResult([
@@ -1551,12 +1588,13 @@ describe("MCPServerManager", () => {
       })
     );
 
-    const refreshPrompts = mock(() => Promise.resolve());
+    const staleRefresh = mock(() => Promise.resolve([{ name: "review" }]));
+    const stableRefresh = mock(() => Promise.resolve([{ name: "status" }]));
     access.startServers = mock(() =>
       Promise.resolve(
         startResult([
-          ["server", { prompts: [{ name: "review" }], refreshPrompts }],
-          ["stable", { prompts: [{ name: "status" }], refreshPrompts }],
+          ["server", { prompts: [{ name: "review" }], refreshPrompts: staleRefresh }],
+          ["stable", { prompts: [{ name: "status" }], refreshPrompts: stableRefresh }],
         ])
       )
     );
@@ -1567,12 +1605,14 @@ describe("MCPServerManager", () => {
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     try {
-      refreshPrompts.mockClear();
+      staleRefresh.mockClear();
+      stableRefresh.mockClear();
       const descriptors = await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
       expect(descriptors.map((descriptor) => descriptor.serverName)).toEqual(["stable"]);
       // The stale instance still points at the old endpoint; discovery must
       // not send prompts/list there with potentially obsolete credentials.
-      expect(refreshPrompts).toHaveBeenCalledTimes(1);
+      expect(staleRefresh).not.toHaveBeenCalled();
+      expect(stableRefresh).toHaveBeenCalledTimes(1);
     } finally {
       manager.releaseLease(workspaceId);
     }
@@ -1592,18 +1632,31 @@ describe("MCPServerManager", () => {
     // already taken when the mutation lands, so only a post-refresh counter
     // recheck can drop the now-disabled server's descriptors.
     let revokeOnFirstRefresh = true;
-    const refreshPrompts = mock(() => {
-      if (revokeOnFirstRefresh) {
-        revokeOnFirstRefresh = false;
-        manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
-      }
-      return Promise.resolve();
-    });
+    const revokingRefresh = (list: Array<{ name: string }>) =>
+      mock(() => {
+        if (revokeOnFirstRefresh) {
+          revokeOnFirstRefresh = false;
+          manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+        }
+        return Promise.resolve(list);
+      });
     access.startServers = mock(() =>
       Promise.resolve(
         startResult([
-          ["server", { prompts: [{ name: "review" }], refreshPrompts }],
-          ["stable", { prompts: [{ name: "status" }], refreshPrompts }],
+          [
+            "server",
+            {
+              prompts: [{ name: "review" }],
+              refreshPrompts: revokingRefresh([{ name: "review" }]),
+            },
+          ],
+          [
+            "stable",
+            {
+              prompts: [{ name: "status" }],
+              refreshPrompts: revokingRefresh([{ name: "status" }]),
+            },
+          ],
         ])
       )
     );
@@ -1619,7 +1672,7 @@ describe("MCPServerManager", () => {
   test("prompt discovery forwards the abort signal to prompt refreshes", async () => {
     const workspaceId = "ws-discovery-signal";
     configService.listServers = mock(() => Promise.resolve({ server: stdioConfig("cmd-1") }));
-    const refreshPrompts = mock((_options?: { signal?: AbortSignal }) => Promise.resolve());
+    const refreshPrompts = mock((_options?: { signal?: AbortSignal }) => Promise.resolve([]));
     access.startServers = mock(() =>
       Promise.resolve(startResult([["server", { refreshPrompts }]]))
     );

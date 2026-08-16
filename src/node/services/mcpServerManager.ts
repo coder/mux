@@ -848,6 +848,76 @@ export function flattenMcpPrompt(result: MCPGetPromptResult): string {
   return truncated ? flattened + MCP_PROMPT_TRUNCATION_MARKER : flattened;
 }
 
+/**
+ * Normalizes a server-advertised prompt catalog once per refresh so the
+ * synchronous per-send descriptor rebuild never traverses raw
+ * server-controlled argument arrays. Prompts whose required arguments cannot
+ * round-trip through bounded hints and errors (oversized name, or more
+ * required arguments than the cap) are dropped as uninvocable; retained
+ * argument arrays are bounded to MCP_PROMPT_MAX_ARGUMENTS entries in
+ * server-advertised order, keeping every required argument and filling the
+ * remaining slots with the earliest round-trippable optional ones.
+ */
+export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
+  const normalized: MCPPrompt[] = [];
+  for (const prompt of prompts) {
+    const args = prompt.arguments;
+    if (args === undefined) {
+      normalized.push(prompt);
+      continue;
+    }
+    let requiredCount = 0;
+    let oversizedRequired = false;
+    let oversizedOptional = false;
+    for (const argument of args) {
+      if (argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS) {
+        if (argument.required === true) {
+          oversizedRequired = true;
+          break;
+        }
+        oversizedOptional = true;
+      } else if (argument.required === true) {
+        requiredCount++;
+      }
+    }
+    if (oversizedRequired) {
+      log.debug("[MCP] Dropping prompt with oversized required argument name", {
+        server: serverName,
+        prompt: prompt.name,
+      });
+      continue;
+    }
+    if (requiredCount > MCP_PROMPT_MAX_ARGUMENTS) {
+      log.debug("[MCP] Dropping prompt with too many required arguments", {
+        server: serverName,
+        prompt: prompt.name,
+      });
+      continue;
+    }
+    if (args.length <= MCP_PROMPT_MAX_ARGUMENTS && !oversizedOptional) {
+      normalized.push(prompt);
+      continue;
+    }
+    const selected: typeof args = [];
+    let requiredRemaining = requiredCount;
+    let optionalBudget = MCP_PROMPT_MAX_ARGUMENTS - requiredCount;
+    for (const argument of args) {
+      if (argument.required === true) {
+        selected.push(argument);
+        requiredRemaining--;
+      } else if (optionalBudget > 0 && argument.name.length <= MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS) {
+        selected.push(argument);
+        optionalBudget--;
+      }
+      if (requiredRemaining === 0 && optionalBudget === 0) {
+        break;
+      }
+    }
+    normalized.push({ ...prompt, arguments: selected });
+  }
+  return normalized;
+}
+
 interface MCPServerInstance {
   name: string;
   /** Resolved transport actually used (auto may fall back to sse). */
@@ -867,7 +937,13 @@ interface MCPServerInstance {
    * results carry no freshness hints).
    */
   refreshTools?: () => Promise<void>;
-  refreshPrompts?: (options?: { signal?: AbortSignal }) => Promise<void>;
+  /**
+   * Fetches the current prompts/list from the server and returns it without
+   * touching instance state. refreshInstancePrompts is the single writer of
+   * `prompts`, so raw server-controlled catalogs are never observable: every
+   * stored catalog has passed normalizePromptCatalog.
+   */
+  refreshPrompts?: (options?: { signal?: AbortSignal }) => Promise<MCPPrompt[]>;
   close: () => Promise<void>;
 }
 
@@ -1065,7 +1141,10 @@ export class MCPServerManager {
       [...instances.values()].map(async (instance) => {
         if (instance.isClosed || !instance.refreshPrompts) return;
         try {
-          await instance.refreshPrompts(signal !== undefined ? { signal } : undefined);
+          const fetched = await instance.refreshPrompts(
+            signal !== undefined ? { signal } : undefined
+          );
+          instance.prompts = normalizePromptCatalog(fetched, instance.name);
         } catch (error) {
           log.debug("[MCP] Prompt list refresh failed; keeping cached prompts", {
             name: instance.name,
@@ -1932,68 +2011,16 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
-        // Bound the retained copy of the server-controlled arguments array to
-        // MCP_PROMPT_MAX_ARGUMENTS entries per send. Every required argument
-        // must survive the cap (composer validation and the tool's
-        // missing-argument check depend on knowing them all), so required
-        // entries are kept first and optional ones fill the remaining slots.
-        // A prompt whose required arguments alone exceed the cap cannot
-        // round-trip through bounded hints and errors, so it is dropped.
-        let boundedArguments = prompt.arguments;
-        if (prompt.arguments !== undefined && prompt.arguments.length > MCP_PROMPT_MAX_ARGUMENTS) {
-          const required: typeof prompt.arguments = [];
-          const optional: typeof prompt.arguments = [];
-          let requiredOverflow = false;
-          for (const argument of prompt.arguments) {
-            if (argument.required === true) {
-              if (required.length >= MCP_PROMPT_MAX_ARGUMENTS) {
-                requiredOverflow = true;
-                break;
-              }
-              required.push(argument);
-            } else if (optional.length < MCP_PROMPT_MAX_ARGUMENTS) {
-              optional.push(argument);
-            }
-          }
-          if (requiredOverflow) {
-            log.debug("[MCP] Skipping prompt with too many required arguments", {
-              server: instance.name,
-              prompt: prompt.name,
-            });
-            continue;
-          }
-          boundedArguments = [
-            ...required,
-            ...optional.slice(0, MCP_PROMPT_MAX_ARGUMENTS - required.length),
-          ];
-        }
-        // Oversized argument names cannot round-trip through bounded hints
-        // and errors. A required one leaves the prompt permanently
-        // uninvocable, so the prompt is dropped; oversized optional arguments
-        // are omitted from the descriptor while the prompt stays callable.
-        if (
-          (boundedArguments ?? []).some(
-            (argument) =>
-              argument.required === true &&
-              argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
-          )
-        ) {
-          log.debug("[MCP] Skipping prompt with oversized required argument name", {
-            server: instance.name,
-            prompt: prompt.name,
-          });
-          continue;
-        }
-        const advertisedArguments = boundedArguments?.filter(
-          (argument) => argument.name.length <= MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
-        );
+        // instance.prompts passed normalizePromptCatalog at refresh time, so
+        // argument arrays arrive bounded and name-checked and this per-send
+        // rebuild never traverses raw server-controlled arrays.
         descriptors.push({
           commandKey: command.toolName,
           stableKey,
           serverName: instance.name,
           promptName: prompt.name,
           ...(prompt.description !== undefined ? { description: prompt.description } : {}),
-          ...(advertisedArguments !== undefined ? { arguments: advertisedArguments } : {}),
+          ...(prompt.arguments !== undefined ? { arguments: prompt.arguments } : {}),
         });
       }
     }
@@ -2956,9 +2983,7 @@ export class MCPServerManager {
           prompts: [],
           getPrompt: (promptName, args, options) =>
             readyClient.getPrompt(promptName, args, options),
-          refreshPrompts: async (options) => {
-            instance.prompts = await readyClient.prompts(options);
-          },
+          refreshPrompts: (options) => readyClient.prompts(options),
           isClosed: transportClosed,
           ...(isModernEra(negotiatedPrior)
             ? {
@@ -3208,9 +3233,7 @@ export class MCPServerManager {
         tools,
         prompts: [],
         getPrompt: (promptName, args, options) => activeClient.getPrompt(promptName, args, options),
-        refreshPrompts: async (options) => {
-          instance.prompts = await activeClient.prompts(options);
-        },
+        refreshPrompts: (options) => activeClient.prompts(options),
         isClosed: transportErrored || clientClosed,
         ...(isModernEra(negotiatedPrior)
           ? {
