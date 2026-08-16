@@ -80,6 +80,10 @@ export const TimelineStatusSchema = z.enum([
  */
 export const TIMELINE_TEXT_MAX_LENGTH = 600;
 
+// Row digests are truncated by the mapper to this length. The preview card relies on the exact
+// producer lengths to tell truncation apart from a digest that naturally ends in "...".
+export const TIMELINE_ROW_DIGEST_MAX_LENGTH = 120;
+
 export function truncateTimelineDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length <= TIMELINE_TEXT_MAX_LENGTH

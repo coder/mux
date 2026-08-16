@@ -21,10 +21,12 @@ import { KEYBINDS, isEditableElement, matchesKeybind } from "@/browser/utils/ui/
 import { cn } from "@/common/lib/utils";
 import { capitalize } from "@/common/utils/capitalize";
 import { formatDuration } from "@/common/utils/formatDuration";
-import type {
-  TimelineAnchor,
-  TimelineEvent,
-  TimelinePreview,
+import {
+  TIMELINE_ROW_DIGEST_MAX_LENGTH,
+  TIMELINE_TEXT_MAX_LENGTH,
+  type TimelineAnchor,
+  type TimelineEvent,
+  type TimelinePreview,
 } from "@/common/orpc/schemas/timeline";
 
 import {
@@ -227,10 +229,8 @@ const TASK_LIFECYCLE_KINDS = new Set([
   "task.interrupted",
 ]);
 
-// A sub-agent's bare "started" row and its later updates or report describe the same task, so once
-// any newer row for that task is on the feed the started row only doubles it. Updates and reports
-// keep their own rows: each carries distinct content, and a persistent child can report several
-// times. An in-flight task with no other rows still shows that it started.
+// An older task.created row adds no unique information once the same task has a newer lifecycle
+// row on the feed; an in-flight task with no other rows still shows that it started.
 function dropSupersededTaskStarts(newestFirst: TimelineEvent[]): TimelineEvent[] {
   const supersededTaskIds = new Set<string>();
   return newestFirst.filter((event) => {
@@ -264,6 +264,19 @@ function getEventDetail(event: TimelineEvent): string | null {
 
 function hasTranscriptAnchor(anchor: TimelineAnchor | undefined): boolean {
   return anchor?.toolCallId != null || anchor?.messageId != null || anchor?.historySequence != null;
+}
+
+// Producers cut digests to fixed lengths with a "..." suffix, so only a digest at exactly one of
+// those lengths is treated as truncated; a digest that naturally ends in "..." must match in full.
+function stripTruncationSuffix(text: string): string {
+  const truncated =
+    text.endsWith("...") &&
+    (text.length === TIMELINE_ROW_DIGEST_MAX_LENGTH || text.length === TIMELINE_TEXT_MAX_LENGTH);
+  return truncated ? text.slice(0, -3) : text;
+}
+
+function excerptCovers(excerpt: string, text: string | null): boolean {
+  return text != null && text !== "" && excerpt.startsWith(stripTruncationSuffix(text));
 }
 
 function TimelineRuleRow(props: {
@@ -606,12 +619,11 @@ function TimelinePreviewCard(props: {
 
   const title = getTimelineEventTitle(props.event);
   const digest = props.event.data?.description ?? props.event.data?.digest ?? null;
-  const excerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
-  // The digest is a shorter cut of the same normalized text the excerpt holds, so when the loaded
-  // excerpt starts with it (ellipsis aside) showing both would render the prompt twice.
-  const digestShownByExcerpt =
-    digest != null && excerpt !== "" && excerpt.startsWith(digest.replace(/\.\.\.$/, ""));
-  const eventText = digest === title || digestShownByExcerpt ? null : digest;
+  const loadedExcerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
+  // Each stretch of text renders once: the excerpt supersedes a digest it covers, and an excerpt
+  // that only repeats the card title (agent events preview their own description) adds nothing.
+  const excerpt = excerptCovers(loadedExcerpt, title) ? "" : loadedExcerpt;
+  const eventText = digest === title || excerptCovers(loadedExcerpt, digest) ? null : digest;
 
   return (
     <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">

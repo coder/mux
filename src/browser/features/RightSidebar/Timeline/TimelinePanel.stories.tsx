@@ -216,18 +216,15 @@ const STORY_STORE: TimelineWorkspaceStore = {
   retryTimeline: () => undefined,
 };
 
-// The shared mock resolves previews to null; return a transcript excerpt that extends the
-// user-turn digest so selecting that row exercises the digest-vs-excerpt dedupe path.
-const STORY_API = (() => {
-  const api = createMockORPCClient();
-  api.workspace.timeline.preview = () =>
-    Promise.resolve({
-      role: "user",
-      textExcerpt:
-        "Add Timeline behavior coverage and responsive stories so the panel is validated at phone widths as well as desktop.",
-    });
-  return api;
-})();
+// Override the shared null preview so selecting the user-turn row demonstrates the
+// digest-vs-excerpt dedupe.
+const STORY_API = createMockORPCClient();
+STORY_API.workspace.timeline.preview = () =>
+  Promise.resolve({
+    role: "user",
+    textExcerpt:
+      "Add Timeline behavior coverage and responsive stories so the panel is validated at phone widths as well as desktop.",
+  });
 
 const meta = {
   title: "Features/RightSidebar/TimelinePanel",

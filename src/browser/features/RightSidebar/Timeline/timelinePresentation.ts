@@ -115,7 +115,7 @@ export function isMachineryKind(kind: string): boolean {
   return MACHINERY_KINDS.has(kind);
 }
 
-export interface TimelineRowTint {
+interface TimelineRowTint {
   row: string;
   icon: string;
   badge: string;
@@ -129,7 +129,7 @@ const DEFAULT_AGENT_TINT: TimelineRowTint = {
 
 // Attention-worthy categories get their own hue so a blocker reads differently from a milestone at
 // a glance. Routine categories (picked_up) and uncategorized events keep the generic agent tint.
-const AGENT_EVENT_TINTS: Record<string, TimelineRowTint> = {
+const AGENT_EVENT_TINTS: Partial<Record<string, TimelineRowTint>> = {
   milestone: {
     row: "border-success/25 bg-success/10",
     icon: "border-success/40 text-success",

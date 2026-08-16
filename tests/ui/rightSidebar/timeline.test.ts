@@ -12,7 +12,7 @@ import {
   type WorkspaceTimelineSnapshot,
 } from "@/browser/stores/WorkspaceStore";
 import { CUSTOM_EVENTS } from "@/common/constants/events";
-import type { TimelineEvent } from "@/common/orpc/schemas/timeline";
+import type { TimelineEvent, TimelinePreview } from "@/common/orpc/schemas/timeline";
 import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 
 import { installDom } from "../dom";
@@ -64,7 +64,7 @@ function renderTimeline(params: {
   loadOlderHistory?: jest.Mock<Promise<"loaded">, [string]>;
   snapshot?: Partial<WorkspaceTimelineSnapshot>;
   hasOlderHistory?: boolean;
-  preview?: { role: "system" | "user" | "assistant"; textExcerpt: string };
+  preview?: TimelinePreview;
 }) {
   const loadOlderHistory = params.loadOlderHistory ?? jest.fn().mockResolvedValue("loaded");
   const workspaceState: { messages: unknown[]; muxMessages: unknown[]; hasOlderHistory: boolean } =
@@ -401,21 +401,62 @@ describe("TimelinePanel", () => {
   });
 
   test("shows a single representation when the preview excerpt duplicates the digest", async () => {
+    // Mirror the producer: a >120-char prompt is digested to a 117-char cut plus "...".
+    const longPrompt = "alpha beta gamma delta epsilon ".repeat(8).trim();
+    const truncatedDigest = `${longPrompt.slice(0, 117)}...`;
     const view = renderTimeline({
       events: [
         makeEvent("prompt", "turn.user", 1, {
-          data: { digest: "alpha beta gam..." },
+          data: { digest: truncatedDigest },
           anchor: { messageId: "user-1" },
         }),
       ],
-      preview: { role: "user", textExcerpt: "alpha beta gamma delta epsilon" },
+      preview: { role: "user", textExcerpt: longPrompt },
     });
 
     fireEvent.click(view.container.querySelector('[data-timeline-event-id="prompt"]')!);
-    await waitFor(() => view.getByText("alpha beta gamma delta epsilon"));
+    await waitFor(() => view.getByText(longPrompt));
 
-    // The row detail is the only place the digest still renders; the card shows just the excerpt.
-    expect(view.getAllByText("alpha beta gam...")).toHaveLength(1);
+    // The digest still renders in the row detail; the card itself shows only the excerpt.
+    expect(view.getAllByText(truncatedDigest)).toHaveLength(1);
+  });
+
+  test("keeps a digest whose natural trailing ellipsis is not a truncation marker", async () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("prompt", "turn.user", 1, {
+          data: { digest: "Investigate..." },
+          anchor: { messageId: "user-1" },
+        }),
+      ],
+      preview: { role: "user", textExcerpt: "Investigate the logs" },
+    });
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="prompt"]')!);
+    await waitFor(() => view.getByText("Investigate the logs"));
+
+    expect(view.getAllByText("Investigate...")).toHaveLength(2);
+  });
+
+  test("hides an excerpt that only repeats an agent event's description", async () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("agent-note", "agent.event", 1, {
+          source: { system: "agent", key: "timeline-event:note" },
+          data: { description: "Pushed the branch and opened the PR", category: "handoff" },
+          anchor: { toolCallId: "tool-1" },
+        }),
+      ],
+      preview: { role: "assistant", textExcerpt: "Pushed the branch and opened the PR" },
+    });
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="agent-note"]')!);
+    await waitFor(() => view.getByTestId("timeline-reveal"));
+    await waitFor(() => {
+      if (view.queryByText("Loading preview…")) throw new Error("Preview still loading");
+    });
+
+    expect(view.getAllByText("Pushed the branch and opened the PR")).toHaveLength(2);
   });
 
   test("keeps a digest the preview excerpt does not cover", async () => {

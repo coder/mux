@@ -1,4 +1,7 @@
-import { subagentReportSourceKey } from "@/common/orpc/schemas/timeline";
+import {
+  TIMELINE_ROW_DIGEST_MAX_LENGTH,
+  subagentReportSourceKey,
+} from "@/common/orpc/schemas/timeline";
 import type {
   TimelineAnchor,
   TimelineEventData,
@@ -50,7 +53,9 @@ function streamKey(workspaceId: string, messageId: string): string {
 
 function truncateDigest(value: string): string {
   const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= 120 ? normalized : `${normalized.slice(0, 117)}...`;
+  return normalized.length <= TIMELINE_ROW_DIGEST_MAX_LENGTH
+    ? normalized
+    : `${normalized.slice(0, TIMELINE_ROW_DIGEST_MAX_LENGTH - 3)}...`;
 }
 
 function messageTimestamp(
