@@ -20,6 +20,7 @@ import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
+import { downloadBlob } from "@/browser/utils/downloadFile";
 import {
   buildEditingStateFromDisplayed,
   canEditDisplayedUserMessage,
@@ -44,17 +45,6 @@ function base64ToBlob(dataBase64: string, mediaType: string): Blob {
     bytes[i] = binary.charCodeAt(i);
   }
   return new Blob([bytes], { type: mediaType });
-}
-
-function downloadBlob(blob: Blob, filename: string): void {
-  const blobUrl = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = blobUrl;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
 
 /** Navigation info for navigating between user messages */

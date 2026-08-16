@@ -6,6 +6,7 @@ import {
   normalizeAttachmentMediaType,
 } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import { formatBytes } from "@/common/utils/formatBytes";
+import { downloadDataUrl } from "@/browser/utils/imageActions";
 import { isToolContentResult } from "@/common/utils/tools/toolContentResult";
 import {
   getDisplayOnlyFileMetadata,
@@ -83,6 +84,21 @@ function decodeBase64Utf8(data: string): string | null {
   }
 }
 
+/**
+ * Button, not <a download>: iOS home-screen web apps silently drop anchor
+ * downloads; downloadDataUrl routes them to the native share sheet instead.
+ */
+const AttachmentDownloadButton: React.FC<{ dataUrl: string; filename?: string }> = (props) => (
+  <button
+    type="button"
+    onClick={() => downloadDataUrl(props.dataUrl, props.filename ?? "attachment")}
+    className="border-border-light hover:bg-surface flex items-center gap-1 rounded border px-2 py-1 text-[var(--color-text)]"
+  >
+    <Download className="h-3 w-3" />
+    Download
+  </button>
+);
+
 function createMarkdownPreview(markdown: string): { content: string; truncated: boolean } {
   if (markdown.length <= MARKDOWN_PREVIEW_CHAR_LIMIT) {
     return { content: markdown, truncated: false };
@@ -136,14 +152,7 @@ const DisplayOnlyFile: React.FC<{ file: DisplayOnlyFilePart }> = (props) => {
         <span>Shown to the user only; not sent to the model as a file attachment.</span>
         {dataUrl == null && <span>File data is unavailable for preview or download.</span>}
         {dataUrl != null && (
-          <a
-            href={dataUrl}
-            download={props.file.filename ?? "attachment"}
-            className="border-border-light hover:bg-surface flex items-center gap-1 rounded border px-2 py-1 text-[var(--color-text)]"
-          >
-            <Download className="h-3 w-3" />
-            Download
-          </a>
+          <AttachmentDownloadButton dataUrl={dataUrl} filename={props.file.filename} />
         )}
       </div>
     </div>
@@ -174,14 +183,7 @@ const MediaAttachmentDownloadCard: React.FC<{ media: MediaContent }> = (props) =
         <span>Attached for the model; inline preview is not available for this file type.</span>
         {dataUrl == null && <span>File data is unavailable for download.</span>}
         {dataUrl != null && (
-          <a
-            href={dataUrl}
-            download={props.media.filename ?? "attachment"}
-            className="border-border-light hover:bg-surface flex items-center gap-1 rounded border px-2 py-1 text-[var(--color-text)]"
-          >
-            <Download className="h-3 w-3" />
-            Download
-          </a>
+          <AttachmentDownloadButton dataUrl={dataUrl} filename={props.media.filename} />
         )}
       </div>
     </div>

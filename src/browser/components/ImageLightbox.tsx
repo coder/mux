@@ -96,11 +96,18 @@ export function ImageLightbox(props: ImageLightboxProps) {
                   {copied ? "Copied" : "Copy"}
                   <ShortcutHint keybind={KEYBINDS.IMAGE_COPY} />
                 </button>
-                <a href={src} download={downloadFilename} className={ACTION_BUTTON_CLASS}>
+                {/* Button, not <a download>: iOS home-screen web apps silently
+                    drop anchor downloads; downloadDataUrl routes them to the
+                    native share sheet instead. */}
+                <button
+                  type="button"
+                  onClick={() => downloadDataUrl(src, downloadFilename)}
+                  className={ACTION_BUTTON_CLASS}
+                >
                   <Download className="h-3 w-3" />
                   Download
                   <ShortcutHint keybind={KEYBINDS.IMAGE_DOWNLOAD} />
-                </a>
+                </button>
               </div>
             </div>
           </>

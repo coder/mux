@@ -1,6 +1,7 @@
 import type React from "react";
 import { normalizeAttachmentMediaType } from "@/common/utils/attachments/supportedAttachmentMediaTypes";
 import { KEYBINDS, matchesKeybind } from "@/browser/utils/ui/keybinds";
+import { downloadBlob } from "@/browser/utils/downloadFile";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 
 /**
@@ -128,8 +129,18 @@ export function handleImageActionKeyDown(
   return false;
 }
 
-/** Trigger a browser download of a data URL via a temporary anchor element. */
+/**
+ * Trigger a download of a data URL. Routed through downloadBlob so iOS
+ * home-screen web apps (which drop anchor downloads) get the share sheet.
+ */
 export function downloadDataUrl(dataUrl: string, filename: string): void {
+  const blob = dataUrlToBlob(dataUrl);
+  if (blob) {
+    downloadBlob(blob, filename);
+    return;
+  }
+
+  // Non-base64 sources: fall back to a direct anchor download.
   const anchor = document.createElement("a");
   anchor.href = dataUrl;
   anchor.download = filename;

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { TooltipProvider } from "@/browser/components/Tooltip/Tooltip";
 import { createDisplayOnlyFilePart } from "@/common/utils/attachments/displayOnlyFileParts";
@@ -8,22 +8,45 @@ import { AttachFileToolCall } from "./AttachFileToolCall";
 describe("AttachFileToolCall", () => {
   let originalWindow: typeof globalThis.window;
   let originalDocument: typeof globalThis.document;
+  let originalCreateObjectURL: typeof URL.createObjectURL;
+  let originalRevokeObjectURL: typeof URL.revokeObjectURL;
+  let downloadedBlobs: Blob[];
+  let clickedAnchors: HTMLAnchorElement[];
 
   beforeEach(() => {
     originalWindow = globalThis.window;
     originalDocument = globalThis.document;
+    originalCreateObjectURL = URL.createObjectURL.bind(URL);
+    originalRevokeObjectURL = URL.revokeObjectURL.bind(URL);
 
     globalThis.window = new GlobalWindow() as unknown as Window & typeof globalThis;
     globalThis.document = globalThis.window.document;
+
+    // Capture blob downloads (object URL + anchor click) without navigating.
+    downloadedBlobs = [];
+    clickedAnchors = [];
+    URL.createObjectURL = (blob: Blob | MediaSource) => {
+      downloadedBlobs.push(blob as Blob);
+      return "blob:mock";
+    };
+    URL.revokeObjectURL = () => undefined;
+    const anchorPrototype = (
+      globalThis.window as unknown as { HTMLAnchorElement: { prototype: HTMLAnchorElement } }
+    ).HTMLAnchorElement.prototype;
+    anchorPrototype.click = function (this: HTMLAnchorElement) {
+      clickedAnchors.push(this);
+    };
   });
 
   afterEach(() => {
     cleanup();
     globalThis.window = originalWindow;
     globalThis.document = originalDocument;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
   });
 
-  test("renders display-only markdown files with preview and download", () => {
+  test("renders display-only markdown files with preview and download", async () => {
     const markdown = "# Release Notes\n\n- Added **markdown** preview.\n";
     const data = Buffer.from(markdown).toString("base64");
 
@@ -53,9 +76,12 @@ describe("AttachFileToolCall", () => {
     expect(view.getByText(/Added/)).toBeTruthy();
     expect(view.getByText(/Shown to the user only/)).toBeTruthy();
 
-    const download = view.getByRole("link", { name: /Download/ });
-    expect(download.getAttribute("download")).toBe("release-notes.md");
-    expect(download.getAttribute("href")).toBe(`data:text/markdown;base64,${data}`);
+    fireEvent.click(view.getByRole("button", { name: /Download/ }));
+    expect(clickedAnchors).toHaveLength(1);
+    expect(clickedAnchors[0].getAttribute("download")).toBe("release-notes.md");
+    expect(downloadedBlobs).toHaveLength(1);
+    expect(downloadedBlobs[0].type).toBe("text/markdown");
+    expect(await downloadedBlobs[0].text()).toBe(markdown);
   });
 
   test("renders image attachments with a filename caption", () => {
@@ -108,8 +134,10 @@ describe("AttachFileToolCall", () => {
     expect(view.queryByRole("img")).toBeNull();
     // ...but the attachment is surfaced as a download card instead of being invisible.
     expect(view.getByText("report.pdf")).toBeTruthy();
-    const download = view.getByRole("link", { name: /Download/ });
-    expect(download.getAttribute("download")).toBe("report.pdf");
-    expect(download.getAttribute("href")).toBe(`data:application/pdf;base64,${data}`);
+    fireEvent.click(view.getByRole("button", { name: /Download/ }));
+    expect(clickedAnchors).toHaveLength(1);
+    expect(clickedAnchors[0].getAttribute("download")).toBe("report.pdf");
+    expect(downloadedBlobs).toHaveLength(1);
+    expect(downloadedBlobs[0].type).toBe("application/pdf");
   });
 });
