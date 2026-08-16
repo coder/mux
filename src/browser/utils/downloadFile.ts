@@ -97,26 +97,29 @@ interface FetchedFile {
 /**
  * Download coordinator for flows that fetch a file's bytes asynchronously
  * after the user gesture. If the fetch outlives iOS's transient-activation
- * window, the share sheet is blocked; the fetched bytes are cached so the
+ * window, the share sheet is blocked; the fetched bytes are kept so the
  * user's retry tap shares synchronously within its own activation window
- * instead of repeating the fetch and failing again. Only "blocked" failures
- * are cached: unshareable files can never succeed, so retaining their bytes
- * would only grow renderer memory.
+ * instead of repeating the fetch and failing again.
+ *
+ * Holds a single retry slot: only the most recent "blocked" download is
+ * retained (a retry alert only ever refers to the last tap), so abandoned
+ * retries are evicted by the next blocked download and retained memory is
+ * bounded to one blob. Unshareable files can never succeed and are never
+ * cached.
  */
 export function createDownloadRetryCache() {
-  const cache = new Map<string, FetchedFile>();
+  let entry: { key: string; file: FetchedFile } | null = null;
   return {
     async download(key: string, fetchFile: () => Promise<FetchedFile | null>): Promise<void> {
-      const cached = cache.get(key);
-      if (cached) {
-        if ((await downloadBlob(cached.blob, cached.filename)) !== "blocked") {
-          cache.delete(key);
+      if (entry?.key === key) {
+        if ((await downloadBlob(entry.file.blob, entry.file.filename)) !== "blocked") {
+          entry = null;
         }
         return;
       }
       const fetched = await fetchFile();
       if (fetched && (await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {
-        cache.set(key, fetched);
+        entry = { key, file: fetched };
       }
     },
   };

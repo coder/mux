@@ -221,6 +221,25 @@ describe("createDownloadRetryCache", () => {
     expect(fetchFile).toHaveBeenCalledTimes(2);
   });
 
+  it("evicts an abandoned blocked entry when a different download gets blocked", async () => {
+    const share = mock(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    installNavigator({ standalone: true, canShare: () => true, share });
+    const fetchA = mock(() => Promise.resolve(fetchedFile()));
+    const fetchB = mock(() => Promise.resolve(fetchedFile()));
+    const downloads = createDownloadRetryCache();
+
+    await downloads.download("a", fetchA);
+    await downloads.download("b", fetchB);
+
+    // "b" now owns the single retry slot, so retrying "a" refetches.
+    await downloads.download("a", fetchA);
+    expect(fetchA).toHaveBeenCalledTimes(2);
+
+    // "b" was evicted by the second blocked "a", so it refetches too.
+    await downloads.download("b", fetchB);
+    expect(fetchB).toHaveBeenCalledTimes(2);
+  });
+
   it("does not cache unshareable files, since no retry can succeed", async () => {
     const share = mock(() => Promise.resolve());
     installNavigator({ standalone: true, canShare: () => false, share });

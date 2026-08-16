@@ -67,6 +67,11 @@ interface UserMessageProps {
   navigation?: UserMessageNavigation;
 }
 
+// Module-level so all messages share one retry slot, bounding retained
+// staged-attachment bytes to a single blob renderer-wide (iOS share-sheet
+// retries only ever target the most recent tap).
+const stagedDownloads = createDownloadRetryCache();
+
 export const UserMessage: React.FC<UserMessageProps> = ({
   message,
   className,
@@ -101,11 +106,6 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const api = apiState?.api ?? null;
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
-
-  // Retry cache: if the backend fetch outlives iOS's transient-activation
-  // window, the share sheet is blocked; the cached bytes let the user's retry
-  // tap share synchronously within its own gesture.
-  const [stagedDownloads] = React.useState(createDownloadRetryCache);
 
   const handleDownloadStagedAttachment = (attachment: DisplayStagedAttachment) =>
     stagedDownloads.download(attachment.stagedPath, async () => {
