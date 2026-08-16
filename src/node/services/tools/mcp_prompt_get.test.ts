@@ -153,6 +153,23 @@ describe("createMcpPromptGetTool", () => {
     expect(getPrompt).toHaveBeenCalledWith("coder", "status", {}, undefined);
   });
 
+  it("never lets a stableKey alias shadow another prompt's exact commandKey", async () => {
+    const getPrompt = mock(() => Promise.resolve({ text: "ok" }));
+    // STATUS_PROMPT's stableKey doubles as a later prompt's current commandKey.
+    const shadowed: MCPPromptDescriptor = {
+      commandKey: "mcp__coder__status__def456",
+      stableKey: "mcp__coder__status__def456__zzz",
+      serverName: "coder",
+      promptName: "status__def456",
+    };
+    const tool = createTool({ prompts: [STATUS_PROMPT, shadowed], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status__def456" });
+
+    expect(result).toEqual({ success: true, text: "ok" });
+    expect(getPrompt).toHaveBeenCalledWith("coder", "status__def456", {}, undefined);
+  });
+
   it("rejects unknown prompt names without calling the server", async () => {
     const getPrompt = mock(() => Promise.resolve({ text: "" }));
     const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
@@ -183,6 +200,31 @@ describe("createMcpPromptGetTool", () => {
     if (!result.success) {
       expect(result.error).toContain("mcp__coder__long_prompt_name_399");
       expect(result.error.length).toBeLessThan(25_000);
+    }
+  });
+
+  it("narrows the unknown-name error by substring so prompts past the error budget stay reachable", async () => {
+    // Full catalog exceeds the 20k error budget; prompt 999 falls past it.
+    const prompts = Array.from({ length: 1_000 }, (_, index) => ({
+      ...STATUS_PROMPT,
+      commandKey: `mcp__coder__long_prompt_name_${index}`,
+      stableKey: `mcp__coder__long_prompt_name_${index}__hash`,
+      promptName: `long_prompt_name_${index}`,
+    }));
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+
+    const unfiltered = await execute(tool, { name: "?" });
+    expect(unfiltered.success).toBe(false);
+    if (!unfiltered.success) {
+      expect(unfiltered.error).not.toContain("mcp__coder__long_prompt_name_999");
+      expect(unfiltered.error).toContain("more; use a longer partial name to narrow");
+    }
+
+    const narrowed = await execute(tool, { name: "name_999" });
+    expect(narrowed.success).toBe(false);
+    if (!narrowed.success) {
+      expect(narrowed.error).toContain("Prompts matching 'name_999'");
+      expect(narrowed.error).toContain("mcp__coder__long_prompt_name_999");
     }
   });
 

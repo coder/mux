@@ -19,8 +19,9 @@ const MAX_INDEX_CHARS = 10_000;
 // Names-only tail: keys past the full-entry budget stay discoverable and
 // invocable (the missing-required-argument error recovers argument names).
 const MAX_NAME_TAIL_CHARS = 2_000;
-// Unknown-name errors list the catalog as an on-demand discovery path for
-// prompts the description budgets cut. Per-call cost, so it can be generous.
+// Unknown-name errors search the catalog as an on-demand discovery path for
+// prompts the description budgets cut. Per-call cost, so it can be generous;
+// substring narrowing keeps arbitrarily large catalogs reachable.
 const MAX_ERROR_KEYS_CHARS = 20_000;
 
 function clampText(text: string, maxChars: number): string {
@@ -93,7 +94,7 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
     }
     if (tail.omitted > 0) {
       promptLines.push(
-        `(+${tail.omitted} more not shown; call this tool with any unknown name to list every prompt key)`
+        `(+${tail.omitted} more not shown; call this tool with a full or partial name to search all prompt keys)`
       );
     }
   }
@@ -121,20 +122,29 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         return { success: false, error: "Tool misconfigured: no MCP prompt runtime." };
       }
 
-      // stableKey is accepted as an alias because it survives catalog changes
-      // that re-suffix commandKey.
-      const descriptor = prompts.find(
-        (candidate) => candidate.commandKey === name || candidate.stableKey === name
-      );
+      // Exact commandKey wins across the whole catalog; stableKey is only an
+      // alias that survives catalog changes re-suffixing commandKey, so it
+      // must never shadow another prompt's current commandKey (same contract
+      // as the composer's findPromptDescriptor).
+      const descriptor =
+        prompts.find((candidate) => candidate.commandKey === name) ??
+        prompts.find((candidate) => candidate.stableKey === name);
       if (!descriptor) {
+        // Substring search keeps every prompt reachable however large the
+        // catalog: the model can always narrow past the character budget.
+        const needle = name.toLowerCase();
+        const matching = prompts
+          .map((candidate) => candidate.commandKey)
+          .filter((key) => key.toLowerCase().includes(needle));
+        const label = matching.length > 0 ? `Prompts matching '${name}'` : "Available prompts";
         const keys = joinKeysWithinBudget(
-          prompts.map((candidate) => candidate.commandKey),
+          matching.length > 0 ? matching : prompts.map((candidate) => candidate.commandKey),
           MAX_ERROR_KEYS_CHARS
         );
         return {
           success: false,
-          error: `Unknown MCP prompt '${name}'. Available prompts: ${keys.text}${
-            keys.omitted > 0 ? ` (+${keys.omitted} more)` : ""
+          error: `Unknown MCP prompt '${name}'. ${label}: ${keys.text}${
+            keys.omitted > 0 ? ` (+${keys.omitted} more; use a longer partial name to narrow)` : ""
           }`,
         };
       }
