@@ -36,8 +36,12 @@ function clampText(text: string, maxChars: number): string {
 // non-ASCII text can otherwise inflate the serialized result to ~3x the
 // nominal cap. Never splits a multi-byte character.
 function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
-  const bytes = Buffer.from(text, "utf8");
-  if (bytes.length <= maxBytes) {
+  // UTF-8 encodes every UTF-16 code unit to at least one byte, so a prefix of
+  // maxBytes code units always covers the byte budget. Encoding only that
+  // prefix keeps the transient copy bounded however large the expansion is.
+  const prefix = text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  const bytes = Buffer.from(prefix, "utf8");
+  if (prefix === text && bytes.length <= maxBytes) {
     return text;
   }
   let end = maxBytes;
@@ -166,19 +170,42 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       if (!descriptor) {
         // Substring search keeps every prompt reachable however large the
         // catalog: the model can always narrow past the character budget.
+        // Single bounded scan: accumulate keys only while they fit the budget
+        // and count the rest, so a hostile catalog costs no large allocation.
         const needle = name.toLowerCase();
-        const matching = prompts
-          .map((candidate) => candidate.commandKey)
-          .filter((key) => key.toLowerCase().includes(needle));
-        const label = matching.length > 0 ? `Prompts matching '${name}'` : "Available prompts";
-        const keys = joinKeysWithinBudget(
-          matching.length > 0 ? matching : prompts.map((candidate) => candidate.commandKey),
-          MAX_ERROR_KEYS_CHARS
-        );
+        const matched: string[] = [];
+        let matchedChars = 0;
+        let matchedFull = false;
+        let matchedCount = 0;
+        const all: string[] = [];
+        let allChars = 0;
+        let allFull = false;
+        for (const candidate of prompts) {
+          const key = candidate.commandKey;
+          if (!allFull && allChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
+            all.push(key);
+            allChars += key.length + 2;
+          } else {
+            allFull = true;
+          }
+          if (key.toLowerCase().includes(needle)) {
+            matchedCount++;
+            if (!matchedFull && matchedChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
+              matched.push(key);
+              matchedChars += key.length + 2;
+            } else {
+              matchedFull = true;
+            }
+          }
+        }
+        const useMatches = matchedCount > 0;
+        const label = useMatches ? `Prompts matching '${name}'` : "Available prompts";
+        const shown = useMatches ? matched : all;
+        const omitted = useMatches ? matchedCount - matched.length : prompts.length - all.length;
         return {
           success: false,
-          error: `Unknown MCP prompt '${name}'. ${label}: ${keys.text}${
-            keys.omitted > 0 ? ` (+${keys.omitted} more; use a longer partial name to narrow)` : ""
+          error: `Unknown MCP prompt '${name}'. ${label}: ${shown.join(", ")}${
+            omitted > 0 ? ` (+${omitted} more; use a longer partial name to narrow)` : ""
           }`,
         };
       }

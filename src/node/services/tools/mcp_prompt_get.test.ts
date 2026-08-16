@@ -1,4 +1,4 @@
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 
 import type { Tool } from "ai";
 
@@ -303,6 +303,57 @@ describe("createMcpPromptGetTool", () => {
     const result = await execute(tool, { name: "mcp__coder__status" });
 
     expect(result).toEqual({ success: false, error: "server exploded" });
+  });
+
+  it("never encodes more than the byte budget when truncating a huge expansion", async () => {
+    const getPrompt = mock(() => Promise.resolve({ text: "a".repeat(10 * 1024 * 1024) }));
+    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
+    const fromSpy = spyOn(Buffer, "from");
+
+    try {
+      const result = await execute(tool, { name: "mcp__coder__status" });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.text).toEndWith("[Prompt text truncated]");
+      }
+      // The transient encoding copy is bounded by the budget, not input size.
+      for (const call of fromSpy.mock.calls) {
+        const input = call[0];
+        if (typeof input === "string") {
+          expect(input.length).toBeLessThanOrEqual(64 * 1024);
+        }
+      }
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
+  it("scans the catalog once when building the unknown-name error", async () => {
+    let keyReads = 0;
+    const prompts = Array.from({ length: 100 }, (_, index) => {
+      const descriptor = {
+        ...STATUS_PROMPT,
+        stableKey: `mcp__coder__p${index}__hash`,
+        promptName: `p${index}`,
+      };
+      Object.defineProperty(descriptor, "commandKey", {
+        get() {
+          keyReads++;
+          return `mcp__coder__p${index}`;
+        },
+      });
+      return descriptor;
+    });
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+    keyReads = 0;
+
+    const result = await execute(tool, { name: "no_match_anywhere" });
+
+    expect(result.success).toBe(false);
+    // One read per key in the exact-match pass plus one in the search scan;
+    // the no-match fallback must not rescan the catalog.
+    expect(keyReads).toBeLessThanOrEqual(250);
   });
 
   it("enforces the expansion cap in encoded bytes without splitting characters", async () => {
