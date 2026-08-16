@@ -988,22 +988,6 @@ export class MCPServerManager {
     );
   }
 
-  /**
-   * Modern instances refresh every stream. Legacy instances refresh until the
-   * first non-empty catalog; repeated checks for unsupported servers stay local.
-   */
-  private async refreshPromptCatalogsForStream(
-    instances: Map<string, MCPServerInstance>
-  ): Promise<void> {
-    await this.refreshInstancePrompts(
-      new Map(
-        [...instances].filter(
-          ([, instance]) => instance.refreshTools !== undefined || instance.prompts.length === 0
-        )
-      )
-    );
-  }
-
   private async refreshInstancePrompts(
     instances: Map<string, MCPServerInstance>,
     signal?: AbortSignal
@@ -1501,7 +1485,7 @@ export class MCPServerManager {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
         await Promise.all([
           this.refreshModernInstanceTools(existing.instances),
-          this.refreshPromptCatalogsForStream(this.promptEligibleInstances(existing)),
+          this.refreshInstancePrompts(this.promptEligibleInstances(existing)),
         ]);
       }
 
@@ -1655,7 +1639,7 @@ export class MCPServerManager {
         // Honor SEP-2549 freshness hints instead of caching tool lists for the instance lifetime.
         await Promise.all([
           this.refreshModernInstanceTools(instancesForTools),
-          this.refreshPromptCatalogsForStream(this.promptEligibleInstances(existing)),
+          this.refreshInstancePrompts(this.promptEligibleInstances(existing)),
         ]);
       }
 
@@ -1681,7 +1665,7 @@ export class MCPServerManager {
           if (refreshToolCatalogs) {
             await Promise.all([
               this.refreshModernInstanceTools(current.instances),
-              this.refreshPromptCatalogsForStream(this.promptEligibleInstances(current)),
+              this.refreshInstancePrompts(this.promptEligibleInstances(current)),
             ]);
           }
           // Repair again in case a mutation landed after the concurrent starter's check.
@@ -1761,7 +1745,7 @@ export class MCPServerManager {
 
       // Refresh before enablement repair so mutations during loading cannot leak stale descriptors.
       if (refreshToolCatalogs) {
-        await this.refreshPromptCatalogsForStream(this.promptEligibleInstances(entry));
+        await this.refreshInstancePrompts(this.promptEligibleInstances(entry));
       }
 
       await this.repairEnablementAfterConcurrentMutation(

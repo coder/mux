@@ -1,6 +1,6 @@
 import { tool } from "ai";
 
-import { MCP_PROMPT_MAX_TEXT_CHARS } from "@/common/constants/toolLimits";
+import { MCP_PROMPT_MAX_TEXT_BYTES } from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -24,9 +24,27 @@ const MAX_NAME_TAIL_CHARS = 2_000;
 // prompts the description budgets cut. Per-call cost, so it can be generous;
 // substring narrowing keeps arbitrarily large catalogs reachable.
 const MAX_ERROR_KEYS_CHARS = 20_000;
+// Budget for other server-controlled text in error results (argument names,
+// server failure messages).
+const MAX_ERROR_TEXT_CHARS = 2_000;
 
 function clampText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
+}
+
+// The expansion budget is enforced on encoded bytes, not UTF-16 code units:
+// non-ASCII text can otherwise inflate the serialized result to ~3x the
+// nominal cap. Never splits a multi-byte character.
+function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
+  const bytes = Buffer.from(text, "utf8");
+  if (bytes.length <= maxBytes) {
+    return text;
+  }
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+    end--;
+  }
+  return bytes.subarray(0, end).toString("utf8") + marker;
 }
 
 // Never cuts a key mid-name; a partial key is not invocable.
@@ -155,9 +173,13 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         .filter((argument) => argument.required === true && argumentValues[argument.name] == null)
         .map((argument) => argument.name);
       if (missingRequired.length > 0) {
+        // Argument names are server-controlled; bound them like the catalog.
+        const missing = joinKeysWithinBudget(missingRequired, MAX_ERROR_TEXT_CHARS);
         return {
           success: false,
-          error: `Missing required argument(s) for '${descriptor.commandKey}': ${missingRequired.join(", ")}`,
+          error: `Missing required argument(s) for '${descriptor.commandKey}': ${missing.text}${
+            missing.omitted > 0 ? ` (+${missing.omitted} more)` : ""
+          }`,
         };
       }
 
@@ -170,10 +192,11 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         );
         // Expansions are server-controlled; bound them so one verbose or
         // hostile server cannot flood the next model request.
-        const text =
-          result.text.length <= MCP_PROMPT_MAX_TEXT_CHARS
-            ? result.text
-            : `${result.text.slice(0, MCP_PROMPT_MAX_TEXT_CHARS)}\n\n[Prompt text truncated]`;
+        const text = truncateUtf8Bytes(
+          result.text,
+          MCP_PROMPT_MAX_TEXT_BYTES,
+          "\n\n[Prompt text truncated]"
+        );
         return {
           success: true,
           text,
@@ -182,7 +205,8 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
             : {}),
         };
       } catch (error) {
-        return { success: false, error: getErrorMessage(error) };
+        // Server-controlled failure text gets the same bounding treatment.
+        return { success: false, error: clampText(getErrorMessage(error), MAX_ERROR_TEXT_CHARS) };
       }
     },
   });

@@ -281,4 +281,53 @@ describe("createMcpPromptGetTool", () => {
 
     expect(result).toEqual({ success: false, error: "server exploded" });
   });
+
+  it("enforces the expansion cap in encoded bytes without splitting characters", async () => {
+    // 64k "€" chars encode to ~192KB UTF-8, triple the nominal cap.
+    const getPrompt = mock(() => Promise.resolve({ text: "€".repeat(64 * 1024) }));
+    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(64 * 1024 + 40);
+      expect(result.text).toEndWith("[Prompt text truncated]");
+      expect(result.text).not.toContain("\uFFFD");
+    }
+  });
+
+  it("bounds the missing-argument error against hostile argument lists", async () => {
+    const prompt: MCPPromptDescriptor = {
+      ...STATUS_PROMPT,
+      arguments: Array.from({ length: 500 }, (_, index) => ({
+        name: `required_argument_with_a_very_long_name_${index}`,
+        required: true,
+      })),
+    };
+    const tool = createTool({
+      prompts: [prompt],
+      getPrompt: mock(() => Promise.resolve({ text: "" })),
+    });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.length).toBeLessThan(5_000);
+      expect(result.error).toMatch(/\(\+\d+ more\)/);
+    }
+  });
+
+  it("clamps server-controlled error messages", async () => {
+    const getPrompt = mock(() => Promise.reject(new Error("e".repeat(100_000))));
+    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.length).toBeLessThan(3_000);
+    }
+  });
 });

@@ -769,14 +769,16 @@ describe("MCPServerManager", () => {
     });
   });
 
-  test("getToolsForWorkspace fetches legacy prompt catalogs once and re-polls modern instances", async () => {
+  test("getToolsForWorkspace re-polls legacy and modern prompt catalogs each stream", async () => {
     const workspaceId = "ws-prompt-freshness";
     configService.listServers = mock(() =>
       Promise.resolve({ legacy: stdioConfig("cmd-legacy"), modern: stdioConfig("cmd-modern") })
     );
     const legacy = testInstance("legacy");
+    let legacyFetches = 0;
     const legacyRefresh = mock(() => {
-      legacy.prompts = [{ name: "legacy-prompt" }];
+      legacyFetches += 1;
+      legacy.prompts = [{ name: `legacy-v${legacyFetches}` }];
       return Promise.resolve();
     });
     (legacy as { refreshPrompts?: typeof legacyRefresh }).refreshPrompts = legacyRefresh;
@@ -802,14 +804,16 @@ describe("MCPServerManager", () => {
     const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    expect(legacyRefresh).toHaveBeenCalledTimes(1);
+    // Legacy servers re-poll too: prompt catalogs can change after the first
+    // listing even when the instance has no refreshTools.
+    expect(legacyRefresh).toHaveBeenCalledTimes(2);
     expect(modernRefresh).toHaveBeenCalledTimes(2);
     expect(first.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
-      "legacy-prompt",
+      "legacy-v1",
       "modern-v1",
     ]);
     expect(second.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
-      "legacy-prompt",
+      "legacy-v2",
       "modern-v2",
     ]);
   });
