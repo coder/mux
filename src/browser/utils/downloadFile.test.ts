@@ -24,6 +24,7 @@ function installNavigator(nav: {
   standalone?: boolean;
   canShare?: (data: { files: File[] }) => boolean;
   share?: (data: { files: File[] }) => Promise<void>;
+  userActivation?: { isActive: boolean };
 }) {
   globalThis.navigator = nav as unknown as Navigator;
 }
@@ -96,6 +97,31 @@ describe("downloadBlob", () => {
     expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe("blocked");
     expect(alertMock).toHaveBeenCalledTimes(1);
     expect(createElement).not.toHaveBeenCalled();
+  });
+
+  it("treats NotAllowedError with live user activation as a permanent denial", async () => {
+    const share = mock(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    installNavigator({
+      standalone: true,
+      canShare: () => true,
+      share,
+      userActivation: { isActive: true },
+    });
+
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "unshareable"
+    );
+    expect(alertMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats non-activation share rejections as permanent", async () => {
+    const share = mock(() => Promise.reject(new TypeError("invalid share data")));
+    installNavigator({ standalone: true, canShare: () => true, share });
+
+    expect(await downloadBlob(new Blob(["x"], { type: "image/png" }), "shot.png")).toBe(
+      "unshareable"
+    );
+    expect(alertMock).toHaveBeenCalledTimes(1);
   });
 
   it("uses an anchor download outside iOS standalone mode even when share is available", async () => {

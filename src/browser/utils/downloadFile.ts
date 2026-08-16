@@ -18,6 +18,20 @@ function canShareFile(file: File): boolean {
   return typeof navigator.share === "function" && navigator.canShare?.({ files: [file] }) === true;
 }
 
+/**
+ * WebKit rejects share() with NotAllowedError when the gesture's transient
+ * activation has expired (e.g. after a slow fetch); only that failure is
+ * retryable with a fresh tap. Where the UA exposes userActivation, a
+ * NotAllowedError with activation still live is a permanent denial (e.g.
+ * permissions policy), not an expiry.
+ */
+function isTransientActivationExpiry(err: unknown): boolean {
+  if (!(err instanceof DOMException) || err.name !== "NotAllowedError") return false;
+  const activation = (navigator as Navigator & { userActivation?: { isActive?: boolean } })
+    .userActivation;
+  return activation == null || activation.isActive !== true;
+}
+
 /** Trigger a plain anchor download. Unusable in iOS standalone mode. */
 export function downloadViaAnchor(href: string, filename: string): void {
   const anchor = document.createElement("a");
@@ -57,11 +71,13 @@ export async function downloadBlob(blob: Blob, filename: string): Promise<Downlo
     } catch (err) {
       // AbortError means the user dismissed the share sheet.
       if (err instanceof DOMException && err.name === "AbortError") return "delivered";
-      // Typically NotAllowedError: WebKit blocks share() once the gesture's
-      // transient activation expires (e.g. after a slow fetch).
       console.error("Failed to share file:", err);
-      window.alert("Saving was interrupted. Tap the download again to save.");
-      return "blocked";
+      if (isTransientActivationExpiry(err)) {
+        window.alert("Saving was interrupted. Tap the download again to save.");
+        return "blocked";
+      }
+      window.alert("This file can't be saved from this app.");
+      return "unshareable";
     }
     return "delivered";
   }
