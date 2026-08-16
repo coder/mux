@@ -230,11 +230,13 @@ const TASK_LIFECYCLE_KINDS = new Set([
   "task.interrupted",
 ]);
 
-// An older task.created row adds no unique information once the same task has a newer lifecycle
-// row on the feed; an in-flight task with no other rows still shows that it started. The started
-// row is the only one anchored to the spawning tool call, so rows that cannot reveal a transcript
-// target themselves inherit that anchor before the started row is dropped.
-function dropSupersededTaskStarts(newestFirst: TimelineEvent[]): TimelineEvent[] {
+// Started and progress rows are provisional: an in-progress update repeats what the terminal
+// report will say, so once the same task has a newer lifecycle row on the feed they add no unique
+// information and only the newest row per task survives. Terminal rows always stay, since a
+// reawakened sub-agent can report more than once. The started row is the only one anchored to the
+// spawning tool call, so rows that cannot reveal a transcript target themselves inherit that
+// anchor before the started row is dropped.
+function dropSupersededTaskRows(newestFirst: TimelineEvent[]): TimelineEvent[] {
   const startAnchors = new Map<string, TimelineAnchor>();
   for (const event of newestFirst) {
     const anchor = event.anchor;
@@ -256,7 +258,7 @@ function dropSupersededTaskStarts(newestFirst: TimelineEvent[]): TimelineEvent[]
       continue;
     }
     const kind = getTimelineEventKind(event);
-    if (kind === "task.created" && supersededTaskIds.has(taskId)) {
+    if ((kind === "task.created" || kind === "task.progress") && supersededTaskIds.has(taskId)) {
       continue;
     }
     if (TASK_LIFECYCLE_KINDS.has(kind)) {
@@ -754,7 +756,7 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({});
   const filter = isTimelineFilter(storedFilter) ? storedFilter : "all";
-  const filteredEvents = dropSupersededTaskStarts(
+  const filteredEvents = dropSupersededTaskRows(
     timeline.events.filter(
       (event) => filter === "all" || getTimelineEventCategories(event).includes(filter)
     )

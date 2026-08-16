@@ -400,6 +400,56 @@ describe("TimelinePanel", () => {
     ).not.toBeNull();
   });
 
+  test("drops the sub-agent update row once the same task's report lands", () => {
+    const events = [
+      makeEvent("report", "task.reported", 2, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { title: "Comment audit finding", digest: "No must-fix issues" },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update", "task.progress", 1, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Comment audit finding", digest: "No must-fix issues" },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="update"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
+  });
+
+  test("keeps only the newest update row for an in-flight task", () => {
+    const events = [
+      makeEvent("update-late", "task.progress", 3, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Second checkpoint" },
+        anchor: { taskId: "task-a", messageId: "msg-2", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update-early", "task.progress", 2, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "First checkpoint" },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("start", "task.created", 1, {
+        source: { system: "task", key: "task-created:task-a" },
+        status: "started",
+        anchor: { taskId: "task-a", toolCallId: "call-a", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="update-late"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="update-early"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="start"]')).toBeNull();
+  });
+
   test("shows a single representation when the preview excerpt duplicates the digest", async () => {
     // Mirror the producer: a >120-char prompt is digested to a 117-char cut plus "...".
     const longPrompt = "alpha beta gamma delta epsilon ".repeat(8).trim();
