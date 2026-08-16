@@ -48,6 +48,8 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import {
   MCP_PROMPT_MAX_ARGUMENTS,
   MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS,
+  MCP_PROMPT_MAX_TEXT_BYTES,
+  MCP_PROMPT_TRUNCATION_MARKER,
 } from "@/common/constants/toolLimits";
 import { getErrorMessage } from "@/common/utils/errors";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
@@ -793,14 +795,38 @@ function flattenPromptContent(content: MCPPromptContent): string {
   }
 }
 
+// Accumulates only up to the expansion byte cap (plus one code unit) so a
+// server returning many large message blocks never materializes a full-size
+// combined string. Invariant: whenever content is dropped, the pre-marker
+// text exceeds MCP_PROMPT_MAX_TEXT_BYTES code units (hence bytes), so the
+// byte-level truncation in mcp_prompt_get always fires and replaces the
+// marker cleanly instead of cutting it mid-string.
 export function flattenMcpPrompt(result: MCPGetPromptResult): string {
-  return result.messages
-    .map((message) => {
-      const text = flattenPromptContent(message.content);
-      return message.role === "user" ? text : `[${message.role}]\n${text}`;
-    })
-    .filter((message) => message.length > 0)
-    .join("\n\n");
+  const parts: string[] = [];
+  let length = 0;
+  let truncated = false;
+  for (const message of result.messages) {
+    if (length > MCP_PROMPT_MAX_TEXT_BYTES) {
+      truncated = true;
+      break;
+    }
+    const text = flattenPromptContent(message.content);
+    const prefix = message.role === "user" ? "" : `[${message.role}]\n`;
+    if (prefix.length === 0 && text.length === 0) {
+      continue;
+    }
+    const separator = parts.length > 0 ? 2 : 0;
+    const allowed = Math.max(1, MCP_PROMPT_MAX_TEXT_BYTES + 1 - length - separator - prefix.length);
+    const body = text.length > allowed ? text.slice(0, allowed) : text;
+    parts.push(prefix + body);
+    length += separator + prefix.length + body.length;
+    if (body.length < text.length) {
+      truncated = true;
+      break;
+    }
+  }
+  const flattened = parts.join("\n\n");
+  return truncated ? flattened + MCP_PROMPT_TRUNCATION_MARKER : flattened;
 }
 
 interface MCPServerInstance {
@@ -1887,22 +1913,21 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
-        // Length check first: it is O(1), so a hostile argument array is
-        // never traversed or copied into the per-send descriptor set.
-        if ((prompt.arguments?.length ?? 0) > MCP_PROMPT_MAX_ARGUMENTS) {
-          log.debug("[MCP] Skipping prompt with too many arguments", {
-            server: instance.name,
-            prompt: prompt.name,
-            argumentCount: prompt.arguments?.length,
-          });
-          continue;
-        }
+        // Bound the copy of the server-controlled arguments array before any
+        // scan, so a hostile argument count costs O(cap) per send. The prompt
+        // stays callable (composer and model) with only the first
+        // MCP_PROMPT_MAX_ARGUMENTS arguments advertised; a required argument
+        // beyond the cap surfaces as the server's own (clamped) error.
+        const boundedArguments =
+          prompt.arguments !== undefined && prompt.arguments.length > MCP_PROMPT_MAX_ARGUMENTS
+            ? prompt.arguments.slice(0, MCP_PROMPT_MAX_ARGUMENTS)
+            : prompt.arguments;
         // Oversized argument names cannot round-trip through bounded hints
         // and errors. A required one leaves the prompt permanently
         // uninvocable, so the prompt is dropped; oversized optional arguments
         // are omitted from the descriptor while the prompt stays callable.
         if (
-          (prompt.arguments ?? []).some(
+          (boundedArguments ?? []).some(
             (argument) =>
               argument.required === true &&
               argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
@@ -1914,7 +1939,7 @@ export class MCPServerManager {
           });
           continue;
         }
-        const advertisedArguments = prompt.arguments?.filter(
+        const advertisedArguments = boundedArguments?.filter(
           (argument) => argument.name.length <= MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS
         );
         descriptors.push({

@@ -2,6 +2,10 @@ import { describe, expect, it, mock, spyOn } from "bun:test";
 
 import type { Tool } from "ai";
 
+import {
+  MCP_PROMPT_MAX_TEXT_BYTES,
+  MCP_PROMPT_TRUNCATION_MARKER,
+} from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { MCPPromptRuntime } from "@/common/utils/tools/tools";
@@ -326,6 +330,25 @@ describe("createMcpPromptGetTool", () => {
       }
     } finally {
       fromSpy.mockRestore();
+    }
+  });
+
+  it("replaces a flatten-level truncation marker instead of stacking a second one", async () => {
+    // Mirrors flattenMcpPrompt truncation output: pre-marker text exceeds the
+    // byte cap by one unit, so the tool-level byte truncation always fires.
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        text: "a".repeat(MCP_PROMPT_MAX_TEXT_BYTES + 1) + MCP_PROMPT_TRUNCATION_MARKER,
+      })
+    );
+    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
+
+    const result = await execute(tool, { name: "mcp__coder__status" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.text).toEndWith(MCP_PROMPT_TRUNCATION_MARKER);
+      expect(result.text.split("[Prompt text truncated]")).toHaveLength(2);
     }
   });
 

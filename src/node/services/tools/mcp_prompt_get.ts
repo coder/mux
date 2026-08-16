@@ -1,6 +1,9 @@
 import { tool } from "ai";
 
-import { MCP_PROMPT_MAX_TEXT_BYTES } from "@/common/constants/toolLimits";
+import {
+  MCP_PROMPT_MAX_TEXT_BYTES,
+  MCP_PROMPT_TRUNCATION_MARKER,
+} from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -51,20 +54,6 @@ function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): stri
   return bytes.subarray(0, end).toString("utf8") + marker;
 }
 
-// Never cuts a key mid-name; a partial key is not invocable.
-function joinKeysWithinBudget(keys: string[], maxChars: number): { text: string; omitted: number } {
-  const shown: string[] = [];
-  let chars = 0;
-  for (const key of keys) {
-    if (chars + key.length + 2 > maxChars) {
-      break;
-    }
-    shown.push(key);
-    chars += key.length + 2;
-  }
-  return { text: shown.join(", "), omitted: keys.length - shown.length };
-}
-
 function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
   const args = descriptor.arguments ?? [];
   if (args.length === 0) {
@@ -102,12 +91,19 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
   }
 
   const promptLines: string[] = [];
-  const tailKeys: string[] = [];
   let indexChars = 0;
   // First line that misses the budget ends full-entry mode outright, so line
   // construction (which touches server-controlled text) never repeats for
   // every remaining descriptor of a large catalog.
   let indexBudgetExhausted = false;
+  // Tail keys accumulate only while they fit the display budget; the rest are
+  // just counted, so a hostile catalog never allocates a catalog-sized array
+  // on the send path. A key is never cut mid-name: a partial key is not
+  // invocable.
+  const tailShown: string[] = [];
+  let tailChars = 0;
+  let tailFull = false;
+  let tailOmitted = 0;
   for (const descriptor of prompts) {
     if (promptLines.length < MAX_PROMPTS && !indexBudgetExhausted) {
       const description = clampText(
@@ -122,19 +118,23 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
       }
       indexBudgetExhausted = true;
     }
-    tailKeys.push(descriptor.commandKey);
+    const key = descriptor.commandKey;
+    if (!tailFull && tailChars + key.length + 2 <= MAX_NAME_TAIL_CHARS) {
+      tailShown.push(key);
+      tailChars += key.length + 2;
+    } else {
+      tailFull = true;
+      tailOmitted++;
+    }
   }
 
-  if (tailKeys.length > 0) {
-    const tail = joinKeysWithinBudget(tailKeys, MAX_NAME_TAIL_CHARS);
-    if (tail.text.length > 0) {
-      promptLines.push(`(more prompts, names only: ${tail.text})`);
-    }
-    if (tail.omitted > 0) {
-      promptLines.push(
-        `(+${tail.omitted} more not shown; call this tool with a full or partial name to search all prompt keys)`
-      );
-    }
+  if (tailShown.length > 0) {
+    promptLines.push(`(more prompts, names only: ${tailShown.join(", ")})`);
+  }
+  if (tailOmitted > 0) {
+    promptLines.push(
+      `(+${tailOmitted} more not shown; call this tool with a full or partial name to search all prompt keys)`
+    );
   }
 
   return `${baseDescription}\n\nAvailable MCP prompts:\n${promptLines.join("\n")}`;
@@ -248,7 +248,7 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         const text = truncateUtf8Bytes(
           result.text,
           MCP_PROMPT_MAX_TEXT_BYTES,
-          "\n\n[Prompt text truncated]"
+          MCP_PROMPT_TRUNCATION_MARKER
         );
         return {
           success: true,

@@ -3,7 +3,11 @@ import { createServer } from "http";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { MCP_PROMPT_MAX_ARGUMENTS } from "@/common/constants/toolLimits";
+import {
+  MCP_PROMPT_MAX_ARGUMENTS,
+  MCP_PROMPT_MAX_TEXT_BYTES,
+  MCP_PROMPT_TRUNCATION_MARKER,
+} from "@/common/constants/toolLimits";
 import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
@@ -777,7 +781,7 @@ describe("MCPServerManager", () => {
     expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
   });
 
-  test("getToolsForWorkspace drops prompts with hostile argument counts without traversing them", async () => {
+  test("getToolsForWorkspace caps advertised arguments without traversing hostile argument arrays", async () => {
     const workspaceId = "ws-hostile-arg-count";
     let elementReads = 0;
     const hostileArguments = new Proxy(
@@ -816,9 +820,17 @@ describe("MCPServerManager", () => {
 
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["at_cap"]);
-    // The count check is O(1); the hostile array is never visited or copied.
-    expect(elementReads).toBe(0);
+    // The prompt stays discoverable and callable with a bounded argument copy.
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
+      "at_cap",
+      "hostile",
+    ]);
+    const hostile = result.promptDescriptors.find(
+      (descriptor) => descriptor.promptName === "hostile"
+    );
+    expect(hostile?.arguments).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
+    // Only the bounded slice touches the hostile array.
+    expect(elementReads).toBeLessThanOrEqual(MCP_PROMPT_MAX_ARGUMENTS);
   });
 
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
@@ -2382,6 +2394,26 @@ describe("MCPServerManager", () => {
         ],
       })
     ).toBe("[Audio content omitted]\n\n[Resource content omitted]");
+  });
+
+  test("flattenMcpPrompt accumulates only a bounded prefix of oversized expansions", () => {
+    const block = "a".repeat(40 * 1024);
+    const flattened = flattenMcpPrompt({
+      messages: [
+        { role: "user", content: { type: "text", text: block } },
+        { role: "assistant", content: { type: "text", text: block } },
+        { role: "user", content: { type: "text", text: block } },
+      ],
+    });
+
+    expect(flattened.endsWith(MCP_PROMPT_TRUNCATION_MARKER)).toBe(true);
+    // Pre-marker text must exceed the byte cap so the tool-level truncation
+    // always fires and replaces the marker at a clean boundary.
+    const preMarker = flattened.length - MCP_PROMPT_TRUNCATION_MARKER.length;
+    expect(preMarker).toBeGreaterThan(MCP_PROMPT_MAX_TEXT_BYTES);
+    expect(preMarker).toBeLessThanOrEqual(MCP_PROMPT_MAX_TEXT_BYTES + 2);
+    expect(flattened.startsWith(block)).toBe(true);
+    expect(flattened).toContain("[assistant]\n");
   });
 
   test("test() includes oauthChallenge when server responds 401 + WWW-Authenticate Bearer", async () => {
