@@ -1,11 +1,8 @@
 /**
- * Shared blob-download helper for surfaces that offer "Download" buttons
- * (image lightbox, attachment cards, debug snapshots).
- *
- * iOS home-screen web apps have no download manager: clicking an anchor with
- * a `download` attribute silently aborts (WebKit limitation), so we present
- * the native share sheet instead, where "Save Image" / "Save to Files" is
- * available.
+ * Shared blob-download helper. iOS home-screen web apps have no download
+ * manager: clicking an anchor with a `download` attribute silently aborts
+ * (WebKit limitation), so downloads are offered through the native share
+ * sheet ("Save Image" / "Save to Files") there.
  */
 
 /**
@@ -17,7 +14,6 @@ function isIosStandaloneWebApp(): boolean {
   return (navigator as Navigator & { standalone?: unknown }).standalone === true;
 }
 
-/** Returns false when this environment cannot share the file, so callers can fall back. */
 function shareFileViaShareSheet(file: File): boolean {
   if (typeof navigator.share !== "function" || navigator.canShare?.({ files: [file] }) !== true) {
     return false;
