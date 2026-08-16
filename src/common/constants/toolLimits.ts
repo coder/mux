@@ -29,9 +29,11 @@ export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl
 // MCP prompt expansions are server-controlled; bound them like web_fetch output.
 export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
 export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";
-// Argument names must fit bounded discovery and error text. Oversized
-// required names drop the prompt; oversized optional names are omitted.
+// Argument names must fit bounded discovery and error text; a prompt with an
+// oversized name is dropped so the advertised list always matches the server's.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
-// Bound normalized argument arrays so per-send descriptor and hint building
-// never traverse server-sized input.
+// Bound normalized argument arrays so descriptor and hint building never
+// traverse server-sized input. Prompts advertising more are dropped rather
+// than truncated: composer slash invocation binds tokens positionally, so a
+// shortened list would misassign input.
 export const MCP_PROMPT_MAX_ARGUMENTS = 64;

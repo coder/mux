@@ -774,14 +774,10 @@ describe("MCPServerManager", () => {
 
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
-      "partial",
-      "usable",
-    ]);
-    const partial = result.promptDescriptors.find(
-      (descriptor) => descriptor.promptName === "partial"
-    );
-    expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
+    // Both oversized-name prompts are dropped, not rewritten: composer slash
+    // invocation maps tokens positionally, so a stripped argument would
+    // silently misassign the remaining tokens.
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["usable"]);
   });
 
   test("prompt catalogs are normalized once at refresh, off the per-send rebuild path", async () => {
@@ -790,8 +786,6 @@ describe("MCPServerManager", () => {
     const hostileArguments = new Proxy(
       Array.from({ length: 100_000 }, (_, index) => ({
         name: `arg_${index}`,
-        // One required argument buried deep past the cap must survive so
-        // composer and tool missing-argument validation still see it.
         required: index === 90_000,
       })),
       {
@@ -810,10 +804,10 @@ describe("MCPServerManager", () => {
         ? Promise.resolve([
             { name: "hostile", arguments: hostileArguments },
             {
-              name: "unusable",
-              arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS + 1 }, (_, index) => ({
-                name: `req_${index}`,
-                required: true,
+              name: "usable",
+              arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS }, (_, index) => ({
+                name: `arg_${index}`,
+                required: index === 0,
               })),
             },
           ])
@@ -825,22 +819,18 @@ describe("MCPServerManager", () => {
     );
 
     const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    rawElementReads = 0;
+    // The over-cap prompt is dropped by the length gate without reading a
+    // single element, and no per-send path revisits the raw array.
+    expect(rawElementReads).toBe(0);
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     expect(rawElementReads).toBe(0);
     expect(second.promptDescriptors).toBe(first.promptDescriptors);
     for (const result of [first, second]) {
-      // Preserve server order because composer argument mapping is positional.
       expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
-        "hostile",
+        "usable",
       ]);
-      const advertised = result.promptDescriptors[0]?.arguments ?? [];
-      expect(advertised).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
-      expect(advertised.map((argument) => argument.name)).toEqual([
-        ...Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS - 1 }, (_, index) => `arg_${index}`),
-        "arg_90000",
-      ]);
+      expect(result.promptDescriptors[0]?.arguments).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
     }
   });
 

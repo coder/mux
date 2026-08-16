@@ -861,54 +861,26 @@ export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string)
       normalized.push(prompt);
       continue;
     }
-    let requiredCount = 0;
-    let oversizedRequired = false;
-    let oversizedOptional = false;
-    for (const argument of args) {
-      if (argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS) {
-        if (argument.required === true) {
-          oversizedRequired = true;
-          break;
-        }
-        oversizedOptional = true;
-      } else if (argument.required === true) {
-        requiredCount++;
-      }
-    }
-    if (oversizedRequired) {
-      log.debug("[MCP] Dropping prompt with oversized required argument name", {
+    // Composer slash invocation binds tokens to arguments by position
+    // (mapPromptArguments), so advertising a list that differs from the
+    // server's would silently misassign input. Advertise the exact list or
+    // drop the prompt. The length gate runs first so an over-cap array is
+    // rejected without touching its elements.
+    if (args.length > MCP_PROMPT_MAX_ARGUMENTS) {
+      log.debug("[MCP] Dropping prompt with too many arguments", {
         server: serverName,
         prompt: prompt.name,
       });
       continue;
     }
-    if (requiredCount > MCP_PROMPT_MAX_ARGUMENTS) {
-      log.debug("[MCP] Dropping prompt with too many required arguments", {
+    if (args.some((argument) => argument.name.length > MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS)) {
+      log.debug("[MCP] Dropping prompt with oversized argument name", {
         server: serverName,
         prompt: prompt.name,
       });
       continue;
     }
-    if (args.length <= MCP_PROMPT_MAX_ARGUMENTS && !oversizedOptional) {
-      normalized.push(prompt);
-      continue;
-    }
-    const selected: typeof args = [];
-    let requiredRemaining = requiredCount;
-    let optionalBudget = MCP_PROMPT_MAX_ARGUMENTS - requiredCount;
-    for (const argument of args) {
-      if (argument.required === true) {
-        selected.push(argument);
-        requiredRemaining--;
-      } else if (optionalBudget > 0 && argument.name.length <= MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS) {
-        selected.push(argument);
-        optionalBudget--;
-      }
-      if (requiredRemaining === 0 && optionalBudget === 0) {
-        break;
-      }
-    }
-    normalized.push({ ...prompt, arguments: selected });
+    normalized.push(prompt);
   }
   return normalized;
 }
