@@ -134,9 +134,8 @@ export async function applyToolPolicyAndExperiments(
         // tools. The experiment flag is the opt-in; policy cannot disable it here since
         // that would leave no way to access tools. nonBridgeable is already policy-filtered.
         const nonBridgeable = toolBridge.getNonBridgeableTools();
-        // mcp_prompt_get advertises the prompt catalog in its description, and
-        // sandbox type declarations keep only a description's first line. Keep
-        // it directly visible so exclusive mode does not hide every prompt name.
+        // Keep mcp_prompt_get direct because sandbox declarations omit its
+        // multiline prompt catalog.
         const promptGet = policyFilteredTools.mcp_prompt_get;
         toolsForModel = {
           ...nonBridgeable,

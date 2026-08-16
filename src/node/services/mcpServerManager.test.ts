@@ -88,9 +88,8 @@ function testInstance(
     prompts: options.prompts ?? [],
     getPrompt: options.getPrompt ?? mock(() => Promise.resolve({ messages: [] })),
     ...(options.refreshTools !== undefined ? { refreshTools: options.refreshTools } : {}),
-    // refreshInstancePrompts is the single writer of instance.prompts, so
-    // prompt-carrying instances need a refresher for the manager to
-    // normalize and store the catalog like production connections do.
+    // Prompt fixtures need a refresher because production stores catalogs
+    // only through refreshInstancePrompts.
     ...(options.refreshPrompts !== undefined
       ? { refreshPrompts: options.refreshPrompts }
       : options.prompts !== undefined
@@ -741,8 +740,7 @@ describe("MCPServerManager", () => {
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
     const names = Object.keys(result.tools);
-    // "mcp" + "prompt_get" normalizes to the built-in mcp_prompt_get; the MCP
-    // tool must not shadow it in the downstream base/MCP merge.
+    // "mcp" + "prompt_get" normalizes to the built-in mcp_prompt_get name.
     expect(names).not.toContain("mcp_prompt_get");
     expect(names.some((name) => name.startsWith("mcp_prompt_get_"))).toBe(true);
     expect(names).toContain("mcp_other_tool");
@@ -776,8 +774,6 @@ describe("MCPServerManager", () => {
 
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // A prompt with an oversized required argument is dropped outright; an
-    // oversized optional argument is omitted while the prompt stays callable.
     expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
       "partial",
       "usable",
@@ -810,8 +806,6 @@ describe("MCPServerManager", () => {
     let refreshCalls = 0;
     const oneShotRefresh = mock(() => {
       refreshCalls += 1;
-      // First call happens at cold start (awaited); later background SWR
-      // refreshes hang so the raw catalog is deterministically fetched once.
       return refreshCalls === 1
         ? Promise.resolve([
             { name: "hostile", arguments: hostileArguments },
@@ -834,17 +828,10 @@ describe("MCPServerManager", () => {
     rawElementReads = 0;
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // The cached send rebuilds descriptors from the normalized catalog and
-    // never touches the raw server-controlled array again.
     expect(rawElementReads).toBe(0);
-    // Unchanged catalogs reuse the memoized descriptor array outright, so
-    // the full sort/re-key rebuild stays off the send-critical path.
     expect(second.promptDescriptors).toBe(first.promptDescriptors);
     for (const result of [first, second]) {
-      // A prompt whose required arguments alone exceed the cap is dropped;
-      // the hostile-but-callable prompt stays discoverable with a bounded
-      // copy in server-advertised order (composer argument mapping is
-      // positional, so required-first reordering would swap values).
+      // Preserve server order because composer argument mapping is positional.
       expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
         "hostile",
       ]);
@@ -926,10 +913,6 @@ describe("MCPServerManager", () => {
     await Bun.sleep(0);
     const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // Every cached send revalidates prompt catalogs, legacy included; the
-    // hung-refresh test below guards that this never blocks the send. The
-    // revalidation is stale-while-revalidate: a cached send serves the
-    // previous catalog and the refreshed one arrives for the next send.
     expect(legacyRefresh).toHaveBeenCalledTimes(3);
     expect(modernRefresh).toHaveBeenCalledTimes(3);
     expect(first.promptDescriptors.map((descriptor) => descriptor.promptName).sort()).toEqual([
@@ -953,9 +936,8 @@ describe("MCPServerManager", () => {
     let resolveStale!: (prompts: Array<{ name: string }>) => void;
     const refreshPrompts = mock(() => {
       calls += 1;
-      // Call 1: awaited cold start. Call 2: background SWR refresh held open.
-      // Call 3: composer discovery, lands first. Later calls hang so the
-      // final send observes the stored catalog.
+      // Call 1 seeds the cache, call 2 is held stale, and call 3 wins through
+      // direct discovery. Later calls hang.
       if (calls === 1) return Promise.resolve([{ name: "initial" }]);
       if (calls === 2)
         return new Promise<Array<{ name: string }>>((resolve) => {
@@ -967,13 +949,10 @@ describe("MCPServerManager", () => {
     access.startServers = mock(() => Promise.resolve(startResult([["coder", { refreshPrompts }]])));
 
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    // Cached send starts the detached background refresh (call 2, held open).
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    // Discovery refreshes directly (call 3) and applies the newer catalog.
     const discovered = await manager.getPromptsForWorkspace(workspaceRequest(workspaceId));
     expect(discovered.map((descriptor) => descriptor.promptName)).toEqual(["newer"]);
 
-    // The older fetch resolves last; its completion must be discarded.
     resolveStale([{ name: "stale" }]);
     await Bun.sleep(0);
 
@@ -988,7 +967,6 @@ describe("MCPServerManager", () => {
     let refreshCalls = 0;
     const neverSettles = mock(() => {
       refreshCalls += 1;
-      // First call happens at cold start (awaited); later ones hang forever.
       return refreshCalls === 1
         ? Promise.resolve([{ name: "cached" }])
         : new Promise<Array<{ name: string }>>(() => undefined);
@@ -1003,9 +981,6 @@ describe("MCPServerManager", () => {
     );
 
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
-    // Cached sends resolve immediately with the cached catalog even though
-    // the background refresh never settles, and in-flight dedup keeps later
-    // sends from stacking further refreshes.
     const second = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
     const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
@@ -1437,8 +1412,6 @@ describe("MCPServerManager", () => {
     await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
     await Bun.sleep(0);
 
-    // The uncancellable detached refresh started from repaired enablement, so
-    // it never queried the just-revoked server.
     expect(revokedRefresh).toHaveBeenCalledTimes(1);
     expect(stableRefresh).toHaveBeenCalledTimes(2);
   });

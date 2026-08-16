@@ -13,18 +13,13 @@ const MAX_PROMPTS = 50;
 const MAX_PROMPT_DESCRIPTION_CHARS = 200;
 const MAX_ARGUMENT_DESCRIPTION_CHARS = 100;
 const MAX_ARGUMENT_HINT_CHARS = 300;
-// Total budget for fully rendered index entries; prompts past it fall into
-// the names-only tail below.
 const MAX_INDEX_CHARS = 10_000;
 // Names-only tail: keys past the full-entry budget stay discoverable and
 // invocable (the missing-required-argument error recovers argument names).
 const MAX_NAME_TAIL_CHARS = 2_000;
-// Unknown-name errors search the catalog as an on-demand discovery path for
-// prompts the description budgets cut. Per-call cost, so it can be generous;
-// substring narrowing keeps arbitrarily large catalogs reachable.
+// Unknown-name errors provide discovery beyond the description budget;
+// substring filtering keeps oversized catalogs searchable.
 const MAX_ERROR_KEYS_CHARS = 20_000;
-// Budget for other server-controlled text in error results (argument names,
-// server failure messages).
 const MAX_ERROR_TEXT_CHARS = 2_000;
 
 function clampText(text: string, maxChars: number): string {
@@ -36,8 +31,8 @@ function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
   if (args.length === 0) {
     return "";
   }
-  // The arguments array is server-controlled and can be huge; stop building
-  // once the budget is consumed instead of materializing the full hint.
+  // Stop at the hint budget as defense in depth against unexpectedly large
+  // descriptor arrays (production arrays arrive bounded by normalization).
   const parts: string[] = [];
   let chars = 0;
   for (const argument of args) {
@@ -69,15 +64,11 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
 
   const promptLines: string[] = [];
   let indexChars = 0;
-  // First line that misses the budget ends full-entry mode outright, so line
-  // construction (which touches server-controlled text) never repeats for
-  // every remaining descriptor of a large catalog.
+  // Stop each phase at its first budget miss so the send path never scans the
+  // undisclosed catalog tail; the omitted remainder is derived from
+  // prompts.length. A key is never cut mid-name: a partial key is not
+  // invocable.
   let indexBudgetExhausted = false;
-  // Tail keys accumulate only while they fit the display budget. The first
-  // key that misses the budget ends the scan outright and the remainder is
-  // derived from prompts.length, so a hostile catalog costs neither a
-  // catalog-sized allocation nor an O(n) scan on the send path. A key is
-  // never cut mid-name: a partial key is not invocable.
   const tailShown: string[] = [];
   let tailChars = 0;
   let tailOmitted = 0;
@@ -136,18 +127,27 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         return { success: false, error: "Tool misconfigured: no MCP prompt runtime." };
       }
 
-      // Exact commandKey wins across the whole catalog; stableKey is only an
-      // alias that survives catalog changes re-suffixing commandKey, so it
-      // must never shadow another prompt's current commandKey (same contract
-      // as the composer's findPromptDescriptor).
-      const descriptor =
-        prompts.find((candidate) => candidate.commandKey === name) ??
-        prompts.find((candidate) => candidate.stableKey === name);
+      // Exact commandKey takes precedence so a stableKey alias cannot shadow
+      // a prompt's current key, matching composer resolution. One traversal
+      // resolves both.
+      let exactMatch: MCPPromptDescriptor | undefined;
+      let aliasMatch: MCPPromptDescriptor | undefined;
+      for (const candidate of prompts) {
+        if (candidate.commandKey === name) {
+          exactMatch = candidate;
+          break;
+        }
+        if (aliasMatch === undefined && candidate.stableKey === name) {
+          aliasMatch = candidate;
+        }
+      }
+      const descriptor = exactMatch ?? aliasMatch;
+      // Model-provided, so clamp its echo in error text.
+      const shownName = clampText(name, MAX_ERROR_TEXT_CHARS);
       if (!descriptor) {
-        // Substring search keeps every prompt reachable however large the
-        // catalog: the model can always narrow past the character budget.
-        // Single bounded scan: accumulate keys only while they fit the budget
-        // and count the rest, so a hostile catalog costs no large allocation.
+        // Substring matches expose additional keys beyond the description
+        // budget. Scan once, storing only keys that fit the error budget
+        // while counting the rest.
         const needle = name.toLowerCase();
         const matched: string[] = [];
         let matchedChars = 0;
@@ -175,12 +175,12 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
           }
         }
         const useMatches = matchedCount > 0;
-        const label = useMatches ? `Prompts matching '${name}'` : "Available prompts";
+        const label = useMatches ? `Prompts matching '${shownName}'` : "Available prompts";
         const shown = useMatches ? matched : all;
         const omitted = useMatches ? matchedCount - matched.length : prompts.length - all.length;
         return {
           success: false,
-          error: `Unknown MCP prompt '${name}'. ${label}: ${shown.join(", ")}${
+          error: `Unknown MCP prompt '${shownName}'. ${label}: ${shown.join(", ")}${
             omitted > 0 ? ` (+${omitted} more; use a longer partial name to narrow)` : ""
           }`,
         };
@@ -193,12 +193,13 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       let missingChars = 0;
       let missingOmitted = 0;
       for (const argument of descriptor.arguments ?? []) {
+        if (argument.required !== true) {
+          continue;
+        }
         // Own-property check: an argument named after an inherited
         // Object.prototype member (constructor, toString, __proto__) must not
         // count as provided via prototype lookup.
-        const provided =
-          Object.hasOwn(argumentValues, argument.name) && argumentValues[argument.name] != null;
-        if (argument.required !== true || provided) {
+        if (Object.hasOwn(argumentValues, argument.name) && argumentValues[argument.name] != null) {
           continue;
         }
         if (missingChars + argument.name.length + 2 <= MAX_ERROR_TEXT_CHARS) {
@@ -226,16 +227,13 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         );
         return {
           success: true,
-          // Expansion text is already byte-capped at the runtime's shared
-          // getPrompt chokepoint (MCPServerManager), which also serves the
-          // composer path.
+          // MCPServerManager caps text for both tool and composer callers.
           text: result.text,
           ...(result.description !== undefined
             ? { description: clampText(result.description, MAX_PROMPT_DESCRIPTION_CHARS) }
             : {}),
         };
       } catch (error) {
-        // Server-controlled failure text gets the same bounding treatment.
         return { success: false, error: clampText(getErrorMessage(error), MAX_ERROR_TEXT_CHARS) };
       }
     },

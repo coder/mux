@@ -26,10 +26,9 @@ describe("applyToolPolicyAndExperiments", () => {
 
     const names = Object.keys(result);
     expect(names).toContain("code_execution");
-    // Bridgeable tools are absorbed by the sandbox in exclusive mode.
     expect(names).not.toContain("bash");
-    // mcp_prompt_get stays direct: its description carries the prompt catalog,
-    // which sandbox type declarations (first line only) would hide.
+    // Sandbox declarations keep only the first description line, which would
+    // hide the prompt catalog.
     expect(names).toContain("mcp_prompt_get");
     expect(result.mcp_prompt_get.description).toContain("mcp__s__p");
   });

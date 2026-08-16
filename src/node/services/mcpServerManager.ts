@@ -795,13 +795,12 @@ function flattenPromptContent(content: MCPPromptContent): string {
   }
 }
 
-// The expansion budget is enforced on encoded bytes, not UTF-16 code units:
-// non-ASCII text can otherwise inflate the result to ~3x the nominal cap.
-// Never splits a multi-byte character.
+// Enforce the expansion budget on UTF-8 bytes; non-ASCII text can use up to
+// three bytes per UTF-16 code unit. Backs up to a UTF-8 sequence boundary
+// before decoding.
 function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
-  // UTF-8 encodes every UTF-16 code unit to at least one byte, so a prefix of
-  // maxBytes code units always covers the byte budget. Encoding only that
-  // prefix keeps the transient copy bounded however large the expansion is.
+  // Encoding at most maxBytes UTF-16 code units bounds the temporary buffer
+  // while still covering maxBytes UTF-8 bytes.
   const prefix = text.length > maxBytes ? text.slice(0, maxBytes) : text;
   const bytes = Buffer.from(prefix, "utf8");
   if (prefix === text && bytes.length <= maxBytes) {
@@ -814,12 +813,11 @@ function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): stri
   return bytes.subarray(0, end).toString("utf8") + marker;
 }
 
-// Accumulates only up to the expansion byte cap (plus one code unit) so a
-// server returning many large message blocks never materializes a full-size
-// combined string. Invariant: whenever content is dropped, the pre-marker
-// text exceeds MCP_PROMPT_MAX_TEXT_BYTES code units (hence bytes), so the
-// byte-level truncation in getPrompt always fires and replaces the marker
-// cleanly instead of cutting it mid-string.
+// Accumulates at most the cap plus one body code unit and fixed
+// separator/role prefixes, so many large message blocks never materialize a
+// full-size combined string. Whenever content is dropped, the pre-marker text
+// exceeds the cap, so getPrompt's byte truncation always fires and replaces
+// the marker cleanly instead of cutting it mid-string.
 export function flattenMcpPrompt(result: MCPGetPromptResult): string {
   const parts: string[] = [];
   let length = 0;
@@ -849,14 +847,11 @@ export function flattenMcpPrompt(result: MCPGetPromptResult): string {
 }
 
 /**
- * Normalizes a server-advertised prompt catalog once per refresh so the
- * synchronous per-send descriptor rebuild never traverses raw
- * server-controlled argument arrays. Prompts whose required arguments cannot
- * round-trip through bounded hints and errors (oversized name, or more
- * required arguments than the cap) are dropped as uninvocable; retained
- * argument arrays are bounded to MCP_PROMPT_MAX_ARGUMENTS entries in
- * server-advertised order, keeping every required argument and filling the
- * remaining slots with the earliest round-trippable optional ones.
+ * Normalizes prompt arguments once per refresh so per-send descriptor
+ * building sees bounded arrays. Drops prompts whose required arguments cannot
+ * round-trip (oversized name, or more than the cap); bounded arrays keep
+ * every required argument in server order because composer argument mapping
+ * is positional.
  */
 export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
   const normalized: MCPPrompt[] = [];
@@ -937,12 +932,7 @@ interface MCPServerInstance {
    * results carry no freshness hints).
    */
   refreshTools?: () => Promise<void>;
-  /**
-   * Fetches the current prompts/list from the server and returns it without
-   * touching instance state. refreshInstancePrompts is the single writer of
-   * `prompts`, so raw server-controlled catalogs are never observable: every
-   * stored catalog has passed normalizePromptCatalog.
-   */
+  /** Fetches prompts/list without mutating instance state; refreshInstancePrompts alone normalizes and stores the catalog. */
   refreshPrompts?: (options?: { signal?: AbortSignal }) => Promise<MCPPrompt[]>;
   close: () => Promise<void>;
 }
@@ -997,10 +987,6 @@ interface WorkspaceServers {
   stalePromptServerNames?: Set<string>;
   /** Dedupes send-path background prompt refreshes so streams never stack them. */
   promptRefreshInFlight?: Promise<void>;
-  /**
-   * Memoized model-facing descriptors keyed by the exact (instance, prompts)
-   * references they were built from; see promptDescriptorsFor.
-   */
   promptDescriptorCache?: {
     sources: Array<{ instance: MCPServerInstance; prompts: MCPPrompt[] }>;
     descriptors: MCPPromptDescriptor[];
@@ -1153,11 +1139,9 @@ export class MCPServerManager {
     await Promise.all(
       [...instances.values()].map(async (instance) => {
         if (instance.isClosed || !instance.refreshPrompts) return;
-        // promptRefreshInFlight dedupes only background refreshes; discovery
-        // calls this directly, so two fetches can race. Tokens are issued at
-        // fetch start and a completion applies only if no later-started fetch
-        // has landed, so an older, slower fetch never overwrites a newer
-        // catalog.
+        // Discovery can race the deduped background refresh. Apply only
+        // tokens newer than the last applied one so an older completion
+        // cannot overwrite a newer catalog.
         let sequence = this.promptRefreshSequences.get(instance);
         if (!sequence) {
           sequence = { started: 0, applied: 0 };
@@ -2009,11 +1993,10 @@ export class MCPServerManager {
   }
 
   /**
-   * Rebuilding descriptors sorts and re-keys the whole catalog, so the
-   * send-critical path memoizes the result per workspace entry. Reference
-   * revalidation is sound because refreshInstancePrompts is the single
-   * writer of instance.prompts and always replaces the array wholesale;
-   * eligibility changes surface as instance-set mismatches.
+   * Memoize descriptors by exact instance and prompt-array references, since
+   * rebuilding sorts and re-keys the whole catalog on the send path. Refresh
+   * replaces prompt arrays wholesale and eligibility changes alter the
+   * instance list, so reference checks are sound.
    */
   private promptDescriptorsFor(entry: WorkspaceServers): MCPPromptDescriptor[] {
     const eligible = this.promptEligibleInstances(entry);
@@ -2069,9 +2052,8 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
-        // instance.prompts passed normalizePromptCatalog at refresh time, so
-        // argument arrays arrive bounded and name-checked and this per-send
-        // rebuild never traverses raw server-controlled arrays.
+        // Catalogs are normalized at refresh, so this per-send path sees only
+        // bounded argument arrays.
         descriptors.push({
           commandKey: command.toolName,
           stableKey,
@@ -2345,9 +2327,7 @@ export class MCPServerManager {
       throw new Error(`MCP prompt '${serverName}/${promptName}' returned no text content`);
     }
     return {
-      // Both consumers (composer slash/inline expansion in agentSession and
-      // the mcp_prompt_get tool) go through this chokepoint, so the byte cap
-      // is enforced here rather than per consumer.
+      // Cap here because both composer expansion and mcp_prompt_get use this path.
       text: truncateUtf8Bytes(text, MCP_PROMPT_MAX_TEXT_BYTES, MCP_PROMPT_TRUNCATION_MARKER),
       ...(result.description !== undefined ? { description: result.description } : {}),
     };
@@ -2523,10 +2503,8 @@ export class MCPServerManager {
     workspaceOverrides?: WorkspaceMCPOverrides
   ): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
-    // Reserve built-in tool names: MCP tools merge over base tools downstream
-    // ({ ...baseTools, ...mcpTools }), so an MCP tool normalizing to a
-    // built-in name (e.g. server "mcp" + tool "prompt_get") would silently
-    // shadow it. Seeding forces such tools onto hash-suffixed names instead.
+    // Reserve built-in names because MCP tools merge over base tools
+    // downstream and a normalized collision would otherwise shadow them.
     const usedNames = new Set<string>(Object.keys(TOOL_DEFINITIONS));
 
     // Sort for determinism so collision handling yields stable tool keys.

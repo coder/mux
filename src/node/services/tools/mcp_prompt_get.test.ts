@@ -65,7 +65,6 @@ describe("createMcpPromptGetTool", () => {
     expect(tool.description).toContain("mcp__coder__p49");
     expect(tool.description).not.toContain("mcp__coder__p50:");
     expect(tool.description).toContain("names only:");
-    // Every prompt past the cap stays discoverable by exact key.
     for (let index = 50; index < 60; index++) {
       expect(tool.description).toContain(`mcp__coder__p${index}`);
     }
@@ -91,7 +90,6 @@ describe("createMcpPromptGetTool", () => {
     });
 
     expect(tool.description!.length).toBeLessThan(2_000);
-    // Construction stops at the hint budget rather than visiting all 10k entries.
     expect(elementReads).toBeLessThan(100);
   });
 
@@ -114,8 +112,8 @@ describe("createMcpPromptGetTool", () => {
   });
 
   it("moves prompts past the total index budget into the names-only tail", () => {
-    // Max clamped entry (~535 chars: 300 arg hint + 200 description); the
-    // 10k index budget fits ~18 of 30 as full entries.
+    // Maximally sized descriptions exhaust the aggregate index budget before
+    // every prompt receives a full entry.
     const prompts = Array.from({ length: 30 }, (_, index) => ({
       ...STATUS_PROMPT,
       commandKey: `mcp__coder__q${index}`,
@@ -128,7 +126,6 @@ describe("createMcpPromptGetTool", () => {
 
     expect(tool.description!.length).toBeLessThan(15_000);
     expect(tool.description).toContain("names only:");
-    // The last prompt is still discoverable even though its full entry did not fit.
     expect(tool.description).toContain("mcp__coder__q29");
   });
 
@@ -143,7 +140,6 @@ describe("createMcpPromptGetTool", () => {
 
     expect(tool.description!.length).toBeLessThan(20_000);
     expect(tool.description).toMatch(/\(\+\d+ more not shown; call this tool/);
-    // Keys are never cut mid-name: every advertised tail key is complete.
     const tail = /\(more prompts, names only: ([^)]+)\)/.exec(tool.description as string);
     expect(tail).not.toBeNull();
     for (const key of tail![1].split(", ")) {
@@ -214,7 +210,6 @@ describe("createMcpPromptGetTool", () => {
       promptName: `long_prompt_name_${index}`,
     }));
     const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
-    // Prompt 399 is beyond both description budgets, so the description omits it.
     expect(tool.description).not.toContain("mcp__coder__long_prompt_name_399");
 
     const result = await execute(tool, { name: "?" });
@@ -227,7 +222,6 @@ describe("createMcpPromptGetTool", () => {
   });
 
   it("narrows the unknown-name error by substring so prompts past the error budget stay reachable", async () => {
-    // Full catalog exceeds the 20k error budget; prompt 999 falls past it.
     const prompts = Array.from({ length: 1_000 }, (_, index) => ({
       ...STATUS_PROMPT,
       commandKey: `mcp__coder__long_prompt_name_${index}`,
@@ -281,9 +275,8 @@ describe("createMcpPromptGetTool", () => {
   });
 
   it("clamps the result description", async () => {
-    // Expansion text is byte-capped upstream at the manager's getPrompt
-    // chokepoint (covered by mcpServerManager tests); the tool only clamps
-    // the description.
+    // Production text is capped by MCPServerManager; this tool clamps only
+    // the returned description.
     const getPrompt = mock(() => Promise.resolve({ text: "ok", description: "y".repeat(5_000) }));
     const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
 
@@ -324,10 +317,23 @@ describe("createMcpPromptGetTool", () => {
     const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
 
     expect(tool.description).toMatch(/\(\+\d+ more not shown; call this tool/);
-    // Full-entry mode reads at most MAX_PROMPTS keys and the tail reads only
-    // keys that fit its 2,000-char budget plus the one that misses it; the
-    // omitted remainder is derived from prompts.length, not scanned.
+    // Description construction must stop reading keys after both display
+    // budgets are exhausted.
     expect(keyReads).toBeLessThanOrEqual(500);
+  });
+
+  it("clamps an oversized prompt name echoed in the unknown-name error", async () => {
+    const tool = createTool({
+      prompts: [STATUS_PROMPT],
+      getPrompt: mock(() => Promise.resolve({ text: "" })),
+    });
+
+    const result = await execute(tool, { name: "z".repeat(1_000_000) });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.length).toBeLessThan(10_000);
+    }
   });
 
   it("scans the catalog once when building the unknown-name error", async () => {

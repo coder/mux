@@ -29,11 +29,9 @@ export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl
 // MCP prompt expansions are server-controlled; bound them like web_fetch output.
 export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
 export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";
-// Argument names must round-trip exactly through hints, errors, and calls;
-// a prompt whose argument name exceeds this can never be invoked reliably,
-// so it is dropped at descriptor build instead of advertised in a stuck state.
+// Argument names must fit bounded discovery and error text. Oversized
+// required names drop the prompt; oversized optional names are omitted.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
-// Bounded hints and errors can only ever surface a handful of arguments, so
-// slicing the advertised copy to this many keeps hostile argument arrays off
-// the per-send path while the prompt itself stays discoverable and callable.
+// Bound normalized argument arrays so per-send descriptor and hint building
+// never traverse server-sized input.
 export const MCP_PROMPT_MAX_ARGUMENTS = 64;
