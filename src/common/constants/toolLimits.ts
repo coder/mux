@@ -32,8 +32,7 @@ export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";
 // Argument names must fit bounded discovery and error text; a prompt with an
 // oversized name is dropped so the advertised list always matches the server's.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
-// Bound normalized argument arrays so descriptor and hint building never
-// traverse server-sized input. Prompts advertising more are dropped rather
-// than truncated: composer slash invocation binds tokens positionally, so a
-// shortened list would misassign input.
+// Drop over-cap argument arrays instead of truncating them because composer
+// slash invocation binds tokens positionally. This also bounds descriptor and
+// hint construction.
 export const MCP_PROMPT_MAX_ARGUMENTS = 64;

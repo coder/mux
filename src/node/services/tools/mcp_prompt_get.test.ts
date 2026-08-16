@@ -419,7 +419,6 @@ describe("createMcpPromptGetTool", () => {
     const first = await execute(tool, { name: "mcp__coder__p4999" });
     expect(first).toEqual({ text: "hi", success: true });
 
-    // Later invocations reuse the memoized lookup instead of rescanning.
     elementReads = 0;
     const second = await execute(tool, { name: "mcp__coder__p4999" });
     expect(second).toEqual({ text: "hi", success: true });

@@ -847,11 +847,9 @@ export function flattenMcpPrompt(result: MCPGetPromptResult): string {
 }
 
 /**
- * Normalizes prompt arguments once per refresh so per-send descriptor
- * building sees bounded arrays. Drops prompts whose required arguments cannot
- * round-trip (oversized name, or more than the cap); bounded arrays keep
- * every required argument in server order because composer argument mapping
- * is positional.
+ * Bounds prompt argument arrays once per refresh without changing their
+ * positional shape: drops prompts with too many arguments or any oversized
+ * argument name.
  */
 export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
   const normalized: MCPPrompt[] = [];
@@ -861,11 +859,9 @@ export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string)
       normalized.push(prompt);
       continue;
     }
-    // Composer slash invocation binds tokens to arguments by position
-    // (mapPromptArguments), so advertising a list that differs from the
-    // server's would silently misassign input. Advertise the exact list or
-    // drop the prompt. The length gate runs first so an over-cap array is
-    // rejected without touching its elements.
+    // Composer maps slash arguments positionally (mapPromptArguments), so
+    // advertise the exact server list or drop the prompt. Check length first
+    // to reject over-cap arrays without reading their elements.
     if (args.length > MCP_PROMPT_MAX_ARGUMENTS) {
       log.debug("[MCP] Dropping prompt with too many arguments", {
         server: serverName,

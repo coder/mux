@@ -41,8 +41,8 @@ function promptLookupFor(prompts: MCPPromptDescriptor[]): PromptLookup {
   if (!lookup) {
     const byCommandKey = new Map<string, MCPPromptDescriptor>();
     const byStableKey = new Map<string, MCPPromptDescriptor>();
-    // First-wins inserts preserve the earlier linear scan's precedence
-    // between duplicate keys.
+    // Keep the first descriptor for each duplicate key to match composer
+    // catalog-order resolution.
     for (const descriptor of prompts) {
       const commandKey = descriptor.commandKey;
       if (!byCommandKey.has(commandKey)) {
@@ -167,12 +167,9 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       // Model-provided, so clamp its echo in error text.
       const shownName = clampText(name, MAX_ERROR_TEXT_CHARS);
       if (!descriptor) {
-        // Substring matches expose additional keys beyond the description
-        // budget. Scan once, storing only keys that fit the error budget
-        // while counting the rest. list_offset pages past earlier keys so
-        // every key stays reachable even when one listing overflows the
-        // budget (e.g. hash-suffixed collision groups substring search
-        // cannot tell apart).
+        // Unknown-name searches scan once, retaining only keys within the
+        // error budget. list_offset pages past earlier keys so all stay
+        // reachable when substring narrowing cannot distinguish them.
         const needle = name.toLowerCase();
         const offset = listOffset ?? 0;
         const matched: string[] = [];
