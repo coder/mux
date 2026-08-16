@@ -29,7 +29,7 @@ function isTransientActivationExpiry(err: unknown): boolean {
   if (!(err instanceof DOMException) || err.name !== "NotAllowedError") return false;
   const activation = (navigator as Navigator & { userActivation?: { isActive?: boolean } })
     .userActivation;
-  return activation == null || activation.isActive !== true;
+  return activation?.isActive !== true;
 }
 
 /** Trigger a plain anchor download. Unusable in iOS standalone mode. */

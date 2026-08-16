@@ -16,6 +16,7 @@ let originalDocument: typeof globalThis.document;
 let originalWindow: typeof globalThis.window;
 let alertMock: ReturnType<typeof mock>;
 let originalCreateObjectURL: typeof URL.createObjectURL;
+let createObjectURLMock: ReturnType<typeof mock>;
 let originalRevokeObjectURL: typeof URL.revokeObjectURL;
 let anchor: AnchorStub;
 let createElement: ReturnType<typeof mock>;
@@ -49,7 +50,8 @@ beforeEach(() => {
     createElement,
     body: { appendChild: mock(() => undefined) },
   } as unknown as Document;
-  URL.createObjectURL = mock(() => "blob:test");
+  createObjectURLMock = mock(() => "blob:test");
+  URL.createObjectURL = createObjectURLMock;
   URL.revokeObjectURL = mock(() => undefined);
 });
 
@@ -160,7 +162,7 @@ describe("downloadDataUrl", () => {
     downloadDataUrl(PNG_DATA_URL, "shot.png");
 
     expect(share).not.toHaveBeenCalled();
-    expect(URL.createObjectURL).not.toHaveBeenCalled();
+    expect(createObjectURLMock).not.toHaveBeenCalled();
     expect(anchor.href).toBe(PNG_DATA_URL);
     expect(anchor.download).toBe("shot.png");
     expect(anchor.click).toHaveBeenCalledTimes(1);
