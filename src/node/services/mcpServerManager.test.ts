@@ -5,6 +5,7 @@ import * as path from "node:path";
 
 import {
   MCP_PROMPT_MAX_ARGUMENTS,
+  MCP_PROMPT_MAX_DESCRIPTION_CHARS,
   MCP_PROMPT_MAX_TEXT_BYTES,
   MCP_PROMPT_TRUNCATION_MARKER,
 } from "@/common/constants/toolLimits";
@@ -778,6 +779,39 @@ describe("MCPServerManager", () => {
     // invocation maps tokens positionally, so a stripped argument would
     // silently misassign the remaining tokens.
     expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["usable"]);
+  });
+
+  test("getToolsForWorkspace drops oversized prompt names and clamps descriptions at refresh", async () => {
+    const workspaceId = "ws-oversized-prompt-fields";
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([
+          [
+            "coder",
+            {
+              prompts: [
+                // An oversized name must be rejected before key normalization
+                // can run Unicode/regex passes over it.
+                { name: "n".repeat(1024 * 1024) },
+                {
+                  name: "wordy",
+                  description: "d".repeat(1024 * 1024),
+                  arguments: [{ name: "pr", description: "a".repeat(1024 * 1024), required: true }],
+                },
+              ],
+            },
+          ],
+        ])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual(["wordy"]);
+    const wordy = result.promptDescriptors[0];
+    expect(wordy?.description?.length).toBe(MCP_PROMPT_MAX_DESCRIPTION_CHARS);
+    expect(wordy?.arguments?.[0]?.description?.length).toBe(MCP_PROMPT_MAX_DESCRIPTION_CHARS);
   });
 
   test("prompt catalogs are normalized once at refresh, off the per-send rebuild path", async () => {

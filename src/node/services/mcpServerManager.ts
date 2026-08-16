@@ -48,6 +48,8 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import {
   MCP_PROMPT_MAX_ARGUMENTS,
   MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS,
+  MCP_PROMPT_MAX_DESCRIPTION_CHARS,
+  MCP_PROMPT_MAX_NAME_CHARS,
   MCP_PROMPT_MAX_TEXT_BYTES,
   MCP_PROMPT_TRUNCATION_MARKER,
 } from "@/common/constants/toolLimits";
@@ -851,17 +853,32 @@ export function flattenMcpPrompt(result: MCPGetPromptResult): string {
     : flattened;
 }
 
+function clampDescription(description: string | undefined): string | undefined {
+  return description !== undefined && description.length > MCP_PROMPT_MAX_DESCRIPTION_CHARS
+    ? description.slice(0, MCP_PROMPT_MAX_DESCRIPTION_CHARS)
+    : description;
+}
+
 /**
- * Bounds prompt argument arrays once per refresh without changing their
- * positional shape: drops prompts with too many arguments or any oversized
- * argument name.
+ * Bounds prompt fields once per refresh: drops prompts with oversized names,
+ * too many arguments, or any oversized argument name (arrays keep their
+ * positional shape), and clamps display-only descriptions.
  */
 export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
   const normalized: MCPPrompt[] = [];
   for (const prompt of prompts) {
+    // Names feed key normalization, which runs Unicode and regex passes over
+    // the raw string, so gate them before anything can process the name.
+    if (prompt.name.length > MCP_PROMPT_MAX_NAME_CHARS) {
+      log.debug("[MCP] Dropping prompt with oversized name", {
+        server: serverName,
+        prompt: prompt.name.slice(0, MCP_PROMPT_MAX_NAME_CHARS),
+      });
+      continue;
+    }
     const args = prompt.arguments;
     if (args === undefined) {
-      normalized.push(prompt);
+      normalized.push({ ...prompt, description: clampDescription(prompt.description) });
       continue;
     }
     // Composer maps slash arguments positionally (mapPromptArguments), so
@@ -881,7 +898,14 @@ export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string)
       });
       continue;
     }
-    normalized.push(prompt);
+    normalized.push({
+      ...prompt,
+      description: clampDescription(prompt.description),
+      arguments: args.map((argument) => ({
+        ...argument,
+        description: clampDescription(argument.description),
+      })),
+    });
   }
   return normalized;
 }
