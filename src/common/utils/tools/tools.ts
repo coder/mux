@@ -355,6 +355,7 @@ export interface ToolConfiguration {
 
 export interface MCPPromptRuntime {
   prompts: MCPPromptDescriptor[];
+  /** Returned text is already UTF-8 byte-capped at the manager chokepoint. */
   getPrompt: (
     serverName: string,
     promptName: string,

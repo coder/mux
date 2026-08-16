@@ -1,9 +1,5 @@
 import { tool } from "ai";
 
-import {
-  MCP_PROMPT_MAX_TEXT_BYTES,
-  MCP_PROMPT_TRUNCATION_MARKER,
-} from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -33,25 +29,6 @@ const MAX_ERROR_TEXT_CHARS = 2_000;
 
 function clampText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
-}
-
-// The expansion budget is enforced on encoded bytes, not UTF-16 code units:
-// non-ASCII text can otherwise inflate the serialized result to ~3x the
-// nominal cap. Never splits a multi-byte character.
-function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
-  // UTF-8 encodes every UTF-16 code unit to at least one byte, so a prefix of
-  // maxBytes code units always covers the byte budget. Encoding only that
-  // prefix keeps the transient copy bounded however large the expansion is.
-  const prefix = text.length > maxBytes ? text.slice(0, maxBytes) : text;
-  const bytes = Buffer.from(prefix, "utf8");
-  if (prefix === text && bytes.length <= maxBytes) {
-    return text;
-  }
-  let end = maxBytes;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
-    end--;
-  }
-  return bytes.subarray(0, end).toString("utf8") + marker;
 }
 
 function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
@@ -243,16 +220,12 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
           argumentValues,
           abortSignal !== undefined ? { signal: abortSignal } : undefined
         );
-        // Expansions are server-controlled; bound them so one verbose or
-        // hostile server cannot flood the next model request.
-        const text = truncateUtf8Bytes(
-          result.text,
-          MCP_PROMPT_MAX_TEXT_BYTES,
-          MCP_PROMPT_TRUNCATION_MARKER
-        );
         return {
           success: true,
-          text,
+          // Expansion text is already byte-capped at the runtime's shared
+          // getPrompt chokepoint (MCPServerManager), which also serves the
+          // composer path.
+          text: result.text,
           ...(result.description !== undefined
             ? { description: clampText(result.description, MAX_PROMPT_DESCRIPTION_CHARS) }
             : {}),

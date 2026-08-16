@@ -781,20 +781,14 @@ describe("MCPServerManager", () => {
     expect(partial?.arguments).toEqual([{ name: "ok", required: true }]);
   });
 
-  test("getToolsForWorkspace caps advertised arguments without traversing hostile argument arrays", async () => {
+  test("getToolsForWorkspace caps advertised arguments while preserving every required one", async () => {
     const workspaceId = "ws-hostile-arg-count";
-    let elementReads = 0;
-    const hostileArguments = new Proxy(
-      Array.from({ length: 100_000 }, (_, index) => ({ name: `arg_${index}`, required: false })),
-      {
-        get(target, property, receiver): unknown {
-          if (typeof property === "string" && /^\d+$/.test(property)) {
-            elementReads++;
-          }
-          return Reflect.get(target, property, receiver);
-        },
-      }
-    );
+    const hostileArguments = Array.from({ length: 100_000 }, (_, index) => ({
+      name: `arg_${index}`,
+      // One required argument buried deep past the cap must survive so
+      // composer and tool missing-argument validation still see it.
+      required: index === 90_000,
+    }));
     configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
     access.startServers = mock(() =>
       Promise.resolve(
@@ -805,10 +799,10 @@ describe("MCPServerManager", () => {
               prompts: [
                 { name: "hostile", arguments: hostileArguments },
                 {
-                  name: "at_cap",
-                  arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS }, (_, index) => ({
-                    name: `arg_${index}`,
-                    required: false,
+                  name: "unusable",
+                  arguments: Array.from({ length: MCP_PROMPT_MAX_ARGUMENTS + 1 }, (_, index) => ({
+                    name: `req_${index}`,
+                    required: true,
                   })),
                 },
               ],
@@ -820,17 +814,16 @@ describe("MCPServerManager", () => {
 
     const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
 
-    // The prompt stays discoverable and callable with a bounded argument copy.
+    // A prompt whose required arguments alone exceed the cap is dropped; the
+    // hostile-but-callable prompt stays discoverable with a bounded copy.
     expect(result.promptDescriptors.map((descriptor) => descriptor.promptName)).toEqual([
-      "at_cap",
       "hostile",
     ]);
-    const hostile = result.promptDescriptors.find(
-      (descriptor) => descriptor.promptName === "hostile"
-    );
-    expect(hostile?.arguments).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
-    // Only the bounded slice touches the hostile array.
-    expect(elementReads).toBeLessThanOrEqual(MCP_PROMPT_MAX_ARGUMENTS);
+    const advertised = result.promptDescriptors[0]?.arguments ?? [];
+    expect(advertised).toHaveLength(MCP_PROMPT_MAX_ARGUMENTS);
+    expect(advertised.filter((argument) => argument.required === true)).toEqual([
+      { name: "arg_90000", required: true },
+    ]);
   });
 
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
@@ -2281,6 +2274,86 @@ describe("MCPServerManager", () => {
     // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
     await expect(manager.getPrompt("workspace", "coder", "status", {})).rejects.toThrow("disabled");
     expect(getPrompt).toHaveBeenCalledTimes(1);
+  });
+
+  test("getPrompt caps expansion bytes for non-ASCII content shared with the composer path", async () => {
+    // 64k "€" chars encode to ~192KB UTF-8, triple the nominal cap.
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: "€".repeat(64 * 1024) },
+          },
+        ],
+      })
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() => Promise.resolve(startResult([["coder", { getPrompt }]])));
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+
+    const result = await manager.getPrompt("workspace", "coder", "status", {});
+
+    expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(
+      MCP_PROMPT_MAX_TEXT_BYTES + MCP_PROMPT_TRUNCATION_MARKER.length
+    );
+    expect(result.text).toEndWith(MCP_PROMPT_TRUNCATION_MARKER);
+    expect(result.text).not.toContain("\uFFFD");
+  });
+
+  test("getPrompt never encodes more than the byte budget for a huge expansion", async () => {
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        messages: [
+          {
+            role: "user" as const,
+            content: { type: "text" as const, text: "a".repeat(10 * 1024 * 1024) },
+          },
+        ],
+      })
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() => Promise.resolve(startResult([["coder", { getPrompt }]])));
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+    const fromSpy = spyOn(Buffer, "from");
+
+    try {
+      const result = await manager.getPrompt("workspace", "coder", "status", {});
+
+      expect(result.text).toEndWith(MCP_PROMPT_TRUNCATION_MARKER);
+      // The transient encoding copy is bounded by the budget, not input size.
+      for (const call of fromSpy.mock.calls) {
+        const input = call[0];
+        if (typeof input === "string") {
+          expect(input.length).toBeLessThanOrEqual(MCP_PROMPT_MAX_TEXT_BYTES);
+        }
+      }
+    } finally {
+      fromSpy.mockRestore();
+    }
+  });
+
+  test("getPrompt emits a single truncation marker when flattening also truncated", async () => {
+    const block = "a".repeat(40 * 1024);
+    const getPrompt = mock(() =>
+      Promise.resolve({
+        messages: [
+          { role: "user" as const, content: { type: "text" as const, text: block } },
+          { role: "user" as const, content: { type: "text" as const, text: block } },
+        ],
+      })
+    );
+    configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));
+    access.startServers = mock(() => Promise.resolve(startResult([["coder", { getPrompt }]])));
+    await manager.getToolsForWorkspace(workspaceRequest("workspace"));
+
+    const result = await manager.getPrompt("workspace", "coder", "status", {});
+
+    expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(
+      MCP_PROMPT_MAX_TEXT_BYTES + MCP_PROMPT_TRUNCATION_MARKER.length
+    );
+    expect(result.text.split("[Prompt text truncated]")).toHaveLength(2);
+    expect(result.text).toEndWith(MCP_PROMPT_TRUNCATION_MARKER);
   });
 
   test("applyProjectTrust flips recorded trust so getPrompt refreshes untrusted", async () => {

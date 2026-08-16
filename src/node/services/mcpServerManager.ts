@@ -795,12 +795,31 @@ function flattenPromptContent(content: MCPPromptContent): string {
   }
 }
 
+// The expansion budget is enforced on encoded bytes, not UTF-16 code units:
+// non-ASCII text can otherwise inflate the result to ~3x the nominal cap.
+// Never splits a multi-byte character.
+function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
+  // UTF-8 encodes every UTF-16 code unit to at least one byte, so a prefix of
+  // maxBytes code units always covers the byte budget. Encoding only that
+  // prefix keeps the transient copy bounded however large the expansion is.
+  const prefix = text.length > maxBytes ? text.slice(0, maxBytes) : text;
+  const bytes = Buffer.from(prefix, "utf8");
+  if (prefix === text && bytes.length <= maxBytes) {
+    return text;
+  }
+  let end = maxBytes;
+  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
+    end--;
+  }
+  return bytes.subarray(0, end).toString("utf8") + marker;
+}
+
 // Accumulates only up to the expansion byte cap (plus one code unit) so a
 // server returning many large message blocks never materializes a full-size
 // combined string. Invariant: whenever content is dropped, the pre-marker
 // text exceeds MCP_PROMPT_MAX_TEXT_BYTES code units (hence bytes), so the
-// byte-level truncation in mcp_prompt_get always fires and replaces the
-// marker cleanly instead of cutting it mid-string.
+// byte-level truncation in getPrompt always fires and replaces the marker
+// cleanly instead of cutting it mid-string.
 export function flattenMcpPrompt(result: MCPGetPromptResult): string {
   const parts: string[] = [];
   let length = 0;
@@ -1913,15 +1932,41 @@ export class MCPServerManager {
         });
         const stableKey = buildMcpPromptStableKey(instance.name, prompt.name);
         if (!command || stableKey === null) continue;
-        // Bound the copy of the server-controlled arguments array before any
-        // scan, so a hostile argument count costs O(cap) per send. The prompt
-        // stays callable (composer and model) with only the first
-        // MCP_PROMPT_MAX_ARGUMENTS arguments advertised; a required argument
-        // beyond the cap surfaces as the server's own (clamped) error.
-        const boundedArguments =
-          prompt.arguments !== undefined && prompt.arguments.length > MCP_PROMPT_MAX_ARGUMENTS
-            ? prompt.arguments.slice(0, MCP_PROMPT_MAX_ARGUMENTS)
-            : prompt.arguments;
+        // Bound the retained copy of the server-controlled arguments array to
+        // MCP_PROMPT_MAX_ARGUMENTS entries per send. Every required argument
+        // must survive the cap (composer validation and the tool's
+        // missing-argument check depend on knowing them all), so required
+        // entries are kept first and optional ones fill the remaining slots.
+        // A prompt whose required arguments alone exceed the cap cannot
+        // round-trip through bounded hints and errors, so it is dropped.
+        let boundedArguments = prompt.arguments;
+        if (prompt.arguments !== undefined && prompt.arguments.length > MCP_PROMPT_MAX_ARGUMENTS) {
+          const required: typeof prompt.arguments = [];
+          const optional: typeof prompt.arguments = [];
+          let requiredOverflow = false;
+          for (const argument of prompt.arguments) {
+            if (argument.required === true) {
+              if (required.length >= MCP_PROMPT_MAX_ARGUMENTS) {
+                requiredOverflow = true;
+                break;
+              }
+              required.push(argument);
+            } else if (optional.length < MCP_PROMPT_MAX_ARGUMENTS) {
+              optional.push(argument);
+            }
+          }
+          if (requiredOverflow) {
+            log.debug("[MCP] Skipping prompt with too many required arguments", {
+              server: instance.name,
+              prompt: prompt.name,
+            });
+            continue;
+          }
+          boundedArguments = [
+            ...required,
+            ...optional.slice(0, MCP_PROMPT_MAX_ARGUMENTS - required.length),
+          ];
+        }
         // Oversized argument names cannot round-trip through bounded hints
         // and errors. A required one leaves the prompt permanently
         // uninvocable, so the prompt is dropped; oversized optional arguments
@@ -2215,7 +2260,10 @@ export class MCPServerManager {
       throw new Error(`MCP prompt '${serverName}/${promptName}' returned no text content`);
     }
     return {
-      text,
+      // Both consumers (composer slash/inline expansion in agentSession and
+      // the mcp_prompt_get tool) go through this chokepoint, so the byte cap
+      // is enforced here rather than per consumer.
+      text: truncateUtf8Bytes(text, MCP_PROMPT_MAX_TEXT_BYTES, MCP_PROMPT_TRUNCATION_MARKER),
       ...(result.description !== undefined ? { description: result.description } : {}),
     };
   }

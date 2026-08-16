@@ -1,11 +1,7 @@
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 
 import type { Tool } from "ai";
 
-import {
-  MCP_PROMPT_MAX_TEXT_BYTES,
-  MCP_PROMPT_TRUNCATION_MARKER,
-} from "@/common/constants/toolLimits";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { MCPPromptGetToolResult } from "@/common/types/tools";
 import type { MCPPromptRuntime } from "@/common/utils/tools/tools";
@@ -284,18 +280,17 @@ describe("createMcpPromptGetTool", () => {
     expect(getPrompt).toHaveBeenCalledWith("coder", "status", {}, { signal: controller.signal });
   });
 
-  it("truncates oversized prompt expansions and clamps the result description", async () => {
-    const getPrompt = mock(() =>
-      Promise.resolve({ text: "x".repeat(200_000), description: "y".repeat(5_000) })
-    );
+  it("clamps the result description", async () => {
+    // Expansion text is byte-capped upstream at the manager's getPrompt
+    // chokepoint (covered by mcpServerManager tests); the tool only clamps
+    // the description.
+    const getPrompt = mock(() => Promise.resolve({ text: "ok", description: "y".repeat(5_000) }));
     const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
 
     const result = await execute(tool, { name: "mcp__coder__status" });
 
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.text.length).toBeLessThan(70_000);
-      expect(result.text).toEndWith("[Prompt text truncated]");
       expect(result.description!.length).toBeLessThan(300);
     }
   });
@@ -307,49 +302,6 @@ describe("createMcpPromptGetTool", () => {
     const result = await execute(tool, { name: "mcp__coder__status" });
 
     expect(result).toEqual({ success: false, error: "server exploded" });
-  });
-
-  it("never encodes more than the byte budget when truncating a huge expansion", async () => {
-    const getPrompt = mock(() => Promise.resolve({ text: "a".repeat(10 * 1024 * 1024) }));
-    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
-    const fromSpy = spyOn(Buffer, "from");
-
-    try {
-      const result = await execute(tool, { name: "mcp__coder__status" });
-
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(result.text).toEndWith("[Prompt text truncated]");
-      }
-      // The transient encoding copy is bounded by the budget, not input size.
-      for (const call of fromSpy.mock.calls) {
-        const input = call[0];
-        if (typeof input === "string") {
-          expect(input.length).toBeLessThanOrEqual(64 * 1024);
-        }
-      }
-    } finally {
-      fromSpy.mockRestore();
-    }
-  });
-
-  it("replaces a flatten-level truncation marker instead of stacking a second one", async () => {
-    // Mirrors flattenMcpPrompt truncation output: pre-marker text exceeds the
-    // byte cap by one unit, so the tool-level byte truncation always fires.
-    const getPrompt = mock(() =>
-      Promise.resolve({
-        text: "a".repeat(MCP_PROMPT_MAX_TEXT_BYTES + 1) + MCP_PROMPT_TRUNCATION_MARKER,
-      })
-    );
-    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
-
-    const result = await execute(tool, { name: "mcp__coder__status" });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.text).toEndWith(MCP_PROMPT_TRUNCATION_MARKER);
-      expect(result.text.split("[Prompt text truncated]")).toHaveLength(2);
-    }
   });
 
   it("scans the catalog once when building the unknown-name error", async () => {
@@ -377,21 +329,6 @@ describe("createMcpPromptGetTool", () => {
     // One read per key in the exact-match pass plus one in the search scan;
     // the no-match fallback must not rescan the catalog.
     expect(keyReads).toBeLessThanOrEqual(250);
-  });
-
-  it("enforces the expansion cap in encoded bytes without splitting characters", async () => {
-    // 64k "€" chars encode to ~192KB UTF-8, triple the nominal cap.
-    const getPrompt = mock(() => Promise.resolve({ text: "€".repeat(64 * 1024) }));
-    const tool = createTool({ prompts: [STATUS_PROMPT], getPrompt });
-
-    const result = await execute(tool, { name: "mcp__coder__status" });
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(Buffer.byteLength(result.text, "utf8")).toBeLessThanOrEqual(64 * 1024 + 40);
-      expect(result.text).toEndWith("[Prompt text truncated]");
-      expect(result.text).not.toContain("\uFFFD");
-    }
   });
 
   it("bounds the missing-argument error against hostile argument lists", async () => {
