@@ -421,6 +421,50 @@ describe("TimelinePanel", () => {
     expect(view.getAllByText(truncatedDigest)).toHaveLength(1);
   });
 
+  test("keeps the reveal path when the retained task row lacks a transcript anchor", async () => {
+    const events = [
+      makeEvent("report", "task.reported", 2, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { title: "Auditor finished" },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("start", "task.created", 1, {
+        source: { system: "task", key: "task-created:task-a" },
+        status: "started",
+        anchor: { taskId: "task-a", toolCallId: "spawn-call", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+    expect(view.container.querySelector('[data-timeline-event-id="start"]')).toBeNull();
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="report"]')!);
+
+    // The report row inherited the started row's spawning tool-call anchor, so the reveal
+    // action stays available even though TaskService recorded the report without one.
+    await waitFor(() => view.getByTestId("timeline-reveal"));
+  });
+
+  test("does not hide the excerpt behind a generic title the prompt happens to open with", async () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("prompt", "turn.user", 1, {
+          data: { digest: "User prompt: reproduce the issue" },
+          anchor: { messageId: "user-1" },
+        }),
+      ],
+      preview: {
+        role: "user",
+        textExcerpt: "User prompt: reproduce the issue with the beta build",
+      },
+    });
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="prompt"]')!);
+
+    await waitFor(() => view.getByText("User prompt: reproduce the issue with the beta build"));
+  });
+
   test("keeps a digest whose natural trailing ellipsis is not a truncation marker", async () => {
     const view = renderTimeline({
       events: [

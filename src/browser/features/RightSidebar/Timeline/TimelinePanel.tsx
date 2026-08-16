@@ -231,23 +231,53 @@ const TASK_LIFECYCLE_KINDS = new Set([
 ]);
 
 // An older task.created row adds no unique information once the same task has a newer lifecycle
-// row on the feed; an in-flight task with no other rows still shows that it started.
+// row on the feed; an in-flight task with no other rows still shows that it started. The started
+// row is the only one anchored to the spawning tool call, so rows that cannot reveal a transcript
+// target themselves inherit that anchor before the started row is dropped.
 function dropSupersededTaskStarts(newestFirst: TimelineEvent[]): TimelineEvent[] {
+  const startAnchors = new Map<string, TimelineAnchor>();
+  for (const event of newestFirst) {
+    const anchor = event.anchor;
+    if (
+      anchor?.taskId != null &&
+      getTimelineEventKind(event) === "task.created" &&
+      hasTranscriptAnchor(anchor)
+    ) {
+      startAnchors.set(anchor.taskId, anchor);
+    }
+  }
+
   const supersededTaskIds = new Set<string>();
-  return newestFirst.filter((event) => {
+  const events: TimelineEvent[] = [];
+  for (const event of newestFirst) {
     const taskId = event.anchor?.taskId;
     if (taskId == null) {
-      return true;
+      events.push(event);
+      continue;
     }
     const kind = getTimelineEventKind(event);
     if (kind === "task.created" && supersededTaskIds.has(taskId)) {
-      return false;
+      continue;
     }
     if (TASK_LIFECYCLE_KINDS.has(kind)) {
       supersededTaskIds.add(taskId);
+      const start = startAnchors.get(taskId);
+      if (kind !== "task.created" && start != null && !hasTranscriptAnchor(event.anchor)) {
+        events.push({
+          ...event,
+          anchor: {
+            ...event.anchor,
+            ...(start.historySequence != null ? { historySequence: start.historySequence } : {}),
+            ...(start.messageId != null ? { messageId: start.messageId } : {}),
+            ...(start.toolCallId != null ? { toolCallId: start.toolCallId } : {}),
+          },
+        });
+        continue;
+      }
     }
-    return true;
-  });
+    events.push(event);
+  }
+  return events;
 }
 
 function getEventDetail(event: TimelineEvent): string | null {
@@ -624,8 +654,13 @@ function TimelinePreviewCard(props: {
   const digest = props.event.data?.description ?? props.event.data?.digest ?? null;
   const loadedExcerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
   // Each stretch of text renders once: the excerpt supersedes a digest it covers, and an excerpt
-  // that only repeats the card title (agent events preview their own description) adds nothing.
-  const excerpt = excerptCovers(loadedExcerpt, title) ? "" : loadedExcerpt;
+  // that only repeats a description-backed title (agent events preview their own description) adds
+  // nothing. A generic kind-label title never suppresses the excerpt, since a prompt can happen to
+  // open with those same words.
+  const excerpt =
+    props.event.data?.description != null && excerptCovers(loadedExcerpt, title)
+      ? ""
+      : loadedExcerpt;
   const eventText = digest === title || excerptCovers(loadedExcerpt, digest) ? null : digest;
 
   return (
