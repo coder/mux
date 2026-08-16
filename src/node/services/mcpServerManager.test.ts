@@ -717,6 +717,25 @@ describe("MCPServerManager", () => {
     expect(result.stats.failedServerNames).toContain("broken-server");
   });
 
+  test("getToolsForWorkspace suffixes MCP tools that collide with built-in tool names", async () => {
+    const workspaceId = "ws-builtin-collision";
+    configService.listServers = mock(() => Promise.resolve({ mcp: stdioConfig("cmd") }));
+    access.startServers = mock(() =>
+      Promise.resolve(
+        startResult([["mcp", { tools: { prompt_get: testTool(), other_tool: testTool() } }]])
+      )
+    );
+
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    const names = Object.keys(result.tools);
+    // "mcp" + "prompt_get" normalizes to the built-in mcp_prompt_get; the MCP
+    // tool must not shadow it in the downstream base/MCP merge.
+    expect(names).not.toContain("mcp_prompt_get");
+    expect(names.some((name) => name.startsWith("mcp_prompt_get_"))).toBe(true);
+    expect(names).toContain("mcp_other_tool");
+  });
+
   test("getToolsForWorkspace returns prompt descriptors alongside tools", async () => {
     const workspaceId = "ws-tool-prompts";
     configService.listServers = mock(() => Promise.resolve({ coder: stdioConfig("cmd") }));

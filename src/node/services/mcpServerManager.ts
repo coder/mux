@@ -44,6 +44,7 @@ import {
   buildMcpPromptStableKey,
   buildMcpToolName,
 } from "@/common/utils/tools/mcpToolName";
+import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { AsyncSemaphore } from "@/node/utils/concurrency/asyncSemaphore";
 import { MutexMap } from "@/node/utils/concurrency/mutexMap";
@@ -2323,7 +2324,11 @@ export class MCPServerManager {
     workspaceOverrides?: WorkspaceMCPOverrides
   ): Record<string, Tool> {
     const aggregated: Record<string, Tool> = {};
-    const usedNames = new Set<string>();
+    // Reserve built-in tool names: MCP tools merge over base tools downstream
+    // ({ ...baseTools, ...mcpTools }), so an MCP tool normalizing to a
+    // built-in name (e.g. server "mcp" + tool "prompt_get") would silently
+    // shadow it. Seeding forces such tools onto hash-suffixed names instead.
+    const usedNames = new Set<string>(Object.keys(TOOL_DEFINITIONS));
 
     // Sort for determinism so collision handling yields stable tool keys.
     const sortedInstances = [...instances.values()].sort((a, b) => a.name.localeCompare(b.name));

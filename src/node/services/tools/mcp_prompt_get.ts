@@ -19,9 +19,26 @@ const MAX_INDEX_CHARS = 10_000;
 // Names-only tail: keys past the full-entry budget stay discoverable and
 // invocable (the missing-required-argument error recovers argument names).
 const MAX_NAME_TAIL_CHARS = 2_000;
+// Unknown-name errors list the catalog as an on-demand discovery path for
+// prompts the description budgets cut. Per-call cost, so it can be generous.
+const MAX_ERROR_KEYS_CHARS = 20_000;
 
 function clampText(text: string, maxChars: number): string {
   return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
+}
+
+// Never cuts a key mid-name; a partial key is not invocable.
+function joinKeysWithinBudget(keys: string[], maxChars: number): { text: string; omitted: number } {
+  const shown: string[] = [];
+  let chars = 0;
+  for (const key of keys) {
+    if (chars + key.length + 2 > maxChars) {
+      break;
+    }
+    shown.push(key);
+    chars += key.length + 2;
+  }
+  return { text: shown.join(", "), omitted: keys.length - shown.length };
 }
 
 function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
@@ -70,22 +87,14 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
   }
 
   if (tailKeys.length > 0) {
-    // Never cut a key mid-name; a partial key is not invocable.
-    const shownKeys: string[] = [];
-    let tailChars = 0;
-    for (const key of tailKeys) {
-      if (tailChars + key.length + 2 > MAX_NAME_TAIL_CHARS) {
-        break;
-      }
-      shownKeys.push(key);
-      tailChars += key.length + 2;
+    const tail = joinKeysWithinBudget(tailKeys, MAX_NAME_TAIL_CHARS);
+    if (tail.text.length > 0) {
+      promptLines.push(`(more prompts, names only: ${tail.text})`);
     }
-    if (shownKeys.length > 0) {
-      promptLines.push(`(more prompts, names only: ${shownKeys.join(", ")})`);
-    }
-    const omitted = tailKeys.length - shownKeys.length;
-    if (omitted > 0) {
-      promptLines.push(`(+${omitted} more not shown)`);
+    if (tail.omitted > 0) {
+      promptLines.push(
+        `(+${tail.omitted} more not shown; call this tool with any unknown name to list every prompt key)`
+      );
     }
   }
 
@@ -118,9 +127,15 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         (candidate) => candidate.commandKey === name || candidate.stableKey === name
       );
       if (!descriptor) {
+        const keys = joinKeysWithinBudget(
+          prompts.map((candidate) => candidate.commandKey),
+          MAX_ERROR_KEYS_CHARS
+        );
         return {
           success: false,
-          error: `Unknown MCP prompt '${name}'. See "Available MCP prompts" in this tool's description.`,
+          error: `Unknown MCP prompt '${name}'. Available prompts: ${keys.text}${
+            keys.omitted > 0 ? ` (+${keys.omitted} more)` : ""
+          }`,
         };
       }
 

@@ -119,7 +119,7 @@ describe("createMcpPromptGetTool", () => {
     const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
 
     expect(tool.description!.length).toBeLessThan(20_000);
-    expect(tool.description).toMatch(/\(\+\d+ more not shown\)/);
+    expect(tool.description).toMatch(/\(\+\d+ more not shown; call this tool/);
     // Keys are never cut mid-name: every advertised tail key is complete.
     const tail = /\(more prompts, names only: ([^)]+)\)/.exec(tool.description as string);
     expect(tail).not.toBeNull();
@@ -164,6 +164,26 @@ describe("createMcpPromptGetTool", () => {
       expect(result.error).toContain("mcp__coder__missing");
     }
     expect(getPrompt).not.toHaveBeenCalled();
+  });
+
+  it("lists every prompt key in the unknown-name error, including ones cut from the description", async () => {
+    const prompts = Array.from({ length: 400 }, (_, index) => ({
+      ...STATUS_PROMPT,
+      commandKey: `mcp__coder__long_prompt_name_${index}`,
+      stableKey: `mcp__coder__long_prompt_name_${index}__hash`,
+      promptName: `long_prompt_name_${index}`,
+    }));
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+    // Prompt 399 is beyond both description budgets, so the description omits it.
+    expect(tool.description).not.toContain("mcp__coder__long_prompt_name_399");
+
+    const result = await execute(tool, { name: "?" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain("mcp__coder__long_prompt_name_399");
+      expect(result.error.length).toBeLessThan(25_000);
+    }
   });
 
   it("rejects calls missing required arguments without calling the server", async () => {
