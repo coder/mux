@@ -20,7 +20,7 @@ import { TerminalOutput } from "./TerminalOutput";
 import { formatKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
 import { copyToClipboard } from "@/browser/utils/clipboard";
-import { downloadBlob } from "@/browser/utils/downloadFile";
+import { createDownloadRetryCache } from "@/browser/utils/downloadFile";
 import {
   buildEditingStateFromDisplayed,
   canEditDisplayedUserMessage,
@@ -102,26 +102,32 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
 
-  const handleDownloadStagedAttachment = async (attachment: DisplayStagedAttachment) => {
-    if (api == null || workspaceId == null) {
-      console.warn("Cannot download staged attachment without an active workspace connection.");
-      return;
-    }
+  // Retry cache: if the backend fetch outlives iOS's transient-activation
+  // window, the share sheet is blocked; the cached bytes let the user's retry
+  // tap share synchronously within its own gesture.
+  const [stagedDownloads] = React.useState(createDownloadRetryCache);
 
-    const result = await api.workspace.downloadStagedAttachment({
-      workspaceId,
-      stagedPath: attachment.stagedPath,
+  const handleDownloadStagedAttachment = (attachment: DisplayStagedAttachment) =>
+    stagedDownloads.download(attachment.stagedPath, async () => {
+      if (api == null || workspaceId == null) {
+        console.warn("Cannot download staged attachment without an active workspace connection.");
+        return null;
+      }
+
+      const result = await api.workspace.downloadStagedAttachment({
+        workspaceId,
+        stagedPath: attachment.stagedPath,
+      });
+      if (!result.success) {
+        console.error("Failed to download staged attachment:", result.error);
+        return null;
+      }
+
+      return {
+        blob: base64ToBlob(result.data.dataBase64, result.data.mediaType),
+        filename: result.data.filename || attachment.filename,
+      };
     });
-    if (!result.success) {
-      console.error("Failed to download staged attachment:", result.error);
-      return;
-    }
-
-    downloadBlob(
-      base64ToBlob(result.data.dataBase64, result.data.mediaType),
-      result.data.filename || attachment.filename
-    );
-  };
 
   console.assert(
     typeof clipboardWriteText === "function",

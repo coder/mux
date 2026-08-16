@@ -247,7 +247,7 @@ export const UserMessageContent: React.FC<UserMessageContentProps> = (props) => 
                     // In desktop mode, new windows are routed via shell.openExternal.
                     // blob: URLs are tied to this renderer and won't resolve externally,
                     // so download the file in-app instead.
-                    downloadBlob(
+                    void downloadBlob(
                       blob,
                       part.filename ??
                         (baseMediaType === "application/pdf" ? "attachment.pdf" : "attachment")

@@ -136,7 +136,9 @@ export function handleImageActionKeyDown(
 export function downloadDataUrl(dataUrl: string, filename: string): void {
   const blob = dataUrlToBlob(dataUrl);
   if (blob) {
-    downloadBlob(blob, filename);
+    // In-gesture call with in-memory bytes: the share path cannot be blocked
+    // by expired activation, so the result needs no handling.
+    void downloadBlob(blob, filename);
     return;
   }
 
