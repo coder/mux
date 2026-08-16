@@ -66,12 +66,22 @@ function formatArgumentHint(descriptor: MCPPromptDescriptor): string {
   if (args.length === 0) {
     return "";
   }
-  const parts = args.map((argument) => {
+  // The arguments array is server-controlled and can be huge; stop building
+  // once the budget is consumed instead of materializing the full hint.
+  const parts: string[] = [];
+  let chars = 0;
+  for (const argument of args) {
     const marker = argument.required === true ? "" : "?";
-    return argument.description == null
-      ? `${argument.name}${marker}`
-      : `${argument.name}${marker}: ${clampText(argument.description, MAX_ARGUMENT_DESCRIPTION_CHARS)}`;
-  });
+    const part =
+      argument.description == null
+        ? `${argument.name}${marker}`
+        : `${argument.name}${marker}: ${clampText(argument.description, MAX_ARGUMENT_DESCRIPTION_CHARS)}`;
+    parts.push(part);
+    chars += part.length + 2;
+    if (chars > MAX_ARGUMENT_HINT_CHARS) {
+      break;
+    }
+  }
   return clampText(` (args: ${parts.join("; ")})`, MAX_ARGUMENT_HINT_CHARS);
 }
 
@@ -90,8 +100,12 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
   const promptLines: string[] = [];
   const tailKeys: string[] = [];
   let indexChars = 0;
+  // First line that misses the budget ends full-entry mode outright, so line
+  // construction (which touches server-controlled text) never repeats for
+  // every remaining descriptor of a large catalog.
+  let indexBudgetExhausted = false;
   for (const descriptor of prompts) {
-    if (promptLines.length < MAX_PROMPTS) {
+    if (promptLines.length < MAX_PROMPTS && !indexBudgetExhausted) {
       const description = clampText(
         descriptor.description ?? "MCP prompt",
         MAX_PROMPT_DESCRIPTION_CHARS
@@ -102,6 +116,7 @@ function buildMcpPromptGetDescription(prompts: MCPPromptDescriptor[]): string {
         indexChars += line.length;
         continue;
       }
+      indexBudgetExhausted = true;
     }
     tailKeys.push(descriptor.commandKey);
   }

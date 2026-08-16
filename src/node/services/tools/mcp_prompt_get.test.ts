@@ -72,6 +72,29 @@ describe("createMcpPromptGetTool", () => {
     expect(tool.description).not.toContain("more not shown");
   });
 
+  it("builds argument hints incrementally instead of materializing huge argument arrays", () => {
+    let elementReads = 0;
+    const hugeArguments = new Proxy(
+      Array.from({ length: 10_000 }, (_, index) => ({ name: `arg_${index}`, required: true })),
+      {
+        get(target, property, receiver): unknown {
+          if (typeof property === "string" && /^\d+$/.test(property)) {
+            elementReads++;
+          }
+          return Reflect.get(target, property, receiver);
+        },
+      }
+    );
+    const tool = createTool({
+      prompts: [{ ...STATUS_PROMPT, arguments: hugeArguments }],
+      getPrompt: mock(() => Promise.resolve({ text: "" })),
+    });
+
+    expect(tool.description!.length).toBeLessThan(2_000);
+    // Construction stops at the hint budget rather than visiting all 10k entries.
+    expect(elementReads).toBeLessThan(100);
+  });
+
   it("clamps server-supplied prompt and argument descriptions", () => {
     const tool = createTool({
       prompts: [
