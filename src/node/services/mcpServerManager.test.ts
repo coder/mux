@@ -1416,6 +1416,35 @@ describe("MCPServerManager", () => {
     expect(stableRefresh).toHaveBeenCalledTimes(2);
   });
 
+  test("cold-start prompt refresh never targets servers revoked while startup was in flight", async () => {
+    const workspaceId = "ws-cold-refresh-after-repair";
+    configService.listServers = mock((_projectPath: string, trusted: boolean) =>
+      Promise.resolve(
+        trusted
+          ? { server: stdioConfig("cmd-1"), stable: stdioConfig("cmd-stable") }
+          : { stable: stdioConfig("cmd-stable") }
+      )
+    );
+    const revokedRefresh = mock(() => Promise.resolve([]));
+    const stableRefresh = mock(() => Promise.resolve([]));
+    access.startServers = mock(() => {
+      // Revocation lands while startServers is still in flight, before the
+      // cold path caches the entry and refreshes prompts.
+      manager.applyProjectTrust([{ projectPath: PROJECT_PATH, trusted: false }]);
+      return Promise.resolve(
+        startResult([
+          ["server", { refreshPrompts: revokedRefresh }],
+          ["stable", { refreshPrompts: stableRefresh }],
+        ])
+      );
+    });
+
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId, { trusted: true }));
+
+    expect(revokedRefresh).not.toHaveBeenCalled();
+    expect(stableRefresh).toHaveBeenCalledTimes(1);
+  });
+
   test("applies overrides recorded before the first workspace request (cold mutation)", async () => {
     const workspaceId = "ws-cold-overrides";
     configService.listServers = mock(() =>

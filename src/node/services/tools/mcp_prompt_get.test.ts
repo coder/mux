@@ -34,7 +34,7 @@ function createTool(runtime: MCPPromptRuntime): Tool {
 
 async function execute(
   tool: Tool,
-  args: { name: string; arguments?: Record<string, string> }
+  args: { name: string; arguments?: Record<string, string>; list_offset?: number }
 ): Promise<MCPPromptGetToolResult> {
   return (await tool.execute!(args, mockToolCallOptions)) as MCPPromptGetToolResult;
 }
@@ -242,6 +242,38 @@ describe("createMcpPromptGetTool", () => {
     if (!narrowed.success) {
       expect(narrowed.error).toContain("Prompts matching 'name_999'");
       expect(narrowed.error).toContain("mcp__coder__long_prompt_name_999");
+    }
+  });
+
+  it("pages colliding hash-suffixed keys with list_offset when substring narrowing cannot split them", async () => {
+    // Every key shares each searchable substring except its hash suffix, so
+    // keys past the error budget are reachable only by paging.
+    const prompts = Array.from({ length: 1_000 }, (_, index) => ({
+      ...STATUS_PROMPT,
+      commandKey: `mcp__coder__review_${index.toString(16).padStart(4, "0")}`,
+      stableKey: `mcp__coder__review_${index.toString(16).padStart(4, "0")}__x`,
+      promptName: "review",
+    }));
+    const lastKey = "mcp__coder__review_03e7";
+    const tool = createTool({ prompts, getPrompt: mock(() => Promise.resolve({ text: "" })) });
+
+    const first = await execute(tool, { name: "review_" });
+    expect(first.success).toBe(false);
+    let suggestedOffset = 0;
+    if (!first.success) {
+      expect(first.error).not.toContain(lastKey);
+      const suggestion = /list_offset=(\d+)/.exec(first.error);
+      expect(suggestion).not.toBeNull();
+      suggestedOffset = Number(suggestion?.[1] ?? 0);
+      expect(suggestedOffset).toBeGreaterThan(0);
+    }
+
+    const second = await execute(tool, { name: "review_", list_offset: suggestedOffset });
+    expect(second.success).toBe(false);
+    if (!second.success) {
+      expect(second.error).toContain(`after skipping ${suggestedOffset}`);
+      expect(second.error).toContain(lastKey);
+      expect(second.error).not.toContain(" more;");
     }
   });
 

@@ -1904,17 +1904,24 @@ export class MCPServerManager {
       };
       this.workspaceServers.set(workspaceId, entry);
 
-      // Refresh before enablement repair so mutations during loading cannot leak stale descriptors.
-      if (refreshToolCatalogs) {
-        await this.refreshInstancePrompts(this.promptEligibleInstances(entry));
-      }
-
+      // Repair first so the awaited refresh never queries a server revoked
+      // during startup, then again after it so mutations landing during the
+      // slow refresh cannot leak stale descriptors.
       await this.repairEnablementAfterConcurrentMutation(
         workspaceId,
         options,
         entry,
         configGenerationUsed
       );
+      if (refreshToolCatalogs) {
+        await this.refreshInstancePrompts(this.promptEligibleInstances(entry));
+        await this.repairEnablementAfterConcurrentMutation(
+          workspaceId,
+          options,
+          entry,
+          configGenerationUsed
+        );
+      }
 
       return {
         tools: this.collectTools(instances, fullServerInfo, overrides),

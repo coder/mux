@@ -2736,6 +2736,14 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
           .describe(
             "Prompt argument values by argument name. Arguments marked with ? are optional; all others are required."
           ),
+        list_offset: z
+          .number()
+          .int()
+          .min(0)
+          .nullish()
+          .describe(
+            "When an unknown-name error truncates the prompt listing, repeat the call with the suggested list_offset to page through the remaining prompt names."
+          ),
       })
       .strict(),
   },

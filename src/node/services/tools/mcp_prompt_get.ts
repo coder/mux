@@ -120,7 +120,7 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
     description: buildMcpPromptGetDescription(prompts),
     inputSchema: TOOL_DEFINITIONS.mcp_prompt_get.schema,
     execute: async (
-      { name, arguments: args },
+      { name, arguments: args, list_offset: listOffset },
       { abortSignal }
     ): Promise<MCPPromptGetToolResult> => {
       if (!runtime) {
@@ -147,18 +147,26 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
       if (!descriptor) {
         // Substring matches expose additional keys beyond the description
         // budget. Scan once, storing only keys that fit the error budget
-        // while counting the rest.
+        // while counting the rest. list_offset pages past earlier keys so
+        // every key stays reachable even when one listing overflows the
+        // budget (e.g. hash-suffixed collision groups substring search
+        // cannot tell apart).
         const needle = name.toLowerCase();
+        const offset = listOffset ?? 0;
         const matched: string[] = [];
         let matchedChars = 0;
         let matchedFull = false;
         let matchedCount = 0;
+        let matchedSkipped = 0;
         const all: string[] = [];
         let allChars = 0;
         let allFull = false;
+        let allSkipped = 0;
         for (const candidate of prompts) {
           const key = candidate.commandKey;
-          if (!allFull && allChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
+          if (allSkipped < offset) {
+            allSkipped++;
+          } else if (!allFull && allChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
             all.push(key);
             allChars += key.length + 2;
           } else {
@@ -166,7 +174,9 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
           }
           if (key.toLowerCase().includes(needle)) {
             matchedCount++;
-            if (!matchedFull && matchedChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
+            if (matchedSkipped < offset) {
+              matchedSkipped++;
+            } else if (!matchedFull && matchedChars + key.length + 2 <= MAX_ERROR_KEYS_CHARS) {
               matched.push(key);
               matchedChars += key.length + 2;
             } else {
@@ -177,11 +187,18 @@ export const createMcpPromptGetTool: ToolFactory = (config: ToolConfiguration) =
         const useMatches = matchedCount > 0;
         const label = useMatches ? `Prompts matching '${shownName}'` : "Available prompts";
         const shown = useMatches ? matched : all;
-        const omitted = useMatches ? matchedCount - matched.length : prompts.length - all.length;
+        const skipped = useMatches ? matchedSkipped : allSkipped;
+        const omitted = useMatches
+          ? matchedCount - matchedSkipped - matched.length
+          : prompts.length - allSkipped - all.length;
         return {
           success: false,
-          error: `Unknown MCP prompt '${shownName}'. ${label}: ${shown.join(", ")}${
-            omitted > 0 ? ` (+${omitted} more; use a longer partial name to narrow)` : ""
+          error: `Unknown MCP prompt '${shownName}'. ${label}${
+            skipped > 0 ? ` (after skipping ${skipped})` : ""
+          }: ${shown.join(", ")}${
+            omitted > 0
+              ? ` (+${omitted} more; use a longer partial name to narrow, or repeat with list_offset=${skipped + shown.length} to continue)`
+              : ""
           }`,
         };
       }

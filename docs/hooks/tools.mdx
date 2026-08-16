@@ -537,12 +537,13 @@ If a value is too large for the environment, it may be omitted (not set). Mux al
 </details>
 
 <details>
-<summary>mcp_prompt_get (2)</summary>
+<summary>mcp_prompt_get (3)</summary>
 
-| Env var                          | JSON path          | Type   | Description                                                                                             |
-| -------------------------------- | ------------------ | ------ | ------------------------------------------------------------------------------------------------------- |
-| `MUX_TOOL_INPUT_ARGUMENTS_<KEY>` | `arguments[<KEY>]` | string | Prompt argument values by argument name. Arguments marked with ? are optional; all others are required. |
-| `MUX_TOOL_INPUT_NAME`            | `name`             | string | Prompt name from the available list, e.g. "mcp\_\_server\_\_prompt"                                     |
+| Env var                          | JSON path          | Type   | Description                                                                                                                                         |
+| -------------------------------- | ------------------ | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MUX_TOOL_INPUT_ARGUMENTS_<KEY>` | `arguments[<KEY>]` | string | Prompt argument values by argument name. Arguments marked with ? are optional; all others are required.                                             |
+| `MUX_TOOL_INPUT_LIST_OFFSET`     | `list_offset`      | number | When an unknown-name error truncates the prompt listing, repeat the call with the suggested list_offset to page through the remaining prompt names. |
+| `MUX_TOOL_INPUT_NAME`            | `name`             | string | Prompt name from the available list, e.g. "mcp\_\_server\_\_prompt"                                                                                 |
 
 </details>
 
