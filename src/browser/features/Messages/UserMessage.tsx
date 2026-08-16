@@ -107,8 +107,11 @@ export const UserMessage: React.FC<UserMessageProps> = ({
   const workspaceContext = useOptionalWorkspaceContext();
   const workspaceId = workspaceContext?.selectedWorkspace?.workspaceId ?? null;
 
+  // Forked workspaces copy staged attachments under the same relative path,
+  // so the cache key needs the workspaceId to avoid serving another
+  // workspace's bytes after navigation.
   const handleDownloadStagedAttachment = (attachment: DisplayStagedAttachment) =>
-    stagedDownloads.download(attachment.stagedPath, async () => {
+    stagedDownloads.download(`${workspaceId ?? ""}:${attachment.stagedPath}`, async () => {
       if (api == null || workspaceId == null) {
         console.warn("Cannot download staged attachment without an active workspace connection.");
         return null;

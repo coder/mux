@@ -109,8 +109,10 @@ interface FetchedFile {
  */
 export function createDownloadRetryCache() {
   let entry: { key: string; file: FetchedFile } | null = null;
+  let latestCall = 0;
   return {
     async download(key: string, fetchFile: () => Promise<FetchedFile | null>): Promise<void> {
+      const call = ++latestCall;
       if (entry?.key === key) {
         if ((await downloadBlob(entry.file.blob, entry.file.filename)) !== "blocked") {
           entry = null;
@@ -119,7 +121,11 @@ export function createDownloadRetryCache() {
       }
       const fetched = await fetchFile();
       if (fetched && (await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {
-        entry = { key, file: fetched };
+        // A slower earlier fetch must not overwrite the slot after a later
+        // tap already claimed it; the retry alert refers to the last tap.
+        if (call === latestCall) {
+          entry = { key, file: fetched };
+        }
       }
     },
   };

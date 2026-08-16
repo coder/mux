@@ -181,6 +181,7 @@ describe("downloadDataUrl", () => {
 
 describe("createDownloadRetryCache", () => {
   const fetchedFile = () => ({ blob: new Blob(["x"], { type: "image/png" }), filename: "a.png" });
+  type FetchedFileForTest = ReturnType<typeof fetchedFile>;
 
   it("serves a retry from cache after a blocked share, then clears it once delivered", async () => {
     let shareCalls = 0;
@@ -238,6 +239,26 @@ describe("createDownloadRetryCache", () => {
     // "b" was evicted by the second blocked "a", so it refetches too.
     await downloads.download("b", fetchB);
     expect(fetchB).toHaveBeenCalledTimes(2);
+  });
+
+  it("ignores a slower earlier fetch that resolves after a later tap claimed the slot", async () => {
+    const share = mock(() => Promise.reject(new DOMException("denied", "NotAllowedError")));
+    installNavigator({ standalone: true, canShare: () => true, share });
+    let resolveA: (file: FetchedFileForTest) => void = () => undefined;
+    const fetchA = mock(() => new Promise<FetchedFileForTest>((resolve) => (resolveA = resolve)));
+    const fetchB = mock(() => Promise.resolve(fetchedFile()));
+    const downloads = createDownloadRetryCache();
+
+    // Tap A (fetch hangs), then tap B (blocked, claims the slot).
+    const pendingA = downloads.download("a", fetchA);
+    await downloads.download("b", fetchB);
+
+    // A's fetch finally resolves and gets blocked, but must not steal B's slot.
+    resolveA(fetchedFile());
+    await pendingA;
+
+    await downloads.download("b", fetchB);
+    expect(fetchB).toHaveBeenCalledTimes(1);
   });
 
   it("does not cache unshareable files, since no retry can succeed", async () => {
