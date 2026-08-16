@@ -253,9 +253,13 @@ describe("createDownloadRetryCache", () => {
     const pendingA = downloads.download("a", fetchA);
     await downloads.download("b", fetchB);
 
-    // A's fetch finally resolves and gets blocked, but must not steal B's slot.
+    const sharesBeforeA = share.mock.calls.length;
+
+    // A's fetch finally resolves, but the superseded call must not share,
+    // alert, or steal B's slot.
     resolveA(fetchedFile());
     await pendingA;
+    expect(share.mock.calls.length).toBe(sharesBeforeA);
 
     await downloads.download("b", fetchB);
     expect(fetchB).toHaveBeenCalledTimes(1);

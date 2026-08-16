@@ -120,12 +120,14 @@ export function createDownloadRetryCache() {
         return;
       }
       const fetched = await fetchFile();
-      if (fetched && (await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {
-        // A slower earlier fetch must not overwrite the slot after a later
-        // tap already claimed it; the retry alert refers to the last tap.
-        if (call === latestCall) {
-          entry = { key, file: fetched };
-        }
+      // A fetch superseded by a later tap must not open the share sheet (it
+      // could hijack the newer tap's activation or alert without owning the
+      // slot); drop it before any side effect.
+      if (!fetched || call !== latestCall) {
+        return;
+      }
+      if ((await downloadBlob(fetched.blob, fetched.filename)) === "blocked") {
+        entry = { key, file: fetched };
       }
     },
   };
