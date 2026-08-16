@@ -115,6 +115,47 @@ export function isMachineryKind(kind: string): boolean {
   return MACHINERY_KINDS.has(kind);
 }
 
+export interface TimelineRowTint {
+  row: string;
+  icon: string;
+  badge: string;
+}
+
+const DEFAULT_AGENT_TINT: TimelineRowTint = {
+  row: "border-ask-mode/25 bg-ask-mode-alpha",
+  icon: "border-ask-mode/40 text-ask-mode",
+  badge: "border-ask-mode/30 text-ask-mode",
+};
+
+// Attention-worthy categories get their own hue so a blocker reads differently from a milestone at
+// a glance. Routine categories (picked_up) and uncategorized events keep the generic agent tint.
+const AGENT_EVENT_TINTS: Record<string, TimelineRowTint> = {
+  milestone: {
+    row: "border-success/25 bg-success/10",
+    icon: "border-success/40 text-success",
+    badge: "border-success/30 text-success",
+  },
+  decision: {
+    row: "border-info/25 bg-info/10",
+    icon: "border-info/40 text-info",
+    badge: "border-info/30 text-info",
+  },
+  blocker: {
+    row: "border-danger/25 bg-danger/10",
+    icon: "border-danger/40 text-danger",
+    badge: "border-danger/30 text-danger",
+  },
+  handoff: {
+    row: "border-warning/25 bg-warning/10",
+    icon: "border-warning/40 text-warning",
+    badge: "border-warning/30 text-warning",
+  },
+};
+
+export function getAgentEventTint(category: string | undefined): TimelineRowTint {
+  return (category != null ? AGENT_EVENT_TINTS[category] : undefined) ?? DEFAULT_AGENT_TINT;
+}
+
 const knownKinds = new Set<string>(TIMELINE_EVENT_KINDS);
 
 const timeFormatter = new Intl.DateTimeFormat(undefined, {

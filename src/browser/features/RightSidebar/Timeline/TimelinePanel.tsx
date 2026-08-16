@@ -33,6 +33,7 @@ import {
   getTimelineDayLabel,
   getTimelineEventCategories,
   getTimelineEventKind,
+  getAgentEventTint,
   getTimelineEventTitle,
   getTimelinePresentation,
   isMachineryKind,
@@ -218,6 +219,36 @@ function isCollapsedRun(item: DayItem): item is CollapsedRun {
   return "events" in item;
 }
 
+const TASK_LIFECYCLE_KINDS = new Set([
+  "task.created",
+  "task.progress",
+  "task.reported",
+  "task.failed",
+  "task.interrupted",
+]);
+
+// A sub-agent's bare "started" row and its later updates or report describe the same task, so once
+// any newer row for that task is on the feed the started row only doubles it. Updates and reports
+// keep their own rows: each carries distinct content, and a persistent child can report several
+// times. An in-flight task with no other rows still shows that it started.
+function dropSupersededTaskStarts(newestFirst: TimelineEvent[]): TimelineEvent[] {
+  const supersededTaskIds = new Set<string>();
+  return newestFirst.filter((event) => {
+    const taskId = event.anchor?.taskId;
+    if (taskId == null) {
+      return true;
+    }
+    const kind = getTimelineEventKind(event);
+    if (kind === "task.created" && supersededTaskIds.has(taskId)) {
+      return false;
+    }
+    if (TASK_LIFECYCLE_KINDS.has(kind)) {
+      supersededTaskIds.add(taskId);
+    }
+    return true;
+  });
+}
+
 function getEventDetail(event: TimelineEvent): string | null {
   const data = event.data;
   if (!data) return null;
@@ -312,6 +343,7 @@ function TimelineEventRow(props: {
   const detail = getEventDetail(props.event);
   const agentAuthored = props.event.source.system === "agent";
   const badge = props.event.data?.category?.replace(/_/g, " ") ?? "Agent";
+  const tint = getAgentEventTint(props.event.data?.category);
   const failed = props.event.status === "failed";
   const interrupted = props.event.status === "interrupted";
 
@@ -326,7 +358,7 @@ function TimelineEventRow(props: {
       className={cn(
         "grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 rounded-md border border-transparent px-2 py-2 text-left transition-colors",
         "hover:bg-hover focus-visible:ring-accent focus-visible:ring-1 focus-visible:outline-none",
-        agentAuthored && "border-ask-mode/25 bg-ask-mode-alpha",
+        agentAuthored && tint.row,
         failed && "border-danger/40 bg-danger-overlay",
         interrupted && !failed && "border-warning/40 bg-warning-overlay",
         props.selected && "border-accent/60 bg-accent/10"
@@ -335,7 +367,7 @@ function TimelineEventRow(props: {
       <span
         className={cn(
           "border-border bg-surface-secondary text-content-secondary mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border",
-          agentAuthored && "border-ask-mode/40 text-ask-mode",
+          agentAuthored && tint.icon,
           failed && "border-danger/50 text-danger",
           interrupted && !failed && "border-warning/50 text-warning"
         )}
@@ -349,7 +381,12 @@ function TimelineEventRow(props: {
         {agentAuthored || detail ? (
           <span className="mt-0.5 flex min-w-0 items-center gap-1.5">
             {agentAuthored ? (
-              <span className="border-ask-mode/30 text-ask-mode shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase">
+              <span
+                className={cn(
+                  "shrink-0 rounded border px-1 py-px text-[9px] font-medium uppercase",
+                  tint.badge
+                )}
+              >
                 {badge}
               </span>
             ) : null}
@@ -569,8 +606,12 @@ function TimelinePreviewCard(props: {
 
   const title = getTimelineEventTitle(props.event);
   const digest = props.event.data?.description ?? props.event.data?.digest ?? null;
-  const eventText = digest === title ? null : digest;
   const excerpt = previewState.status === "ready" ? previewState.preview.textExcerpt : "";
+  // The digest is a shorter cut of the same normalized text the excerpt holds, so when the loaded
+  // excerpt starts with it (ellipsis aside) showing both would render the prompt twice.
+  const digestShownByExcerpt =
+    digest != null && excerpt !== "" && excerpt.startsWith(digest.replace(/\.\.\.$/, ""));
+  const eventText = digest === title || digestShownByExcerpt ? null : digest;
 
   return (
     <div className="border-border bg-surface-secondary mx-3 mb-3 shrink-0 rounded-md border p-3">
@@ -663,8 +704,10 @@ export function TimelinePanelView(props: TimelinePanelViewProps) {
   const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [expandedRuns, setExpandedRuns] = useState<Record<string, boolean>>({});
   const filter = isTimelineFilter(storedFilter) ? storedFilter : "all";
-  const filteredEvents = timeline.events.filter(
-    (event) => filter === "all" || getTimelineEventCategories(event).includes(filter)
+  const filteredEvents = dropSupersededTaskStarts(
+    timeline.events.filter(
+      (event) => filter === "all" || getTimelineEventCategories(event).includes(filter)
+    )
   );
   const selectedEvent = filteredEvents.find((event) => event.id === selectedEventId);
   const dayGroups = groupEventsByDay(filteredEvents);

@@ -141,6 +141,54 @@ const MIXED_EVENTS: TimelineEvent[] = [
   }),
 ];
 
+const CATEGORY_EVENTS: TimelineEvent[] = [
+  makeEvent("agent-blocker", "agent.event", 25, {
+    source: { system: "agent", key: "timeline-event:blocker" },
+    data: {
+      description: "PR #87 checks reached terminal state with six failures matching the baseline",
+      category: "blocker",
+    },
+    anchor: { toolCallId: "tool-timeline-event-blocker" },
+  }),
+  makeEvent("agent-milestone", "agent.event", 24, {
+    source: { system: "agent", key: "timeline-event:milestone" },
+    data: {
+      description: "Landed the retry backoff refactor with green checks",
+      category: "milestone",
+    },
+    anchor: { toolCallId: "tool-timeline-event-milestone" },
+  }),
+  makeEvent("agent-decision", "agent.event", 23, {
+    source: { system: "agent", key: "timeline-event:decision" },
+    data: {
+      description: "Chose client-side grouping over rewriting the append-only log",
+      category: "decision",
+    },
+    anchor: { toolCallId: "tool-timeline-event-decision" },
+  }),
+  makeEvent("agent-handoff-2", "agent.event", 22, {
+    source: { system: "agent", key: "timeline-event:handoff-2" },
+    data: {
+      description: "Pushed mike/timeline and opened PR #4821",
+      category: "handoff",
+    },
+    anchor: { toolCallId: "tool-timeline-event-handoff-2" },
+  }),
+  makeEvent("agent-picked-up-2", "agent.event", 21, {
+    source: { system: "agent", key: "timeline-event:picked-up-2" },
+    data: {
+      description: "Picked up review feedback on the retry backoff",
+      category: "picked_up",
+    },
+    anchor: { toolCallId: "tool-timeline-event-picked-up-2" },
+  }),
+  makeEvent("agent-uncategorized", "agent.event", 20, {
+    source: { system: "agent", key: "timeline-event:uncategorized" },
+    data: { description: "Recorded a note without a category" },
+    anchor: { toolCallId: "tool-timeline-event-uncategorized" },
+  }),
+];
+
 const STORY_STORE: TimelineWorkspaceStore = {
   getWorkspaceState: () => ({ messages: [], muxMessages: [], hasOlderHistory: false }),
   loadOlderHistory: () => Promise.resolve("exhausted"),
@@ -219,6 +267,14 @@ export const Phone390: Story = {
     pixel: {
       matrix: { viewports: ["phone"] },
     },
+  },
+};
+
+export const AgentEventCategories: Story = {
+  args: {
+    workspaceId: `${WORKSPACE_ID}-categories`,
+    timeline: { ...populatedTimeline, events: CATEGORY_EVENTS },
+    workspaceStore: STORY_STORE,
   },
 };
 

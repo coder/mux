@@ -64,6 +64,7 @@ function renderTimeline(params: {
   loadOlderHistory?: jest.Mock<Promise<"loaded">, [string]>;
   snapshot?: Partial<WorkspaceTimelineSnapshot>;
   hasOlderHistory?: boolean;
+  preview?: { role: "system" | "user" | "assistant"; textExcerpt: string };
 }) {
   const loadOlderHistory = params.loadOlderHistory ?? jest.fn().mockResolvedValue("loaded");
   const workspaceState: { messages: unknown[]; muxMessages: unknown[]; hasOlderHistory: boolean } =
@@ -88,10 +89,12 @@ function renderTimeline(params: {
   const api = {
     workspace: {
       timeline: {
-        preview: jest.fn().mockResolvedValue({
-          role: "assistant",
-          textExcerpt: "Preview fixture",
-        }),
+        preview: jest.fn().mockResolvedValue(
+          params.preview ?? {
+            role: "assistant",
+            textExcerpt: "Preview fixture",
+          }
+        ),
       },
     },
   };
@@ -366,6 +369,72 @@ describe("TimelinePanel", () => {
 
     expect(view.container.querySelector('[data-timeline-event-id="wake"]')).not.toBeNull();
     expect(view.container.querySelector('[data-timeline-event-id="continuation"]')).not.toBeNull();
+  });
+
+  test("drops the sub-agent started row once a newer row for its task lands", () => {
+    const events = [
+      makeEvent("done-report", "task.reported", 3, {
+        source: { system: "task", key: "task-report:task-a" },
+        status: "completed",
+        data: { title: "Auditor finished", digest: "Found two issues" },
+        anchor: { taskId: "task-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("done-start", "task.created", 2, {
+        source: { system: "task", key: "task-created:task-a" },
+        status: "started",
+        anchor: { taskId: "task-a", toolCallId: "call-a", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("inflight-start", "task.created", 1, {
+        source: { system: "task", key: "task-created:task-b" },
+        status: "started",
+        anchor: { taskId: "task-b", toolCallId: "call-b", childWorkspaceId: "task-b" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="done-start"]')).toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="done-report"]')).not.toBeNull();
+    expect(
+      view.container.querySelector('[data-timeline-event-id="inflight-start"]')
+    ).not.toBeNull();
+  });
+
+  test("shows a single representation when the preview excerpt duplicates the digest", async () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("prompt", "turn.user", 1, {
+          data: { digest: "alpha beta gam..." },
+          anchor: { messageId: "user-1" },
+        }),
+      ],
+      preview: { role: "user", textExcerpt: "alpha beta gamma delta epsilon" },
+    });
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="prompt"]')!);
+    await waitFor(() => view.getByText("alpha beta gamma delta epsilon"));
+
+    // The row detail is the only place the digest still renders; the card shows just the excerpt.
+    expect(view.getAllByText("alpha beta gam...")).toHaveLength(1);
+  });
+
+  test("keeps a digest the preview excerpt does not cover", async () => {
+    const view = renderTimeline({
+      events: [
+        makeEvent("report", "task.reported", 1, {
+          source: { system: "task", key: "task-report:task-c" },
+          status: "completed",
+          data: { digest: "Report digest text" },
+          anchor: { messageId: "report-1", taskId: "task-c" },
+        }),
+      ],
+      preview: { role: "assistant", textExcerpt: "Unrelated transcript excerpt" },
+    });
+
+    fireEvent.click(view.container.querySelector('[data-timeline-event-id="report"]')!);
+    await waitFor(() => view.getByText("Unrelated transcript excerpt"));
+
+    expect(view.getAllByText("Report digest text")).toHaveLength(2);
   });
 
   test("drops the abandoned-retry row that duplicates an adjacent interruption", () => {
