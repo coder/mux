@@ -860,15 +860,15 @@ function clampDescription(description: string | undefined): string | undefined {
 }
 
 /**
- * Bounds prompt fields once per refresh: drops prompts with oversized names,
- * too many arguments, or any oversized argument name (arrays keep their
- * positional shape), and clamps display-only descriptions.
+ * Bounds prompt fields once per refresh: drops prompts with oversized prompt
+ * names, oversized argument names, or too many arguments (retained argument
+ * arrays keep their positional shape), and clamps catalog descriptions.
  */
 export function normalizePromptCatalog(prompts: MCPPrompt[], serverName: string): MCPPrompt[] {
   const normalized: MCPPrompt[] = [];
   for (const prompt of prompts) {
-    // Names feed key normalization, which runs Unicode and regex passes over
-    // the raw string, so gate them before anything can process the name.
+    // Gate length before key normalization, which runs Unicode normalization
+    // and regex replacements on the name.
     if (prompt.name.length > MCP_PROMPT_MAX_NAME_CHARS) {
       log.debug("[MCP] Dropping prompt with oversized name", {
         server: serverName,

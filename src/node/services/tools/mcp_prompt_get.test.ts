@@ -77,8 +77,6 @@ describe("createMcpPromptGetTool", () => {
       getPrompt: mock(() => Promise.resolve({ text: "" })),
     });
 
-    // Unclamped, the 50k name would blow the 10k index budget and demote the
-    // prompt to the names-only tail, losing its description and hints.
     expect(tool.description).toContain("Review a pull request");
     expect(tool.description).not.toContain("names only:");
     expect(tool.description!.length).toBeLessThan(15_000);

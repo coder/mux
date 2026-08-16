@@ -21,9 +21,8 @@ const MAX_NAME_TAIL_CHARS = 2_000;
 // substring filtering keeps oversized catalogs searchable.
 const MAX_ERROR_KEYS_CHARS = 20_000;
 const MAX_ERROR_TEXT_CHARS = 2_000;
-// Server names come from user config record keys and are unbounded; clamp
-// before interpolating so one huge name cannot evict its prompts from the
-// index or copy megabytes per send.
+// Server names are unbounded map keys; clamp before interpolation so one name
+// cannot consume the index budget or copy megabytes per send.
 const MAX_SERVER_NAME_CHARS = 100;
 
 function clampText(text: string, maxChars: number): string {

@@ -791,8 +791,6 @@ describe("MCPServerManager", () => {
             "coder",
             {
               prompts: [
-                // An oversized name must be rejected before key normalization
-                // can run Unicode/regex passes over it.
                 { name: "n".repeat(1024 * 1024) },
                 {
                   name: "wordy",

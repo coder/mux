@@ -35,8 +35,8 @@ export const MCP_PROMPT_MAX_NAME_CHARS = 200;
 // Argument names must fit bounded discovery and error text; a prompt with an
 // oversized name is dropped so the advertised list always matches the server's.
 export const MCP_PROMPT_MAX_ARGUMENT_NAME_CHARS = 200;
-// Prompt and argument descriptions are display-only; bound them at refresh so
-// descriptors stay small in memory and over IPC.
+// Prompt and argument descriptions are server-controlled metadata; clamp them
+// at refresh to bound descriptor memory and IPC payloads.
 export const MCP_PROMPT_MAX_DESCRIPTION_CHARS = 500;
 // Drop over-cap argument arrays instead of truncating them because composer
 // slash invocation binds tokens positionally. This also bounds descriptor and
