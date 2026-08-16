@@ -6,6 +6,7 @@ import * as path from "node:path";
 import * as mcpSdk from "@/node/services/mcpClient";
 import {
   MCPServerManager,
+  MCPToolCallError,
   isClosedClientError,
   prepareStdioLaunch,
   runMCPToolWithDeadline,
@@ -1592,6 +1593,66 @@ describe("isClosedClientError", () => {
 });
 
 describe("wrapMCPTools", () => {
+  test("converts MCP application failures into tool errors without recycling the client", async () => {
+    const onActivity = mock(() => undefined);
+    const onClosed = mock(() => undefined);
+    const tool = {
+      execute: mock(() =>
+        Promise.resolve({
+          isError: true,
+          content: [
+            { type: "text", text: "statusUpdateType requires statusUpdateId" },
+            {
+              type: "resource",
+              resource: { uri: "linear://issue/CODAGT-709", text: "Linear rejected the call" },
+            },
+          ],
+        })
+      ),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onActivity, onClosed });
+
+    let caught: unknown;
+    try {
+      await wrapped.myTool.execute!({}, {} as never);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(MCPToolCallError);
+    expect((caught as Error).message).toContain("statusUpdateType requires statusUpdateId");
+    expect((caught as Error).message).toContain("Linear rejected the call");
+    expect(onActivity).toHaveBeenCalledTimes(1);
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  test("does not recycle the client when application error text resembles a closed client", async () => {
+    const onClosed = mock(() => undefined);
+    const tool = {
+      execute: mock(() =>
+        Promise.resolve({
+          isError: true,
+          content: [{ type: "text", text: "Not connected to the external account" }],
+        })
+      ),
+      parameters: {},
+    } as unknown as Tool;
+
+    const wrapped = wrapMCPTools({ myTool: tool }, { onClosed });
+
+    let caught: unknown;
+    try {
+      await Promise.resolve(wrapped.myTool.execute!({}, {} as never));
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(MCPToolCallError);
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
   for (const [message, expectedOnClosedCalls] of [
     ["Attempted to send a request from a closed client", 1],
     ["some other failure", 0],

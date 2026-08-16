@@ -9,6 +9,7 @@ import { log } from "@/node/services/log";
  * pass normal screenshots while preventing pathological payloads.
  */
 export const MAX_IMAGE_DATA_BYTES = 8 * 1024 * 1024; // 8MB guard per image
+const MAX_ERROR_DESCRIPTION_CHARACTERS = 64 * 1024;
 
 /**
  * MCP CallToolResult content types (MCP spec wire shapes)
@@ -41,6 +42,65 @@ export interface MCPCallToolResult {
   content?: MCPContent[];
   isError?: boolean;
   toolResult?: unknown;
+}
+
+export function isMCPErrorResult(value: unknown): value is MCPCallToolResult & { isError: true } {
+  return (
+    value != null && typeof value === "object" && (value as { isError?: unknown }).isError === true
+  );
+}
+
+export function describeMCPErrorResult(result: MCPCallToolResult): string {
+  const readableParts = (result.content ?? []).flatMap((item) => {
+    if (item.type === "text") {
+      return item.text;
+    }
+    if (item.type === "resource") {
+      return item.resource.text ?? item.resource.uri;
+    }
+    return [];
+  });
+  if (readableParts.length > 0) {
+    return readableParts.join("\n");
+  }
+
+  const binaryParts = (result.content ?? []).flatMap((item) => {
+    if (item.type === "image") {
+      return describeBinaryErrorPart("Image", item.data, item.mimeType);
+    }
+    if (item.type === "audio") {
+      return describeBinaryErrorPart("Audio", item.data, item.mimeType);
+    }
+    return [];
+  });
+  if (binaryParts.length > 0) {
+    return binaryParts.join("\n");
+  }
+
+  return stringifyMCPErrorValue(result.toolResult ?? result.content ?? result);
+}
+
+function stringifyMCPErrorValue(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized == null) {
+      return "MCP tool call failed";
+    }
+    if (serialized.length <= MAX_ERROR_DESCRIPTION_CHARACTERS) {
+      return serialized;
+    }
+    return `${serialized.slice(0, MAX_ERROR_DESCRIPTION_CHARACTERS)}\n[MCP error details truncated]`;
+  } catch {
+    return "MCP tool call failed";
+  }
+}
+
+function describeBinaryErrorPart(kind: string, data: string, mediaType: string): string {
+  const dataLength = data.length;
+  if (dataLength > MAX_IMAGE_DATA_BYTES) {
+    return `[${kind} omitted: ${formatBytesSI(dataLength)} exceeds per-${kind.toLowerCase()} guard of ${formatBytesSI(MAX_IMAGE_DATA_BYTES)}.]`;
+  }
+  return `[${kind} omitted from MCP error text: ${formatBytesSI(dataLength)}, ${mediaType}.]`;
 }
 
 /**
@@ -107,9 +167,8 @@ export function transformMCPResult(result: unknown): unknown {
     return result;
   }
 
-  // Only rewrite results carrying binary payloads; text-only results
-  // (including text-only errors) pass through in MCP shape (converted by the
-  // tool's toModelOutput, which keeps the isError flag visible to the model).
+  // Only rewrite results carrying binary payloads. Text-only results pass
+  // through in MCP shape for the tool's toModelOutput conversion.
   const hasBinaryContent = typed.content.some(
     (c) =>
       c.type === "image" ||
@@ -151,13 +210,6 @@ export function transformMCPResult(result: unknown): unknown {
     // Fallback: stringify unknown content
     return { type: "text" as const, text: JSON.stringify(item) };
   });
-
-  // The model-output "content" shape has no error flag, so error results
-  // carrying binary payloads get an explicit text marker instead of bypassing
-  // the media conversion (and its size guard).
-  if (typed.isError) {
-    transformedContent.unshift({ type: "text", text: "[Tool reported an error]" });
-  }
 
   return { type: "content", value: transformedContent };
 }

@@ -34,7 +34,12 @@ import {
   type McpOauthService,
 } from "@/node/services/mcpOauthService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
+import {
+  describeMCPErrorResult,
+  isMCPErrorResult,
+  transformMCPResult,
+  type MCPCallToolResult,
+} from "@/node/services/mcpResultTransform";
 import { buildMcpToolName } from "@/common/utils/tools/mcpToolName";
 import { getErrorMessage } from "@/common/utils/errors";
 
@@ -77,6 +82,13 @@ class MCPDeadlineError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "MCPDeadlineError";
+  }
+}
+
+export class MCPToolCallError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "MCPToolCallError";
   }
 }
 
@@ -163,6 +175,9 @@ export async function runMCPToolWithDeadline<T>(
 }
 
 function shouldRecycleClientAfterToolError(error: unknown): boolean {
+  if (error instanceof MCPToolCallError) {
+    return false;
+  }
   return isClosedClientError(error) || error instanceof MCPDeadlineError;
 }
 
@@ -201,6 +216,9 @@ export function wrapMCPTools(
             () => Promise.resolve(originalExecute(args, context)) as Promise<unknown>,
             { toolName, timeoutMs: MCP_TOOL_CALL_TIMEOUT_MS, signal: abortSignal }
           );
+          if (isMCPErrorResult(result)) {
+            throw new MCPToolCallError(describeMCPErrorResult(result));
+          }
           return transformMCPResult(result as MCPCallToolResult);
         } catch (error) {
           if (shouldRecycleClientAfterToolError(error)) {

@@ -6,7 +6,7 @@ import {
   validateJsonSchemaSubsetSchema,
   type JsonSchemaValidationError,
 } from "@/common/utils/jsonSchemaSubset";
-import { normalizeWorkflowAgentReportPayloadForHostSchema } from "@/common/utils/tools/workflowReportPayload";
+import { stripSyntheticNulls } from "@/common/utils/tools/optionalNullSchema";
 import { sanitizeWorkflowAgentReportSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
@@ -80,10 +80,7 @@ function validateStructuredOutput(config: ToolConfiguration, structuredOutput: u
     return null;
   }
 
-  const normalizedOutput = normalizeWorkflowAgentReportPayloadForHostSchema(
-    outputSchema,
-    structuredOutput
-  );
+  const normalizedOutput = stripSyntheticNulls(outputSchema, structuredOutput);
   const validation = validateJsonSchemaSubset(outputSchema, normalizedOutput);
   return validation.success
     ? null
@@ -103,7 +100,7 @@ function buildInlineInputSchema(config: ToolConfiguration) {
   ) as JSONSchema7;
   return jsonSchema(providerFacingSchema, {
     validate: (value) => {
-      const normalizedValue = normalizeWorkflowAgentReportPayloadForHostSchema(outputSchema, value);
+      const normalizedValue = stripSyntheticNulls(outputSchema, value);
       const validation = validateStructuredOutput(config, normalizedValue);
       if (validation) {
         return { success: false, error: new Error(validation.message) };
@@ -119,10 +116,7 @@ function parseProgressReport(
 ): { report: AgentProgressReport } | { failure: AgentReportFailureResult } {
   const workflowOutputSchema = getWorkflowAgentOutputSchema(config);
   if (workflowOutputSchema != null) {
-    const normalizedArgs = normalizeWorkflowAgentReportPayloadForHostSchema(
-      workflowOutputSchema,
-      rawArgs
-    );
+    const normalizedArgs = stripSyntheticNulls(workflowOutputSchema, rawArgs);
     const structuredValidation = validateStructuredOutput(config, normalizedArgs);
     if (structuredValidation) {
       return { failure: structuredValidation };
