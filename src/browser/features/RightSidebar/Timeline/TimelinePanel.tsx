@@ -230,18 +230,15 @@ const TASK_LIFECYCLE_KINDS = new Set([
   "task.interrupted",
 ]);
 
-// Keep the dedupe key's field order aligned with getEventDetail: title before digest.
+// Untitled agent_report calls from the same task share a default title while the distinct finding
+// lives in the digest, so the dedupe key must include both fields.
 function taskRowContentKey(event: TimelineEvent): string {
-  return event.data?.title ?? event.data?.digest ?? "";
+  return `${event.data?.title ?? ""}\u0000${event.data?.digest ?? ""}`;
 }
 
-// Started rows are provisional: once the same task has a newer lifecycle row on the feed they add
-// no unique information. Update rows dedupe by content key: a checkpoint whose key reappears on a
-// newer lifecycle row for the task is redundant, while updates with distinct keys stay visible
-// because a child may report several times with different findings. Terminal rows always stay,
-// since a reawakened sub-agent can report more than once. The started row is the only one
-// anchored to the spawning tool call, so rows that cannot reveal a transcript target themselves
-// inherit that anchor before the started row is dropped.
+// A newer lifecycle row makes task.created redundant, but its transcript anchor may still be the
+// task's only reveal target. Deduplicate only task.progress rows whose title and digest match a
+// newer row for that task; terminal rows remain because a reawakened task can report again.
 function dropSupersededTaskRows(newestFirst: TimelineEvent[]): TimelineEvent[] {
   const startAnchors = new Map<string, TimelineAnchor>();
   for (const event of newestFirst) {

@@ -444,6 +444,28 @@ describe("TimelinePanel", () => {
     expect(view.container.querySelector('[data-timeline-event-id="report"]')).not.toBeNull();
   });
 
+  test("keeps default-titled updates whose digests differ", () => {
+    const events = [
+      makeEvent("update-late", "task.progress", 2, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Subagent (explore) update", digest: "Cache poisoning suspected" },
+        anchor: { taskId: "task-a", messageId: "msg-2", childWorkspaceId: "task-a" },
+      }),
+      makeEvent("update-early", "task.progress", 1, {
+        source: { system: "task" },
+        status: "started",
+        data: { title: "Subagent (explore) update", digest: "Found a race in the loader" },
+        anchor: { taskId: "task-a", messageId: "msg-1", childWorkspaceId: "task-a" },
+      }),
+    ];
+
+    const view = renderTimeline({ events });
+
+    expect(view.container.querySelector('[data-timeline-event-id="update-late"]')).not.toBeNull();
+    expect(view.container.querySelector('[data-timeline-event-id="update-early"]')).not.toBeNull();
+  });
+
   test("collapses duplicate update rows while keeping distinct checkpoints", () => {
     const events = [
       makeEvent("update-late", "task.progress", 4, {
