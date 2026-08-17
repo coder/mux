@@ -1,0 +1,181 @@
+import { describe, expect, test } from "bun:test";
+import { EventSpine, type ToolExecuteContext, type ToolExecutionHost } from "./eventSpine";
+import type { Runtime } from "@/node/runtime/Runtime";
+
+function makeToolCtx(overrides?: Partial<ToolExecuteContext>): ToolExecuteContext {
+  // The spine never touches the host; a stub is sufficient for pipeline tests.
+  const host: ToolExecutionHost = {
+    runtime: {} as Runtime,
+    runtimeTempDir: "/tmp",
+    cwd: "/tmp",
+    workspaceId: "ws-test",
+  };
+  return { toolName: "test_tool", args: { a: 1 }, host, executed: false, ...overrides };
+}
+
+describe("EventSpine waterfall", () => {
+  test("runs terminal when no middleware is registered", async () => {
+    const spine = new EventSpine();
+    const ctx = makeToolCtx();
+    await spine.run("tool.execute", ctx, async (c) => {
+      c.result = "ran";
+      c.executed = true;
+    });
+    expect(ctx.result).toBe("ran");
+    expect(ctx.executed).toBe(true);
+  });
+
+  test("middleware composes around the terminal in registration order", async () => {
+    const spine = new EventSpine();
+    const calls: string[] = [];
+    spine.use("tool.execute", async (_ctx, next) => {
+      calls.push("a:before");
+      await next();
+      calls.push("a:after");
+    });
+    spine.use("tool.execute", async (_ctx, next) => {
+      calls.push("b:before");
+      await next();
+      calls.push("b:after");
+    });
+    await spine.run("tool.execute", makeToolCtx(), async () => {
+      calls.push("terminal");
+    });
+    expect(calls).toEqual(["a:before", "b:before", "terminal", "b:after", "a:after"]);
+  });
+
+  test("explicit order overrides registration order", async () => {
+    const spine = new EventSpine();
+    const calls: string[] = [];
+    spine.use(
+      "tool.execute",
+      async (_ctx, next) => {
+        calls.push("late");
+        await next();
+      },
+      { order: 10 }
+    );
+    spine.use(
+      "tool.execute",
+      async (_ctx, next) => {
+        calls.push("early");
+        await next();
+      },
+      { order: -10 }
+    );
+    await spine.run("tool.execute", makeToolCtx());
+    expect(calls).toEqual(["early", "late"]);
+  });
+
+  test("blocking middleware skips terminal and downstream middleware", async () => {
+    const spine = new EventSpine();
+    const calls: string[] = [];
+    spine.use("tool.execute", async (ctx, _next) => {
+      ctx.blocked = { result: { error: "denied" } };
+      calls.push("blocker");
+    });
+    spine.use("tool.execute", async (_ctx, next) => {
+      calls.push("downstream");
+      await next();
+    });
+    const ctx = makeToolCtx();
+    await spine.run("tool.execute", ctx, async () => {
+      calls.push("terminal");
+    });
+    expect(calls).toEqual(["blocker"]);
+    expect(ctx.blocked?.result).toEqual({ error: "denied" });
+    expect(ctx.executed).toBe(false);
+  });
+
+  test("middleware may rewrite args before terminal and result after", async () => {
+    const spine = new EventSpine();
+    spine.use("tool.execute", async (ctx, next) => {
+      ctx.args = { a: 2 };
+      await next();
+      ctx.result = `${String(ctx.result)}+audited`;
+    });
+    const ctx = makeToolCtx();
+    await spine.run("tool.execute", ctx, async (c) => {
+      c.result = `ran(${JSON.stringify(c.args)})`;
+      c.executed = true;
+    });
+    expect(ctx.result).toBe('ran({"a":2})+audited');
+  });
+
+  test("calling next() twice throws", async () => {
+    const spine = new EventSpine();
+    spine.use("tool.execute", async (_ctx, next) => {
+      await next();
+      await next();
+    });
+    await expect(spine.run("tool.execute", makeToolCtx())).rejects.toThrow(
+      /called next\(\) more than once/
+    );
+  });
+
+  test("useBefore/useAfter sugar wraps the pipeline; after is skipped when blocked", async () => {
+    const spine = new EventSpine();
+    const calls: string[] = [];
+    spine.useBefore("tool.execute", (ctx) => {
+      calls.push("before");
+      if (ctx.toolName === "blocked_tool") {
+        ctx.blocked = { result: { error: "no" } };
+      }
+    });
+    spine.useAfter("tool.execute", () => {
+      calls.push("after");
+    });
+
+    await spine.run("tool.execute", makeToolCtx(), async (c) => {
+      calls.push("terminal");
+      c.executed = true;
+    });
+    expect(calls).toEqual(["before", "terminal", "after"]);
+
+    calls.length = 0;
+    const blockedCtx = makeToolCtx({ toolName: "blocked_tool" });
+    await spine.run("tool.execute", blockedCtx, async (c) => {
+      calls.push("terminal");
+      c.executed = true;
+    });
+    expect(calls).toEqual(["before"]);
+    expect(blockedCtx.executed).toBe(false);
+  });
+
+  test("unregister removes middleware", async () => {
+    const spine = new EventSpine();
+    const calls: string[] = [];
+    const unregister = spine.use("tool.execute", async (_ctx, next) => {
+      calls.push("mw");
+      await next();
+    });
+    expect(spine.hasMiddleware("tool.execute")).toBe(true);
+    unregister();
+    expect(spine.hasMiddleware("tool.execute")).toBe(false);
+    await spine.run("tool.execute", makeToolCtx());
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("EventSpine observers", () => {
+  test("fan-out delivers payloads and unsubscribe stops delivery", () => {
+    const spine = new EventSpine();
+    const seen: string[] = [];
+    const unsubscribe = spine.subscribe("workspace.created", (p) => seen.push(p.workspaceId));
+    spine.emit("workspace.created", { workspaceId: "ws-1" });
+    unsubscribe();
+    spine.emit("workspace.created", { workspaceId: "ws-2" });
+    expect(seen).toEqual(["ws-1"]);
+  });
+
+  test("a throwing observer does not break the emitter or other observers", () => {
+    const spine = new EventSpine();
+    const seen: string[] = [];
+    spine.subscribe("stream.start", () => {
+      throw new Error("bad observer");
+    });
+    spine.subscribe("stream.start", (p) => seen.push(p.messageId));
+    expect(() => spine.emit("stream.start", { workspaceId: "ws", messageId: "m1" })).not.toThrow();
+    expect(seen).toEqual(["m1"]);
+  });
+});

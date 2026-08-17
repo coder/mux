@@ -26,6 +26,7 @@ import {
 import { BACKGROUND_WORK_WAKE_OPENINGS } from "@/common/utils/machineTurnPrompts";
 import { WORKSPACE_TURN_TASK_TAGS } from "@/constants/workspaceTags";
 import { log } from "@/node/services/log";
+import { eventSpine } from "@/node/services/events/eventSpine";
 import {
   discoverAgentDefinitions,
   getSkipScopesAboveForKnownScope,
@@ -7477,6 +7478,7 @@ export class TaskService {
           },
           { allowMissing: true }
         );
+        eventSpine.emit("task.reported", { workspaceId: taskId, taskId });
         await this.maybeStartPatchGenerationForReportedTask(taskId);
         await this.emitWorkspaceMetadata(taskId);
         await this.maybeStartQueuedTasks();
@@ -12164,6 +12166,7 @@ export class TaskService {
       },
       { allowMissing: true }
     );
+    eventSpine.emit("task.reported", { workspaceId: childWorkspaceId, taskId: childWorkspaceId });
 
     await this.emitWorkspaceMetadata(childWorkspaceId);
 

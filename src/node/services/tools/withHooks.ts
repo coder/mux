@@ -1,6 +1,12 @@
 /**
  * Higher-order function that wraps a tool with hook support.
  *
+ * Tool execution runs through the event spine's `tool.execute` waterfall
+ * (see src/node/services/events/eventSpine.ts). The shell hook protocol lives
+ * in `shellToolHookMiddleware`, registered as the built-in middleware on that
+ * point, so future consumers (plugin hooks, turn-envelope emission) compose
+ * around the same pipeline.
+ *
  * Hook priority (new → legacy):
  * - Pre-execution: tool_pre → tool_hook (if no tool_pre)
  * - Post-execution: tool_post → tool_hook (only if tool_hook was used for pre)
@@ -12,6 +18,7 @@
  * Legacy model (tool_hook): single hook with marker protocol (echo $MUX_EXEC)
  */
 
+import assert from "node:assert";
 import type { Tool } from "ai";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -24,6 +31,11 @@ import {
   runPreHook,
   runPostHook,
 } from "@/node/services/hooks";
+import {
+  eventSpine,
+  type ToolExecuteContext,
+  type WaterfallNext,
+} from "@/node/services/events/eventSpine";
 import { log } from "@/node/services/log";
 
 export interface HookConfig {
@@ -82,17 +94,7 @@ export function withHooks<TParameters, TResult>(
   const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
 
   wrappedToolRecord.execute = async (args: TParameters, options: unknown) => {
-    // Find hooks (checked per call - hooks can be added/removed dynamically)
-    const [preHookPath, postHookPath, legacyHookPath] = await Promise.all([
-      getPreHookPath(config.runtime, config.cwd),
-      getPostHookPath(config.runtime, config.cwd),
-      getHookPath(config.runtime, config.cwd),
-    ]);
-
-    // No hooks at all - execute tool directly
-    if (!preHookPath && !postHookPath && !legacyHookPath) {
-      return executeFn.call(tool, args, options) as TResult;
-    }
+    ensureShellToolHookMiddleware();
 
     // Extract abort signal from tool options (if present)
     const abortSignal =
@@ -100,193 +102,215 @@ export function withHooks<TParameters, TResult>(
         ? (options as { abortSignal?: AbortSignal }).abortSignal
         : undefined;
 
-    const toolInput = JSON.stringify(args);
-    const hookContext = {
-      tool: toolName,
-      toolInput,
-      toolInputValue: args,
-      workspaceId: config.workspaceId,
-      projectDir: config.cwd,
-      runtimeTempDir: config.runtimeTempDir,
-      env: config.env,
+    const ctx: ToolExecuteContext = {
+      toolName,
+      args,
+      host: {
+        runtime: config.runtime,
+        runtimeTempDir: config.runtimeTempDir,
+        cwd: config.cwd,
+        workspaceId: config.workspaceId,
+        env: config.env,
+      },
       abortSignal,
+      executed: false,
     };
 
-    // Use new model (tool_pre/tool_post) if tool_pre exists
-    if (preHookPath) {
-      return executeWithNewHooks(
-        config.runtime,
-        preHookPath,
-        postHookPath,
-        hookContext,
-        toolName,
-        () => executeFn.call(tool, args, options) as TResult
-      );
-    }
+    await eventSpine.run("tool.execute", ctx, async (c) => {
+      assert(!c.blocked, `tool.execute terminal reached with blocked context (${toolName})`);
+      // Middleware may have rewritten args; execute with the current ones.
+      c.result = await (executeFn.call(tool, c.args as TParameters, options) as
+        | TResult
+        | Promise<TResult>);
+      c.executed = true;
+    });
 
-    // Fall back to legacy model (tool_hook) if it exists
-    if (legacyHookPath) {
-      return executeWithLegacyHook(
-        config.runtime,
-        legacyHookPath,
-        hookContext,
-        toolName,
-        () => executeFn.call(tool, args, options) as TResult
-      );
+    if (ctx.blocked) {
+      return ctx.blocked.result as TResult;
     }
-
-    // Only post hook exists (no pre) - execute tool then run post
-    const result = (await executeFn.call(tool, args, options)) as TResult;
-    if (postHookPath) {
-      const postStart = Date.now();
-      const postResult = await runPostHook(config.runtime, postHookPath, hookContext, result);
-      const hookDurationMs = Date.now() - postStart;
-      if (postResult.output) {
-        return appendHookOutput(
-          result,
-          truncateHookOutput(postResult.output),
-          hookDurationMs,
-          postHookPath
-        ) as TResult;
-      }
-    }
-    return result;
+    assert(
+      ctx.executed,
+      `tool.execute middleware for ${toolName} neither executed nor blocked the tool`
+    );
+    return ctx.result as TResult;
   };
 
   return wrappedTool;
 }
 
-/** Execute tool with new pre/post hook model */
-async function executeWithNewHooks<TResult>(
-  runtime: Runtime,
-  preHookPath: string,
-  postHookPath: string | null,
-  context: {
-    tool: string;
-    toolInput: string;
-    workspaceId: string;
-    projectDir: string;
-    runtimeTempDir?: string;
-    env?: Record<string, string>;
-    abortSignal?: AbortSignal;
-  },
-  toolName: string,
-  executeTool: () => TResult | Promise<TResult>
-): Promise<TResult> {
-  log.debug("[withHooks] Running tool with pre/post hooks", {
-    toolName,
-    preHookPath,
-    postHookPath,
-  });
+// ---------------------------------------------------------------------------
+// Shell tool hook middleware (built-in `tool.execute` consumer)
+// ---------------------------------------------------------------------------
 
-  const hookStart = Date.now();
+let shellToolHookMiddlewareRegistered = false;
 
-  // Run pre-hook
-  const preResult = await runPreHook(runtime, preHookPath, context);
+/**
+ * Idempotently register the shell hook middleware on the spine. Invoked from
+ * withHooks() so every entry point that wraps tools (desktop, CLI, tests) gets
+ * identical hook behavior without a separate bootstrap step.
+ */
+function ensureShellToolHookMiddleware(): void {
+  if (shellToolHookMiddlewareRegistered) return;
+  shellToolHookMiddlewareRegistered = true;
+  eventSpine.use("tool.execute", shellToolHookMiddleware);
+}
 
-  // Pre-hook blocked tool
-  if (!preResult.allowed) {
-    const output = truncateHookOutput(
-      preResult.output || `Tool blocked by pre-hook (exit ${preResult.exitCode})`
-    );
-    log.debug("[withHooks] Pre-hook blocked tool", { toolName, output });
-    const errorResult: { error: string } = { error: output };
-    return errorResult as TResult;
+/**
+ * The `.mux/tool_pre` / `.mux/tool_post` / legacy `.mux/tool_hook` protocol as
+ * around-style middleware. Behavior is identical to the pre-spine withHooks
+ * implementation; the legacy protocol inherently wraps execution, which is why
+ * the pipeline is around-style.
+ */
+async function shellToolHookMiddleware(
+  ctx: ToolExecuteContext,
+  next: WaterfallNext
+): Promise<void> {
+  const { runtime, cwd } = ctx.host;
+
+  // Find hooks (checked per call - hooks can be added/removed dynamically)
+  const [preHookPath, postHookPath, legacyHookPath] = await Promise.all([
+    getPreHookPath(runtime, cwd),
+    getPostHookPath(runtime, cwd),
+    getHookPath(runtime, cwd),
+  ]);
+
+  // No hooks at all - continue the pipeline directly
+  if (!preHookPath && !postHookPath && !legacyHookPath) {
+    return next();
   }
 
-  // Execute tool
-  const result = await executeTool();
+  const toolName = ctx.toolName;
+  const hookContext = {
+    tool: toolName,
+    toolInput: JSON.stringify(ctx.args),
+    toolInputValue: ctx.args,
+    workspaceId: ctx.host.workspaceId,
+    projectDir: cwd,
+    runtimeTempDir: ctx.host.runtimeTempDir,
+    env: ctx.host.env,
+    abortSignal: ctx.abortSignal,
+  };
 
-  // Run post-hook if exists
-  if (postHookPath) {
-    const postResult = await runPostHook(runtime, postHookPath, context, result);
+  // Use new model (tool_pre/tool_post) if tool_pre exists
+  if (preHookPath) {
+    log.debug("[withHooks] Running tool with pre/post hooks", {
+      toolName,
+      preHookPath,
+      postHookPath,
+    });
+
+    const hookStart = Date.now();
+    const preResult = await runPreHook(runtime, preHookPath, hookContext);
+
+    // Pre-hook blocked tool
+    if (!preResult.allowed) {
+      const output = truncateHookOutput(
+        preResult.output || `Tool blocked by pre-hook (exit ${preResult.exitCode})`
+      );
+      log.debug("[withHooks] Pre-hook blocked tool", { toolName, output });
+      ctx.blocked = { result: { error: output } };
+      return;
+    }
+
+    // Execute tool (rest of pipeline)
+    await next();
+
+    // Run post-hook if exists
+    if (postHookPath) {
+      const postResult = await runPostHook(runtime, postHookPath, hookContext, ctx.result);
+      const hookDurationMs = Date.now() - hookStart;
+      let hookOutput = postResult.output;
+
+      if (!postResult.success && !hookOutput) {
+        hookOutput = `Post-hook failed (exit code ${postResult.exitCode})`;
+      }
+
+      if (hookOutput) {
+        hookOutput = truncateHookOutput(hookOutput);
+        log.debug("[withHooks] Post-hook produced output", {
+          toolName,
+          success: postResult.success,
+          output: hookOutput,
+        });
+        ctx.result = appendHookOutput(ctx.result, hookOutput, hookDurationMs, postHookPath);
+      }
+    }
+    return;
+  }
+
+  // Fall back to legacy model (tool_hook) if it exists
+  if (legacyHookPath) {
+    log.debug("[withHooks] Running tool with legacy hook", { toolName, hookPath: legacyHookPath });
+
+    const hookStart = Date.now();
+    const { result, hook } = await runWithHook<unknown>(
+      runtime,
+      legacyHookPath,
+      hookContext,
+      async () => {
+        await next();
+        return ctx.result;
+      },
+      {
+        slowThresholdMs: 10000,
+        onSlowHook: (phase, elapsedMs) => {
+          const seconds = (elapsedMs / 1000).toFixed(1);
+          log.warn(`[withHooks] Slow ${phase}-hook for ${toolName}: ${seconds}s`);
+          console.warn(`⚠️  Slow tool hook (${phase}): ${toolName} took ${seconds}s`);
+        },
+      }
+    );
     const hookDurationMs = Date.now() - hookStart;
-    let hookOutput = postResult.output;
 
-    if (!postResult.success && !hookOutput) {
-      hookOutput = `Post-hook failed (exit code ${postResult.exitCode})`;
+    // Hook blocked tool execution (exited before $MUX_EXEC)
+    if (!hook.toolExecuted) {
+      const blockOutput = truncateHookOutput(
+        [hook.stdoutBeforeExec, hook.stderr].filter(Boolean).join("\n").trim()
+      );
+      log.debug("[withHooks] Hook blocked tool execution", { toolName, output: blockOutput });
+      ctx.blocked = {
+        result: { error: blockOutput || "Tool blocked by hook (exited before $MUX_EXEC)" },
+      };
+      return;
+    }
+
+    // Combine stdout and stderr for hook output
+    let hookOutput = [hook.stdout, hook.stderr].filter(Boolean).join("\n").trim();
+
+    if (!hook.success && !hookOutput) {
+      hookOutput = `Tool hook failed (exit code ${hook.exitCode})`;
     }
 
     if (hookOutput) {
       hookOutput = truncateHookOutput(hookOutput);
-      log.debug("[withHooks] Post-hook produced output", {
+      log.debug("[withHooks] Hook produced output", {
         toolName,
-        success: postResult.success,
+        success: hook.success,
         output: hookOutput,
       });
-      return appendHookOutput(result, hookOutput, hookDurationMs, postHookPath) as TResult;
+      ctx.result = appendHookOutput(result, hookOutput, hookDurationMs, legacyHookPath);
+      return;
     }
+
+    // Note: result could be TResult or AsyncIterable<TResult>
+    ctx.result = result;
+    return;
   }
 
-  return result;
-}
-
-/** Execute tool with legacy tool_hook model */
-async function executeWithLegacyHook<TResult>(
-  runtime: Runtime,
-  hookPath: string,
-  context: {
-    tool: string;
-    toolInput: string;
-    workspaceId: string;
-    projectDir: string;
-    runtimeTempDir?: string;
-    env?: Record<string, string>;
-    abortSignal?: AbortSignal;
-  },
-  toolName: string,
-  executeTool: () => TResult | Promise<TResult>
-): Promise<TResult> {
-  log.debug("[withHooks] Running tool with legacy hook", { toolName, hookPath });
-
-  const hookStart = Date.now();
-  const { result, hook } = await runWithHook<TResult>(
-    runtime,
-    hookPath,
-    context,
-    () => Promise.resolve(executeTool()),
-    {
-      slowThresholdMs: 10000,
-      onSlowHook: (phase, elapsedMs) => {
-        const seconds = (elapsedMs / 1000).toFixed(1);
-        log.warn(`[withHooks] Slow ${phase}-hook for ${toolName}: ${seconds}s`);
-        console.warn(`⚠️  Slow tool hook (${phase}): ${toolName} took ${seconds}s`);
-      },
-    }
-  );
-  const hookDurationMs = Date.now() - hookStart;
-
-  // Hook blocked tool execution (exited before $MUX_EXEC)
-  if (!hook.toolExecuted) {
-    const blockOutput = truncateHookOutput(
-      [hook.stdoutBeforeExec, hook.stderr].filter(Boolean).join("\n").trim()
+  // Only post hook exists (no pre) - execute tool then run post
+  assert(postHookPath, "shellToolHookMiddleware: expected tool_post path in post-only branch");
+  await next();
+  const postStart = Date.now();
+  const postResult = await runPostHook(runtime, postHookPath, hookContext, ctx.result);
+  const hookDurationMs = Date.now() - postStart;
+  if (postResult.output) {
+    ctx.result = appendHookOutput(
+      ctx.result,
+      truncateHookOutput(postResult.output),
+      hookDurationMs,
+      postHookPath
     );
-    log.debug("[withHooks] Hook blocked tool execution", { toolName, output: blockOutput });
-    const errorResult: { error: string } = {
-      error: blockOutput || "Tool blocked by hook (exited before $MUX_EXEC)",
-    };
-    return errorResult as TResult;
   }
-
-  // Combine stdout and stderr for hook output
-  let hookOutput = [hook.stdout, hook.stderr].filter(Boolean).join("\n").trim();
-
-  if (!hook.success && !hookOutput) {
-    hookOutput = `Tool hook failed (exit code ${hook.exitCode})`;
-  }
-
-  if (hookOutput) {
-    hookOutput = truncateHookOutput(hookOutput);
-    log.debug("[withHooks] Hook produced output", {
-      toolName,
-      success: hook.success,
-      output: hookOutput,
-    });
-    return appendHookOutput(result, hookOutput, hookDurationMs, hookPath) as TResult;
-  }
-
-  // Note: result could be TResult or AsyncIterable<TResult>
-  return result as TResult;
 }
 
 /** Check if a value is an AsyncIterable (streaming result) */

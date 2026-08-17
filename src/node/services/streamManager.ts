@@ -1,6 +1,7 @@
 import { EventEmitter } from "events";
 import * as path from "path";
 import { PlatformPaths } from "@/common/utils/paths";
+import { eventSpine } from "@/node/services/events/eventSpine";
 import {
   streamText,
   stepCountIs,
@@ -2345,6 +2346,10 @@ export class StreamManager extends EventEmitter {
         ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
         : {}),
     } as StreamStartEvent);
+    eventSpine.emit("stream.start", {
+      workspaceId: workspaceId as string,
+      messageId: streamInfo.messageId,
+    });
   }
 
   private emitStreamAbort(
@@ -3554,6 +3559,10 @@ export class StreamManager extends EventEmitter {
             // before updateHistory completes, compaction can clear the file and then
             // updateHistory writes stale data back.
             this.emit("stream-end", streamEndEvent);
+            eventSpine.emit("stream.end", {
+              workspaceId: workspaceId as string,
+              messageId: streamInfo.messageId,
+            });
           }
           break;
         } catch (error) {

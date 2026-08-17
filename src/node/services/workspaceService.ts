@@ -22,6 +22,7 @@ import { Ok, Err } from "@/common/types/result";
 import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
+import { eventSpine } from "@/node/services/events/eventSpine";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import { AgentSession, type StreamErrorRecoveryOutcome } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -4337,6 +4338,7 @@ export class WorkspaceService extends EventEmitter {
         session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
       }
 
+      eventSpine.emit("workspace.created", { workspaceId });
       return Ok({ metadata: this.enrichFrontendMetadata(completeMetadata) });
     } catch (error) {
       initLogger.logComplete(-1);
@@ -6986,6 +6988,7 @@ export class WorkspaceService extends EventEmitter {
       // before the workspace's memory dies with it. Fire-and-forget; never blocks archive.
       this.memoryConsolidationService?.triggerInBackground(workspaceId, "archive");
 
+      eventSpine.emit("workspace.archived", { workspaceId });
       return Ok({ kind: "archived" as const });
     } catch (error) {
       const message = getErrorMessage(error);

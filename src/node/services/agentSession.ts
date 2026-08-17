@@ -5,6 +5,7 @@ import { mkdir, readFile, unlink, writeFile } from "fs/promises";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
+import { eventSpine } from "@/node/services/events/eventSpine";
 import type { Config } from "@/node/config";
 import type { AIService } from "@/node/services/aiService";
 import type { HistoryService } from "@/node/services/historyService";
@@ -721,6 +722,7 @@ export class AgentSession {
 
     this.attachAiListeners();
     this.attachInitListeners();
+    eventSpine.emit("session.start", { workspaceId: this.workspaceId });
   }
 
   dispose(): void {
@@ -753,6 +755,7 @@ export class AgentSession {
     }
     this.initListeners.length = 0;
     this.emitter.removeAllListeners();
+    eventSpine.emit("session.end", { workspaceId: this.workspaceId });
   }
 
   onChatEvent(listener: (event: AgentSessionChatEvent) => void): () => void {
@@ -3027,6 +3030,13 @@ export class AgentSession {
           workspaceTurnMetadata: inheritedWorkspaceTurnMetadata,
         });
 
+        // Waterfall hook point: lets registered middleware (e.g. refinement
+        // journaling) run before context is compacted away. No-op when empty.
+        await eventSpine.run("compaction.prepare", {
+          workspaceId: this.workspaceId,
+          reason: "on-send",
+        });
+
         const autoCompactionRequest = this.buildAutoCompactionRequest({
           followUpContent,
           baseOptions: optionsForStream,
@@ -3879,6 +3889,12 @@ export class AgentSession {
         modelForStream: streamContext.modelString,
         muxMetadata: streamContext.workspaceTurnMetadata,
       });
+      // Waterfall hook point: see the on-send compaction.prepare run above.
+      await eventSpine.run("compaction.prepare", {
+        workspaceId: this.workspaceId,
+        reason: "mid-stream",
+      });
+
       const autoCompactionRequest = this.buildAutoCompactionRequest({
         followUpContent,
         baseOptions: streamContext.options,

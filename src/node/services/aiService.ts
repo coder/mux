@@ -174,6 +174,7 @@ import {
   type SimulationContext,
 } from "./streamSimulation";
 import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import { eventSpine, type RequestAssembleContext } from "@/node/services/events/eventSpine";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
 import { isTerminalWorkflowRunStatus } from "@/common/types/workflow";
@@ -2745,6 +2746,29 @@ export class AIService extends EventEmitter {
         const metadataModel = resolveModelForMetadata(modelString, requestProvidersConfig);
         const tokenizer = await getTokenizerForModel(modelString, metadataModel);
         systemMessageTokens = await tokenizer.countTokens(systemMessage);
+      }
+
+      // Waterfall hook point: registered middleware may rewrite the final system
+      // prompt or filter the toolset. Contract for future consumers: any content
+      // middleware adds to a request must exist as a durable event first
+      // (append-time materialization) — see eventSpine module docs. Gated on
+      // hasMiddleware so the empty-pipeline hot path skips ctx construction.
+      if (eventSpine.hasMiddleware("request.assemble")) {
+        const assembleCtx: RequestAssembleContext = {
+          workspaceId,
+          modelString,
+          systemMessage,
+          tools,
+        };
+        await eventSpine.run("request.assemble", assembleCtx);
+        tools = assembleCtx.tools;
+        if (assembleCtx.systemMessage !== systemMessage) {
+          systemMessage = assembleCtx.systemMessage;
+          // Keep context-size estimation accurate after middleware mutation.
+          const metadataModel = resolveModelForMetadata(modelString, requestProvidersConfig);
+          const tokenizer = await getTokenizerForModel(modelString, metadataModel);
+          systemMessageTokens = await tokenizer.countTokens(systemMessage);
+        }
       }
 
       // Re-activate deferred tools discovered by tool_catalog_search in earlier turns
