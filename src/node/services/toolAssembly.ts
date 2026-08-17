@@ -21,7 +21,8 @@ import type {
 } from "@/node/services/tools/code_execution";
 import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
-import { sandboxHostService } from "@/node/services/sandbox/sandboxHostService";
+import type { PTCExecutionResult } from "@/node/services/ptc/types";
+import { sandboxHostService, type SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 import { log } from "./log";
 import type { MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
@@ -168,26 +169,30 @@ export async function applyToolPolicyAndExperiments(
       // so omitting them here would silently widen to full session grants.
       // bridgeKey identifies the effective bridgeable toolset so the mount is
       // rebuilt (revoking guest-saved bridge references) when policy changes
-      // what the sandbox may reach.
+      // what the sandbox may reach. The lease runner (withPersistentMount)
+      // holds the scope lock from acquisition through execution.
       const bridgeKey = toolBridge.getBridgeableToolNames().sort().join(",");
-      const mountProvider =
+      const withMount =
         sandbox && persistentSandboxMountsEnabled()
-          ? () =>
-              sandboxHostService.acquireMount({
-                lifetime: "persistent",
-                runtimeFactory,
-                scopeKey: sandbox.workspaceId,
-                sessionDir: sandbox.sessionDir,
-                grants: opts.capabilityGrants,
-                bridgeKey,
-              })
+          ? (fn: (mount: SandboxMount) => Promise<PTCExecutionResult>) =>
+              sandboxHostService.withPersistentMount(
+                {
+                  lifetime: "persistent",
+                  runtimeFactory,
+                  scopeKey: sandbox.workspaceId,
+                  sessionDir: sandbox.sessionDir,
+                  grants: opts.capabilityGrants,
+                  bridgeKey,
+                },
+                fn
+              )
           : undefined;
 
       const codeExecutionTool = await ptc.createCodeExecutionTool(
         runtimeFactory,
         toolBridge,
         emitNestedToolEvent,
-        mountProvider
+        withMount
       );
 
       if (experiments?.programmaticToolCallingExclusive) {

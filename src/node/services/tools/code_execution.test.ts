@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, mock } from "bun:test";
-import { createCodeExecutionTool, clearTypeCaches } from "./code_execution";
+import { createCodeExecutionTool, clearTypeCaches, type MountRunner } from "./code_execution";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { Tool, ToolExecutionOptions } from "ai";
@@ -551,13 +551,16 @@ describe("createCodeExecutionTool", () => {
     it("persistent mount shares vars across two separate code_execution calls and a simulated restart", async () => {
       using tmp = new DisposableTempDir("code-exec-persistent");
       const host = new SandboxHostService();
-      const mountProvider = () =>
-        host.acquireMount({
-          lifetime: "persistent",
-          runtimeFactory,
-          scopeKey: "ws-code-exec",
-          sessionDir: tmp.path,
-        });
+      const mountProvider: MountRunner = (fn) =>
+        host.withPersistentMount(
+          {
+            lifetime: "persistent",
+            runtimeFactory,
+            scopeKey: "ws-code-exec",
+            sessionDir: tmp.path,
+          },
+          fn
+        );
       const tool = await createCodeExecutionTool(
         runtimeFactory,
         new ToolBridge({}),
@@ -587,13 +590,16 @@ describe("createCodeExecutionTool", () => {
         runtimeFactory,
         new ToolBridge({}),
         undefined,
-        () =>
-          host2.acquireMount({
-            lifetime: "persistent",
-            runtimeFactory,
-            scopeKey: "ws-code-exec",
-            sessionDir: tmp.path,
-          })
+        (fn) =>
+          host2.withPersistentMount(
+            {
+              lifetime: "persistent",
+              runtimeFactory,
+              scopeKey: "ws-code-exec",
+              sessionDir: tmp.path,
+            },
+            fn
+          )
       );
       const third = (await tool2.execute!(
         { code: "return vars.total;" },
@@ -607,13 +613,16 @@ describe("createCodeExecutionTool", () => {
     it("persists vars mutated before a failed eval so memory and disk agree", async () => {
       using tmp = new DisposableTempDir("code-exec-persistent");
       const host = new SandboxHostService();
-      const mountProvider = () =>
-        host.acquireMount({
-          lifetime: "persistent",
-          runtimeFactory,
-          scopeKey: "ws-failed-eval",
-          sessionDir: tmp.path,
-        });
+      const mountProvider: MountRunner = (fn) =>
+        host.withPersistentMount(
+          {
+            lifetime: "persistent",
+            runtimeFactory,
+            scopeKey: "ws-failed-eval",
+            sessionDir: tmp.path,
+          },
+          fn
+        );
       const tool = await createCodeExecutionTool(
         runtimeFactory,
         new ToolBridge({}),
@@ -642,13 +651,16 @@ describe("createCodeExecutionTool", () => {
         runtimeFactory,
         new ToolBridge({}),
         undefined,
-        () =>
-          host2.acquireMount({
-            lifetime: "persistent",
-            runtimeFactory,
-            scopeKey: "ws-failed-eval",
-            sessionDir: tmp.path,
-          })
+        (fn) =>
+          host2.withPersistentMount(
+            {
+              lifetime: "persistent",
+              runtimeFactory,
+              scopeKey: "ws-failed-eval",
+              sessionDir: tmp.path,
+            },
+            fn
+          )
       );
       const after = (await tool2.execute!(
         { code: "return vars.state;" },
@@ -662,13 +674,16 @@ describe("createCodeExecutionTool", () => {
     it("recovers from unsnapshottable vars by rebuilding the mount from the last durable snapshot", async () => {
       using tmp = new DisposableTempDir("code-exec-persistent");
       const host = new SandboxHostService();
-      const mountProvider = () =>
-        host.acquireMount({
-          lifetime: "persistent",
-          runtimeFactory,
-          scopeKey: "ws-cyclic-vars",
-          sessionDir: tmp.path,
-        });
+      const mountProvider: MountRunner = (fn) =>
+        host.withPersistentMount(
+          {
+            lifetime: "persistent",
+            runtimeFactory,
+            scopeKey: "ws-cyclic-vars",
+            sessionDir: tmp.path,
+          },
+          fn
+        );
       const tool = await createCodeExecutionTool(
         runtimeFactory,
         new ToolBridge({}),

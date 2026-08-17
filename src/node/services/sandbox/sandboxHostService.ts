@@ -208,15 +208,49 @@ export class SandboxHostService {
     }
 
     const scopeKey = options.scopeKey;
-    const sessionDir = options.sessionDir;
     assert(scopeKey, "persistent mounts require a scopeKey");
-    assert(sessionDir, "persistent mounts require a sessionDir");
 
     // Serialize per scope: concurrent first acquisitions must not both create
     // runtimes (the map is only populated after several awaits), and
     // acquisition must not interleave with disposal or an exclusive run.
     const lock = this.lockFor(scopeKey);
     await using _guard = await lock.acquire();
+    return await this.acquirePersistentMountLocked(options, grants);
+  }
+
+  /**
+   * Run `fn` with a persistent mount while HOLDING the scope lock from
+   * acquisition through execution. acquireMount + a later mount.exclusive()
+   * leaves an unprotected gap where a concurrent grants/bridge change or
+   * scope disposal can dispose the returned mount; this API closes that gap —
+   * code_execution's register→eval→persist sequence runs entirely under one
+   * lease. `fn` must NOT call mount.exclusive() (same non-reentrant lock).
+   */
+  async withPersistentMount<T>(
+    options: AcquireMountOptions,
+    fn: (mount: SandboxMount) => Promise<T>
+  ): Promise<T> {
+    assert(options.lifetime === "persistent", "withPersistentMount requires lifetime=persistent");
+    const scopeKey = options.scopeKey;
+    assert(scopeKey, "persistent mounts require a scopeKey");
+    const grants = options.grants ?? resolveCapabilityGrants({ scope: "session" });
+
+    const lock = this.lockFor(scopeKey);
+    await using _guard = await lock.acquire();
+    const mount = await this.acquirePersistentMountLocked(options, grants);
+    return await fn(mount);
+  }
+
+  /** Get-or-create the persistent mount for a scope. Caller must hold the scope lock. */
+  private async acquirePersistentMountLocked(
+    options: AcquireMountOptions,
+    grants: CapabilityGrants
+  ): Promise<SandboxMount> {
+    const scopeKey = options.scopeKey;
+    const sessionDir = options.sessionDir;
+    assert(scopeKey, "persistent mounts require a scopeKey");
+    assert(sessionDir, "persistent mounts require a sessionDir");
+    const lock = this.lockFor(scopeKey);
 
     const existing = this.persistentMounts.get(scopeKey);
     if (existing && !existing.isDisposed) {

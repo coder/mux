@@ -2755,6 +2755,7 @@ export class AIService extends EventEmitter {
       // (append-time materialization) — see eventSpine module docs. Gated on
       // hasMiddleware so the empty-pipeline hot path skips ctx construction.
       if (eventSpine.hasMiddleware("request.assemble")) {
+        const preHookToolNames = Object.keys(tools).sort().join(",");
         const assembleCtx: RequestAssembleContext = {
           workspaceId,
           modelString,
@@ -2763,6 +2764,27 @@ export class AIService extends EventEmitter {
         };
         await eventSpine.run("request.assemble", assembleCtx);
         tools = assembleCtx.tools;
+        // Supplement-mode PTC: the code_execution instance created during
+        // assembly closes over a ToolBridge built from the PRE-hook toolset
+        // (and its description advertises those tools), so a hook-removed
+        // bridgeable tool would remain reachable via mux.*. Rebuild
+        // code_execution from the post-hook record. Exclusive mode is
+        // unaffected: bridgeable tools are not in the hook-visible record.
+        if (
+          Object.keys(tools).sort().join(",") !== preHookToolNames &&
+          experiments?.programmaticToolCalling === true &&
+          experiments?.programmaticToolCallingExclusive !== true &&
+          tools.code_execution !== undefined
+        ) {
+          const { code_execution: _staleCodeExecution, ...postHookTools } = tools;
+          tools = await applyToolPolicyAndExperiments({
+            allTools: postHookTools,
+            effectiveToolPolicy,
+            experiments,
+            emitNestedToolEvent: emitNestedPtcToolEvent,
+            sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+          });
+        }
         // Tool-search state was classified from the pre-hook record; a hook
         // that added/removed tools would leave allToolNames/deferred/active
         // sets stale (prepareStep scoping + sentinel names both read them).
@@ -3442,6 +3464,7 @@ export class AIService extends EventEmitter {
                   // request.assemble over the rebuilt request too (see the
                   // primary-path run above).
                   if (eventSpine.hasMiddleware("request.assemble")) {
+                    const preHookNextToolNames = Object.keys(nextTools).sort().join(",");
                     const nextAssembleCtx: RequestAssembleContext = {
                       workspaceId,
                       modelString: nextModelString,
@@ -3450,6 +3473,28 @@ export class AIService extends EventEmitter {
                     };
                     await eventSpine.run("request.assemble", nextAssembleCtx);
                     nextTools = nextAssembleCtx.tools;
+                    // Same rebuild as the primary path: hook-removed tools
+                    // must not stay reachable via a stale code_execution
+                    // bridge (supplement mode only).
+                    if (
+                      Object.keys(nextTools).sort().join(",") !== preHookNextToolNames &&
+                      experiments?.programmaticToolCalling === true &&
+                      experiments?.programmaticToolCallingExclusive !== true &&
+                      nextTools.code_execution !== undefined
+                    ) {
+                      const { code_execution: _staleNextCodeExecution, ...postHookNextTools } =
+                        nextTools;
+                      nextTools = await applyToolPolicyAndExperiments({
+                        allTools: postHookNextTools,
+                        effectiveToolPolicy,
+                        experiments,
+                        emitNestedToolEvent: emitNestedPtcToolEvent,
+                        sandbox: {
+                          workspaceId,
+                          sessionDir: this.config.getSessionDir(workspaceId),
+                        },
+                      });
+                    }
                     // Same reconcile as the primary path: tool-search state
                     // must describe the post-hook toolset.
                     if (toolSearchRuntime?.state) {

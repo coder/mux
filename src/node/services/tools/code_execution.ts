@@ -10,7 +10,7 @@ import { tool } from "ai";
 import { z } from "zod";
 import type { Tool } from "ai";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
-import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
+import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import type { SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 
@@ -42,16 +42,23 @@ export type PTCEventWithParent = PTCEvent & { parentToolCallId: string };
  * @param runtimeFactory Factory for creating QuickJS runtime instances
  * @param toolBridge Bridge containing tools to expose in sandbox
  * @param emitNestedEvent Callback for streaming nested tool events (includes parentToolCallId)
- * @param mountProvider Optional SandboxHostService mount source. When absent,
+ * @param withMount Optional SandboxHostService lease runner
+ *   (withPersistentMount bound to this workspace's scope). When absent,
  *   behavior is the classic ephemeral per-call flow (create → eval → dispose).
- *   A persistent mount survives across calls: `vars` is shared, the tool
- *   bridge is registered once, and the runtime is not disposed here.
+ *   The runner holds the scope lock from mount acquisition through fn's
+ *   completion, so the register→eval→persist sequence cannot race concurrent
+ *   grant changes or scope disposal; the persistent runtime is not disposed
+ *   here.
  */
+export type MountRunner = (
+  fn: (mount: SandboxMount) => Promise<PTCExecutionResult>
+) => Promise<PTCExecutionResult>;
+
 export async function createCodeExecutionTool(
   runtimeFactory: IJSRuntimeFactory,
   toolBridge: ToolBridge,
   emitNestedEvent?: (event: PTCEventWithParent) => void,
-  mountProvider?: () => Promise<SandboxMount>
+  withMount?: MountRunner
 ): Promise<Tool> {
   const bridgeableTools = toolBridge.getBridgeableTools();
 
@@ -123,13 +130,10 @@ ${muxTypes}
         };
       }
 
-      // Acquire the runtime: a SandboxHostService mount when provided
-      // (persistent mounts are reused across calls), otherwise the classic
-      // ephemeral per-call runtime.
-      const mount = mountProvider ? await mountProvider() : null;
-      const runtime = mount ? mount.runtime : await runtimeFactory.create();
-
-      const runWithRuntime = async (): Promise<PTCExecutionResult> => {
+      const runWithRuntime = async (
+        mount: SandboxMount | null,
+        runtime: IJSRuntime
+      ): Promise<PTCExecutionResult> => {
         const onAbort = () => runtime.abort();
         try {
           // Set resource limits (clamp timeout to max)
@@ -197,20 +201,21 @@ ${muxTypes}
         }
       };
 
+      // Persistent mounts can be handed to concurrent code_execution calls
+      // for the same workspace, but eval() mutates runtime-wide state (abort
+      // controller, tool-call attribution, event handler). The lease runner
+      // holds the scope lock from acquisition through the whole
+      // register→eval→persist sequence, so concurrent calls, grant changes,
+      // and scope disposal are all serialized against this execution.
+      if (withMount) {
+        return await withMount((mount) => runWithRuntime(mount, mount.runtime));
+      }
+      // Classic ephemeral flow: per-call runtime, no serialization needed.
+      const runtime = await runtimeFactory.create();
       try {
-        // Persistent mounts can be handed to concurrent code_execution calls
-        // for the same workspace, but eval() mutates runtime-wide state
-        // (abort controller, tool-call attribution, event handler), so the
-        // register→eval→persist sequence runs under the mount's exclusive
-        // lock. Ephemeral runtimes are per-call and need no serialization.
-        return mount ? await mount.exclusive(runWithRuntime) : await runWithRuntime();
+        return await runWithRuntime(null, runtime);
       } finally {
-        if (mount) {
-          mount.release(); // dispose ephemeral mounts; keep persistent alive
-        } else {
-          // Clean up runtime resources
-          runtime.dispose();
-        }
+        runtime.dispose();
       }
     },
   });

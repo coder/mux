@@ -189,6 +189,7 @@ export class QuickJSRuntime implements IJSRuntime {
       // execution, so consulting them at settlement would report the record
       // under a later eval and emit it to the wrong handler.
       const toolCalls = this.toolCalls;
+      const consoleOutput = this.consoleOutput;
       const eventHandler = this.eventHandler;
       // Generation of the eval this capability originated from: settlement
       // may touch the VM directly only while that same eval is still running
@@ -213,8 +214,25 @@ export class QuickJSRuntime implements IJSRuntime {
       const settleInVm = (run: () => void) => {
         const guarded = () => {
           if (this.disposed) return;
-          run();
-          this.ctx.runtime.executePendingJobs();
+          // Bind the resumed guest continuation to its ORIGINATING eval's
+          // attribution state: console.log and nested capability calls inside
+          // the continuation read the runtime's mutable fields, which by now
+          // may belong to a later eval. Swap for the duration of the drain,
+          // then restore (no-op while the originating eval is still active).
+          const prevToolCalls = this.toolCalls;
+          const prevConsoleOutput = this.consoleOutput;
+          const prevEventHandler = this.eventHandler;
+          this.toolCalls = toolCalls;
+          this.consoleOutput = consoleOutput;
+          this.eventHandler = eventHandler;
+          try {
+            run();
+            this.ctx.runtime.executePendingJobs();
+          } finally {
+            this.toolCalls = prevToolCalls;
+            this.consoleOutput = prevConsoleOutput;
+            this.eventHandler = prevEventHandler;
+          }
         };
         if (this.activeEvalGeneration === originGeneration && originGeneration !== null) {
           guarded();

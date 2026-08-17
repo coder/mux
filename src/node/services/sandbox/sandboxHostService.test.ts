@@ -257,6 +257,43 @@ describe("SandboxHostService", () => {
     await host.disposeScope("ws-race");
   });
 
+  test("withPersistentMount holds the lease: concurrent disposal waits for fn to finish", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const order: string[] = [];
+    let releaseFn: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      releaseFn = resolve;
+    });
+
+    const run = host.withPersistentMount(
+      {
+        lifetime: "persistent",
+        runtimeFactory,
+        scopeKey: "ws-lease",
+        sessionDir: tmp.path,
+      },
+      async (mount) => {
+        order.push("fn-start");
+        await gate;
+        // The mount must still be live: disposeScope started while fn held
+        // the lease and must be queued behind it, not race it.
+        expect(mount.isDisposed).toBe(false);
+        const result = await mount.runtime.eval("return 7;");
+        order.push("fn-end");
+        return result;
+      }
+    );
+    // Give fn time to enter the lease, then attempt disposal concurrently.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const disposal = host.disposeScope("ws-lease").then(() => order.push("disposed"));
+    releaseFn?.();
+    const result = await run;
+    await disposal;
+    expect(result.success).toBe(true);
+    expect(order).toEqual(["fn-start", "fn-end", "disposed"]);
+  });
+
   test("exclusive() serializes concurrent runs on a shared mount", async () => {
     using tmp = new DisposableTempDir("sandbox-host-test");
     const host = new SandboxHostService();
