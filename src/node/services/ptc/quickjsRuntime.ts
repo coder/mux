@@ -391,7 +391,7 @@ export class QuickJSRuntime implements IJSRuntime {
             // The originating eval still owns the tool-call record via the
             // attribution captured at call time above.
             run();
-            this.ctx.runtime.executePendingJobs();
+            this.drainPendingJobs();
             this.clearReactionOwner();
             return;
           }
@@ -406,7 +406,7 @@ export class QuickJSRuntime implements IJSRuntime {
           this.eventHandler = eventHandler;
           try {
             run();
-            this.ctx.runtime.executePendingJobs();
+            this.drainPendingJobs();
             this.clearReactionOwner();
           } finally {
             this.toolCalls = prevToolCalls;
@@ -779,14 +779,9 @@ export class QuickJSRuntime implements IJSRuntime {
       // a capability promise registers through the patched then here) must
       // tag with THIS eval as owner, not whichever eval drains them later.
       if (!this.disposed) {
-        const leftoverJobs = this.ctx.runtime.executePendingJobs();
-        if (leftoverJobs.error) {
-          // Fire-and-forget guest job failed; surfacing it would mask the
-          // eval result. Drop it — same policy as the gate's drain.
-          leftoverJobs.error.dispose();
-        } else {
-          leftoverJobs.dispose();
-        }
+        // A failed fire-and-forget guest job is dropped (surfacing it would
+        // mask the eval result) — same policy as the gate's drain.
+        this.drainPendingJobs();
         this.clearReactionOwner();
       }
       // Settlements arriving from here on are LATE (post-eval) and must be
@@ -835,6 +830,20 @@ export class QuickJSRuntime implements IJSRuntime {
   private assertNotDisposed(method: string): void {
     if (this.disposed) {
       throw new Error(`Cannot call ${method} on disposed QuickJSRuntime`);
+    }
+  }
+
+  /** Execute pending guest jobs and dispose the disposable result in both
+   * the success and error cases — dropping it leaks QuickJS handles, which
+   * accumulates across repeated capability settlements on persistent mounts.
+   * Fire-and-forget drain: a failed guest job here has nothing to report to
+   * (same policy as eval()'s finally drain). */
+  private drainPendingJobs(): void {
+    const result = this.ctx.runtime.executePendingJobs();
+    if (result.error) {
+      result.error.dispose();
+    } else {
+      result.dispose();
     }
   }
 
