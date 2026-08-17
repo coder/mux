@@ -613,6 +613,95 @@ describe("QuickJSRuntime", () => {
       }
     });
 
+    it("attributes reactions registered by a prior eval to that eval", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+
+      // Eval 1 registers ITS OWN reaction on the capability promise.
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        globalThis.p.then((v) => console.log("prior-owned", v));
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+      expect(first.consoleOutput).toHaveLength(0);
+
+      // Eval 2 parks in its resolve loop on an unrelated capability; the
+      // prior eval's promise settles during that drain window.
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveP).toBeDefined();
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveUnrelated).toBeDefined();
+      resolveUnrelated?.("done");
+      const second = await evalPromise;
+      expect(second.success).toBe(true);
+      expect(second.result).toBe("done");
+
+      // The reaction was REGISTERED by eval 1: its console output must land
+      // there, not on the eval whose drain executed the job.
+      expect(first.consoleOutput.some((c) => c.args[0] === "prior-owned")).toBe(true);
+      expect(second.consoleOutput.some((c) => c.args[0] === "prior-owned")).toBe(false);
+    });
+
+    it("attributes nested capabilities started by a prior eval's reaction to that eval", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+      runtime.registerPromiseFunction("nestedCap", () => Promise.resolve("nested-done"));
+
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        globalThis.p.then(() => { nestedCap(); });
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+      expect(first.toolCalls).toHaveLength(0);
+
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      resolveUnrelated?.("done");
+      const second = await evalPromise;
+      expect(second.success).toBe(true);
+
+      // Give the nested capability's settlement bookkeeping time to land.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      // The nested capability was started inside eval 1's reaction: its
+      // record belongs to eval 1 even though eval 2's drain ran the job.
+      expect(first.toolCalls.map((c) => c.toolName)).toContain("nestedCap");
+      expect(second.toolCalls.map((c) => c.toolName)).not.toContain("nestedCap");
+    });
+
     it("queues a prior-eval settlement arriving during an unrelated asyncified call", async () => {
       const mutex = new AsyncMutex();
       runtime.setPendingJobGate((run) => {

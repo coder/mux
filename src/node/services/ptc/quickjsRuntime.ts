@@ -25,6 +25,60 @@ function generateCallId(): string {
   return crypto.randomBytes(5).toString("hex");
 }
 
+/** Guest globals used for per-reaction attribution (see REACTION_TAGGING_SCRIPT). */
+const EVAL_GENERATION_GLOBAL = "__muxEvalGeneration";
+const REACTION_OWNER_GLOBAL = "__muxReactionOwner";
+
+/**
+ * Installed once per context: tags every promise reaction with the eval
+ * generation that REGISTERED it. Persistent mounts share one context across
+ * evals, and a capability promise from eval N can settle while eval M runs —
+ * QuickJS's job queue carries no per-job ownership, so registration is the
+ * only point where the owner is knowable. The wrapper sets the owner global
+ * for the duration of the callback; host entry points (console, capability
+ * calls) read it to route records to the owning eval's context. catch()/
+ * finally() delegate to then() per spec, so patching then() covers them.
+ * Best-effort observability, not a security boundary: guests can overwrite
+ * the patch, and await-registered continuations use the engine-internal
+ * reaction path (no .then call), falling back to the drain context.
+ */
+const REACTION_TAGGING_SCRIPT = `
+(() => {
+  const origThen = Promise.prototype.then;
+  Promise.prototype.then = function (onFulfilled, onRejected) {
+    const owner =
+      globalThis.${REACTION_OWNER_GLOBAL} !== undefined
+        ? globalThis.${REACTION_OWNER_GLOBAL}
+        : globalThis.${EVAL_GENERATION_GLOBAL};
+    const wrap = (fn) =>
+      typeof fn === "function"
+        ? function (value) {
+            const prev = globalThis.${REACTION_OWNER_GLOBAL};
+            globalThis.${REACTION_OWNER_GLOBAL} = owner;
+            try {
+              return fn(value);
+            } finally {
+              globalThis.${REACTION_OWNER_GLOBAL} = prev;
+            }
+          }
+        : fn;
+    return origThen.call(this, wrap(onFulfilled), wrap(onRejected));
+  };
+})();
+`;
+
+/** Per-eval attribution sinks; see generationContexts. */
+interface AttributionContext {
+  toolCalls: PTCToolCallRecord[];
+  consoleOutput: PTCConsoleRecord[];
+  eventHandler: ((event: PTCEvent) => void) | undefined;
+}
+
+/** Bound on retained per-eval attribution contexts (persistent mounts run
+ * many evals; reactions rarely outlive a handful of calls). Evicted
+ * generations fall back to the drain context. */
+const MAX_GENERATION_CONTEXTS = 8;
+
 /**
  * QuickJS-based JavaScript runtime for PTC.
  * Uses Asyncify build for async host function support.
@@ -40,11 +94,17 @@ export class QuickJSRuntime implements IJSRuntime {
   private pendingJobGate?: (run: () => void) => void;
   /** Monotonic eval counter + the generation currently inside eval() (null
    * between evals). Distinguishes settlements arriving mid-eval (queued for
-   * the eval's own drain points; reactions attribute to the consuming eval)
-   * from truly-late ones between evals (gated; reactions attribute to their
-   * originating eval). */
+   * the eval's own drain points) from truly-late ones between evals (gated).
+   * Reaction attribution is per-registration via REACTION_TAGGING_SCRIPT +
+   * generationContexts; the drain-context swaps are only the fallback for
+   * untagged (await-registered) continuations. */
   private evalGeneration = 0;
   private activeEvalGeneration: number | null = null;
+  /** Attribution sinks per eval generation. Tagged reactions route their
+   * console output and nested capability records to the eval that REGISTERED
+   * them, no matter which eval's drain executes the job. Bounded by
+   * MAX_GENERATION_CONTEXTS (oldest evicted; fallback is the drain context). */
+  private readonly generationContexts = new Map<number, AttributionContext>();
   /** True only while eval()'s returned-value resolve loop coordinates VM
    * access (evalCodeAsync completed, VM idle at the top level). Settlements
    * may touch the VM directly ONLY then: during asyncified suspension the
@@ -209,10 +269,14 @@ export class QuickJSRuntime implements IJSRuntime {
       // can settle after its originating eval() returned (timeout/abort or
       // un-awaited call). eval() swaps this.toolCalls/this.eventHandler per
       // execution, so consulting them at settlement would report the record
-      // under a later eval and emit it to the wrong handler.
-      const toolCalls = this.toolCalls;
-      const consoleOutput = this.consoleOutput;
-      const eventHandler = this.eventHandler;
+      // under a later eval and emit it to the wrong handler. Resolved via
+      // currentAttribution(): a capability started inside a tagged reaction
+      // records to the eval that REGISTERED the reaction, not whichever
+      // eval's drain happens to execute it.
+      const attribution = this.currentAttribution();
+      const toolCalls = attribution.toolCalls;
+      const consoleOutput = attribution.consoleOutput;
+      const eventHandler = attribution.eventHandler;
 
       eventHandler?.({
         type: "tool-call-start",
@@ -233,21 +297,23 @@ export class QuickJSRuntime implements IJSRuntime {
       const settleInVm = (run: () => void) => {
         const execute = () => {
           if (this.disposed) return;
+          // Reaction attribution is per-registration: tagged callbacks route
+          // console output and nested capability records to the eval that
+          // registered them via currentAttribution(), regardless of which
+          // drain executes the job. The branches below only choose the
+          // FALLBACK context for untagged (await-registered) continuations.
           if (this.activeEvalGeneration !== null) {
-            // A consuming eval is draining this settlement: the pending
-            // reactions include continuations IT created (e.g.
-            // `return p.then(...)` on a prior eval's stored promise), so
-            // they run under the CURRENT eval's attribution state. The
-            // originating eval still owns the tool-call record itself via
-            // the captured arrays above.
+            // A consuming eval is draining: fall back to its state (it may
+            // have created untagged continuations on this promise itself).
+            // The originating eval still owns the tool-call record via the
+            // attribution captured at call time above.
             run();
             this.ctx.runtime.executePendingJobs();
             return;
           }
-          // Between evals: bind the drained continuations to their
-          // ORIGINATING eval's attribution state — console.log and nested
-          // capability calls read the runtime's mutable fields, which by now
-          // may have been swapped by later evals. Restore afterwards.
+          // Between evals: fall back to the ORIGINATING eval's attribution
+          // state — the runtime's mutable fields may have been swapped by
+          // later evals. Restore afterwards.
           const prevToolCalls = this.toolCalls;
           const prevConsoleOutput = this.consoleOutput;
           const prevEventHandler = this.eventHandler;
@@ -487,9 +553,10 @@ export class QuickJSRuntime implements IJSRuntime {
       this.abortController.abort();
     }
 
-    // Set up console capturing (only once)
+    // Set up console capturing + reaction tagging (only once)
     if (!this.consoleSetup) {
       this.setupConsole();
+      this.setupReactionTagging();
       this.consoleSetup = true;
     }
 
@@ -527,6 +594,24 @@ export class QuickJSRuntime implements IJSRuntime {
     // originating attribution state.
     this.drainQueuedLateSettlements();
     this.activeEvalGeneration = ++this.evalGeneration;
+
+    // Register this eval's attribution sinks and expose the generation to
+    // the guest so reactions registered from here on are tagged with it
+    // (REACTION_TAGGING_SCRIPT). Placed after the drain: drained reactions
+    // belong to prior generations.
+    this.generationContexts.set(this.activeEvalGeneration, {
+      toolCalls: this.toolCalls,
+      consoleOutput: this.consoleOutput,
+      eventHandler: this.eventHandler,
+    });
+    while (this.generationContexts.size > MAX_GENERATION_CONTEXTS) {
+      const oldest: number | undefined = this.generationContexts.keys().next().value;
+      if (oldest === undefined) break;
+      this.generationContexts.delete(oldest);
+    }
+    const generationHandle = this.ctx.newNumber(this.activeEvalGeneration);
+    this.ctx.setProp(this.ctx.global, EVAL_GENERATION_GLOBAL, generationHandle);
+    generationHandle.dispose();
 
     // Wrap code in function to allow return statements.
     // With asyncify, async host functions appear synchronous to QuickJS,
@@ -801,11 +886,11 @@ export class QuickJSRuntime implements IJSRuntime {
         const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
         const timestamp = Date.now();
 
-        // Record console output
-        this.consoleOutput.push({ level, args, timestamp });
-
-        // Emit console event
-        this.eventHandler?.({
+        // Route to the eval that registered the enclosing reaction (falls
+        // back to the current drain context for untagged code).
+        const attribution = this.currentAttribution();
+        attribution.consoleOutput.push({ level, args, timestamp });
+        attribution.eventHandler?.({
           type: "console",
           level,
           args,
@@ -818,6 +903,48 @@ export class QuickJSRuntime implements IJSRuntime {
 
     this.ctx.setProp(this.ctx.global, "console", consoleObj);
     consoleObj.dispose();
+  }
+
+  /** Install the promise-reaction tagging patch; see REACTION_TAGGING_SCRIPT. */
+  private setupReactionTagging(): void {
+    const result = this.ctx.evalCode(REACTION_TAGGING_SCRIPT);
+    if (result.error) {
+      const errObj: unknown = this.ctx.dump(result.error) as unknown;
+      result.error.dispose();
+      // Startup invariant — the script is static; crash fast if it breaks.
+      throw new Error(`Failed to install reaction tagging: ${this.formatError(errObj)}`);
+    }
+    result.value.dispose();
+  }
+
+  /** Generation of the eval that registered the currently-running promise
+   * reaction, or undefined outside tagged callbacks. */
+  private readReactionOwner(): number | undefined {
+    const handle = this.ctx.getProp(this.ctx.global, REACTION_OWNER_GLOBAL);
+    try {
+      const value: unknown = this.ctx.dump(handle) as unknown;
+      return typeof value === "number" ? value : undefined;
+    } finally {
+      handle.dispose();
+    }
+  }
+
+  /** Attribution sinks for the code executing RIGHT NOW: the registering
+   * eval's context when inside a tagged reaction, else the current drain
+   * context (the runtime's mutable fields, possibly swapped by settleInVm). */
+  private currentAttribution(): AttributionContext {
+    const owner = this.readReactionOwner();
+    if (owner !== undefined) {
+      const context = this.generationContexts.get(owner);
+      if (context) {
+        return context;
+      }
+    }
+    return {
+      toolCalls: this.toolCalls,
+      consoleOutput: this.consoleOutput,
+      eventHandler: this.eventHandler,
+    };
   }
 
   /**
