@@ -39,16 +39,25 @@ export class QuickJSRuntime implements IJSRuntime {
   /** Serializes late-settlement guest continuations; see setPendingJobGate. */
   private pendingJobGate?: (run: () => void) => void;
   /** Monotonic eval counter + the generation currently inside eval() (null
-   * between evals). Used to detect LATE capability settlements that must be
-   * routed through the pending-job gate instead of touching the VM directly. */
+   * between evals). Distinguishes settlements arriving mid-eval (queued for
+   * the eval's own drain points; reactions attribute to the consuming eval)
+   * from truly-late ones between evals (gated; reactions attribute to their
+   * originating eval). */
   private evalGeneration = 0;
   private activeEvalGeneration: number | null = null;
-  /** Late settlements handed to the pending-job gate but not yet run. eval()
-   * drains this at start: the gate serializes on the scope lock, so a
-   * settlement queued between calls can lose the lock race to the next
-   * code_execution call — without the drain, that eval could never consume
-   * the guest-visible promise (the tracked host promise resolves at gate
-   * hand-off, so the resolve loop has nothing left to wait on). */
+  /** True only while eval()'s returned-value resolve loop coordinates VM
+   * access (evalCodeAsync completed, VM idle at the top level). Settlements
+   * may touch the VM directly ONLY then: during asyncified suspension the
+   * WASM stack is unwound and re-entry would corrupt it, and between evals
+   * another call may own the runtime. */
+  private directSettleAllowed = false;
+  /** VM-facing settlements that could not safely touch the VM on arrival:
+   * either the active eval was suspended inside an asyncified call, or the
+   * settlement landed between evals and must serialize through the
+   * pending-job gate (whose lock acquisition can lose the race to the next
+   * code_execution call). Drained at eval start, by the resolve loop, at
+   * eval end, and by the gate — whichever runs first; later drains see an
+   * empty queue. */
   private readonly queuedLateSettlements: Array<() => void> = [];
   /** Current registration per registerObject name; guest methods dispatch
    * through this at call time so re-registration retargets saved references. */
@@ -214,22 +223,31 @@ export class QuickJSRuntime implements IJSRuntime {
       });
 
       // VM-facing settlement: marshal + resolve/reject + drain continuations.
-      // Runs directly while ANY eval is active: that eval's resolve loop
-      // coordinates VM access and may itself be awaiting this settlement
-      // (e.g. a later call returning a promise stored by a prior call), so
-      // routing through the gate would deadlock — the gate serializes on the
-      // mount lock held by that very eval. Settlements between evals go
-      // through the gate so they cannot re-enter the shared QuickJS context
-      // unserialized; they are queued so the next eval can drain them if its
-      // call wins the mount-lock race against the gate.
+      // May touch the VM directly ONLY while an eval's resolve loop is
+      // coordinating (directSettleAllowed): during asyncified suspension the
+      // WASM stack is unwound and re-entry would corrupt it, and between
+      // evals another call may own the runtime. Routing through the gate
+      // while an eval holds the mount lock would deadlock (the gate waits on
+      // that very lock), so mid-eval arrivals are queued for the eval's own
+      // drain points instead.
       const settleInVm = (run: () => void) => {
-        const guarded = () => {
+        const execute = () => {
           if (this.disposed) return;
-          // Bind the resumed guest continuation to its ORIGINATING eval's
-          // attribution state: console.log and nested capability calls inside
-          // the continuation read the runtime's mutable fields, which by now
-          // may belong to a later eval. Swap for the duration of the drain,
-          // then restore (no-op while the originating eval is still active).
+          if (this.activeEvalGeneration !== null) {
+            // A consuming eval is draining this settlement: the pending
+            // reactions include continuations IT created (e.g.
+            // `return p.then(...)` on a prior eval's stored promise), so
+            // they run under the CURRENT eval's attribution state. The
+            // originating eval still owns the tool-call record itself via
+            // the captured arrays above.
+            run();
+            this.ctx.runtime.executePendingJobs();
+            return;
+          }
+          // Between evals: bind the drained continuations to their
+          // ORIGINATING eval's attribution state — console.log and nested
+          // capability calls read the runtime's mutable fields, which by now
+          // may have been swapped by later evals. Restore afterwards.
           const prevToolCalls = this.toolCalls;
           const prevConsoleOutput = this.consoleOutput;
           const prevEventHandler = this.eventHandler;
@@ -245,16 +263,27 @@ export class QuickJSRuntime implements IJSRuntime {
             this.eventHandler = prevEventHandler;
           }
         };
+        if (this.directSettleAllowed) {
+          // The active eval is parked in its resolve loop: the VM is idle at
+          // the top level and this call's owner holds the mount lock, so the
+          // settlement may land now (the loop may itself be awaiting it).
+          execute();
+          return;
+        }
+        this.queuedLateSettlements.push(execute);
         if (this.activeEvalGeneration !== null) {
-          // Attribution stays bound to the ORIGINATING eval either way: for a
-          // different active generation, guarded() swaps in the captured
-          // per-eval state for the duration of the drain.
-          guarded();
-        } else if (this.pendingJobGate) {
-          this.queuedLateSettlements.push(guarded);
+          // The active eval is suspended inside an asyncified capability
+          // call: touching the VM would re-enter the unwound WASM stack.
+          // The eval's resolve loop or finally-block drain lands the queue.
+          return;
+        }
+        if (this.pendingJobGate) {
+          // Between evals on a shared runtime: schedule a serialized drain.
           this.pendingJobGate(() => this.drainQueuedLateSettlements());
         } else {
-          guarded();
+          // Between evals on a single-owner (ephemeral) runtime: the VM is
+          // idle and nothing else can hold it — land immediately.
+          this.drainQueuedLateSettlements();
         }
       };
 
@@ -452,7 +481,6 @@ export class QuickJSRuntime implements IJSRuntime {
     this.abortController = new AbortController();
     this.toolCalls = [];
     this.consoleOutput = [];
-    this.activeEvalGeneration = ++this.evalGeneration;
 
     // Honor abort requests made before eval() was called
     if (this.abortRequested) {
@@ -494,8 +522,11 @@ export class QuickJSRuntime implements IJSRuntime {
     // runs so a promise stored by a prior eval is consumable here; the gate's
     // eventual drain then finds an empty queue and no-ops. Placed after the
     // interrupt handler + timer setup so the drain runs under THIS eval's
-    // deadline, not a stale one.
+    // deadline (not a stale one), and BEFORE the generation is marked active
+    // so the drained reactions — all created by prior evals — bind to their
+    // originating attribution state.
     this.drainQueuedLateSettlements();
+    this.activeEvalGeneration = ++this.evalGeneration;
 
     // Wrap code in function to allow return statements.
     // With asyncify, async host functions appear synchronous to QuickJS,
@@ -504,6 +535,10 @@ export class QuickJSRuntime implements IJSRuntime {
 
     try {
       const evalResult = await this.ctx.evalCodeAsync(wrappedCode);
+      // Top-level guest execution finished: the VM is idle and this call
+      // still owns the runtime, so settlements may now land directly (the
+      // resolve loop below coordinates, and may itself await them).
+      this.directSettleAllowed = true;
 
       if (evalResult.error) {
         const errObj: unknown = this.ctx.dump(evalResult.error) as unknown;
@@ -559,8 +594,20 @@ export class QuickJSRuntime implements IJSRuntime {
       // across calls, and a sticky flag would poison every later eval.
       this.abortRequested = false;
       // Settlements arriving from here on are LATE (post-eval) and must be
-      // gated; see registerPromiseFunction.
+      // queued; see settleInVm in registerPromiseFunction.
+      this.directSettleAllowed = false;
       this.activeEvalGeneration = null;
+      // Land settlements queued while guest code was suspended inside an
+      // asyncified call and not consumed by the resolve loop (e.g. the guest
+      // returned a plain value or threw). Serialized through the gate when
+      // present; a gateless (ephemeral) runtime is single-owner and idle.
+      if (this.queuedLateSettlements.length > 0) {
+        if (this.pendingJobGate) {
+          this.pendingJobGate(() => this.drainQueuedLateSettlements());
+        } else {
+          this.drainQueuedLateSettlements();
+        }
+      }
     }
   }
 
@@ -595,15 +642,19 @@ export class QuickJSRuntime implements IJSRuntime {
     }
   }
 
-  /** Run queued late settlements in arrival order. Called from eval() start
-   * (under the caller's mount lock) and from the pending-job gate (under the
-   * gate's own lock acquisition) — whichever wins the race; the loser sees an
-   * empty queue. Each entry is a guarded() that no-ops after dispose. */
-  private drainQueuedLateSettlements(): void {
+  /** Run queued late settlements in arrival order; returns whether any ran.
+   * Called from eval() start, the resolve loop, and eval() end (all under
+   * the caller's mount lock) and from the pending-job gate (under the gate's
+   * own lock acquisition) — whichever runs first; later drains see an empty
+   * queue. Each entry no-ops after dispose. */
+  private drainQueuedLateSettlements(): boolean {
+    let drained = false;
     while (this.queuedLateSettlements.length > 0) {
       const run = this.queuedLateSettlements.shift();
       run?.();
+      drained = true;
     }
+    return drained;
   }
 
   private async resolveReturnedValue(
@@ -619,6 +670,10 @@ export class QuickJSRuntime implements IJSRuntime {
           error: this.getErrorMessage("Execution interrupted", deadline, timeoutMs),
         };
       }
+      // Land settlements queued while guest code was suspended inside an
+      // asyncified call (see settleInVm): the returned value may be a prior
+      // eval's promise that only these settlements can resolve.
+      const drainedQueued = this.drainQueuedLateSettlements();
       if (this.ctx.runtime.hasPendingJob()) {
         const pendingJobs = this.ctx.runtime.executePendingJobs();
         if (pendingJobs.error) {
@@ -628,12 +683,12 @@ export class QuickJSRuntime implements IJSRuntime {
           return { success: false, error };
         }
         pendingJobs.dispose();
-      } else if (this.pendingHostPromises.size > 0) {
+      } else if (!drainedQueued && this.pendingHostPromises.size > 0) {
         // The returned value may depend on an in-flight async capability
         // (registerPromiseFunction). Wait for any settlement, bounded by the
         // deadline/abort; each settlement schedules executePendingJobs.
         await this.waitForAnyHostPromise(deadline);
-      } else {
+      } else if (!drainedQueued) {
         // Nothing can ever settle this promise.
         break;
       }

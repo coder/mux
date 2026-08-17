@@ -573,6 +573,97 @@ describe("QuickJSRuntime", () => {
       expect(third.result).toBe(3);
     });
 
+    it("attributes cross-eval promise reactions to the consuming eval", async () => {
+      const mutex = new AsyncMutex();
+      runtime.setPendingJobGate((run) => {
+        void (async () => {
+          await using _lock = await mutex.acquire();
+          run();
+        })();
+      });
+
+      let resolveHost: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveHost = resolve;
+          })
+      );
+
+      const first = await runtime.eval('globalThis.p = lateCap(); return "stored";');
+      expect(first.success).toBe(true);
+
+      {
+        await using _lock = await mutex.acquire();
+        // The .then() reaction is created by THIS eval on the prior eval's
+        // stored promise: its console output must land on the consuming
+        // eval, not retroactively on the already-returned originating one.
+        const evalPromise = runtime.eval(
+          'return globalThis.p.then((v) => { console.log("consumed", v); return v; });'
+        );
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(resolveHost).toBeDefined();
+        resolveHost?.("late-value");
+        const second = await evalPromise;
+        expect(second.success).toBe(true);
+        expect(second.result).toBe("late-value");
+        expect(second.consoleOutput.some((c) => c.args[0] === "consumed")).toBe(true);
+        expect(first.consoleOutput).toHaveLength(0);
+      }
+    });
+
+    it("queues a prior-eval settlement arriving during an unrelated asyncified call", async () => {
+      const mutex = new AsyncMutex();
+      runtime.setPendingJobGate((run) => {
+        void (async () => {
+          await using _lock = await mutex.acquire();
+          run();
+        })();
+      });
+
+      let resolveHost: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveHost = resolve;
+          })
+      );
+      let resolveBash: ((value: string) => void) | undefined;
+      runtime.registerObject("mux", {
+        bash: () =>
+          new Promise<string>((resolve) => {
+            resolveBash = resolve;
+          }),
+      });
+
+      const first = await runtime.eval('globalThis.p = lateCap(); return "stored";');
+      expect(first.success).toBe(true);
+
+      {
+        await using _lock = await mutex.acquire();
+        // The eval suspends inside the asyncified mux.bash call (unwound
+        // WASM stack)...
+        const evalPromise = runtime.eval("const r = mux.bash({}); return globalThis.p;");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        // ...and the prior eval's capability settles during that suspension:
+        // touching the VM now would re-enter suspended WASM, so the
+        // settlement must queue until a safe drain point.
+        expect(resolveHost).toBeDefined();
+        resolveHost?.("cross-eval");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // Resume the asyncified call; the resolve loop drains the queued
+        // settlement so the returned prior-eval promise is consumable.
+        expect(resolveBash).toBeDefined();
+        resolveBash?.("bash-done");
+        const second = await evalPromise;
+        expect(second.success).toBe(true);
+        expect(second.result).toBe("cross-eval");
+      }
+    });
+
     it("re-registering an object retargets guest-saved method references", async () => {
       runtime.registerObject("mux", {
         bash: () => Promise.resolve("original"),
