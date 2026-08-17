@@ -153,3 +153,5 @@ ds-bundle/
 
 # TRAE remote sandbox share artifacts (auto-generated, not repo content)
 .trae-html-share-packages/
+.gh-token
+.git-credentials
