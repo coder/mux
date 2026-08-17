@@ -370,6 +370,85 @@ describe("QuickJSRuntime", () => {
     });
   });
 
+  describe("async capability bridge (registerPromiseFunction)", () => {
+    it("returns a real Promise into the guest that resolves via await", async () => {
+      runtime.registerPromiseFunction("slowDouble", async (n) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return (n as number) * 2;
+      });
+
+      // Guest awaits the capability promise inside an async IIFE; eval's
+      // resolve loop must wait for the host settlement instead of reporting a
+      // stuck pending Promise.
+      const result = await runtime.eval(`
+        return (async () => {
+          const doubled = await slowDouble(21);
+          return { doubled };
+        })();
+      `);
+      expect(result.success).toBe(true);
+      expect(result.result).toEqual({ doubled: 42 });
+    });
+
+    it("supports fire-and-forget: returns immediately without awaiting", async () => {
+      let settled = false;
+      runtime.registerPromiseFunction("background", async () => {
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        settled = true;
+        return "done";
+      });
+
+      const result = await runtime.eval(`
+        const p = background();
+        return { startedImmediately: typeof p.then === "function" };
+      `);
+      expect(result.success).toBe(true);
+      expect(result.result).toEqual({ startedImmediately: true });
+      // The guest did not wait for the host promise.
+      expect(settled).toBe(false);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(true);
+    });
+
+    it("propagates capability rejection as a catchable guest error", async () => {
+      runtime.registerPromiseFunction("failAsync", () => {
+        return Promise.reject(new Error("capability exploded"));
+      });
+
+      const result = await runtime.eval(`
+        return (async () => {
+          try {
+            await failAsync();
+            return "no error";
+          } catch (e) {
+            return "caught: " + e.message;
+          }
+        })();
+      `);
+      expect(result.success).toBe(true);
+      expect(result.result).toBe("caught: capability exploded");
+    });
+
+    it("still reports a genuinely stuck pending Promise", async () => {
+      const result = await runtime.eval("return new Promise(() => {});");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("pending Promise");
+    });
+
+    it("enforces the deadline while awaiting a capability promise", async () => {
+      runtime.setLimits({ timeoutMs: 100 });
+      runtime.registerPromiseFunction("never", () => new Promise(() => {}));
+      const result = await runtime.eval(`
+        return (async () => {
+          await never();
+          return "unreachable";
+        })();
+      `);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("timeout");
+    });
+  });
+
   describe("dispose", () => {
     it("throws on eval after dispose", async () => {
       runtime.dispose();

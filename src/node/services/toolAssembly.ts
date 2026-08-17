@@ -19,6 +19,7 @@ import type {
 } from "@/node/services/tools/code_execution";
 import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
+import { sandboxHostService } from "@/node/services/sandbox/sandboxHostService";
 import { log } from "./log";
 import type { MCPWorkspaceStats } from "@/node/services/mcpServerManager";
 import type { TelemetryService } from "@/node/services/telemetryService";
@@ -82,6 +83,19 @@ export interface ApplyToolPolicyAndExperimentsOptions {
   };
   /** Callback to forward nested PTC tool events to the stream. */
   emitNestedToolEvent: (event: PTCEventWithParent) => void;
+  /**
+   * Sandbox host context for code_execution. When set AND persistent mounts
+   * are enabled (MUX_SANDBOX_PERSISTENT_MOUNTS=1), code_execution reuses a
+   * per-workspace persistent mount (shared `vars`, snapshot/restore) instead
+   * of an ephemeral per-call runtime. Foundation-level opt-in only; the
+   * persistent-kernel UX belongs to the RLM track.
+   */
+  sandbox?: { workspaceId: string; sessionDir: string };
+}
+
+/** Env opt-in for persistent code_execution mounts (dogfooding/Track 2). */
+export function persistentSandboxMountsEnabled(): boolean {
+  return process.env.MUX_SANDBOX_PERSISTENT_MOUNTS === "1";
 }
 
 /**
@@ -99,7 +113,8 @@ export interface ApplyToolPolicyAndExperimentsOptions {
 export async function applyToolPolicyAndExperiments(
   opts: ApplyToolPolicyAndExperimentsOptions
 ): Promise<Record<string, Tool>> {
-  const { allTools, extraTools, effectiveToolPolicy, experiments, emitNestedToolEvent } = opts;
+  const { allTools, extraTools, effectiveToolPolicy, experiments, emitNestedToolEvent, sandbox } =
+    opts;
 
   // Merge in extra tools (e.g., CLI-specific tools like set_exit_code).
   // These bypass policy filtering since they're injected by the runtime, not user config.
@@ -122,11 +137,25 @@ export async function applyToolPolicyAndExperiments(
 
       // Singleton runtime factory (WASM module is expensive to load)
       ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
+      const runtimeFactory = ptc.runtimeFactory;
+
+      // Persistent mount opt-in: reuse one per-workspace guest across calls.
+      const mountProvider =
+        sandbox && persistentSandboxMountsEnabled()
+          ? () =>
+              sandboxHostService.acquireMount({
+                lifetime: "persistent",
+                runtimeFactory,
+                scopeKey: sandbox.workspaceId,
+                sessionDir: sandbox.sessionDir,
+              })
+          : undefined;
 
       const codeExecutionTool = await ptc.createCodeExecutionTool(
-        ptc.runtimeFactory,
+        runtimeFactory,
         toolBridge,
-        emitNestedToolEvent
+        emitNestedToolEvent,
+        mountProvider
       );
 
       if (experiments?.programmaticToolCallingExclusive) {

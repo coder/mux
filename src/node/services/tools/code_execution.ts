@@ -12,6 +12,7 @@ import type { Tool } from "ai";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
+import type { SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 
 import { analyzeCode } from "@/node/services/ptc/staticAnalysis";
 import { getCachedMuxTypes, clearTypeCache } from "@/node/services/ptc/typeGenerator";
@@ -40,11 +41,16 @@ export type PTCEventWithParent = PTCEvent & { parentToolCallId: string };
  * @param runtimeFactory Factory for creating QuickJS runtime instances
  * @param toolBridge Bridge containing tools to expose in sandbox
  * @param emitNestedEvent Callback for streaming nested tool events (includes parentToolCallId)
+ * @param mountProvider Optional SandboxHostService mount source. When absent,
+ *   behavior is the classic ephemeral per-call flow (create → eval → dispose).
+ *   A persistent mount survives across calls: `vars` is shared, the tool
+ *   bridge is registered once, and the runtime is not disposed here.
  */
 export async function createCodeExecutionTool(
   runtimeFactory: IJSRuntimeFactory,
   toolBridge: ToolBridge,
-  emitNestedEvent?: (event: PTCEventWithParent) => void
+  emitNestedEvent?: (event: PTCEventWithParent) => void,
+  mountProvider?: () => Promise<SandboxMount>
 ): Promise<Tool> {
   const bridgeableTools = toolBridge.getBridgeableTools();
 
@@ -116,9 +122,13 @@ ${muxTypes}
         };
       }
 
-      // Create runtime with resource limits
-      const runtime = await runtimeFactory.create();
+      // Acquire the runtime: a SandboxHostService mount when provided
+      // (persistent mounts are reused across calls), otherwise the classic
+      // ephemeral per-call runtime.
+      const mount = mountProvider ? await mountProvider() : null;
+      const runtime = mount ? mount.runtime : await runtimeFactory.create();
 
+      const onAbort = () => runtime.abort();
       try {
         // Set resource limits (clamp timeout to max)
         const timeoutSecs = Math.min(timeout_secs ?? DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
@@ -135,8 +145,15 @@ ${muxTypes}
           });
         }
 
-        // Register tools - they'll use runtime.getAbortSignal() for cancellation
-        toolBridge.register(runtime);
+        // Register tools - they'll use runtime.getAbortSignal() for cancellation.
+        // Persistent mounts register once; re-registering on a reused runtime
+        // would rebuild the mux.* object every call for no benefit.
+        if (!mount || !mount.bridgeRegistered) {
+          toolBridge.register(runtime);
+          if (mount) {
+            mount.bridgeRegistered = true;
+          }
+        }
 
         // Handle abort signal - interrupt sandbox and cancel nested tools
         if (abortSignal) {
@@ -144,15 +161,29 @@ ${muxTypes}
           if (abortSignal.aborted) {
             runtime.abort();
           } else {
-            abortSignal.addEventListener("abort", () => runtime.abort(), { once: true });
+            abortSignal.addEventListener("abort", onAbort, { once: true });
           }
         }
 
         // Execute the code
-        return await runtime.eval(code);
+        const result = await runtime.eval(code);
+
+        // Persist the shared vars namespace after each call on persistent
+        // mounts so state survives crashes/restarts (turn-boundary snapshots
+        // are the Track 2 refinement; per-call is the safe foundation).
+        if (mount && mount.lifetime === "persistent" && mount.grants.vars && result.success) {
+          await mount.persistVars();
+        }
+        return result;
       } finally {
-        // Clean up runtime resources
-        runtime.dispose();
+        // A late abort of THIS call's signal must not poison a reused runtime.
+        abortSignal?.removeEventListener("abort", onAbort);
+        if (mount) {
+          mount.release(); // dispose ephemeral mounts; keep persistent alive
+        } else {
+          // Clean up runtime resources
+          runtime.dispose();
+        }
       }
     },
   });

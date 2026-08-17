@@ -42,6 +42,25 @@ export interface IJSRuntime extends Disposable {
   registerObject(name: string, obj: Record<string, (...args: unknown[]) => Promise<unknown>>): void;
 
   /**
+   * Register a host function that returns a real Promise INTO the guest
+   * (async capability bridge). Unlike registerFunction (asyncified: guest
+   * blocks until the host settles), the guest receives the Promise
+   * immediately and may await it, chain it, or ignore it (fire-and-forget).
+   * eval() waits for in-flight capability promises the returned value depends
+   * on, bounded by the same deadline/interrupt semantics.
+   */
+  registerPromiseFunction(name: string, fn: (...args: unknown[]) => Promise<unknown>): void;
+
+  /**
+   * Register a synchronous host function (no asyncify, no suspension).
+   * Required for bridges that must be callable from guest continuations
+   * resumed via executePendingJobs (e.g. code after `await capability()`),
+   * where asyncified functions cannot suspend. Keep these fast and pure-ish:
+   * they block the guest.
+   */
+  registerSyncFunction(name: string, fn: (...args: unknown[]) => unknown): void;
+
+  /**
    * Set memory/CPU limits for the sandbox.
    * Must be called before eval() to take effect.
    */

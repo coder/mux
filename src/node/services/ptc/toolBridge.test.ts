@@ -25,6 +25,8 @@ function createMockRuntime(overrides: Partial<IJSRuntime> = {}): IJSRuntime {
     registerObject: mock(
       (_name: string, _obj: Record<string, () => Promise<unknown>>) => undefined
     ),
+    registerPromiseFunction: mock((_name: string, _fn: () => Promise<unknown>) => undefined),
+    registerSyncFunction: mock((_name: string, _fn: () => unknown) => undefined),
     setLimits: mock((_limits: RuntimeLimits) => undefined),
     onEvent: mock((_handler: (event: PTCEvent) => void) => undefined),
     abort: mock(() => undefined),

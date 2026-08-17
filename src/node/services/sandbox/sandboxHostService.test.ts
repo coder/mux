@@ -1,0 +1,221 @@
+/**
+ * QuickJS-heavy suite: keep out of broad Bun filters (runs isolated in CI,
+ * see .github/workflows: isolated_unit_tests).
+ */
+import { describe, expect, test } from "bun:test";
+import { readdirSync, statSync, writeFileSync } from "fs";
+import { join } from "path";
+import { DisposableTempDir } from "@/node/services/tempDir";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { LEAST_PRIVILEGE_GRANTS } from "@/common/types/capabilityGrants";
+import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { SandboxHostService } from "./sandboxHostService";
+
+const runtimeFactory = new QuickJSRuntimeFactory();
+
+describe("SandboxHostService", () => {
+  test("ephemeral mounts are fresh per acquire and dispose on release", async () => {
+    const host = new SandboxHostService();
+    const first = await host.acquireMount({ lifetime: "ephemeral", runtimeFactory });
+    const result = await first.runtime.eval("return 1 + 1;");
+    expect(result.success).toBe(true);
+    expect(result.result).toBe(2);
+    first.release();
+    expect(first.isDisposed).toBe(true);
+
+    const second = await host.acquireMount({ lifetime: "ephemeral", runtimeFactory });
+    expect(second).not.toBe(first);
+    second.release();
+  });
+
+  test("persistent mount shares vars across separate evals and acquires", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-persist",
+      sessionDir: tmp.path,
+    });
+
+    const write = await mount.runtime.eval("vars.counter = 41; return vars.counter;");
+    expect(write.success).toBe(true);
+    expect(write.result).toBe(41);
+
+    // Re-acquire: same scope returns the same live mount.
+    const again = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-persist",
+      sessionDir: tmp.path,
+    });
+    expect(again).toBe(mount);
+
+    const read = await again.runtime.eval("vars.counter += 1; return vars.counter;");
+    expect(read.success).toBe(true);
+    expect(read.result).toBe(42);
+
+    mount.release(); // no-op for persistent mounts
+    expect(mount.isDisposed).toBe(false);
+    await host.disposeScope("ws-persist");
+    expect(mount.isDisposed).toBe(true);
+  });
+
+  test("vars snapshot/restore survives a simulated restart", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+
+    // "Process 1": write vars, snapshot via journal kit, dispose.
+    const host1 = new SandboxHostService();
+    const mount1 = await host1.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-restart",
+      sessionDir: tmp.path,
+    });
+    const write = await mount1.runtime.eval(
+      'vars.searchResults = { hits: [1, 2, 3], query: "foo" }; return true;'
+    );
+    expect(write.success).toBe(true);
+    await host1.disposeScope("ws-restart"); // snapshots before disposing
+
+    // The snapshot is a durable event referencing a blob.
+    const journal = new DurableEventJournal(tmp.path);
+    const events = await journal.read();
+    const snapshot = events.find((e) => e.kind === "sandbox-vars-snapshot");
+    expect(snapshot).toBeDefined();
+
+    // "Process 2": fresh service (simulated restart) restores latest snapshot.
+    const host2 = new SandboxHostService();
+    const mount2 = await host2.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-restart",
+      sessionDir: tmp.path,
+    });
+    expect(mount2).not.toBe(mount1);
+    const read = await mount2.runtime.eval("return vars.searchResults;");
+    expect(read.success).toBe(true);
+    expect(read.result).toEqual({ hits: [1, 2, 3], query: "foo" });
+    await host2.disposeScope("ws-restart");
+  });
+
+  test("host→guest events: queue + drain via drainHostEvents()", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-events",
+      sessionDir: tmp.path,
+    });
+
+    mount.postHostEvent({ type: "task-complete", taskId: "t1" });
+    mount.postHostEvent({ type: "task-complete", taskId: "t2" });
+
+    const drained = await mount.runtime.eval("return drainHostEvents();");
+    expect(drained.success).toBe(true);
+    expect(drained.result).toEqual([
+      { type: "task-complete", taskId: "t1" },
+      { type: "task-complete", taskId: "t2" },
+    ]);
+
+    // Queue is empty after draining.
+    const empty = await mount.runtime.eval("return drainHostEvents();");
+    expect(empty.result).toEqual([]);
+    await host.disposeScope("ws-events");
+  });
+
+  test("async capability + host event: promise resolves in-guest and completion is delivered", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-async",
+      sessionDir: tmp.path,
+    });
+
+    // Demo capability: resolves asynchronously AND posts a host event on
+    // completion (the mux.task({background:true}) delivery pattern).
+    mount.runtime.registerPromiseFunction("startTask", async (name) => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      mount.postHostEvent({ type: "task-started", name });
+      return { taskId: "task-123" };
+    });
+
+    const result = await mount.runtime.eval(`
+      return (async () => {
+        const handle = await startTask("demo");
+        const events = drainHostEvents();
+        return { handle, events };
+      })();
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({
+      handle: { taskId: "task-123" },
+      events: [{ type: "task-started", name: "demo" }],
+    });
+    await host.disposeScope("ws-async");
+  });
+
+  test("least-privilege grants disable vars and host events on the mount", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-denied",
+      sessionDir: tmp.path,
+      grants: LEAST_PRIVILEGE_GRANTS,
+    });
+
+    // vars namespace was never initialized...
+    const varsProbe = await mount.runtime.eval("return typeof globalThis.vars;");
+    expect(varsProbe.result).toBe("undefined");
+    // ...and the drain bridge is not exposed.
+    const drainProbe = await mount.runtime.eval("return typeof globalThis.drainHostEvents;");
+    expect(drainProbe.result).toBe("undefined");
+    // Host-side APIs refuse too (clear errors, not crashes).
+    expect(() => mount.postHostEvent({})).toThrow(/hostEvents grant/);
+    await expect(mount.snapshotVars()).rejects.toThrow(/vars grant/);
+
+    // disposeScope must not fail even though snapshotting is not granted.
+    await host.disposeScope("ws-denied");
+    expect(mount.isDisposed).toBe(true);
+  });
+
+  test("corrupt snapshot blob self-heals to empty vars", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host1 = new SandboxHostService();
+    const mount1 = await host1.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-heal",
+      sessionDir: tmp.path,
+    });
+    await mount1.runtime.eval("vars.x = 1; return true;");
+    await host1.disposeScope("ws-heal");
+
+    // Corrupt every blob under the session dir.
+    const corruptDir = (dir: string) => {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) corruptDir(full);
+        else writeFileSync(full, "corrupted!");
+      }
+    };
+    corruptDir(join(tmp.path, "blobs"));
+
+    const host2 = new SandboxHostService();
+    const mount2 = await host2.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-heal",
+      sessionDir: tmp.path,
+    });
+    const read = await mount2.runtime.eval("return vars;");
+    expect(read.success).toBe(true);
+    expect(read.result).toEqual({});
+    await host2.disposeScope("ws-heal");
+  });
+});

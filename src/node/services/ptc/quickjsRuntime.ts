@@ -41,6 +41,13 @@ export class QuickJSRuntime implements IJSRuntime {
   private toolCalls: PTCToolCallRecord[] = [];
   private consoleOutput: PTCConsoleRecord[] = [];
 
+  // In-flight async-capability promises (registerPromiseFunction). eval()'s
+  // resolve loop awaits these when the returned value is still pending, so a
+  // guest `await` on a capability promise is not misreported as stuck.
+  // NOT reset per eval: fire-and-forget capabilities from a previous call on a
+  // persistent mount may legitimately still be settling.
+  private readonly pendingHostPromises = new Set<Promise<void>>();
+
   private constructor(private readonly ctx: QuickJSAsyncContext) {}
 
   static async create(): Promise<QuickJSRuntime> {
@@ -154,6 +161,113 @@ export class QuickJSRuntime implements IJSRuntime {
 
     this.ctx.setProp(this.ctx.global, name, handle);
     handle.dispose();
+  }
+
+  registerPromiseFunction(name: string, fn: (...args: unknown[]) => Promise<unknown>): void {
+    this.assertNotDisposed("registerPromiseFunction");
+
+    // Plain (non-asyncified) host function: it must return synchronously, so
+    // it hands the guest a deferred VM promise and settles it when the host
+    // promise settles. This is the async capability bridge: the guest can
+    // fire-and-forget or await the returned Promise.
+    const fnHandle = this.ctx.newFunction(name, (...argHandles) => {
+      const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
+      const startTime = Date.now();
+      const callId = generateCallId();
+      const deferred = this.ctx.newPromise();
+
+      this.eventHandler?.({
+        type: "tool-call-start",
+        callId,
+        toolName: name,
+        args: args[0],
+        startTime,
+      });
+
+      const settle = (async () => {
+        try {
+          const result = await fn(...args);
+          const endTime = Date.now();
+          this.toolCalls.push({
+            toolName: name,
+            args: args[0],
+            result,
+            duration_ms: endTime - startTime,
+          });
+          this.eventHandler?.({
+            type: "tool-call-end",
+            callId,
+            toolName: name,
+            args: args[0],
+            result,
+            startTime,
+            endTime,
+          });
+          if (this.disposed) return;
+          const valueHandle = this.marshal(result);
+          deferred.resolve(valueHandle);
+          valueHandle.dispose();
+        } catch (error) {
+          const endTime = Date.now();
+          const errorStr = error instanceof Error ? error.message : String(error);
+          this.toolCalls.push({
+            toolName: name,
+            args: args[0],
+            error: errorStr,
+            duration_ms: endTime - startTime,
+          });
+          this.eventHandler?.({
+            type: "tool-call-end",
+            callId,
+            toolName: name,
+            args: args[0],
+            error: errorStr,
+            startTime,
+            endTime,
+          });
+          if (this.disposed) return;
+          const errorHandle = this.marshal({ name: "Error", message: errorStr });
+          deferred.reject(errorHandle);
+          errorHandle.dispose();
+        }
+      })();
+
+      // Track settlement so eval()'s resolve loop can wait on it. The tracked
+      // promise never rejects (settle() catches everything above).
+      const tracked: Promise<void> = settle.finally(() => {
+        this.pendingHostPromises.delete(tracked);
+      });
+      this.pendingHostPromises.add(tracked);
+
+      // Run guest continuations (.then/await) once the deferred settles.
+      deferred.settled
+        .then(() => {
+          if (!this.disposed) {
+            this.ctx.runtime.executePendingJobs();
+          }
+        })
+        .catch(() => undefined);
+
+      // Ownership of deferred.handle transfers to the wrapper (return value).
+      return deferred.handle;
+    });
+
+    this.ctx.setProp(this.ctx.global, name, fnHandle);
+    fnHandle.dispose();
+  }
+
+  registerSyncFunction(name: string, fn: (...args: unknown[]) => unknown): void {
+    this.assertNotDisposed("registerSyncFunction");
+
+    const fnHandle = this.ctx.newFunction(name, (...argHandles) => {
+      const args: unknown[] = argHandles.map((h) => this.ctx.dump(h) as unknown);
+      // Host exceptions propagate to the guest as thrown errors.
+      const result = fn(...args);
+      return this.marshal(result);
+    });
+
+    this.ctx.setProp(this.ctx.global, name, fnHandle);
+    fnHandle.dispose();
   }
 
   registerObject(
@@ -305,7 +419,7 @@ export class QuickJSRuntime implements IJSRuntime {
         };
       }
 
-      const resolvedValue = this.resolveReturnedValue(evalResult.value, deadline, timeoutMs);
+      const resolvedValue = await this.resolveReturnedValue(evalResult.value, deadline, timeoutMs);
       evalResult.value.dispose();
 
       if (!resolvedValue.success) {
@@ -338,6 +452,10 @@ export class QuickJSRuntime implements IJSRuntime {
       };
     } finally {
       clearTimeout(timeoutId);
+      // An abort applies to the eval it interrupted (or the one about to
+      // start), not to future evals: persistent mounts reuse this runtime
+      // across calls, and a sticky flag would poison every later eval.
+      this.abortRequested = false;
     }
   }
 
@@ -369,21 +487,37 @@ export class QuickJSRuntime implements IJSRuntime {
     }
   }
 
-  private resolveReturnedValue(
+  private async resolveReturnedValue(
     handle: QuickJSHandle,
     deadline: number,
     timeoutMs: number
-  ): { success: true; value: unknown } | { success: false; error: string } {
+  ): Promise<{ success: true; value: unknown } | { success: false; error: string }> {
     let promiseState = this.ctx.getPromiseState(handle);
-    while (promiseState.type === "pending" && this.ctx.runtime.hasPendingJob()) {
-      const pendingJobs = this.ctx.runtime.executePendingJobs();
-      if (pendingJobs.error) {
-        const errorObj: unknown = pendingJobs.error.context.dump(pendingJobs.error) as unknown;
-        const error = this.getErrorMessage(errorObj, deadline, timeoutMs);
-        pendingJobs.dispose();
-        return { success: false, error };
+    while (promiseState.type === "pending") {
+      if (this.abortController?.signal.aborted || Date.now() > deadline) {
+        return {
+          success: false,
+          error: this.getErrorMessage("Execution interrupted", deadline, timeoutMs),
+        };
       }
-      pendingJobs.dispose();
+      if (this.ctx.runtime.hasPendingJob()) {
+        const pendingJobs = this.ctx.runtime.executePendingJobs();
+        if (pendingJobs.error) {
+          const errorObj: unknown = pendingJobs.error.context.dump(pendingJobs.error) as unknown;
+          const error = this.getErrorMessage(errorObj, deadline, timeoutMs);
+          pendingJobs.dispose();
+          return { success: false, error };
+        }
+        pendingJobs.dispose();
+      } else if (this.pendingHostPromises.size > 0) {
+        // The returned value may depend on an in-flight async capability
+        // (registerPromiseFunction). Wait for any settlement, bounded by the
+        // deadline/abort; each settlement schedules executePendingJobs.
+        await this.waitForAnyHostPromise(deadline);
+      } else {
+        // Nothing can ever settle this promise.
+        break;
+      }
       promiseState = this.ctx.getPromiseState(handle);
     }
 
@@ -405,6 +539,29 @@ export class QuickJSRuntime implements IJSRuntime {
         promiseState.value.dispose();
       }
     }
+  }
+
+  /**
+   * Wait until any in-flight async-capability promise settles, the deadline
+   * passes, or the execution is aborted. Tracked promises never reject.
+   */
+  private async waitForAnyHostPromise(deadline: number): Promise<void> {
+    const abortSignal = this.abortController?.signal;
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        abortSignal?.removeEventListener("abort", finish);
+        resolve();
+      };
+      const timer = setTimeout(finish, Math.max(0, deadline - Date.now()) + 1);
+      abortSignal?.addEventListener("abort", finish, { once: true });
+      for (const pending of this.pendingHostPromises) {
+        void pending.then(finish);
+      }
+    });
   }
 
   /**

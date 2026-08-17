@@ -2668,6 +2668,7 @@ export class AIService extends EventEmitter {
         effectiveToolPolicy,
         experiments,
         emitNestedToolEvent: emitNestedPtcToolEvent,
+        sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
       });
       recordStartupPhaseTiming(
         "applyToolPolicyAndExperimentsMs",
@@ -3364,6 +3365,7 @@ export class AIService extends EventEmitter {
                     effectiveToolPolicy,
                     experiments,
                     emitNestedToolEvent: emitNestedPtcToolEvent,
+                    sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
                   });
                   // Tool search: keep the per-stream state consistent with the
                   // fallback model's re-assembled toolset. rebuildToolSearchState

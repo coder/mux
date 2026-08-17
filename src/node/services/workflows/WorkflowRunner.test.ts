@@ -3226,6 +3226,8 @@ describe("WorkflowRunner", () => {
             },
             registerFunction: noop,
             registerObject: noop,
+            registerPromiseFunction: noop,
+            registerSyncFunction: noop,
             onEvent: noop,
             abort: noop,
             getAbortSignal() {

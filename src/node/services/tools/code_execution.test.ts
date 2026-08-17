@@ -9,6 +9,8 @@ import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import type { Tool, ToolExecutionOptions } from "ai";
 import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import { z } from "zod";
+import { DisposableTempDir } from "@/node/services/tempDir";
+import { SandboxHostService } from "@/node/services/sandbox/sandboxHostService";
 
 const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   toolCallId: "test-call-id",
@@ -544,6 +546,62 @@ describe("createCodeExecutionTool", () => {
       expect(desc1).not.toBe(desc2);
       expect(desc1).not.toContain("function bash");
       expect(desc2).toContain("function bash");
+    });
+
+    it("persistent mount shares vars across two separate code_execution calls and a simulated restart", async () => {
+      using tmp = new DisposableTempDir("code-exec-persistent");
+      const host = new SandboxHostService();
+      const mountProvider = () =>
+        host.acquireMount({
+          lifetime: "persistent",
+          runtimeFactory,
+          scopeKey: "ws-code-exec",
+          sessionDir: tmp.path,
+        });
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        mountProvider
+      );
+
+      // Call 1 writes vars; call 2 (a separate tool call) reads them.
+      const first = (await tool.execute!(
+        { code: "vars.total = 40; return vars.total;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(first.success).toBe(true);
+      expect(first.result).toBe(40);
+
+      const second = (await tool.execute!(
+        { code: "vars.total += 2; return vars.total;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(second.success).toBe(true);
+      expect(second.result).toBe(42);
+
+      // Simulated restart: fresh host restores the per-call snapshot.
+      await host.disposeScope("ws-code-exec");
+      const host2 = new SandboxHostService();
+      const tool2 = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        () =>
+          host2.acquireMount({
+            lifetime: "persistent",
+            runtimeFactory,
+            scopeKey: "ws-code-exec",
+            sessionDir: tmp.path,
+          })
+      );
+      const third = (await tool2.execute!(
+        { code: "return vars.total;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(third.success).toBe(true);
+      expect(third.result).toBe(42);
+      await host2.disposeScope("ws-code-exec");
     });
 
     it("clearTypeCaches forces regeneration", async () => {

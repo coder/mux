@@ -23,6 +23,7 @@ import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
 import { eventSpine } from "@/node/services/events/eventSpine";
+import { sandboxHostService } from "@/node/services/sandbox/sandboxHostService";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import { AgentSession, type StreamErrorRecoveryOutcome } from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
@@ -6988,6 +6989,10 @@ export class WorkspaceService extends EventEmitter {
       // before the workspace's memory dies with it. Fire-and-forget; never blocks archive.
       this.memoryConsolidationService?.triggerInBackground(workspaceId, "archive");
 
+      // Dispose the workspace's persistent sandbox mount (snapshot-then-dispose
+      // inside disposeScope keeps vars recoverable on un-archive).
+      await sandboxHostService.disposeScope(workspaceId);
+
       eventSpine.emit("workspace.archived", { workspaceId });
       return Ok({ kind: "archived" as const });
     } catch (error) {
@@ -9826,6 +9831,11 @@ export class WorkspaceService extends EventEmitter {
         log.error("Failed to require goal acknowledgment after context reset:", error);
       }
       this.sessions.get(workspaceId)?.clearFileState();
+
+      // Persistent sandbox mounts are scoped to the workspace session; a
+      // context reset ends that session, so the mount is disposed (vars are
+      // snapshotted best-effort inside disposeScope).
+      await sandboxHostService.disposeScope(workspaceId);
 
       return Ok("reset");
     } finally {
