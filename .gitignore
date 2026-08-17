@@ -150,3 +150,6 @@ dogfood-output/
 .design-sync/node_modules
 .ds-sync/
 ds-bundle/
+
+# TRAE remote sandbox share artifacts (auto-generated, not repo content)
+.trae-html-share-packages/
