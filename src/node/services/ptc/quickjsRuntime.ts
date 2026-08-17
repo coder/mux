@@ -75,42 +75,47 @@ const REACTION_TAGGING_SCRIPT = `
     if (owner === undefined) {
       return origThen.call(this, onFulfilled, onRejected);
     }
+    if (typeof onFulfilled !== "function" && typeof onRejected !== "function") {
+      // No user callback can run; nothing to tag or retain.
+      return origThen.call(this, onFulfilled, onRejected);
+    }
     let released = false;
     const releaseOnce = () => {
       if (!released) { released = true; release(owner); }
     };
-    const wrap = (fn) =>
-      typeof fn === "function"
-        ? function (value) {
-            const prev = globalThis.${REACTION_OWNER_GLOBAL};
-            globalThis.${REACTION_OWNER_GLOBAL} = owner;
-            tagEpoch += 1;
-            const myEpoch = tagEpoch;
-            try {
-              return fn.call(this, value);
-            } finally {
-              releaseOnce();
-              // Deferred one-hop restore: jobs this callback enqueued run
-              // before the restore job, inheriting its owner. Epoch-guarded
-              // so a restore from an EARLIER callback in a settlement
-              // cascade cannot clear the owner out from under a LATER
-              // callback's still-queued continuations (the host resets the
-              // owner at every drain-batch boundary regardless).
-              origThen.call(origResolve(), () => {
-                if (tagEpoch === myEpoch) {
-                  globalThis.${REACTION_OWNER_GLOBAL} = prev;
-                }
-              });
+    // BOTH branches are wrapped (with the spec's identity/rethrow defaults
+    // for missing handlers) so exactly one wrapper runs at settlement and
+    // the retain is ALWAYS released — a single-handler reaction settling
+    // through the opposite branch must not leak its owner refcount.
+    const wrap = (fn, fallback) =>
+      function (value) {
+        const prev = globalThis.${REACTION_OWNER_GLOBAL};
+        globalThis.${REACTION_OWNER_GLOBAL} = owner;
+        tagEpoch += 1;
+        const myEpoch = tagEpoch;
+        try {
+          return typeof fn === "function" ? fn.call(this, value) : fallback(value);
+        } finally {
+          releaseOnce();
+          // Deferred one-hop restore: jobs this callback enqueued run
+          // before the restore job, inheriting its owner. Epoch-guarded
+          // so a restore from an EARLIER callback in a settlement
+          // cascade cannot clear the owner out from under a LATER
+          // callback's still-queued continuations (the host resets the
+          // owner at every drain-batch boundary regardless).
+          origThen.call(origResolve(), () => {
+            if (tagEpoch === myEpoch) {
+              globalThis.${REACTION_OWNER_GLOBAL} = prev;
             }
-          }
-        : fn;
-    const wrappedFulfilled = wrap(onFulfilled);
-    const wrappedRejected = wrap(onRejected);
-    if (wrappedFulfilled === onFulfilled && wrappedRejected === onRejected) {
-      return origThen.call(this, onFulfilled, onRejected);
-    }
+          });
+        }
+      };
     retain(owner);
-    return origThen.call(this, wrappedFulfilled, wrappedRejected);
+    return origThen.call(
+      this,
+      wrap(onFulfilled, (value) => value),
+      wrap(onRejected, (reason) => { throw reason; })
+    );
   };
   // Subclass wrapper for capability promises: \`await\` on a promise whose
   // constructor is not %Promise% takes the spec's thenable path, which calls

@@ -799,6 +799,60 @@ describe("QuickJSRuntime", () => {
       expect(last.consoleOutput.some((c) => c.args[0] === "retained-owner")).toBe(false);
     });
 
+    it("releases retained owners when single-handler reactions settle through the opposite branch", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+
+      // Eval 1 holds the only GENUINELY outstanding reaction.
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        globalThis.p.then((v) => console.log("genuine-owner", v));
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+
+      // 70 evals (past the 64-context hard cap) each register a rejection
+      // handler on a FULFILLING promise: the handler never runs, so a leaked
+      // retain would keep every one of these generations falsely alive and
+      // push eval 1's genuinely-retained context out of the hard cap.
+      for (let i = 0; i < 70; i++) {
+        const filler = await runtime.eval(
+          `Promise.resolve(1).then(undefined, () => {}); return ${i};`
+        );
+        expect(filler.success).toBe(true);
+      }
+
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveP).toBeDefined();
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveUnrelated).toBeDefined();
+      resolveUnrelated?.("done");
+      const last = await evalPromise;
+      expect(last.success).toBe(true);
+
+      // Eval 1's context must have survived: the opposite-branch settlements
+      // released their retains, so only genuinely-outstanding generations
+      // count against retention.
+      expect(first.consoleOutput.some((c) => c.args[0] === "genuine-owner")).toBe(true);
+      expect(last.consoleOutput.some((c) => c.args[0] === "genuine-owner")).toBe(false);
+    });
+
     it("queues a prior-eval settlement arriving during an unrelated asyncified call", async () => {
       const mutex = new AsyncMutex();
       runtime.setPendingJobGate((run) => {
