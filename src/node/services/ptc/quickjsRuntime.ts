@@ -176,7 +176,15 @@ export class QuickJSRuntime implements IJSRuntime {
       const callId = generateCallId();
       const deferred = this.ctx.newPromise();
 
-      this.eventHandler?.({
+      // Capture per-eval attribution state NOW: a fire-and-forget capability
+      // can settle after its originating eval() returned (timeout/abort or
+      // un-awaited call). eval() swaps this.toolCalls/this.eventHandler per
+      // execution, so consulting them at settlement would report the record
+      // under a later eval and emit it to the wrong handler.
+      const toolCalls = this.toolCalls;
+      const eventHandler = this.eventHandler;
+
+      eventHandler?.({
         type: "tool-call-start",
         callId,
         toolName: name,
@@ -188,13 +196,13 @@ export class QuickJSRuntime implements IJSRuntime {
         try {
           const result = await fn(...args);
           const endTime = Date.now();
-          this.toolCalls.push({
+          toolCalls.push({
             toolName: name,
             args: args[0],
             result,
             duration_ms: endTime - startTime,
           });
-          this.eventHandler?.({
+          eventHandler?.({
             type: "tool-call-end",
             callId,
             toolName: name,
@@ -210,13 +218,13 @@ export class QuickJSRuntime implements IJSRuntime {
         } catch (error) {
           const endTime = Date.now();
           const errorStr = error instanceof Error ? error.message : String(error);
-          this.toolCalls.push({
+          toolCalls.push({
             toolName: name,
             args: args[0],
             error: errorStr,
             duration_ms: endTime - startTime,
           });
-          this.eventHandler?.({
+          eventHandler?.({
             type: "tool-call-end",
             callId,
             toolName: name,

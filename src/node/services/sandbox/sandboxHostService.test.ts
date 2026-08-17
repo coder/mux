@@ -236,6 +236,116 @@ describe("SandboxHostService", () => {
     mount.release();
   });
 
+  test("discardScope: context reset discards vars instead of restoring the last snapshot", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-reset",
+      sessionDir: tmp.path,
+    });
+    const write = await mount.runtime.eval("vars.secret = 'pre-reset'; return vars.secret;");
+    expect(write.success).toBe(true);
+    await mount.persistVars();
+
+    await host.discardScope("ws-reset", tmp.path);
+    expect(mount.isDisposed).toBe(true);
+
+    // The next mount must start fresh, NOT restore pre-reset state.
+    const fresh = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-reset",
+      sessionDir: tmp.path,
+    });
+    expect(fresh).not.toBe(mount);
+    const probe = await fresh.runtime.eval("return Object.keys(vars).length;");
+    expect(probe.success).toBe(true);
+    expect(probe.result).toBe(0);
+    await host.disposeScope("ws-reset");
+  });
+
+  test("reacquiring with changed grants rebuilds the mount under the new grants", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const full = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-grant-change",
+      sessionDir: tmp.path,
+    });
+    const write = await full.runtime.eval("vars.x = 1; return vars.x;");
+    expect(write.success).toBe(true);
+
+    // Same scope, narrowed grants: the full-grants mount must not be reused.
+    const narrowed = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-grant-change",
+      sessionDir: tmp.path,
+      grants: LEAST_PRIVILEGE_GRANTS,
+    });
+    expect(narrowed).not.toBe(full);
+    expect(full.isDisposed).toBe(true);
+    // The rebuilt mount enforces the new boundary: no vars, no drain bridge.
+    const varsProbe = await narrowed.runtime.eval("return typeof globalThis.vars;");
+    expect(varsProbe.result).toBe("undefined");
+    const drainProbe = await narrowed.runtime.eval("return typeof globalThis.drainHostEvents;");
+    expect(drainProbe.result).toBe("undefined");
+    await host.disposeScope("ws-grant-change");
+  });
+
+  test("re-registering a narrower bridge on a reused runtime revokes previously exposed tools", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-rebridge",
+      sessionDir: tmp.path,
+    });
+    const tools = {
+      bash: tool({
+        description: "run",
+        inputSchema: z.object({}),
+        execute: () => Promise.resolve({ output: "ran" }),
+      }),
+    };
+
+    const broad = new ToolBridge(tools, {
+      version: 1,
+      bridgeTools: { allow: "all" },
+      vars: true,
+      hostEvents: true,
+    });
+    broad.register(mount.runtime);
+    const allowed = await mount.runtime.eval("return mux.bash({});");
+    expect(allowed.success).toBe(true);
+    expect(allowed.result).toEqual({ output: "ran" });
+
+    // Next request narrowed the policy: code_execution re-registers its fresh
+    // bridge on the reused runtime, which must fully replace the old one.
+    const narrow = new ToolBridge(tools, {
+      version: 1,
+      bridgeTools: { allow: [] },
+      vars: true,
+      hostEvents: true,
+    });
+    narrow.register(mount.runtime);
+    const denied = await mount.runtime.eval(`
+      try {
+        mux.bash({});
+        return "no error";
+      } catch (e) {
+        return e.message;
+      }
+    `);
+    expect(denied.success).toBe(true);
+    expect(denied.result).toBe("Capability denied: mux.bash is not granted for this sandbox");
+    await host.disposeScope("ws-rebridge");
+  });
+
   test("corrupt snapshot blob self-heals to empty vars", async () => {
     using tmp = new DisposableTempDir("sandbox-host-test");
     const host1 = new SandboxHostService();

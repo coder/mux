@@ -146,14 +146,12 @@ ${muxTypes}
         }
 
         // Register tools - they'll use runtime.getAbortSignal() for cancellation.
-        // Persistent mounts register once; re-registering on a reused runtime
-        // would rebuild the mux.* object every call for no benefit.
-        if (!mount?.bridgeRegistered) {
-          toolBridge.register(runtime);
-          if (mount) {
-            mount.bridgeRegistered = true;
-          }
-        }
+        // Always re-register, even on reused persistent mounts: each request
+        // builds a fresh ToolBridge from the CURRENT policy + grants, and a
+        // stale bridge would keep exposing tools after permissions narrowed.
+        // Registration just overwrites the guest's `mux` global, so this is
+        // cheap and idempotent.
+        toolBridge.register(runtime);
 
         // Handle abort signal - interrupt sandbox and cancel nested tools
         if (abortSignal) {

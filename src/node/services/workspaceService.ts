@@ -9833,9 +9833,10 @@ export class WorkspaceService extends EventEmitter {
       this.sessions.get(workspaceId)?.clearFileState();
 
       // Persistent sandbox mounts are scoped to the workspace session; a
-      // context reset ends that session, so the mount is disposed (vars are
-      // snapshotted best-effort inside disposeScope).
-      await sandboxHostService.disposeScope(workspaceId);
+      // context reset ends that session, so sandbox state is DISCARDED (not
+      // snapshotted) — vars must not survive a reset the way they survive
+      // archive/un-archive.
+      await sandboxHostService.discardScope(workspaceId, this.config.getSessionDir(workspaceId));
 
       return Ok("reset");
     } finally {

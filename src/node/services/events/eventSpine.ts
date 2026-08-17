@@ -142,15 +142,25 @@ export class EventSpine {
   }
 
   /** Subscribe to a read-only observer event. Returns an unsubscribe function. */
+  // The listener returns `unknown` (not `void`) so async listeners and
+  // expression-bodied arrows both typecheck; return values are ignored except
+  // promises, whose rejections are captured below.
   subscribe<K extends keyof ObserverEventMap>(
     event: K,
-    listener: (payload: ObserverEventMap[K]) => void
+    listener: (payload: ObserverEventMap[K]) => unknown
   ): () => void {
-    // Observers are read-only fan-out: a throwing listener must never break
-    // the emitting code path (stream loop, workspace lifecycle, ...).
+    // Observers are read-only fan-out: a throwing OR rejecting listener must
+    // never break the emitting code path (stream loop, workspace lifecycle,
+    // ...). Async listener rejections are logged, not awaited — emission
+    // stays non-blocking.
     const wrapped = (payload: ObserverEventMap[K]) => {
       try {
-        listener(payload);
+        const result = listener(payload);
+        if (result instanceof Promise) {
+          result.catch((error: unknown) => {
+            log.error(`EventSpine observer for '${event}' rejected`, { error });
+          });
+        }
       } catch (error) {
         log.error(`EventSpine observer for '${event}' threw`, { error });
       }

@@ -156,6 +156,8 @@ export async function applyToolPolicyAndExperiments(
       const runtimeFactory = ptc.runtimeFactory;
 
       // Persistent mount opt-in: reuse one per-workspace guest across calls.
+      // Grants must flow through: the mount enforces vars/hostEvents exposure,
+      // so omitting them here would silently widen to full session grants.
       const mountProvider =
         sandbox && persistentSandboxMountsEnabled()
           ? () =>
@@ -164,6 +166,7 @@ export async function applyToolPolicyAndExperiments(
                 runtimeFactory,
                 scopeKey: sandbox.workspaceId,
                 sessionDir: sandbox.sessionDir,
+                grants: opts.capabilityGrants,
               })
           : undefined;
 

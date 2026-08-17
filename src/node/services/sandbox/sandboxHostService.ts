@@ -47,10 +47,6 @@ export interface AcquireMountOptions {
 }
 
 export class SandboxMount {
-  /** Set by code_execution after registering the mux.* tool bridge, so a
-   * reused persistent runtime is not re-registered on every call. */
-  public bridgeRegistered = false;
-
   private readonly hostEventQueue: unknown[] = [];
   private disposed = false;
 
@@ -137,6 +133,13 @@ export class SandboxMount {
   }
 }
 
+/** Stable identity for a grant set, used to detect grant changes on reuse. */
+function grantsKey(grants: CapabilityGrants): string {
+  const allow = grants.bridgeTools.allow;
+  const tools = allow === "all" ? "all" : [...allow].sort().join(",");
+  return `${grants.version}|${tools}|${grants.vars}|${grants.hostEvents}`;
+}
+
 export class SandboxHostService {
   private readonly persistentMounts = new Map<string, SandboxMount>();
   private readonly journals = new Map<string, DurableEventJournal>();
@@ -161,7 +164,13 @@ export class SandboxHostService {
 
     const existing = this.persistentMounts.get(scopeKey);
     if (existing && !existing.isDisposed) {
-      return existing;
+      if (grantsKey(existing.grants) === grantsKey(grants)) {
+        return existing;
+      }
+      // Effective grants changed between requests (e.g. policy narrowed): a
+      // mount must never outlive its capability boundary. Snapshot under the
+      // OLD grants, dispose, and rebuild below under the new grants.
+      await this.disposeScope(scopeKey);
     }
 
     const journal = this.journalFor(scopeKey, sessionDir);
@@ -206,13 +215,50 @@ export class SandboxHostService {
     this.persistentMounts.delete(scopeKey);
     this.journals.delete(scopeKey);
     if (!mount || mount.isDisposed) return;
-    try {
-      await mount.persistVars();
-    } catch (error) {
-      // Never let a snapshot failure block archive/reset.
-      log.warn(`SandboxHostService: vars snapshot failed for scope ${scopeKey}`, { error });
+    if (mount.grants.vars) {
+      try {
+        await mount.persistVars();
+      } catch (error) {
+        // Never let a snapshot failure block archive/reset.
+        log.warn(`SandboxHostService: vars snapshot failed for scope ${scopeKey}`, { error });
+      }
     }
     mount.dispose();
+  }
+
+  /**
+   * Discard a scope's sandbox state (context reset): dispose the mount
+   * WITHOUT snapshotting current vars, and supersede any earlier snapshot
+   * with an empty one so the next mount starts fresh instead of restoring
+   * pre-reset state. Rotation-by-append keeps the journal append-only.
+   */
+  async discardScope(scopeKey: string, sessionDir: string): Promise<void> {
+    const mount = this.persistentMounts.get(scopeKey);
+    this.persistentMounts.delete(scopeKey);
+    const journal = this.journals.get(scopeKey) ?? new DurableEventJournal(sessionDir);
+    this.journals.delete(scopeKey);
+    if (mount && !mount.isDisposed) {
+      mount.dispose();
+    }
+    try {
+      // Only write the empty snapshot when there is prior state to supersede;
+      // otherwise a reset in a sandbox-less workspace would create journal
+      // files for nothing.
+      const events = await journal.read();
+      const hasSnapshot = events.some(
+        (event) => event.kind === "sandbox-vars-snapshot" && event.data.scopeKey === scopeKey
+      );
+      if (!hasSnapshot) return;
+      const { ref, size } = await journal.blobs.put("{}");
+      await journal.append({
+        workspaceId: scopeKey,
+        kind: "sandbox-vars-snapshot",
+        data: { scopeKey, blobHash: ref, size },
+      });
+    } catch (error) {
+      // Never let discard bookkeeping block a context reset.
+      log.warn(`SandboxHostService: vars discard failed for scope ${scopeKey}`, { error });
+    }
   }
 
   /** True when a live persistent mount exists for the scope. */

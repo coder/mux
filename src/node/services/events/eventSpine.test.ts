@@ -183,4 +183,19 @@ describe("EventSpine observers", () => {
     expect(() => spine.emit("stream.start", { workspaceId: "ws", messageId: "m1" })).not.toThrow();
     expect(seen).toEqual(["m1"]);
   });
+
+  test("a rejecting async observer does not break the emitter or other observers", async () => {
+    const spine = new EventSpine();
+    const seen: string[] = [];
+    spine.subscribe("stream.start", async () => {
+      await Promise.resolve();
+      throw new Error("bad async observer");
+    });
+    spine.subscribe("stream.start", (p) => seen.push(p.messageId));
+    expect(() => spine.emit("stream.start", { workspaceId: "ws", messageId: "m1" })).not.toThrow();
+    expect(seen).toEqual(["m1"]);
+    // Let the rejection settle: it must be captured (logged), not surface as
+    // an unhandled rejection that could take down the main process.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 });

@@ -435,6 +435,36 @@ describe("QuickJSRuntime", () => {
       expect(result.result).toBe("caught: capability exploded");
     });
 
+    it("attributes a late-settling fire-and-forget capability to its originating eval", async () => {
+      // Manually-gated host promise: settles only after BOTH evals returned.
+      let resolveHost: (() => void) | undefined;
+      runtime.registerPromiseFunction("lateCap", async () => {
+        await new Promise<void>((resolve) => {
+          resolveHost = resolve;
+        });
+        return "late";
+      });
+
+      // Fire-and-forget: eval returns while the capability is still pending.
+      const first = await runtime.eval('lateCap(); return "first";');
+      expect(first.success).toBe(true);
+      expect(first.toolCalls).toHaveLength(0);
+
+      // A second eval swaps the runtime's per-eval state.
+      const second = await runtime.eval('return "second";');
+      expect(second.success).toBe(true);
+
+      expect(resolveHost).toBeDefined();
+      resolveHost?.();
+      // Let the settlement bookkeeping run.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      // The record must land on the ORIGINATING eval, never on a later one.
+      expect(second.toolCalls).toHaveLength(0);
+      expect(first.toolCalls).toHaveLength(1);
+      expect(first.toolCalls[0]?.toolName).toBe("lateCap");
+    });
+
     it("still reports a genuinely stuck pending Promise", async () => {
       const result = await runtime.eval("return new Promise(() => {});");
       expect(result.success).toBe(false);
