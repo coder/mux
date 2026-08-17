@@ -72,7 +72,7 @@ describe("reconcileHookReplacedCodeExecution", () => {
     // Middleware wrapped by spreading the pre-hook tool: same description,
     // new execute.
     const wrappedExecute = () => Promise.resolve({ success: true, audited: true });
-    const hookReplacement = { ...preHook, execute: wrappedExecute } as Tool;
+    const hookReplacement: Tool = { ...preHook, execute: wrappedExecute };
     const rebuilt = executableTool("defs: function file_read");
 
     const result = reconcileHookReplacedCodeExecution(preHook, hookReplacement, rebuilt);
