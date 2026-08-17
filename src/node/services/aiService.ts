@@ -1032,6 +1032,56 @@ export class AIService extends EventEmitter {
     });
   }
 
+  /**
+   * Supplement-mode PTC reconcile after the request.assemble waterfall: when
+   * middleware changed any tool the bridge exposes (added/removed names OR a
+   * same-name replacement such as an audit wrapper), the pre-hook
+   * code_execution instance closes over a stale ToolBridge — rebuild it from
+   * the post-hook record. When the hook replaced code_execution ITSELF, its
+   * replacement wins (never silently drop a middleware wrapper); such
+   * middleware owns bridge consistency for any other tool edits it makes in
+   * the same run.
+   */
+  private async rebuildCodeExecutionAfterAssembleHook(opts: {
+    preHookTools: Record<string, Tool>;
+    postHookTools: Record<string, Tool>;
+    effectiveToolPolicy: ToolPolicy | undefined;
+    experiments: SendMessageOptions["experiments"];
+    emitNestedToolEvent: (event: PTCEventWithParent) => void;
+    workspaceId: string;
+  }): Promise<Record<string, Tool>> {
+    const { preHookTools, postHookTools, workspaceId } = opts;
+    const hookReplacedCodeExecution =
+      postHookTools.code_execution !== undefined &&
+      preHookTools.code_execution !== undefined &&
+      postHookTools.code_execution !== preHookTools.code_execution;
+    // Identity-aware change detection over everything EXCEPT code_execution
+    // (the instance this rebuild replaces): names and same-name replacements.
+    const bridgeRelevantChanged =
+      Object.keys(postHookTools).filter((n) => n !== "code_execution").length !==
+        Object.keys(preHookTools).filter((n) => n !== "code_execution").length ||
+      Object.entries(postHookTools).some(
+        ([name, t]) => name !== "code_execution" && preHookTools[name] !== t
+      );
+    if (!bridgeRelevantChanged) {
+      return postHookTools;
+    }
+    const { code_execution: hookCodeExecution, ...bridgeInputTools } = postHookTools;
+    const rebuilt = await applyToolPolicyAndExperiments({
+      allTools: bridgeInputTools,
+      effectiveToolPolicy: opts.effectiveToolPolicy,
+      experiments: opts.experiments,
+      emitNestedToolEvent: opts.emitNestedToolEvent,
+      sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+    });
+    // Reinstate a middleware-provided code_execution replacement over the
+    // freshly built instance.
+    if (hookReplacedCodeExecution && hookCodeExecution !== undefined) {
+      return { ...rebuilt, code_execution: hookCodeExecution };
+    }
+    return rebuilt;
+  }
+
   private wrapToolsForDelegation(
     workspaceId: string,
     tools: Record<string, Tool>,
@@ -2767,9 +2817,6 @@ export class AIService extends EventEmitter {
         };
         await eventSpine.run("request.assemble", assembleCtx);
         tools = assembleCtx.tools;
-        const toolsetChanged =
-          Object.keys(tools).length !== Object.keys(preHookTools).length ||
-          Object.entries(tools).some(([name, t]) => preHookTools[name] !== t);
         // Supplement-mode PTC: the code_execution instance created during
         // assembly closes over a ToolBridge built from the PRE-hook toolset
         // (and its description advertises those tools), so a hook-removed or
@@ -2777,18 +2824,17 @@ export class AIService extends EventEmitter {
         // Rebuild code_execution from the post-hook record. Exclusive mode is
         // unaffected: bridgeable tools are not in the hook-visible record.
         if (
-          toolsetChanged &&
           experiments?.programmaticToolCalling === true &&
           experiments?.programmaticToolCallingExclusive !== true &&
           tools.code_execution !== undefined
         ) {
-          const { code_execution: _staleCodeExecution, ...postHookTools } = tools;
-          tools = await applyToolPolicyAndExperiments({
-            allTools: postHookTools,
+          tools = await this.rebuildCodeExecutionAfterAssembleHook({
+            preHookTools,
+            postHookTools: tools,
             effectiveToolPolicy,
             experiments,
             emitNestedToolEvent: emitNestedPtcToolEvent,
-            sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
+            workspaceId,
           });
         }
         // Tool-search state was classified from the pre-hook record; a hook
@@ -3481,29 +3527,21 @@ export class AIService extends EventEmitter {
                     };
                     await eventSpine.run("request.assemble", nextAssembleCtx);
                     nextTools = nextAssembleCtx.tools;
-                    const nextToolsetChanged =
-                      Object.keys(nextTools).length !== Object.keys(preHookNextTools).length ||
-                      Object.entries(nextTools).some(([name, t]) => preHookNextTools[name] !== t);
                     // Same rebuild as the primary path: hook-removed or
                     // hook-replaced tools must not stay reachable via a stale
                     // code_execution bridge (supplement mode only).
                     if (
-                      nextToolsetChanged &&
                       experiments?.programmaticToolCalling === true &&
                       experiments?.programmaticToolCallingExclusive !== true &&
                       nextTools.code_execution !== undefined
                     ) {
-                      const { code_execution: _staleNextCodeExecution, ...postHookNextTools } =
-                        nextTools;
-                      nextTools = await applyToolPolicyAndExperiments({
-                        allTools: postHookNextTools,
+                      nextTools = await this.rebuildCodeExecutionAfterAssembleHook({
+                        preHookTools: preHookNextTools,
+                        postHookTools: nextTools,
                         effectiveToolPolicy,
                         experiments,
                         emitNestedToolEvent: emitNestedPtcToolEvent,
-                        sandbox: {
-                          workspaceId,
-                          sessionDir: this.config.getSessionDir(workspaceId),
-                        },
+                        workspaceId,
                       });
                     }
                     // Same reconcile as the primary path: tool-search state

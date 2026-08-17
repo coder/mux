@@ -43,6 +43,12 @@ export class QuickJSRuntime implements IJSRuntime {
    * routed through the pending-job gate instead of touching the VM directly. */
   private evalGeneration = 0;
   private activeEvalGeneration: number | null = null;
+  /** Current registration per registerObject name; guest methods dispatch
+   * through this at call time so re-registration retargets saved references. */
+  private readonly registeredObjects = new Map<
+    string,
+    Record<string, (...args: unknown[]) => Promise<unknown>>
+  >();
 
   // Execution state (reset per eval)
   private toolCalls: PTCToolCallRecord[] = [];
@@ -339,13 +345,27 @@ export class QuickJSRuntime implements IJSRuntime {
   ): void {
     this.assertNotDisposed("registerObject");
 
+    // Store the CURRENT registration: guest-side methods dispatch through
+    // this map at call time, so re-registering (persistent mounts re-register
+    // the tool bridge every call) retargets even guest-saved references like
+    // `savedBash = mux.bash` to the newest implementation. A saved reference
+    // can therefore never pin a replaced tool or bypass a wrapper installed
+    // by a later registration.
+    this.registeredObjects.set(name, obj);
+
     // Create object in QuickJS
     const objHandle = this.ctx.newObject();
 
-    for (const [methodName, fn] of Object.entries(obj)) {
+    for (const methodName of Object.keys(obj)) {
       const fnHandle = this.ctx.newAsyncifiedFunction(methodName, async (...argHandles) => {
         if (this.abortController?.signal.aborted) {
           throw new Error("Execution aborted");
+        }
+
+        // Late-bound dispatch (see registeredObjects note above).
+        const fn = this.registeredObjects.get(name)?.[methodName];
+        if (fn === undefined) {
+          throw new Error(`${name}.${methodName} is no longer available in this sandbox`);
         }
 
         // Convert QuickJS handles to JS values - cast to unknown at the FFI boundary

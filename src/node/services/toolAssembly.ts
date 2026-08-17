@@ -167,10 +167,14 @@ export async function applyToolPolicyAndExperiments(
       // Persistent mount opt-in: reuse one per-workspace guest across calls.
       // Grants must flow through: the mount enforces vars/hostEvents exposure,
       // so omitting them here would silently widen to full session grants.
-      // bridgeKey identifies the effective bridgeable toolset so the mount is
-      // rebuilt (revoking guest-saved bridge references) when policy changes
-      // what the sandbox may reach. The lease runner (withPersistentMount)
-      // holds the scope lock from acquisition through execution.
+      // bridgeKey identifies the effective bridgeable tool NAMES so the mount
+      // is rebuilt when policy changes what the sandbox may reach. Names-only
+      // is sufficient for same-name replacements: guest method references
+      // dispatch through the runtime's current registration (see
+      // QuickJSRuntime.registerObject), so re-registering the fresh bridge
+      // retargets even guest-saved references to the newest implementation.
+      // The lease runner (withPersistentMount) holds the scope lock from
+      // acquisition through execution.
       const bridgeKey = toolBridge.getBridgeableToolNames().sort().join(",");
       const withMount =
         sandbox && persistentSandboxMountsEnabled()

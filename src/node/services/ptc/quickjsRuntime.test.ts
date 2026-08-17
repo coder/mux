@@ -491,6 +491,37 @@ describe("QuickJSRuntime", () => {
       for (const run of gatedRuns) run();
     });
 
+    it("re-registering an object retargets guest-saved method references", async () => {
+      runtime.registerObject("mux", {
+        bash: () => Promise.resolve("original"),
+      });
+      const saved = await runtime.eval("globalThis.savedBash = mux.bash; return savedBash();");
+      expect(saved.success).toBe(true);
+      expect(saved.result).toBe("original");
+
+      // Same-name replacement (e.g. middleware audit wrapper): the saved
+      // reference must dispatch to the NEW implementation, not pin the old.
+      runtime.registerObject("mux", {
+        bash: () => Promise.resolve("wrapped"),
+      });
+      const rewired = await runtime.eval("return globalThis.savedBash();");
+      expect(rewired.success).toBe(true);
+      expect(rewired.result).toBe("wrapped");
+
+      // Removal: the saved reference must fail closed, not run the old impl.
+      runtime.registerObject("mux", {});
+      const removed = await runtime.eval(`
+        try {
+          globalThis.savedBash();
+          return "no error";
+        } catch (e) {
+          return e.message;
+        }
+      `);
+      expect(removed.success).toBe(true);
+      expect(removed.result).toBe("mux.bash is no longer available in this sandbox");
+    });
+
     it("still reports a genuinely stuck pending Promise", async () => {
       const result = await runtime.eval("return new Promise(() => {});");
       expect(result.success).toBe(false);
