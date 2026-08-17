@@ -66,7 +66,11 @@ import {
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
-import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
+import {
+  MUX_APP_ATTRIBUTION_TITLE,
+  MUX_APP_ATTRIBUTION_URL,
+  MUX_OPENROUTER_SESSION_ID_PREFIX,
+} from "@/constants/appAttribution";
 import {
   resolveCustomProviderCredentials,
   resolveProviderCredentials,
@@ -1069,6 +1073,7 @@ export class ProviderModelFactory {
     muxProviderOptions?: MuxProviderOptions,
     opts?: {
       agentInitiated?: boolean;
+      workspaceId?: string;
       routeContext?: RouteContext;
       providersConfig?: ProvidersConfig;
     }
@@ -1640,15 +1645,26 @@ export class ProviderModelFactory {
         const resolvedApiKey = creds.apiKey;
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Extract standard provider settings and Mux-local metadata before building extraBody.
-        // OpenRouter also has a request-level `models` fallback field capped at 3 entries; our
-        // configured `models` catalog can be longer and must not be forwarded as request input.
+        // Extract standard provider settings and Mux-local metadata before building extraBody
+        // so none of them leak into request bodies as junk top-level fields. baseURL must be
+        // stripped by its post-rename spelling — the baseUrl→baseURL rewrite above runs before
+        // the provider branches, so the lowercase key never matches it here — and apiKeyFile
+        // is a local filesystem path that must never reach the wire. OpenRouter also has a
+        // request-level `models` fallback field capped at 3 entries; our configured `models`
+        // catalog can be longer and must not be forwarded as request input. Remaining
+        // unrecognized keys pass through as request options (the verbatim-parity contract).
         const {
           apiKey: _apiKey,
+          apiKeyFile: _apiKeyFile,
           baseUrl,
+          baseURL: _baseURL,
           headers,
           fetch: _fetch,
+          enabled: _enabled,
+          providerType: _providerType,
+          displayName: _displayName,
           models: _models,
+          modelParameters: _modelParameters,
           ...extraOptions
         } = providerConfig;
 
@@ -1677,12 +1693,58 @@ export class ProviderModelFactory {
           }
         }
 
+        // Config-level `extraBody` is the OpenRouter SDK's own settings key for
+        // extra request-body fields (verbatim-parity contract), so lift its
+        // entries to the body root instead of shipping a literal nested
+        // "extraBody" field; on a key collision the extraBody spelling wins as
+        // the more explicit intent. Non-object values are dropped.
+        const configExtraBody = otherOptions.extraBody;
+        delete otherOptions.extraBody;
+        if (
+          typeof configExtraBody === "object" &&
+          configExtraBody !== null &&
+          !Array.isArray(configExtraBody)
+        ) {
+          Object.assign(otherOptions, configExtraBody);
+        }
+
+        // Session key semantics: an explicit config session_id (top-level or
+        // via extraBody) wins over the per-workspace default, and null or any
+        // non-string disables session tagging — stripped rather than forwarded,
+        // since OpenRouter's contract is a string of at most 256 chars. A
+        // configured x-session-id header is the documented header spelling of
+        // the same key; the body field would win server-side, so never stamp
+        // over it.
+        const hasExplicitSessionId = "session_id" in otherOptions;
+        if (hasExplicitSessionId && typeof otherOptions.session_id !== "string") {
+          delete otherOptions.session_id;
+        }
+        const hasSessionIdHeader = Object.keys(headers ?? {}).some(
+          (headerName) => headerName.toLowerCase() === "x-session-id"
+        );
+
         // Build extraBody with provider nesting if routing options exist
         let extraBody: Record<string, unknown> | undefined;
         if (Object.keys(routingOptions).length > 0) {
           extraBody = { provider: routingOptions, ...otherOptions };
         } else if (Object.keys(otherOptions).length > 0) {
           extraBody = otherOptions;
+        }
+
+        // Per-workspace session grouping: session_id is OpenRouter's explicit
+        // sticky-routing key (a workspace's turns keep hitting the same
+        // upstream provider's prompt cache even as the opening messages change
+        // between requests) and groups the workspace's requests in the
+        // Sessions view of its Logs page. A workspace is mux's conversation
+        // unit, so its id is the session key.
+        // See: https://openrouter.ai/docs/guides/best-practices/prompt-caching
+        if (opts?.workspaceId != null && !hasExplicitSessionId && !hasSessionIdHeader) {
+          extraBody = {
+            ...extraBody,
+            // Sliced to OpenRouter's 256-char cap: legacy workspace ids embed
+            // project/branch basenames and can exceed it.
+            session_id: `${MUX_OPENROUTER_SESSION_ID_PREFIX}${opts.workspaceId}`.slice(0, 256),
+          };
         }
 
         // Lazy-load OpenRouter provider to reduce startup time
