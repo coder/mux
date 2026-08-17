@@ -57,9 +57,14 @@ function findTriggerUserMessage(
  * Build follow-up content from a user message source.
  * Preserves skill metadata if the original message was a skill invocation.
  */
-function buildFollowUpFromSource(
+export function buildFollowUpFromSource(
   source: Extract<DisplayedMessage, { type: "user" }>,
-  ctx: { providersConfig: ProvidersConfigMap | null; currentModel: string | null }
+  // Null ctx degrades gracefully: numeric one-shot thinking rides along as an
+  // index for the backend to resolve instead of resolving here.
+  ctx: { providersConfig: ProvidersConfigMap | null; currentModel: string | null } = {
+    providersConfig: null,
+    currentModel: null,
+  }
 ): CompactionFollowUpInput {
   const slashMcpPromptRef = source.mcpPromptRefs?.find((ref) => ref.source === "slash");
   // A composed one-shot skill send ("/haiku+0 /done args") stores the full
