@@ -465,6 +465,32 @@ describe("QuickJSRuntime", () => {
       expect(first.toolCalls[0]?.toolName).toBe("lateCap");
     });
 
+    it("routes late-settlement continuations through the pending-job gate", async () => {
+      const gatedRuns: Array<() => void> = [];
+      runtime.setPendingJobGate((run) => gatedRuns.push(run));
+
+      let resolveHost: (() => void) | undefined;
+      runtime.registerPromiseFunction("lateGate", async () => {
+        await new Promise<void>((resolve) => {
+          resolveHost = resolve;
+        });
+        return "done";
+      });
+
+      // Fire-and-forget: the eval returns while the capability is pending.
+      const result = await runtime.eval('lateGate(); return "first";');
+      expect(result.success).toBe(true);
+
+      // Settle AFTER the eval returned: the continuation must be handed to
+      // the gate (owner-serialized) instead of executing immediately.
+      expect(resolveHost).toBeDefined();
+      resolveHost?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(gatedRuns.length).toBe(1);
+      // Running the gated job must be safe.
+      for (const run of gatedRuns) run();
+    });
+
     it("still reports a genuinely stuck pending Promise", async () => {
       const result = await runtime.eval("return new Promise(() => {});");
       expect(result.success).toBe(false);

@@ -36,6 +36,8 @@ export class QuickJSRuntime implements IJSRuntime {
   private abortRequested = false; // Track abort requests before eval() starts
   private limits: RuntimeLimits = {};
   private consoleSetup = false;
+  /** Serializes late-settlement guest continuations; see setPendingJobGate. */
+  private pendingJobGate?: (run: () => void) => void;
 
   // Execution state (reset per eval)
   private toolCalls: PTCToolCallRecord[] = [];
@@ -248,10 +250,22 @@ export class QuickJSRuntime implements IJSRuntime {
       this.pendingHostPromises.add(tracked);
 
       // Run guest continuations (.then/await) once the deferred settles.
+      // Routed through the pending-job gate when set: on shared (persistent)
+      // runtimes a LATE settlement must not re-enter the QuickJS context
+      // while a later eval is running — the gate serializes the run under the
+      // owner's exclusive lock. In-eval settlements are unaffected: eval's
+      // resolve loop drains pending jobs itself.
       deferred.settled
         .then(() => {
-          if (!this.disposed) {
-            this.ctx.runtime.executePendingJobs();
+          const run = () => {
+            if (!this.disposed) {
+              this.ctx.runtime.executePendingJobs();
+            }
+          };
+          if (this.pendingJobGate) {
+            this.pendingJobGate(run);
+          } else {
+            run();
           }
         })
         .catch(() => undefined);
@@ -262,6 +276,10 @@ export class QuickJSRuntime implements IJSRuntime {
 
     this.ctx.setProp(this.ctx.global, name, fnHandle);
     fnHandle.dispose();
+  }
+
+  setPendingJobGate(gate: (run: () => void) => void): void {
+    this.pendingJobGate = gate;
   }
 
   registerSyncFunction(name: string, fn: (...args: unknown[]) => unknown): void {

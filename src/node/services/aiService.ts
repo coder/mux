@@ -3390,11 +3390,6 @@ export class AIService extends EventEmitter {
                       nextTools = rest;
                     }
                   }
-                  // Same active-set scoping as the primary sentinel: never
-                  // advertise deferred, not-yet-activated MCP tools.
-                  const nextToolNamesForSentinel = (
-                    computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(nextTools)
-                  ).sort();
                   const nextMemoryToolAvailable = nextTools.memory !== undefined;
                   // Raw identity for prompt rebuilding too (the main path
                   // passes its raw modelString): "Model:"-scoped instructions
@@ -3452,6 +3447,15 @@ export class AIService extends EventEmitter {
                       nextSystemTokens = await nextTokenizer.countTokens(nextSystem);
                     }
                   }
+
+                  // Same active-set scoping as the primary sentinel: never
+                  // advertise deferred, not-yet-activated MCP tools. Computed
+                  // AFTER the request.assemble hook (like the primary path) so
+                  // transition guidance never advertises middleware-removed
+                  // tools.
+                  const nextToolNamesForSentinel = (
+                    computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(nextTools)
+                  ).sort();
 
                   const { providerRequestMessages: nextProviderRequestMessages } =
                     prepareProviderRequestMessages(

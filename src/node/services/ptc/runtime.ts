@@ -61,6 +61,16 @@ export interface IJSRuntime extends Disposable {
   registerSyncFunction(name: string, fn: (...args: unknown[]) => unknown): void;
 
   /**
+   * Route late guest-continuation execution through a host-provided gate.
+   * When a fire-and-forget capability (registerPromiseFunction) settles after
+   * its originating eval() returned, the runtime must run pending guest jobs —
+   * but on a shared/persistent runtime that must not interleave with a later
+   * eval. The gate lets the owner (e.g. SandboxMount) serialize the run under
+   * its exclusive lock. Without a gate, jobs run immediately on settlement.
+   */
+  setPendingJobGate(gate: (run: () => void) => void): void;
+
+  /**
    * Set memory/CPU limits for the sandbox.
    * Must be called before eval() to take effect.
    */

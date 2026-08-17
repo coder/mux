@@ -10,7 +10,7 @@ import { z } from "zod";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import { ToolBridge } from "@/node/services/ptc/toolBridge";
-import { LEAST_PRIVILEGE_GRANTS } from "@/common/types/capabilityGrants";
+import { FULL_GRANTS, LEAST_PRIVILEGE_GRANTS } from "@/common/types/capabilityGrants";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { SandboxHostService } from "./sandboxHostService";
 
@@ -342,6 +342,50 @@ describe("SandboxHostService", () => {
     const drainProbe = await narrowed.runtime.eval("return typeof globalThis.drainHostEvents;");
     expect(drainProbe.result).toBe("undefined");
     await host.disposeScope("ws-grant-change");
+  });
+
+  test("bridge narrowing rebuilds the mount, revoking guest-saved bridge references", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const tools = {
+      bash: tool({
+        description: "run",
+        inputSchema: z.object({}),
+        execute: () => Promise.resolve({ output: "ran" }),
+      }),
+    };
+
+    const broadMount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-saved-ref",
+      sessionDir: tmp.path,
+      bridgeKey: "bash",
+    });
+    new ToolBridge(tools, FULL_GRANTS).register(broadMount.runtime);
+    // Guest saves a bridge reference in a global — re-registering `mux` can
+    // never revoke this closure; only destroying the runtime can.
+    const saved = await broadMount.runtime.eval(
+      "globalThis.savedBash = mux.bash; vars.keep = 1; return typeof savedBash;"
+    );
+    expect(saved.result).toBe("function");
+
+    // Policy narrowed: the effective bridge no longer includes bash.
+    const narrowedMount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-saved-ref",
+      sessionDir: tmp.path,
+      bridgeKey: "",
+    });
+    expect(narrowedMount).not.toBe(broadMount);
+    expect(broadMount.isDisposed).toBe(true);
+    // Saved closure is gone with the old runtime; vars survived the rebuild.
+    const probe = await narrowedMount.runtime.eval(
+      "return { saved: typeof globalThis.savedBash, kept: vars.keep };"
+    );
+    expect(probe.result).toEqual({ saved: "undefined", kept: 1 });
+    await host.disposeScope("ws-saved-ref");
   });
 
   test("re-registering a narrower bridge on a reused runtime revokes previously exposed tools", async () => {

@@ -166,6 +166,10 @@ export async function applyToolPolicyAndExperiments(
       // Persistent mount opt-in: reuse one per-workspace guest across calls.
       // Grants must flow through: the mount enforces vars/hostEvents exposure,
       // so omitting them here would silently widen to full session grants.
+      // bridgeKey identifies the effective bridgeable toolset so the mount is
+      // rebuilt (revoking guest-saved bridge references) when policy changes
+      // what the sandbox may reach.
+      const bridgeKey = toolBridge.getBridgeableToolNames().sort().join(",");
       const mountProvider =
         sandbox && persistentSandboxMountsEnabled()
           ? () =>
@@ -175,6 +179,7 @@ export async function applyToolPolicyAndExperiments(
                 scopeKey: sandbox.workspaceId,
                 sessionDir: sandbox.sessionDir,
                 grants: opts.capabilityGrants,
+                bridgeKey,
               })
           : undefined;
 

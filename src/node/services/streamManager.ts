@@ -2346,10 +2346,16 @@ export class StreamManager extends EventEmitter {
         ? { acpPromptId: streamInfo.initialMetadata.acpPromptId }
         : {}),
     } as StreamStartEvent);
-    eventSpine.emit("stream.start", {
-      workspaceId: workspaceId as string,
-      messageId: streamInfo.messageId,
-    });
+    // Lifecycle spine event: skipped on replay — a reconnecting subscriber
+    // re-observes an already-running stream, and observers must see exactly
+    // one start per stream (paired with the guaranteed end in
+    // processStreamWithCleanup's finally).
+    if (!options?.replay) {
+      eventSpine.emit("stream.start", {
+        workspaceId: workspaceId as string,
+        messageId: streamInfo.messageId,
+      });
+    }
   }
 
   private emitStreamAbort(
@@ -3559,10 +3565,6 @@ export class StreamManager extends EventEmitter {
             // before updateHistory completes, compaction can clear the file and then
             // updateHistory writes stale data back.
             this.emit("stream-end", streamEndEvent);
-            eventSpine.emit("stream.end", {
-              workspaceId: workspaceId as string,
-              messageId: streamInfo.messageId,
-            });
           }
           break;
         } catch (error) {
@@ -3613,6 +3615,15 @@ export class StreamManager extends EventEmitter {
       }
 
       this.workspaceStreams.delete(workspaceId);
+
+      // Lifecycle spine event: emitted from the guaranteed-cleanup path so
+      // EVERY terminal outcome (completion, abort/Escape, provider failure)
+      // closes the stream.start emitted at the top of this method — observers
+      // tracking active streams must never retain stale entries.
+      eventSpine.emit("stream.end", {
+        workspaceId: workspaceId as string,
+        messageId: streamInfo.messageId,
+      });
     }
   }
 

@@ -45,6 +45,15 @@ export interface AcquireMountOptions {
   sessionDir?: string;
   /** Capability grants for this mount. Defaults to session-scope grants. */
   grants?: CapabilityGrants;
+  /**
+   * Identity of the effective bridge configuration (e.g. sorted bridgeable
+   * tool names). Persistent guests can save bridge function references in
+   * globals (`globalThis.saved = mux.bash`) that survive re-registration, so
+   * when the effective bridge NARROWS the mount must be rebuilt — destroying
+   * the runtime is the only reliable way to revoke saved closures. Vars
+   * survive via snapshot/restore.
+   */
+  bridgeKey?: string;
 }
 
 export class SandboxMount {
@@ -60,8 +69,22 @@ export class SandboxMount {
     private readonly persistSnapshot?: (varsJson: string) => Promise<void>,
     /** Persistent mounts share the host's per-scope mutex so exclusive() also
      * serializes against scope disposal; ephemeral mounts get their own. */
-    private readonly mutex: AsyncMutex = new AsyncMutex()
-  ) {}
+    private readonly mutex: AsyncMutex = new AsyncMutex(),
+    /** Effective bridge configuration identity; see AcquireMountOptions. */
+    public readonly bridgeKey?: string
+  ) {
+    // Late capability settlements (fire-and-forget guest code) must not
+    // re-enter the shared runtime while a later eval holds it: route their
+    // pending-job execution through the same exclusive lock.
+    runtime.setPendingJobGate((run) => {
+      this.exclusive(() => {
+        run();
+        return Promise.resolve();
+      }).catch((error: unknown) => {
+        log.warn("SandboxMount: gated pending-job run failed", { error });
+      });
+    });
+  }
 
   /**
    * Run `fn` with exclusive access to this mount's runtime. Concurrent
@@ -197,12 +220,17 @@ export class SandboxHostService {
 
     const existing = this.persistentMounts.get(scopeKey);
     if (existing && !existing.isDisposed) {
-      if (grantsKey(existing.grants) === grantsKey(grants)) {
+      if (
+        grantsKey(existing.grants) === grantsKey(grants) &&
+        existing.bridgeKey === options.bridgeKey
+      ) {
         return existing;
       }
-      // Effective grants changed between requests (e.g. policy narrowed): a
-      // mount must never outlive its capability boundary. Snapshot under the
-      // OLD grants, dispose, and rebuild below under the new grants.
+      // Effective grants OR bridge configuration changed between requests
+      // (e.g. policy narrowed): a mount must never outlive its capability
+      // boundary, and rebuilding the runtime is the only way to revoke bridge
+      // function references the guest saved in globals. Snapshot under the
+      // OLD grants, dispose, and rebuild below.
       await this.disposeScopeLocked(scopeKey);
     }
 
@@ -221,7 +249,8 @@ export class SandboxHostService {
           data: { scopeKey, blobHash: ref, size },
         });
       },
-      lock
+      lock,
+      options.bridgeKey
     );
 
     if (grants.vars) {
