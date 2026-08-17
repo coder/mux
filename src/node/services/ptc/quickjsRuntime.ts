@@ -94,7 +94,10 @@ const REACTION_TAGGING_SCRIPT = `
         tagEpoch += 1;
         const myEpoch = tagEpoch;
         try {
-          return typeof fn === "function" ? fn.call(this, value) : fallback(value);
+          // Plain call (no receiver): native reactions invoke handlers with
+          // an undefined this — forwarding the sloppy-mode wrapper's
+          // globalThis would change strict-mode handler semantics.
+          return typeof fn === "function" ? fn(value) : fallback(value);
         } finally {
           releaseOnce();
           // Deferred one-hop restore: jobs this callback enqueued run
@@ -111,11 +114,19 @@ const REACTION_TAGGING_SCRIPT = `
         }
       };
     retain(owner);
-    return origThen.call(
-      this,
-      wrap(onFulfilled, (value) => value),
-      wrap(onRejected, (reason) => { throw reason; })
-    );
+    try {
+      return origThen.call(
+        this,
+        wrap(onFulfilled, (value) => value),
+        wrap(onRejected, (reason) => { throw reason; })
+      );
+    } catch (registrationError) {
+      // Registration failed (non-promise receiver, throwing Symbol.species
+      // constructor, ...): no wrapper will ever run, so release the retain
+      // here or the owner's context leaks toward the hard cap.
+      releaseOnce();
+      throw registrationError;
+    }
   };
   // Subclass wrapper for capability promises: \`await\` on a promise whose
   // constructor is not %Promise% takes the spec's thenable path, which calls

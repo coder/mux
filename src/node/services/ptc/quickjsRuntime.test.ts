@@ -853,6 +853,70 @@ describe("QuickJSRuntime", () => {
       expect(last.consoleOutput.some((c) => c.args[0] === "genuine-owner")).toBe(false);
     });
 
+    it("invokes tagged promise handlers with an undefined receiver (strict-mode semantics)", async () => {
+      // The tagging wrapper must not leak its sloppy-mode globalThis into
+      // strict handlers: native reactions call handlers with undefined this.
+      const result = await runtime.eval(`
+        return Promise.resolve(1).then(function () {
+          "use strict";
+          return this === undefined;
+        });
+      `);
+      expect(result.success).toBe(true);
+      expect(result.result).toBe(true);
+    });
+
+    it("releases the retain when reaction registration throws", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        globalThis.p.then((v) => console.log("survivor-owner", v));
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+
+      // 70 evals each throw during reaction REGISTRATION (non-promise
+      // receiver): no wrapper can ever run, so a leaked retain would keep
+      // these generations falsely alive past the hard cap and evict the
+      // genuinely-outstanding one above.
+      for (let i = 0; i < 70; i++) {
+        const filler = await runtime.eval(`
+          try { Promise.prototype.then.call({}, () => {}); } catch (e) {}
+          return ${i};
+        `);
+        expect(filler.success).toBe(true);
+      }
+
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveP).toBeDefined();
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveUnrelated).toBeDefined();
+      resolveUnrelated?.("done");
+      const last = await evalPromise;
+      expect(last.success).toBe(true);
+
+      expect(first.consoleOutput.some((c) => c.args[0] === "survivor-owner")).toBe(true);
+      expect(last.consoleOutput.some((c) => c.args[0] === "survivor-owner")).toBe(false);
+    });
+
     it("queues a prior-eval settlement arriving during an unrelated asyncified call", async () => {
       const mutex = new AsyncMutex();
       runtime.setPendingJobGate((run) => {
