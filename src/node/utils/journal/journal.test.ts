@@ -87,9 +87,12 @@ describe("Journal", () => {
   test("append rejects rows that fail schema validation", async () => {
     using tmp = new DisposableTempDir("journal-test");
     const journal = makeJournal(tmp.path);
-    await expect(journal.append((seq) => ({ seq, id: "", value: "empty id" }))).rejects.toThrow(
-      /failed schema validation/
-    );
+    try {
+      await journal.append((seq) => ({ seq, id: "", value: "empty id" }));
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(String(e)).toContain("failed schema validation");
+    }
     // The failed append must not poison subsequent appends.
     const ok = await journal.append((seq) => ({ seq, id: "a", value: "fine" }));
     expect(ok.seq).toBe(0);

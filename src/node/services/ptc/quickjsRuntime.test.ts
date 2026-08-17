@@ -391,9 +391,13 @@ describe("QuickJSRuntime", () => {
     });
 
     it("supports fire-and-forget: returns immediately without awaiting", async () => {
+      // Manually-resolved host promise: deterministic under load (no timers).
+      let resolveHost: (() => void) | undefined;
       let settled = false;
       runtime.registerPromiseFunction("background", async () => {
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        await new Promise<void>((resolve) => {
+          resolveHost = resolve;
+        });
         settled = true;
         return "done";
       });
@@ -404,9 +408,11 @@ describe("QuickJSRuntime", () => {
       `);
       expect(result.success).toBe(true);
       expect(result.result).toEqual({ startedImmediately: true });
-      // The guest did not wait for the host promise.
+      // The guest did not wait for the host promise - it is still unresolved.
       expect(settled).toBe(false);
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(resolveHost).toBeDefined();
+      resolveHost?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
       expect(settled).toBe(true);
     });
 
@@ -437,7 +443,8 @@ describe("QuickJSRuntime", () => {
 
     it("enforces the deadline while awaiting a capability promise", async () => {
       runtime.setLimits({ timeoutMs: 100 });
-      runtime.registerPromiseFunction("never", () => new Promise(() => {}));
+      runtime.registerPromiseFunction("never", () => new Promise(() => undefined));
+      const start = Date.now();
       const result = await runtime.eval(`
         return (async () => {
           await never();
@@ -445,7 +452,11 @@ describe("QuickJSRuntime", () => {
         })();
       `);
       expect(result.success).toBe(false);
-      expect(result.error).toContain("timeout");
+      // The deadline timer both aborts and marks timeout; at millisecond
+      // resolution either message can win the race - the contract is that the
+      // eval fails promptly instead of hanging on the pending capability.
+      expect(result.error).toMatch(/timeout|aborted/);
+      expect(Date.now() - start).toBeLessThan(5000);
     });
   });
 

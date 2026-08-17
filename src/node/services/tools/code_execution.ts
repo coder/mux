@@ -148,7 +148,7 @@ ${muxTypes}
         // Register tools - they'll use runtime.getAbortSignal() for cancellation.
         // Persistent mounts register once; re-registering on a reused runtime
         // would rebuild the mux.* object every call for no benefit.
-        if (!mount || !mount.bridgeRegistered) {
+        if (!mount?.bridgeRegistered) {
           toolBridge.register(runtime);
           if (mount) {
             mount.bridgeRegistered = true;
@@ -171,7 +171,7 @@ ${muxTypes}
         // Persist the shared vars namespace after each call on persistent
         // mounts so state survives crashes/restarts (turn-boundary snapshots
         // are the Track 2 refinement; per-call is the safe foundation).
-        if (mount && mount.lifetime === "persistent" && mount.grants.vars && result.success) {
+        if (mount?.lifetime === "persistent" && mount.grants.vars && result.success) {
           await mount.persistVars();
         }
         return result;

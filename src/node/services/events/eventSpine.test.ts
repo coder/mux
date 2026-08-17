@@ -2,10 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { EventSpine, type ToolExecuteContext, type ToolExecutionHost } from "./eventSpine";
 import type { Runtime } from "@/node/runtime/Runtime";
 
+// The spine never touches the host runtime; a null-backed stub is sufficient.
+const stubRuntime = null as unknown as Runtime;
+
 function makeToolCtx(overrides?: Partial<ToolExecuteContext>): ToolExecuteContext {
-  // The spine never touches the host; a stub is sufficient for pipeline tests.
   const host: ToolExecutionHost = {
-    runtime: {} as Runtime,
+    runtime: stubRuntime,
     runtimeTempDir: "/tmp",
     cwd: "/tmp",
     workspaceId: "ws-test",
@@ -17,7 +19,7 @@ describe("EventSpine waterfall", () => {
   test("runs terminal when no middleware is registered", async () => {
     const spine = new EventSpine();
     const ctx = makeToolCtx();
-    await spine.run("tool.execute", ctx, async (c) => {
+    await spine.run("tool.execute", ctx, (c) => {
       c.result = "ran";
       c.executed = true;
     });
@@ -38,7 +40,7 @@ describe("EventSpine waterfall", () => {
       await next();
       calls.push("b:after");
     });
-    await spine.run("tool.execute", makeToolCtx(), async () => {
+    await spine.run("tool.execute", makeToolCtx(), () => {
       calls.push("terminal");
     });
     expect(calls).toEqual(["a:before", "b:before", "terminal", "b:after", "a:after"]);
@@ -70,7 +72,7 @@ describe("EventSpine waterfall", () => {
   test("blocking middleware skips terminal and downstream middleware", async () => {
     const spine = new EventSpine();
     const calls: string[] = [];
-    spine.use("tool.execute", async (ctx, _next) => {
+    spine.use("tool.execute", (ctx, _next) => {
       ctx.blocked = { result: { error: "denied" } };
       calls.push("blocker");
     });
@@ -79,7 +81,7 @@ describe("EventSpine waterfall", () => {
       await next();
     });
     const ctx = makeToolCtx();
-    await spine.run("tool.execute", ctx, async () => {
+    await spine.run("tool.execute", ctx, () => {
       calls.push("terminal");
     });
     expect(calls).toEqual(["blocker"]);
@@ -95,7 +97,7 @@ describe("EventSpine waterfall", () => {
       ctx.result = `${String(ctx.result)}+audited`;
     });
     const ctx = makeToolCtx();
-    await spine.run("tool.execute", ctx, async (c) => {
+    await spine.run("tool.execute", ctx, (c) => {
       c.result = `ran(${JSON.stringify(c.args)})`;
       c.executed = true;
     });
@@ -108,9 +110,12 @@ describe("EventSpine waterfall", () => {
       await next();
       await next();
     });
-    await expect(spine.run("tool.execute", makeToolCtx())).rejects.toThrow(
-      /called next\(\) more than once/
-    );
+    try {
+      await spine.run("tool.execute", makeToolCtx());
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(String(e)).toContain("called next() more than once");
+    }
   });
 
   test("useBefore/useAfter sugar wraps the pipeline; after is skipped when blocked", async () => {
@@ -126,7 +131,7 @@ describe("EventSpine waterfall", () => {
       calls.push("after");
     });
 
-    await spine.run("tool.execute", makeToolCtx(), async (c) => {
+    await spine.run("tool.execute", makeToolCtx(), (c) => {
       calls.push("terminal");
       c.executed = true;
     });
@@ -134,7 +139,7 @@ describe("EventSpine waterfall", () => {
 
     calls.length = 0;
     const blockedCtx = makeToolCtx({ toolName: "blocked_tool" });
-    await spine.run("tool.execute", blockedCtx, async (c) => {
+    await spine.run("tool.execute", blockedCtx, (c) => {
       calls.push("terminal");
       c.executed = true;
     });

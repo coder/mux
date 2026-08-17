@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tool } from "ai";
+import type { Tool } from "ai";
 import { z } from "zod";
 import {
   FULL_GRANTS,
@@ -10,12 +10,12 @@ import {
 } from "./capabilityGrants";
 import { applyCapabilityGrants } from "@/common/utils/tools/capabilityGrants";
 
-function makeTool(): ReturnType<typeof tool> {
-  return tool({
+function makeTool(): Tool {
+  return {
     description: "t",
     inputSchema: z.object({}),
     execute: () => Promise.resolve({}),
-  });
+  };
 }
 
 describe("capability grants", () => {

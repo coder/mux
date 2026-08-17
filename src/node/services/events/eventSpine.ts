@@ -102,7 +102,8 @@ export interface WaterfallPointMap {
 }
 
 export type WaterfallNext = () => Promise<void>;
-export type WaterfallMiddleware<C> = (ctx: C, next: WaterfallNext) => Promise<void>;
+/** Middleware may be sync or async; the runner awaits either way. */
+export type WaterfallMiddleware<C> = (ctx: C, next: WaterfallNext) => void | Promise<void>;
 
 /** Simple callback shape used by the before/after registration sugar. */
 export type HookCallback<C> = (ctx: C) => void | Promise<void>;
@@ -238,7 +239,7 @@ export class EventSpine {
   async run<K extends keyof WaterfallPointMap>(
     point: K,
     ctx: WaterfallPointMap[K],
-    terminal?: (ctx: WaterfallPointMap[K]) => Promise<void>
+    terminal?: (ctx: WaterfallPointMap[K]) => void | Promise<void>
   ): Promise<void> {
     const registrations = this.waterfalls.get(point) ?? [];
     const dispatch = async (index: number): Promise<void> => {

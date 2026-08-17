@@ -77,8 +77,8 @@ describe("DurableEventJournal", () => {
     using tmp = new DisposableTempDir("durable-journal-test");
     const journal = new DurableEventJournal(tmp.path);
     // hook-context requires exactly one of text/blobHash.
-    await expect(
-      journal.append({
+    try {
+      await journal.append({
         workspaceId: "ws-1",
         kind: "hook-context",
         data: {
@@ -87,7 +87,10 @@ describe("DurableEventJournal", () => {
           text: "both",
           blobHash: `sha256:${"0".repeat(64)}`,
         },
-      })
-    ).rejects.toThrow(/failed schema validation/);
+      });
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(String(e)).toContain("failed schema validation");
+    }
   });
 });

@@ -44,7 +44,12 @@ describe("BlobStore", () => {
   test("rejects malformed refs (crash-fast on programmer error)", async () => {
     using tmp = new DisposableTempDir("blobstore-test");
     const store = new BlobStore(tmp.path);
-    await expect(store.get("md5:abc" as never)).rejects.toThrow(/Invalid blob ref/);
+    try {
+      await store.get("md5:abc" as never);
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(String(e)).toContain("Invalid blob ref");
+    }
   });
 
   test("roundtrips binary content", async () => {

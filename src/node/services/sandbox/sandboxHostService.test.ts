@@ -180,7 +180,12 @@ describe("SandboxHostService", () => {
     expect(drainProbe.result).toBe("undefined");
     // Host-side APIs refuse too (clear errors, not crashes).
     expect(() => mount.postHostEvent({})).toThrow(/hostEvents grant/);
-    await expect(mount.snapshotVars()).rejects.toThrow(/vars grant/);
+    try {
+      await mount.snapshotVars();
+      expect.unreachable("Should have thrown");
+    } catch (e) {
+      expect(String(e)).toContain("vars grant");
+    }
 
     // disposeScope must not fail even though snapshotting is not granted.
     await host.disposeScope("ws-denied");

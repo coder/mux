@@ -85,7 +85,7 @@ export class SandboxMount {
     this.assertNotDisposed("snapshotVars");
     assert(this.grants.vars, "snapshotVars requires the vars grant");
     const result = await this.runtime.eval("return JSON.stringify(globalThis.vars ?? {});");
-    assert(result.success, `snapshotVars failed: ${result.error}`);
+    assert(result.success, `snapshotVars failed: ${result.error ?? "unknown error"}`);
     assert(typeof result.result === "string", "snapshotVars: expected JSON string result");
     return result.result;
   }
@@ -101,7 +101,7 @@ export class SandboxMount {
     const result = await this.runtime.eval(
       `globalThis.vars = JSON.parse(${literal}); return true;`
     );
-    assert(result.success, `restoreVars failed: ${result.error}`);
+    assert(result.success, `restoreVars failed: ${result.error ?? "unknown error"}`);
   }
 
   /** Snapshot vars and persist through the journal kit (persistent mounts). */
@@ -246,7 +246,7 @@ export class SandboxHostService {
     scopeKey: string
   ): Promise<void> {
     const init = await mount.runtime.eval("globalThis.vars = {}; return true;");
-    assert(init.success, `vars init failed: ${init.error}`);
+    assert(init.success, `vars init failed: ${init.error ?? "unknown error"}`);
 
     const events = await journal.read();
     for (let i = events.length - 1; i >= 0; i--) {

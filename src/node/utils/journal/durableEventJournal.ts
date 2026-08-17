@@ -44,13 +44,16 @@ export class DurableEventJournal {
   /** Append a draft; the journal assigns v/seq/ts (and id unless provided). */
   async append(draft: DurableEventDraft): Promise<DurableEvent> {
     return this.journal.append((seq) => {
-      return {
+      const row = {
         ...draft,
         v: DURABLE_EVENT_VERSION,
         seq,
         id: draft.id ?? crypto.randomUUID(),
         ts: Date.now(),
-      } as DurableEvent;
+      };
+      // The spread of a distributive draft union does not re-narrow to the
+      // discriminated union; the journal schema-validates the row on append.
+      return row as DurableEvent;
     });
   }
 
