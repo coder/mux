@@ -130,6 +130,50 @@ describe("ToolBridge", () => {
       expect(typeof obj.file_read).toBe("function");
     });
 
+    it("enforces capability grants: denied tools are excluded, stubbed, and never leak", async () => {
+      const executed = mock(() => ({ result: "ok" }));
+      const tools: Record<string, Tool> = {
+        file_read: createMockTool("file_read", z.object({}), executed),
+        bash: createMockTool("bash", z.object({}), executed),
+      };
+
+      const bridge = new ToolBridge(tools, {
+        version: 1,
+        bridgeTools: { allow: ["file_read"] },
+        vars: false,
+        hostEvents: false,
+      });
+
+      // Denied tool is not advertised as bridgeable...
+      expect(bridge.getBridgeableToolNames()).toEqual(["file_read"]);
+      // ...and must not leak into the model-visible non-bridgeable set either.
+      expect(Object.keys(bridge.getNonBridgeableTools())).toEqual([]);
+
+      let registeredMux: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+      const mockRegisterObject = mock(
+        (name: string, obj: Record<string, (...args: unknown[]) => Promise<unknown>>) => {
+          if (name === "mux") registeredMux = obj;
+          return undefined;
+        }
+      );
+      bridge.register(createMockRuntime({ registerObject: mockRegisterObject }));
+
+      // Granted tool executes.
+      const fileRead = registeredMux.file_read as (...args: unknown[]) => Promise<unknown>;
+      await fileRead({});
+      expect(executed).toHaveBeenCalledTimes(1);
+
+      // Denied tool is stubbed with a clear capability error, not a crash.
+      const bash = registeredMux.bash as (...args: unknown[]) => Promise<unknown>;
+      try {
+        await bash({});
+        expect.unreachable("Should have thrown");
+      } catch (e) {
+        expect(String(e)).toContain("Capability denied: mux.bash is not granted");
+      }
+      expect(executed).toHaveBeenCalledTimes(1); // bash never ran
+    });
+
     it("validates arguments before executing tool", async () => {
       const mockExecute = mock(() => ({ result: "ok" }));
 

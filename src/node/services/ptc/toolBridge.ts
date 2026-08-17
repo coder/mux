@@ -8,6 +8,11 @@
 import type { Tool } from "ai";
 import type { z } from "zod";
 import type { IJSRuntime } from "./runtime";
+import {
+  FULL_GRANTS,
+  isBridgeToolGranted,
+  type CapabilityGrants,
+} from "@/common/types/capabilityGrants";
 
 /** Tools excluded from sandbox - UI-specific or would cause recursion */
 const EXCLUDED_TOOLS = new Set([
@@ -26,20 +31,28 @@ const EXCLUDED_TOOLS = new Set([
 export class ToolBridge {
   private readonly bridgeableTools: Map<string, Tool>;
   private readonly nonBridgeableTools: Map<string, Tool>;
+  /** Bridgeable tools denied by capability grants: stubbed with a clear error
+   * in the sandbox and exposed in NEITHER getter (a denied tool must not leak
+   * into the model-visible set via getNonBridgeableTools in exclusive mode). */
+  private readonly deniedToolNames = new Set<string>();
+  private readonly grants: CapabilityGrants;
 
-  constructor(tools: Record<string, Tool>) {
+  constructor(tools: Record<string, Tool>, grants?: CapabilityGrants) {
     this.bridgeableTools = new Map();
     this.nonBridgeableTools = new Map();
+    this.grants = grants ?? FULL_GRANTS;
 
     for (const [name, tool] of Object.entries(tools)) {
       // code_execution is the tool that uses the bridge, not a candidate for bridging
       if (name === "code_execution") continue;
 
       const isBridgeable = !EXCLUDED_TOOLS.has(name) && this.hasExecute(tool);
-      if (isBridgeable) {
+      if (!isBridgeable) {
+        this.nonBridgeableTools.set(name, tool);
+      } else if (isBridgeToolGranted(this.grants, name)) {
         this.bridgeableTools.set(name, tool);
       } else {
-        this.nonBridgeableTools.set(name, tool);
+        this.deniedToolNames.add(name);
       }
     }
   }
@@ -79,12 +92,25 @@ export class ToolBridge {
   register(runtime: IJSRuntime): void {
     const muxObj: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
 
+    // Grant-denied tools get an explicit stub: the guest sees a clear
+    // capability error instead of a confusing "mux.x is not a function".
+    for (const name of this.deniedToolNames) {
+      muxObj[name] = () =>
+        Promise.reject(new Error(`Capability denied: mux.${name} is not granted for this sandbox`));
+    }
+
     for (const [name, tool] of this.bridgeableTools) {
       // Capture tool for closure
       const boundTool = tool;
       const toolName = name;
 
       muxObj[name] = async (args: unknown) => {
+        // Defense in depth: re-check the grant at call time so a stale or
+        // mutated bridge can never invoke a non-granted tool.
+        if (!isBridgeToolGranted(this.grants, toolName)) {
+          throw new Error(`Capability denied: mux.${toolName} is not granted for this sandbox`);
+        }
+
         // Get the runtime's abort signal - this is aborted on timeout or manual abort
         const abortSignal = runtime.getAbortSignal();
 

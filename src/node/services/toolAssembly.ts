@@ -12,6 +12,8 @@
 import type { Tool } from "ai";
 
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
+import { applyCapabilityGrants } from "@/common/utils/tools/capabilityGrants";
+import type { CapabilityGrants } from "@/common/types/capabilityGrants";
 // PTC types only — modules lazy-loaded to avoid loading typescript/prettier at startup
 import type {
   PTCEventWithParent,
@@ -91,6 +93,13 @@ export interface ApplyToolPolicyAndExperimentsOptions {
    * persistent-kernel UX belongs to the RLM track.
    */
   sandbox?: { workspaceId: string; sessionDir: string };
+  /**
+   * Capability grants for this assembly (registry-with-filters posture).
+   * Omitted = session-scope full grants (identical to pre-grants behavior).
+   * Enforced here (tool visibility) and at the sandbox bridge boundary
+   * (ToolBridge stubs/denies non-granted mux.* calls).
+   */
+  capabilityGrants?: CapabilityGrants;
 }
 
 /** Env opt-in for persistent code_execution mounts (dogfooding/Track 2). */
@@ -120,10 +129,16 @@ export async function applyToolPolicyAndExperiments(
   // These bypass policy filtering since they're injected by the runtime, not user config.
   const allToolsWithExtra = extraTools ? { ...allTools, ...extraTools } : allTools;
 
+  // Capability grants are a ceiling applied before policy: policy can narrow
+  // further but can never re-add a non-granted tool.
+  const grantFilteredTools = opts.capabilityGrants
+    ? applyCapabilityGrants(allToolsWithExtra, opts.capabilityGrants)
+    : allToolsWithExtra;
+
   // Apply tool policy FIRST — this must happen before PTC to ensure the sandbox
   // respects allow/deny filters. The policy-filtered tools are passed to
   // ToolBridge so the mux.* API only exposes policy-allowed tools.
-  const policyFilteredTools = applyToolPolicy(allToolsWithExtra, effectiveToolPolicy);
+  const policyFilteredTools = applyToolPolicy(grantFilteredTools, effectiveToolPolicy);
 
   // Handle PTC experiments — add or replace tools with code_execution
   let toolsForModel = policyFilteredTools;
@@ -132,8 +147,9 @@ export async function applyToolPolicyAndExperiments(
       // Lazy-load PTC modules only when experiments are enabled
       const ptc = await getPTCModules();
 
-      // ToolBridge uses policy-filtered tools — sandbox only exposes allowed tools
-      const toolBridge = new ptc.ToolBridge(policyFilteredTools);
+      // ToolBridge uses policy-filtered tools — sandbox only exposes allowed
+      // tools; grants are re-enforced at the bridge boundary.
+      const toolBridge = new ptc.ToolBridge(policyFilteredTools, opts.capabilityGrants);
 
       // Singleton runtime factory (WASM module is expensive to load)
       ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();

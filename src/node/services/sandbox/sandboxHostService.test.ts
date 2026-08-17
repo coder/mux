@@ -5,8 +5,11 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, statSync, writeFileSync } from "fs";
 import { join } from "path";
+import { tool } from "ai";
+import { z } from "zod";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
+import { ToolBridge } from "@/node/services/ptc/toolBridge";
 import { LEAST_PRIVILEGE_GRANTS } from "@/common/types/capabilityGrants";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { SandboxHostService } from "./sandboxHostService";
@@ -182,6 +185,50 @@ describe("SandboxHostService", () => {
     // disposeScope must not fail even though snapshotting is not granted.
     await host.disposeScope("ws-denied");
     expect(mount.isDisposed).toBe(true);
+  });
+
+  test("denied bridge capability produces a clear catchable guest error, not a crash", async () => {
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({ lifetime: "ephemeral", runtimeFactory });
+
+    const tools = {
+      file_read: tool({
+        description: "read",
+        inputSchema: z.object({}),
+        execute: () => Promise.resolve({ content: "granted!" }),
+      }),
+      bash: tool({
+        description: "run",
+        inputSchema: z.object({}),
+        execute: () => Promise.resolve({ output: "should never run" }),
+      }),
+    };
+    const bridge = new ToolBridge(tools, {
+      version: 1,
+      bridgeTools: { allow: ["file_read"] },
+      vars: false,
+      hostEvents: false,
+    });
+    bridge.register(mount.runtime);
+
+    const result = await mount.runtime.eval(`
+      const granted = mux.file_read({});
+      let denied;
+      try {
+        mux.bash({});
+        denied = "no error";
+      } catch (e) {
+        denied = e.message;
+      }
+      return { granted, denied, sandboxStillWorks: 1 + 1 };
+    `);
+    expect(result.success).toBe(true);
+    expect(result.result).toEqual({
+      granted: { content: "granted!" },
+      denied: "Capability denied: mux.bash is not granted for this sandbox",
+      sandboxStillWorks: 2,
+    });
+    mount.release();
   });
 
   test("corrupt snapshot blob self-heals to empty vars", async () => {
