@@ -4,7 +4,7 @@
 
 import { formatModelDisplayName } from "../utils/ai/modelDisplay";
 
-type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "deepseek" | "moonshotai";
+type ModelProvider = "anthropic" | "openai" | "google" | "xai" | "deepseek" | "moonshotai" | "minimax";
 
 interface KnownModelDefinition {
   /** Provider identifier used by SDK factories */
@@ -223,6 +223,49 @@ const MODEL_DEFINITIONS = {
     aliases: ["kimi", "k3", "kimi-k3"],
     // K3's tokenizer isn't published in ai-tokenizer yet; reuse Kimi K2 (the newest
     // Moonshot tokenizer available) for approximate counting.
+    tokenizerOverride: "moonshotai/kimi-k2",
+  },
+  // MiniMax-M3 - MiniMax's flagship M-series model (1M context, agentic reasoning +
+  // tool use + coding). The bare `minimax` alias tracks the latest flagship per the
+  // shortest-alias convention (mirrors `deepseek` → DeepSeek V4 Pro, `kimi` → Kimi K3).
+  MINIMAX_M3: {
+    provider: "minimax",
+    providerModelId: "MiniMax-M3",
+    aliases: ["minimax", "m3", "MiniMax-M3"],
+    warm: true,
+    // M3's tokenizer isn't published in ai-tokenizer yet; reuse Kimi K2 (the newest
+    // Chinese-trained decoder tokenizer available) for approximate counting. Both
+    // vendor tokenizers share a similar BPE shape, so this is a reasonable proxy
+    // until an upstream encoding ships.
+    tokenizerOverride: "moonshotai/kimi-k2",
+  },
+  // MiniMax-M2.7 - "Beginning the journey of recursive self-improvement" (204,800
+  // context, ~60 tps output). Intentionally omitting M2.7 reasoning model id; users
+  // can opt into the highspeed variant directly via the `MiniMax-M2.7-highspeed`
+  // alias when they prefer the faster variant.
+  MINIMAX_M27: {
+    provider: "minimax",
+    providerModelId: "MiniMax-M2.7",
+    aliases: ["MiniMax-M2.7", "m2.7"],
+    tokenizerOverride: "moonshotai/kimi-k2",
+  },
+  MINIMAX_M27_HIGHSPEED: {
+    provider: "minimax",
+    providerModelId: "MiniMax-M2.7-highspeed",
+    aliases: ["MiniMax-M2.7-highspeed", "m2.7-highspeed", "m2.7hs"],
+    tokenizerOverride: "moonshotai/kimi-k2",
+  },
+  // MiniMax-M2.5 - "Peak Performance. Ultimate Value." (204,800 context, ~60 tps).
+  MINIMAX_M25: {
+    provider: "minimax",
+    providerModelId: "MiniMax-M2.5",
+    aliases: ["MiniMax-M2.5", "m2.5"],
+    tokenizerOverride: "moonshotai/kimi-k2",
+  },
+  MINIMAX_M25_HIGHSPEED: {
+    provider: "minimax",
+    providerModelId: "MiniMax-M2.5-highspeed",
+    aliases: ["MiniMax-M2.5-highspeed", "m2.5-highspeed", "m2.5hs"],
     tokenizerOverride: "moonshotai/kimi-k2",
   },
 } as const satisfies Record<string, KnownModelDefinition>;

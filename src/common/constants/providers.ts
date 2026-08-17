@@ -21,6 +21,7 @@ export type ProviderName =
   | "xai"
   | "deepseek"
   | "moonshotai"
+  | "minimax"
   | "openrouter"
   | "github-copilot"
   | "bedrock"
@@ -135,6 +136,23 @@ export const PROVIDER_DEFINITIONS = {
     factoryName: "createMoonshotAI",
     requiresApiKey: true,
     kind: "direct",
+  },
+  // MiniMax (千千/MiniMax) — community AI SDK provider that wraps MiniMax's
+  // Anthropic-compatible endpoint. Using the third-party SDK (instead of
+  // @ai-sdk/openai-compatible) ensures the upstream `<thinking>` blocks in
+  // MiniMax-M3 reasoning output are parsed into AI SDK's `reasoning` field
+  // rather than surfacing as raw text in the chat. M3/M2.7/M2.5 are the
+  // curated anchor models; bare `minimax` alias tracks the latest flagship.
+  minimax: {
+    displayName: "MiniMax",
+    import: () => import("vercel-minimax-ai-provider"),
+    factoryName: "createMinimax",
+    requiresApiKey: true,
+    kind: "direct",
+    // The lucide-react `Brain` placeholder icon is stroke-based, so flip the
+    // ProviderIcon styling flag to match. Once a real brand SVG lands, drop
+    // this flag and switch PROVIDER_ICONS.minimax back to an SVG import.
+    strokeBasedIcon: true,
   },
   openrouter: {
     displayName: "OpenRouter",

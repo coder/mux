@@ -628,6 +628,78 @@ export const modelsExtra: Record<string, ModelData> = {
     supports_response_schema: true,
   },
 
+  // MiniMax-M3 - MiniMax's flagship M-series model. 1M context window, agentic
+  // reasoning + tool use + coding. Pricing tracks the MiniMax Platform public
+  // listing: $0.30/M input, $1.20/M output (post-Aug 2025 onboarding rate).
+  // MiniMax streams reasoning through the upstream `<thinking>` block; the
+  // vercel-minimax-ai-provider SDK parses those blocks into AI SDK's reasoning
+  // field, which is why we mark `supports_reasoning: true` here.
+  // MiniMax-M3 + M2.7/M2.5 are not yet present in LiteLLM's models.json, so
+  // we key them by the bare providerModelId (no slash prefix), matching the
+  // lookupKey branch in knownModels.test.ts for non-xAI/moonshotai providers.
+  "MiniMax-M3": {
+    max_input_tokens: 1000000,
+    max_output_tokens: 8192,
+    input_cost_per_token: 0.0000003, // $0.30 per million input tokens
+    output_cost_per_token: 0.0000012, // $1.20 per million output tokens
+    litellm_provider: "minimax",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+  // MiniMax-M2.7 - "Beginning the journey of recursive self-improvement"
+  // (204,800 context, ~60 tps output). Public platform rate: $0.30/M input,
+  // $1.20/M output.
+  "MiniMax-M2.7": {
+    max_input_tokens: 204800,
+    max_output_tokens: 8192,
+    input_cost_per_token: 0.0000003,
+    output_cost_per_token: 0.0000012,
+    litellm_provider: "minimax",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+  // MiniMax-M2.7-highspeed - Same model surface, faster inference variant
+  // (~100 tps). Pricing matches M2.7 per the platform listing.
+  "MiniMax-M2.7-highspeed": {
+    max_input_tokens: 204800,
+    max_output_tokens: 8192,
+    input_cost_per_token: 0.0000003,
+    output_cost_per_token: 0.0000012,
+    litellm_provider: "minimax",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+  // MiniMax-M2.5 - "Peak Performance. Ultimate Value." (204,800 context, ~60 tps).
+  "MiniMax-M2.5": {
+    max_input_tokens: 204800,
+    max_output_tokens: 8192,
+    input_cost_per_token: 0.0000003,
+    output_cost_per_token: 0.0000012,
+    litellm_provider: "minimax",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+  // MiniMax-M2.5-highspeed - Faster variant of M2.5 (~100 tps).
+  "MiniMax-M2.5-highspeed": {
+    max_input_tokens: 204800,
+    max_output_tokens: 8192,
+    input_cost_per_token: 0.0000003,
+    output_cost_per_token: 0.0000012,
+    litellm_provider: "minimax",
+    mode: "chat",
+    supports_function_calling: true,
+    supports_reasoning: true,
+    supports_response_schema: true,
+  },
+
   // GPT-5.1-Codex-Max - Extended reasoning model with xhigh support
   // Same pricing as gpt-5.1-codex: $1.25/M input, $10/M output
   // Supports 5 reasoning levels: off, low, medium, high, xhigh

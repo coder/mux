@@ -1,5 +1,5 @@
 import React from "react";
-import { Server } from "lucide-react";
+import { Brain, Server } from "lucide-react";
 import AnthropicIcon from "@/browser/assets/icons/anthropic.svg?react";
 import OpenAIIcon from "@/browser/assets/icons/openai.svg?react";
 import GoogleIcon from "@/browser/assets/icons/google.svg?react";
@@ -29,6 +29,9 @@ const PROVIDER_ICONS: Partial<Record<ProviderName, React.FC>> = {
   xai: XAIIcon,
   deepseek: DeepSeekIcon,
   moonshotai: MoonshotAIIcon,
+  // MiniMax ships no brand SVG yet; use a brain glyph as a generic placeholder
+  // tuned to the provider's "agentic reasoning" positioning.
+  minimax: Brain,
   openrouter: OpenRouterIcon,
   bedrock: AWSIcon,
   ollama: OllamaIcon,
