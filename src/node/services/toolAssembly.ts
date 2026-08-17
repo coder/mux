@@ -80,6 +80,33 @@ export async function retargetCodeExecution(target: Tool, donor: Tool): Promise<
   return ptc.retargetCodeExecutionTool(target, donor);
 }
 
+/**
+ * Reinstate a request.assemble middleware's code_execution replacement over a
+ * rebuilt instance while reconciling stale model-facing metadata. A wrapper
+ * built by spreading the pre-hook tool (`{ ...tool, execute: wrapped }`)
+ * inherits its description, whose embedded TypeScript definitions still
+ * advertise tools the rebuild removed/replaced — execution fails closed, but
+ * the model keeps being instructed those tools exist. When the wrapper
+ * inherited the pre-hook description verbatim, swap in the rebuilt
+ * description; middleware that authored its own description keeps it (it took
+ * ownership of the model-facing contract).
+ */
+export function reconcileHookReplacedCodeExecution(
+  preHook: Tool,
+  hookReplacement: Tool,
+  rebuilt: Tool
+): Tool {
+  if (
+    hookReplacement.description !== undefined &&
+    hookReplacement.description === preHook.description &&
+    rebuilt.description !== undefined &&
+    rebuilt.description !== hookReplacement.description
+  ) {
+    return { ...hookReplacement, description: rebuilt.description };
+  }
+  return hookReplacement;
+}
+
 // ---------------------------------------------------------------------------
 // Tool Policy + PTC Application
 // ---------------------------------------------------------------------------

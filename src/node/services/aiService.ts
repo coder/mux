@@ -176,6 +176,7 @@ import {
 import {
   applyToolPolicyAndExperiments,
   captureMcpToolTelemetry,
+  reconcileHookReplacedCodeExecution,
   retargetCodeExecution,
 } from "./toolAssembly";
 import { eventSpine, type RequestAssembleContext } from "@/node/services/events/eventSpine";
@@ -1085,11 +1086,21 @@ export class AIService extends EventEmitter {
     // the PRE-hook instance the wrapper delegates to. code_execution reads its
     // bridge late-bound at call time, so this retargets the wrapper's
     // delegation path (even a captured execute reference) to the post-hook
-    // toolset instead of leaving it closed over the stale bridge.
+    // toolset instead of leaving it closed over the stale bridge. Then
+    // reconcile model-facing metadata a spread-style wrapper inherited from
+    // the pre-hook instance (description advertising removed tools).
     if (hookReplacedCodeExecution && hookCodeExecution !== undefined) {
       const rebuiltCodeExecution = rebuilt.code_execution;
       if (rebuiltCodeExecution !== undefined && preHookTools.code_execution !== undefined) {
         await retargetCodeExecution(preHookTools.code_execution, rebuiltCodeExecution);
+        return {
+          ...rebuilt,
+          code_execution: reconcileHookReplacedCodeExecution(
+            preHookTools.code_execution,
+            hookCodeExecution,
+            rebuiltCodeExecution
+          ),
+        };
       }
       return { ...rebuilt, code_execution: hookCodeExecution };
     }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { Tool } from "ai";
 
-import { applyToolPolicyAndExperiments } from "./toolAssembly";
+import { applyToolPolicyAndExperiments, reconcileHookReplacedCodeExecution } from "./toolAssembly";
 
 function executableTool(description: string): Tool {
   return {
@@ -63,5 +63,34 @@ describe("applyToolPolicyAndExperiments", () => {
     )) as { success: boolean; result?: unknown };
     expect(evalResult.success).toBe(true);
     expect(evalResult.result).toBe("Capability denied: mux.bash is not granted for this sandbox");
+  });
+});
+
+describe("reconcileHookReplacedCodeExecution", () => {
+  test("spread-style wrapper gets the rebuilt description but keeps its execute", () => {
+    const preHook = executableTool("defs: function bash; function file_read");
+    // Middleware wrapped by spreading the pre-hook tool: same description,
+    // new execute.
+    const wrappedExecute = () => Promise.resolve({ success: true, audited: true });
+    const hookReplacement = { ...preHook, execute: wrappedExecute } as Tool;
+    const rebuilt = executableTool("defs: function file_read");
+
+    const result = reconcileHookReplacedCodeExecution(preHook, hookReplacement, rebuilt);
+
+    // Model-facing metadata follows the rebuilt toolset (bash removed)...
+    expect(result.description).toBe("defs: function file_read");
+    // ...while the middleware's execution wrapper is preserved.
+    expect(result.execute).toBe(wrappedExecute);
+  });
+
+  test("middleware-authored description is preserved", () => {
+    const preHook = executableTool("defs: function bash; function file_read");
+    const hookReplacement = executableTool("audited code execution");
+    const rebuilt = executableTool("defs: function file_read");
+
+    const result = reconcileHookReplacedCodeExecution(preHook, hookReplacement, rebuilt);
+
+    // Middleware took ownership of the model-facing contract; return it as-is.
+    expect(result).toBe(hookReplacement);
   });
 });
