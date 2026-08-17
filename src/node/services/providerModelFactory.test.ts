@@ -1668,23 +1668,54 @@ describe("ProviderModelFactory routing", () => {
       });
     });
 
-    it("clamps the stamped session_id to OpenRouter's 256-char cap", async () => {
+    it("clamps overlong session_ids to the 256-char cap without merging distinct ids", async () => {
       await withCapturedOpenRouterOptions(async (captured) => {
         await withTempConfig(async (config, factory) => {
           config.saveProvidersConfig({ openrouter: { apiKey: "or-test" } });
 
-          // Legacy workspace ids embed project/branch basenames and can be long.
-          const legacyId = "p".repeat(300);
+          // Legacy workspace ids are `<project>-<branch>` basenames: two
+          // workspaces under one long project name differ only in the tail,
+          // so a plain prefix truncation would merge their sessions.
+          const longProject = "p".repeat(280);
+          for (const branch of ["alpha", "beta"]) {
+            const result = await factory.createModel("openrouter:openai/gpt-5", undefined, {
+              workspaceId: `${longProject}-${branch}`,
+            });
+            expect(result.success).toBe(true);
+          }
+          const sessionIds = captured.map((options) => options?.extraBody?.session_id);
+          expect(sessionIds).toHaveLength(2);
+          for (const sessionId of sessionIds) {
+            if (typeof sessionId !== "string") {
+              throw new Error("expected a stamped string session_id");
+            }
+            expect(sessionId).toHaveLength(256);
+            expect(sessionId.startsWith("mux-ppp")).toBe(true);
+          }
+          expect(sessionIds[0]).not.toBe(sessionIds[1]);
+        });
+      });
+    });
+
+    it("clamps an overlong explicit config session_id instead of forwarding it", async () => {
+      await withCapturedOpenRouterOptions(async (captured) => {
+        await withTempConfig(async (config, factory) => {
+          config.saveProvidersConfig({
+            openrouter: { apiKey: "or-test", session_id: "s".repeat(300) },
+          });
+
           const result = await factory.createModel("openrouter:openai/gpt-5", undefined, {
-            workspaceId: legacyId,
+            workspaceId: "ws1234abcd",
           });
           expect(result.success).toBe(true);
           const sessionId = captured[0]?.extraBody?.session_id;
           if (typeof sessionId !== "string") {
-            throw new Error("expected a stamped string session_id");
+            throw new Error("expected a session_id string");
           }
           expect(sessionId).toHaveLength(256);
-          expect(sessionId).toBe(`mux-${legacyId}`.slice(0, 256));
+          expect(sessionId.startsWith("sss")).toBe(true);
+          // Still the user's static override, not the workspace stamp.
+          expect(sessionId).not.toContain("ws1234abcd");
         });
       });
     });

@@ -1,4 +1,5 @@
 import assert from "node:assert";
+import { createHash } from "node:crypto";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import type { XaiProviderOptions } from "@ai-sdk/xai";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
@@ -518,6 +519,22 @@ function wrapFetchWithMuxGatewayAutoLogout(
   };
 
   return Object.assign(wrappedFetch, baseFetch) as typeof fetch;
+}
+
+/**
+ * Normalize a session key to OpenRouter's 256-char session_id cap. Plain
+ * truncation would merge distinct overlong keys that share a prefix (legacy
+ * workspace ids are `<project>-<branch>` basenames, so workspaces under one
+ * long project name differ only in the tail), so overlong values keep a
+ * readable head plus a digest of the full value for uniqueness.
+ */
+function clampOpenRouterSessionId(sessionId: string): string {
+  const MAX_LENGTH = 256;
+  if (sessionId.length <= MAX_LENGTH) {
+    return sessionId;
+  }
+  const digest = createHash("sha256").update(sessionId).digest("hex").slice(0, 16);
+  return `${sessionId.slice(0, MAX_LENGTH - digest.length - 1)}-${digest}`;
 }
 
 /**
@@ -1718,6 +1735,10 @@ export class ProviderModelFactory {
         const hasExplicitSessionId = "session_id" in otherOptions;
         if (hasExplicitSessionId && typeof otherOptions.session_id !== "string") {
           delete otherOptions.session_id;
+        } else if (typeof otherOptions.session_id === "string") {
+          // Normalize explicit overrides to the cap too: forwarding an
+          // overlong key verbatim would fail every request on that provider.
+          otherOptions.session_id = clampOpenRouterSessionId(otherOptions.session_id);
         }
         const hasSessionIdHeader = Object.keys(headers ?? {}).some(
           (headerName) => headerName.toLowerCase() === "x-session-id"
@@ -1741,9 +1762,9 @@ export class ProviderModelFactory {
         if (opts?.workspaceId != null && !hasExplicitSessionId && !hasSessionIdHeader) {
           extraBody = {
             ...extraBody,
-            // Sliced to OpenRouter's 256-char cap: legacy workspace ids embed
-            // project/branch basenames and can exceed it.
-            session_id: `${MUX_OPENROUTER_SESSION_ID_PREFIX}${opts.workspaceId}`.slice(0, 256),
+            session_id: clampOpenRouterSessionId(
+              `${MUX_OPENROUTER_SESSION_ID_PREFIX}${opts.workspaceId}`
+            ),
           };
         }
 
