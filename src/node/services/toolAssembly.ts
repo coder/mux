@@ -140,6 +140,14 @@ export async function applyToolPolicyAndExperiments(
   // ToolBridge so the mux.* API only exposes policy-allowed tools.
   const policyFilteredTools = applyToolPolicy(grantFilteredTools, effectiveToolPolicy);
 
+  // The bridge is built from the PRE-grant policy-filtered set: ToolBridge
+  // must see grant-denied tools so it can stub them with a catchable
+  // "Capability denied" guest error (not a confusing "mux.x is not a
+  // function"). Model-visible sets below still use the grant-filtered tools.
+  const policyFilteredPreGrant = opts.capabilityGrants
+    ? applyToolPolicy(allToolsWithExtra, effectiveToolPolicy)
+    : policyFilteredTools;
+
   // Handle PTC experiments — add or replace tools with code_execution
   let toolsForModel = policyFilteredTools;
   if (experiments?.programmaticToolCalling || experiments?.programmaticToolCallingExclusive) {
@@ -147,9 +155,9 @@ export async function applyToolPolicyAndExperiments(
       // Lazy-load PTC modules only when experiments are enabled
       const ptc = await getPTCModules();
 
-      // ToolBridge uses policy-filtered tools — sandbox only exposes allowed
-      // tools; grants are re-enforced at the bridge boundary.
-      const toolBridge = new ptc.ToolBridge(policyFilteredTools, opts.capabilityGrants);
+      // ToolBridge uses the pre-grant policy-filtered tools — the bridge
+      // enforces grants itself (denied tools become explicit error stubs).
+      const toolBridge = new ptc.ToolBridge(policyFilteredPreGrant, opts.capabilityGrants);
 
       // Singleton runtime factory (WASM module is expensive to load)
       ptc.runtimeFactory ??= new ptc.QuickJSRuntimeFactory();
@@ -180,8 +188,12 @@ export async function applyToolPolicyAndExperiments(
       if (experiments?.programmaticToolCallingExclusive) {
         // Exclusive mode: code_execution is mandatory — it's the only way to use bridged
         // tools. The experiment flag is the opt-in; policy cannot disable it here since
-        // that would leave no way to access tools. nonBridgeable is already policy-filtered.
-        const nonBridgeable = toolBridge.getNonBridgeableTools();
+        // that would leave no way to access tools. nonBridgeable is policy-filtered but
+        // comes from the PRE-grant bridge input, so re-apply the grants ceiling here to
+        // keep grant-denied non-bridgeable tools out of the model-visible set.
+        const nonBridgeable = opts.capabilityGrants
+          ? applyCapabilityGrants(toolBridge.getNonBridgeableTools(), opts.capabilityGrants)
+          : toolBridge.getNonBridgeableTools();
         // Keep mcp_prompt_get direct because sandbox declarations omit its
         // multiline prompt catalog.
         const promptGet = policyFilteredTools.mcp_prompt_get;

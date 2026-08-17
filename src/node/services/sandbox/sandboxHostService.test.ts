@@ -236,6 +236,54 @@ describe("SandboxHostService", () => {
     mount.release();
   });
 
+  test("concurrent first acquisitions share one mount (no double runtime creation)", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const [a, b] = await Promise.all([
+      host.acquireMount({
+        lifetime: "persistent",
+        runtimeFactory,
+        scopeKey: "ws-race",
+        sessionDir: tmp.path,
+      }),
+      host.acquireMount({
+        lifetime: "persistent",
+        runtimeFactory,
+        scopeKey: "ws-race",
+        sessionDir: tmp.path,
+      }),
+    ]);
+    expect(b).toBe(a);
+    await host.disposeScope("ws-race");
+  });
+
+  test("exclusive() serializes concurrent runs on a shared mount", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-serial",
+      sessionDir: tmp.path,
+    });
+    const order: string[] = [];
+    await Promise.all([
+      mount.exclusive(async () => {
+        order.push("a-start");
+        // Yield long enough that an unserialized implementation interleaves b.
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push("a-end");
+      }),
+      mount.exclusive(async () => {
+        order.push("b-start");
+        await Promise.resolve();
+        order.push("b-end");
+      }),
+    ]);
+    expect(order).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+    await host.disposeScope("ws-serial");
+  });
+
   test("discardScope: context reset discards vars instead of restoring the last snapshot", async () => {
     using tmp = new DisposableTempDir("sandbox-host-test");
     const host = new SandboxHostService();

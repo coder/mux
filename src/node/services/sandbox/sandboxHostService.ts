@@ -25,6 +25,7 @@ import assert from "node:assert";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { resolveCapabilityGrants, type CapabilityGrants } from "@/common/types/capabilityGrants";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { log } from "@/node/services/log";
 
 export type SandboxMountLifetime = "ephemeral" | "persistent";
@@ -56,8 +57,22 @@ export class SandboxMount {
     public readonly grants: CapabilityGrants,
     public readonly scopeKey?: string,
     /** Bound by the host service; persists a vars snapshot via the journal kit. */
-    private readonly persistSnapshot?: (varsJson: string) => Promise<void>
+    private readonly persistSnapshot?: (varsJson: string) => Promise<void>,
+    /** Persistent mounts share the host's per-scope mutex so exclusive() also
+     * serializes against scope disposal; ephemeral mounts get their own. */
+    private readonly mutex: AsyncMutex = new AsyncMutex()
   ) {}
+
+  /**
+   * Run `fn` with exclusive access to this mount's runtime. Concurrent
+   * code_execution calls can share one persistent mount, but eval() mutates
+   * runtime-wide state (abort controller, tool-call attribution, handlers),
+   * so evaluation + vars persistence must be serialized per runtime.
+   */
+  async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    await using _lock = await this.mutex.acquire();
+    return await fn();
+  }
 
   /** Queue a host event for the guest. Guest drains via drainHostEvents(). */
   postHostEvent(event: unknown): void {
@@ -143,6 +158,18 @@ function grantsKey(grants: CapabilityGrants): string {
 export class SandboxHostService {
   private readonly persistentMounts = new Map<string, SandboxMount>();
   private readonly journals = new Map<string, DurableEventJournal>();
+  /** Per-scope mutex serializing acquisition, exclusive runs, and disposal.
+   * Kept for the process lifetime (bounded by workspace count). */
+  private readonly scopeLocks = new Map<string, AsyncMutex>();
+
+  private lockFor(scopeKey: string): AsyncMutex {
+    let lock = this.scopeLocks.get(scopeKey);
+    if (!lock) {
+      lock = new AsyncMutex();
+      this.scopeLocks.set(scopeKey, lock);
+    }
+    return lock;
+  }
 
   /**
    * Acquire a mount. Ephemeral mounts are always fresh; persistent mounts are
@@ -162,6 +189,12 @@ export class SandboxHostService {
     assert(scopeKey, "persistent mounts require a scopeKey");
     assert(sessionDir, "persistent mounts require a sessionDir");
 
+    // Serialize per scope: concurrent first acquisitions must not both create
+    // runtimes (the map is only populated after several awaits), and
+    // acquisition must not interleave with disposal or an exclusive run.
+    const lock = this.lockFor(scopeKey);
+    await using _guard = await lock.acquire();
+
     const existing = this.persistentMounts.get(scopeKey);
     if (existing && !existing.isDisposed) {
       if (grantsKey(existing.grants) === grantsKey(grants)) {
@@ -170,19 +203,26 @@ export class SandboxHostService {
       // Effective grants changed between requests (e.g. policy narrowed): a
       // mount must never outlive its capability boundary. Snapshot under the
       // OLD grants, dispose, and rebuild below under the new grants.
-      await this.disposeScope(scopeKey);
+      await this.disposeScopeLocked(scopeKey);
     }
 
     const journal = this.journalFor(scopeKey, sessionDir);
     const runtime = await options.runtimeFactory.create();
-    const mount = new SandboxMount(runtime, "persistent", grants, scopeKey, async (varsJson) => {
-      const { ref, size } = await journal.blobs.put(varsJson);
-      await journal.append({
-        workspaceId: scopeKey,
-        kind: "sandbox-vars-snapshot",
-        data: { scopeKey, blobHash: ref, size },
-      });
-    });
+    const mount = new SandboxMount(
+      runtime,
+      "persistent",
+      grants,
+      scopeKey,
+      async (varsJson) => {
+        const { ref, size } = await journal.blobs.put(varsJson);
+        await journal.append({
+          workspaceId: scopeKey,
+          kind: "sandbox-vars-snapshot",
+          data: { scopeKey, blobHash: ref, size },
+        });
+      },
+      lock
+    );
 
     if (grants.vars) {
       await this.initializeVars(mount, journal, scopeKey);
@@ -201,6 +241,7 @@ export class SandboxHostService {
 
   /** Persist the current vars snapshot for a live persistent scope. */
   async snapshotScope(scopeKey: string): Promise<void> {
+    await using _guard = await this.lockFor(scopeKey).acquire();
     const mount = this.persistentMounts.get(scopeKey);
     if (!mount || mount.isDisposed) return;
     await mount.persistVars();
@@ -211,6 +252,14 @@ export class SandboxHostService {
    * best-effort first so state survives un-archive and restarts.
    */
   async disposeScope(scopeKey: string): Promise<void> {
+    // The scope lock also backs mount.exclusive(), so disposal waits for any
+    // in-flight evaluation instead of pulling the runtime out from under it.
+    await using _guard = await this.lockFor(scopeKey).acquire();
+    await this.disposeScopeLocked(scopeKey);
+  }
+
+  /** Dispose logic without taking the scope lock: caller must hold it. */
+  private async disposeScopeLocked(scopeKey: string): Promise<void> {
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
     this.journals.delete(scopeKey);
@@ -233,6 +282,7 @@ export class SandboxHostService {
    * pre-reset state. Rotation-by-append keeps the journal append-only.
    */
   async discardScope(scopeKey: string, sessionDir: string): Promise<void> {
+    await using _guard = await this.lockFor(scopeKey).acquire();
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
     const journal = this.journals.get(scopeKey) ?? new DurableEventJournal(sessionDir);

@@ -128,54 +128,66 @@ ${muxTypes}
       const mount = mountProvider ? await mountProvider() : null;
       const runtime = mount ? mount.runtime : await runtimeFactory.create();
 
-      const onAbort = () => runtime.abort();
-      try {
-        // Set resource limits (clamp timeout to max)
-        const timeoutSecs = Math.min(timeout_secs ?? DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
-        runtime.setLimits({
-          memoryBytes: DEFAULT_MEMORY_BYTES,
-          timeoutMs: timeoutSecs * 1000,
-        });
-
-        // Subscribe to events for UI streaming
-        // Wrap callback to include parentToolCallId from AI SDK context
-        if (emitNestedEvent) {
-          runtime.onEvent((event: PTCEvent) => {
-            emitNestedEvent({ ...event, parentToolCallId: toolCallId });
+      const runWithRuntime = async (): Promise<PTCExecutionResult> => {
+        const onAbort = () => runtime.abort();
+        try {
+          // Set resource limits (clamp timeout to max)
+          const timeoutSecs = Math.min(timeout_secs ?? DEFAULT_TIMEOUT_SECS, MAX_TIMEOUT_SECS);
+          runtime.setLimits({
+            memoryBytes: DEFAULT_MEMORY_BYTES,
+            timeoutMs: timeoutSecs * 1000,
           });
-        }
 
-        // Register tools - they'll use runtime.getAbortSignal() for cancellation.
-        // Always re-register, even on reused persistent mounts: each request
-        // builds a fresh ToolBridge from the CURRENT policy + grants, and a
-        // stale bridge would keep exposing tools after permissions narrowed.
-        // Registration just overwrites the guest's `mux` global, so this is
-        // cheap and idempotent.
-        toolBridge.register(runtime);
-
-        // Handle abort signal - interrupt sandbox and cancel nested tools
-        if (abortSignal) {
-          // If already aborted, abort runtime immediately
-          if (abortSignal.aborted) {
-            runtime.abort();
-          } else {
-            abortSignal.addEventListener("abort", onAbort, { once: true });
+          // Subscribe to events for UI streaming
+          // Wrap callback to include parentToolCallId from AI SDK context
+          if (emitNestedEvent) {
+            runtime.onEvent((event: PTCEvent) => {
+              emitNestedEvent({ ...event, parentToolCallId: toolCallId });
+            });
           }
-        }
 
-        // Execute the code
-        const result = await runtime.eval(code);
+          // Register tools - they'll use runtime.getAbortSignal() for cancellation.
+          // Always re-register, even on reused persistent mounts: each request
+          // builds a fresh ToolBridge from the CURRENT policy + grants, and a
+          // stale bridge would keep exposing tools after permissions narrowed.
+          // Registration just overwrites the guest's `mux` global, so this is
+          // cheap and idempotent.
+          toolBridge.register(runtime);
 
-        // Persist the shared vars namespace after each call on persistent
-        // mounts so state survives crashes/restarts (turn-boundary snapshots
-        // are the Track 2 refinement; per-call is the safe foundation).
-        if (mount?.lifetime === "persistent" && mount.grants.vars && result.success) {
-          await mount.persistVars();
+          // Handle abort signal - interrupt sandbox and cancel nested tools
+          if (abortSignal) {
+            // If already aborted, abort runtime immediately
+            if (abortSignal.aborted) {
+              runtime.abort();
+            } else {
+              abortSignal.addEventListener("abort", onAbort, { once: true });
+            }
+          }
+
+          // Execute the code
+          const result = await runtime.eval(code);
+
+          // Persist the shared vars namespace after each call on persistent
+          // mounts so state survives crashes/restarts (turn-boundary snapshots
+          // are the Track 2 refinement; per-call is the safe foundation).
+          if (mount?.lifetime === "persistent" && mount.grants.vars && result.success) {
+            await mount.persistVars();
+          }
+          return result;
+        } finally {
+          // A late abort of THIS call's signal must not poison a reused runtime.
+          abortSignal?.removeEventListener("abort", onAbort);
         }
-        return result;
+      };
+
+      try {
+        // Persistent mounts can be handed to concurrent code_execution calls
+        // for the same workspace, but eval() mutates runtime-wide state
+        // (abort controller, tool-call attribution, event handler), so the
+        // register→eval→persist sequence runs under the mount's exclusive
+        // lock. Ephemeral runtimes are per-call and need no serialization.
+        return mount ? await mount.exclusive(runWithRuntime) : await runWithRuntime();
       } finally {
-        // A late abort of THIS call's signal must not poison a reused runtime.
-        abortSignal?.removeEventListener("abort", onAbort);
         if (mount) {
           mount.release(); // dispose ephemeral mounts; keep persistent alive
         } else {
