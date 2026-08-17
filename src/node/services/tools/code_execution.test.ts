@@ -604,6 +604,61 @@ describe("createCodeExecutionTool", () => {
       await host2.disposeScope("ws-code-exec");
     });
 
+    it("persists vars mutated before a failed eval so memory and disk agree", async () => {
+      using tmp = new DisposableTempDir("code-exec-persistent");
+      const host = new SandboxHostService();
+      const mountProvider = () =>
+        host.acquireMount({
+          lifetime: "persistent",
+          runtimeFactory,
+          scopeKey: "ws-failed-eval",
+          sessionDir: tmp.path,
+        });
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        mountProvider
+      );
+
+      const seed = (await tool.execute!(
+        { code: "vars.state = 'initial'; return vars.state;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(seed.success).toBe(true);
+
+      // Guest mutates vars, THEN throws: the live guest keeps the mutation,
+      // so the snapshot must too — a restart must not resurrect 'initial'.
+      const failed = (await tool.execute!(
+        { code: "vars.state = 'mutated-before-throw'; throw new Error('boom');" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(failed.success).toBe(false);
+
+      // Simulated restart: fresh host restores the latest snapshot.
+      await host.disposeScope("ws-failed-eval");
+      const host2 = new SandboxHostService();
+      const tool2 = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        () =>
+          host2.acquireMount({
+            lifetime: "persistent",
+            runtimeFactory,
+            scopeKey: "ws-failed-eval",
+            sessionDir: tmp.path,
+          })
+      );
+      const after = (await tool2.execute!(
+        { code: "return vars.state;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(after.success).toBe(true);
+      expect(after.result).toBe("mutated-before-throw");
+      await host2.disposeScope("ws-failed-eval");
+    });
+
     it("clearTypeCaches forces regeneration", async () => {
       const mockTools: Record<string, Tool> = {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() }), () => ({

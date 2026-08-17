@@ -38,6 +38,11 @@ export class QuickJSRuntime implements IJSRuntime {
   private consoleSetup = false;
   /** Serializes late-settlement guest continuations; see setPendingJobGate. */
   private pendingJobGate?: (run: () => void) => void;
+  /** Monotonic eval counter + the generation currently inside eval() (null
+   * between evals). Used to detect LATE capability settlements that must be
+   * routed through the pending-job gate instead of touching the VM directly. */
+  private evalGeneration = 0;
+  private activeEvalGeneration: number | null = null;
 
   // Execution state (reset per eval)
   private toolCalls: PTCToolCallRecord[] = [];
@@ -185,6 +190,11 @@ export class QuickJSRuntime implements IJSRuntime {
       // under a later eval and emit it to the wrong handler.
       const toolCalls = this.toolCalls;
       const eventHandler = this.eventHandler;
+      // Generation of the eval this capability originated from: settlement
+      // may touch the VM directly only while that same eval is still running
+      // (its resolve loop coordinates); otherwise the VM-facing settlement
+      // must be routed through the pending-job gate.
+      const originGeneration = this.activeEvalGeneration;
 
       eventHandler?.({
         type: "tool-call-start",
@@ -193,6 +203,27 @@ export class QuickJSRuntime implements IJSRuntime {
         args: args[0],
         startTime,
       });
+
+      // VM-facing settlement: marshal + resolve/reject + drain continuations.
+      // Runs directly when the ORIGINATING eval is still active (routing
+      // through the gate would deadlock: the gate serializes on the mount
+      // lock held by that very call, whose resolve loop awaits this
+      // settlement). Any later settlement goes through the gate so it cannot
+      // re-enter the shared QuickJS context while another eval is running.
+      const settleInVm = (run: () => void) => {
+        const guarded = () => {
+          if (this.disposed) return;
+          run();
+          this.ctx.runtime.executePendingJobs();
+        };
+        if (this.activeEvalGeneration === originGeneration && originGeneration !== null) {
+          guarded();
+        } else if (this.pendingJobGate) {
+          this.pendingJobGate(guarded);
+        } else {
+          guarded();
+        }
+      };
 
       const settle = (async () => {
         try {
@@ -213,10 +244,11 @@ export class QuickJSRuntime implements IJSRuntime {
             startTime,
             endTime,
           });
-          if (this.disposed) return;
-          const valueHandle = this.marshal(result);
-          deferred.resolve(valueHandle);
-          valueHandle.dispose();
+          settleInVm(() => {
+            const valueHandle = this.marshal(result);
+            deferred.resolve(valueHandle);
+            valueHandle.dispose();
+          });
         } catch (error) {
           const endTime = Date.now();
           const errorStr = error instanceof Error ? error.message : String(error);
@@ -235,40 +267,27 @@ export class QuickJSRuntime implements IJSRuntime {
             startTime,
             endTime,
           });
-          if (this.disposed) return;
-          const errorHandle = this.marshal({ name: "Error", message: errorStr });
-          deferred.reject(errorHandle);
-          errorHandle.dispose();
+          settleInVm(() => {
+            const errorHandle = this.marshal({ name: "Error", message: errorStr });
+            deferred.reject(errorHandle);
+            errorHandle.dispose();
+          });
         }
       })();
 
       // Track settlement so eval()'s resolve loop can wait on it. The tracked
-      // promise never rejects (settle() catches everything above).
+      // promise never rejects (settle() catches everything above). Note: for
+      // gated late settlements this resolves when the settlement is HANDED to
+      // the gate; the VM effect lands when the gate runs it under the lock.
       const tracked: Promise<void> = settle.finally(() => {
         this.pendingHostPromises.delete(tracked);
       });
       this.pendingHostPromises.add(tracked);
 
-      // Run guest continuations (.then/await) once the deferred settles.
-      // Routed through the pending-job gate when set: on shared (persistent)
-      // runtimes a LATE settlement must not re-enter the QuickJS context
-      // while a later eval is running — the gate serializes the run under the
-      // owner's exclusive lock. In-eval settlements are unaffected: eval's
-      // resolve loop drains pending jobs itself.
-      deferred.settled
-        .then(() => {
-          const run = () => {
-            if (!this.disposed) {
-              this.ctx.runtime.executePendingJobs();
-            }
-          };
-          if (this.pendingJobGate) {
-            this.pendingJobGate(run);
-          } else {
-            run();
-          }
-        })
-        .catch(() => undefined);
+      // Consume the settled promise: nothing chains on it anymore (the gate
+      // handles continuation draining), and an unconsumed rejection would be
+      // reported as unhandled.
+      deferred.settled.catch(() => undefined);
 
       // Ownership of deferred.handle transfers to the wrapper (return value).
       return deferred.handle;
@@ -386,6 +405,7 @@ export class QuickJSRuntime implements IJSRuntime {
     this.abortController = new AbortController();
     this.toolCalls = [];
     this.consoleOutput = [];
+    this.activeEvalGeneration = ++this.evalGeneration;
 
     // Honor abort requests made before eval() was called
     if (this.abortRequested) {
@@ -482,6 +502,9 @@ export class QuickJSRuntime implements IJSRuntime {
       // start), not to future evals: persistent mounts reuse this runtime
       // across calls, and a sticky flag would poison every later eval.
       this.abortRequested = false;
+      // Settlements arriving from here on are LATE (post-eval) and must be
+      // gated; see registerPromiseFunction.
+      this.activeEvalGeneration = null;
     }
   }
 

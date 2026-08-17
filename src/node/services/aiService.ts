@@ -2763,6 +2763,18 @@ export class AIService extends EventEmitter {
         };
         await eventSpine.run("request.assemble", assembleCtx);
         tools = assembleCtx.tools;
+        // Tool-search state was classified from the pre-hook record; a hook
+        // that added/removed tools would leave allToolNames/deferred/active
+        // sets stale (prepareStep scoping + sentinel names both read them).
+        // Rebuild in place so the state describes the post-hook toolset.
+        if (toolSearchRuntime?.state) {
+          tools = rebuildToolSearchState(toolSearchRuntime.state, {
+            tools,
+            mcpToolNames: Object.keys(mcpTools ?? {}),
+            toolPolicy: effectiveToolPolicy,
+            ptcEnabled,
+          }).tools;
+        }
         if (assembleCtx.systemMessage !== systemMessage) {
           systemMessage = assembleCtx.systemMessage;
           // Keep context-size estimation accurate after middleware mutation.
@@ -3438,6 +3450,16 @@ export class AIService extends EventEmitter {
                     };
                     await eventSpine.run("request.assemble", nextAssembleCtx);
                     nextTools = nextAssembleCtx.tools;
+                    // Same reconcile as the primary path: tool-search state
+                    // must describe the post-hook toolset.
+                    if (toolSearchRuntime?.state) {
+                      nextTools = rebuildToolSearchState(toolSearchRuntime.state, {
+                        tools: nextTools,
+                        mcpToolNames: Object.keys(mcpTools ?? {}),
+                        toolPolicy: effectiveToolPolicy,
+                        ptcEnabled,
+                      }).tools;
+                    }
                     if (nextAssembleCtx.systemMessage !== nextSystem) {
                       nextSystem = nextAssembleCtx.systemMessage;
                       const nextTokenizer = await getTokenizerForModel(

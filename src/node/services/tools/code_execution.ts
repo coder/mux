@@ -15,6 +15,7 @@ import type { PTCEvent, PTCExecutionResult } from "@/node/services/ptc/types";
 import type { SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 
 import { analyzeCode } from "@/node/services/ptc/staticAnalysis";
+import { log } from "@/node/services/log";
 import { getCachedMuxTypes, clearTypeCache } from "@/node/services/ptc/typeGenerator";
 
 // Default limits
@@ -170,8 +171,21 @@ ${muxTypes}
           // Persist the shared vars namespace after each call on persistent
           // mounts so state survives crashes/restarts (turn-boundary snapshots
           // are the Track 2 refinement; per-call is the safe foundation).
-          if (mount?.lifetime === "persistent" && mount.grants.vars && result.success) {
-            await mount.persistVars();
+          if (mount?.lifetime === "persistent" && mount.grants.vars) {
+            if (result.success) {
+              await mount.persistVars();
+            } else {
+              // Failed/timed-out/aborted evals may still have mutated vars
+              // before failing, and the live guest keeps those mutations —
+              // persist best-effort so a restart cannot resurrect older state
+              // (memory and disk must agree). Never mask the eval result with
+              // a snapshot error.
+              try {
+                await mount.persistVars();
+              } catch (persistError) {
+                log.warn("code_execution: post-failure vars snapshot failed", { persistError });
+              }
+            }
           }
           return result;
         } finally {
