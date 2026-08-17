@@ -77,9 +77,24 @@ export class SandboxMount {
     // re-enter the shared runtime while a later eval holds it: route their
     // pending-job execution through the same exclusive lock.
     runtime.setPendingJobGate((run) => {
-      this.exclusive(() => {
+      this.exclusive(async () => {
         run();
-        return Promise.resolve();
+        // The continuation may have mutated vars AFTER the originating call's
+        // snapshot: persist so a restart cannot resurrect older state (memory
+        // and disk must agree — mirrors code_execution's post-eval path,
+        // including dispose-on-failure so an unsnapshottable state cannot
+        // linger).
+        if (!this.disposed && this.lifetime === "persistent" && this.grants.vars) {
+          try {
+            await this.persistVars();
+          } catch (error) {
+            log.warn(
+              "SandboxMount: vars snapshot after gated continuation failed; disposing mount",
+              { error }
+            );
+            this.dispose();
+          }
+        }
       }).catch((error: unknown) => {
         log.warn("SandboxMount: gated pending-job run failed", { error });
       });

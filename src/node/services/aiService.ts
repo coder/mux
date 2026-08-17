@@ -2755,7 +2755,10 @@ export class AIService extends EventEmitter {
       // (append-time materialization) — see eventSpine module docs. Gated on
       // hasMiddleware so the empty-pipeline hot path skips ctx construction.
       if (eventSpine.hasMiddleware("request.assemble")) {
-        const preHookToolNames = Object.keys(tools).sort().join(",");
+        // Shallow copy: detects added/removed names AND same-name
+        // replacements (e.g. middleware wrapping a tool with an audit check),
+        // which a key-only comparison would miss.
+        const preHookTools = { ...tools };
         const assembleCtx: RequestAssembleContext = {
           workspaceId,
           modelString,
@@ -2764,14 +2767,17 @@ export class AIService extends EventEmitter {
         };
         await eventSpine.run("request.assemble", assembleCtx);
         tools = assembleCtx.tools;
+        const toolsetChanged =
+          Object.keys(tools).length !== Object.keys(preHookTools).length ||
+          Object.entries(tools).some(([name, t]) => preHookTools[name] !== t);
         // Supplement-mode PTC: the code_execution instance created during
         // assembly closes over a ToolBridge built from the PRE-hook toolset
-        // (and its description advertises those tools), so a hook-removed
-        // bridgeable tool would remain reachable via mux.*. Rebuild
-        // code_execution from the post-hook record. Exclusive mode is
+        // (and its description advertises those tools), so a hook-removed or
+        // hook-replaced bridgeable tool would remain reachable via mux.*.
+        // Rebuild code_execution from the post-hook record. Exclusive mode is
         // unaffected: bridgeable tools are not in the hook-visible record.
         if (
-          Object.keys(tools).sort().join(",") !== preHookToolNames &&
+          toolsetChanged &&
           experiments?.programmaticToolCalling === true &&
           experiments?.programmaticToolCallingExclusive !== true &&
           tools.code_execution !== undefined
@@ -3464,7 +3470,9 @@ export class AIService extends EventEmitter {
                   // request.assemble over the rebuilt request too (see the
                   // primary-path run above).
                   if (eventSpine.hasMiddleware("request.assemble")) {
-                    const preHookNextToolNames = Object.keys(nextTools).sort().join(",");
+                    // Shallow copy: same identity-aware change detection as
+                    // the primary path (names AND same-name replacements).
+                    const preHookNextTools = { ...nextTools };
                     const nextAssembleCtx: RequestAssembleContext = {
                       workspaceId,
                       modelString: nextModelString,
@@ -3473,11 +3481,14 @@ export class AIService extends EventEmitter {
                     };
                     await eventSpine.run("request.assemble", nextAssembleCtx);
                     nextTools = nextAssembleCtx.tools;
-                    // Same rebuild as the primary path: hook-removed tools
-                    // must not stay reachable via a stale code_execution
-                    // bridge (supplement mode only).
+                    const nextToolsetChanged =
+                      Object.keys(nextTools).length !== Object.keys(preHookNextTools).length ||
+                      Object.entries(nextTools).some(([name, t]) => preHookNextTools[name] !== t);
+                    // Same rebuild as the primary path: hook-removed or
+                    // hook-replaced tools must not stay reachable via a stale
+                    // code_execution bridge (supplement mode only).
                     if (
-                      Object.keys(nextTools).sort().join(",") !== preHookNextToolNames &&
+                      nextToolsetChanged &&
                       experiments?.programmaticToolCalling === true &&
                       experiments?.programmaticToolCallingExclusive !== true &&
                       nextTools.code_execution !== undefined
