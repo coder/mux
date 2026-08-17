@@ -18,6 +18,7 @@ import type { CapabilityGrants } from "@/common/types/capabilityGrants";
 import type {
   PTCEventWithParent,
   createCodeExecutionTool as CreateCodeExecutionToolFn,
+  retargetCodeExecutionTool as RetargetCodeExecutionToolFn,
 } from "@/node/services/tools/code_execution";
 import type { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { ToolBridge } from "@/node/services/ptc/toolBridge";
@@ -40,6 +41,7 @@ import { getRuntimeTypeForTelemetry, roundToBase2 } from "@/common/telemetry/uti
 // Dynamic imports are justified: PTC pulls in ~10MB of dependencies that would slow startup.
 interface PTCModules {
   createCodeExecutionTool: typeof CreateCodeExecutionToolFn;
+  retargetCodeExecutionTool: typeof RetargetCodeExecutionToolFn;
   QuickJSRuntimeFactory: typeof QuickJSRuntimeFactory;
   ToolBridge: typeof ToolBridge;
   runtimeFactory: QuickJSRuntimeFactory | null;
@@ -60,11 +62,22 @@ async function getPTCModules(): Promise<PTCModules> {
 
   ptcModules = {
     createCodeExecutionTool: codeExecution.createCodeExecutionTool,
+    retargetCodeExecutionTool: codeExecution.retargetCodeExecutionTool,
     QuickJSRuntimeFactory: quickjs.QuickJSRuntimeFactory,
     ToolBridge: toolBridge.ToolBridge,
     runtimeFactory: null,
   };
   return ptcModules;
+}
+
+/**
+ * Lazy-loading wrapper around code_execution's retargetCodeExecutionTool for
+ * callers (aiService) that must not statically import the PTC modules.
+ * Returns false when either tool was not created by createCodeExecutionTool.
+ */
+export async function retargetCodeExecution(target: Tool, donor: Tool): Promise<boolean> {
+  const ptc = await getPTCModules();
+  return ptc.retargetCodeExecutionTool(target, donor);
 }
 
 // ---------------------------------------------------------------------------

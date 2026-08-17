@@ -173,7 +173,11 @@ import {
   simulateToolPolicyNoop,
   type SimulationContext,
 } from "./streamSimulation";
-import { applyToolPolicyAndExperiments, captureMcpToolTelemetry } from "./toolAssembly";
+import {
+  applyToolPolicyAndExperiments,
+  captureMcpToolTelemetry,
+  retargetCodeExecution,
+} from "./toolAssembly";
 import { eventSpine, type RequestAssembleContext } from "@/node/services/events/eventSpine";
 import { getErrorMessage } from "@/common/utils/errors";
 import { validateJsonSchemaSubsetSchema } from "@/common/utils/jsonSchemaSubset";
@@ -1038,9 +1042,11 @@ export class AIService extends EventEmitter {
    * same-name replacement such as an audit wrapper), the pre-hook
    * code_execution instance closes over a stale ToolBridge — rebuild it from
    * the post-hook record. When the hook replaced code_execution ITSELF, its
-   * replacement wins (never silently drop a middleware wrapper); such
-   * middleware owns bridge consistency for any other tool edits it makes in
-   * the same run.
+   * replacement wins (never silently drop a middleware wrapper) — but such a
+   * wrapper typically delegates to the PRE-hook instance, so that instance is
+   * retargeted in place onto the rebuilt bridge/mount. Delegation through the
+   * wrapper then reaches the post-hook toolset even when the wrapper captured
+   * the original execute function directly.
    */
   private async rebuildCodeExecutionAfterAssembleHook(opts: {
     preHookTools: Record<string, Tool>;
@@ -1075,8 +1081,16 @@ export class AIService extends EventEmitter {
       sandbox: { workspaceId, sessionDir: this.config.getSessionDir(workspaceId) },
     });
     // Reinstate a middleware-provided code_execution replacement over the
-    // freshly built instance.
+    // freshly built instance — but first graft the rebuilt bridge/mount onto
+    // the PRE-hook instance the wrapper delegates to. code_execution reads its
+    // bridge late-bound at call time, so this retargets the wrapper's
+    // delegation path (even a captured execute reference) to the post-hook
+    // toolset instead of leaving it closed over the stale bridge.
     if (hookReplacedCodeExecution && hookCodeExecution !== undefined) {
+      const rebuiltCodeExecution = rebuilt.code_execution;
+      if (rebuiltCodeExecution !== undefined && preHookTools.code_execution !== undefined) {
+        await retargetCodeExecution(preHookTools.code_execution, rebuiltCodeExecution);
+      }
       return { ...rebuilt, code_execution: hookCodeExecution };
     }
     return rebuilt;

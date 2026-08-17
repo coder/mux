@@ -54,6 +54,39 @@ export type MountRunner = (
   fn: (mount: SandboxMount) => Promise<PTCExecutionResult>
 ) => Promise<PTCExecutionResult>;
 
+/**
+ * Late-bound dispatch state for a created code_execution instance. execute()
+ * reads bridge + mount runner from here at CALL time (not closure-capture
+ * time) so retargetCodeExecutionTool can swing an already-created instance —
+ * and any middleware wrapper delegating to it, even through a captured
+ * `execute` function reference — onto a fresh bridge/mount.
+ */
+interface RetargetableState {
+  toolBridge: ToolBridge;
+  withMount: MountRunner | undefined;
+}
+
+const retargetableStates = new WeakMap<object, RetargetableState>();
+
+/**
+ * Point `target` (an instance returned by createCodeExecutionTool) at the
+ * bridge + mount runner of `donor` (another such instance). Used when a
+ * request.assemble hook wrapped/replaced code_execution while also editing
+ * other bridgeable tools: the wrapper delegates to the PRE-hook instance,
+ * which must dispatch through the rebuilt post-hook bridge instead of the
+ * stale one. Returns false when either tool was not created by this factory.
+ */
+export function retargetCodeExecutionTool(target: Tool, donor: Tool): boolean {
+  const targetState = retargetableStates.get(target);
+  const donorState = retargetableStates.get(donor);
+  if (targetState === undefined || donorState === undefined) {
+    return false;
+  }
+  targetState.toolBridge = donorState.toolBridge;
+  targetState.withMount = donorState.withMount;
+  return true;
+}
+
 export async function createCodeExecutionTool(
   runtimeFactory: IJSRuntimeFactory,
   toolBridge: ToolBridge,
@@ -61,11 +94,12 @@ export async function createCodeExecutionTool(
   withMount?: MountRunner
 ): Promise<Tool> {
   const bridgeableTools = toolBridge.getBridgeableTools();
+  const state: RetargetableState = { toolBridge, withMount };
 
   // Generate mux types for type validation and documentation (cached by tool set hash)
   const muxTypes = await getCachedMuxTypes(bridgeableTools);
 
-  return tool({
+  const codeExecutionTool = tool({
     description: `Execute sandboxed JavaScript to batch tools and transform outputs.
 
 **When to use:** Prefer this tool when making 2+ tool calls, especially when later calls depend on earlier results. Reduces round-trip latency.
@@ -107,6 +141,11 @@ ${muxTypes}
       { abortSignal, toolCallId }
     ): Promise<PTCExecutionResult> => {
       const execStartTime = Date.now();
+
+      // Late-bound dispatch: snapshot the CURRENT bridge + mount runner as a
+      // pair so a retarget (see retargetCodeExecutionTool) lands atomically —
+      // the whole call uses either the old pair or the new pair, never a mix.
+      const { toolBridge: activeBridge, withMount: activeMount } = state;
 
       // Static analysis before execution - catch syntax errors and sandbox-forbidden patterns.
       // TypeScript typing issues are intentionally non-blocking for one-off runtime scripts.
@@ -157,7 +196,7 @@ ${muxTypes}
           // stale bridge would keep exposing tools after permissions narrowed.
           // Registration just overwrites the guest's `mux` global, so this is
           // cheap and idempotent.
-          toolBridge.register(runtime);
+          activeBridge.register(runtime);
 
           // Handle abort signal - interrupt sandbox and cancel nested tools
           if (abortSignal) {
@@ -207,8 +246,8 @@ ${muxTypes}
       // holds the scope lock from acquisition through the whole
       // register→eval→persist sequence, so concurrent calls, grant changes,
       // and scope disposal are all serialized against this execution.
-      if (withMount) {
-        return await withMount((mount) => runWithRuntime(mount, mount.runtime));
+      if (activeMount) {
+        return await activeMount((mount) => runWithRuntime(mount, mount.runtime));
       }
       // Classic ephemeral flow: per-call runtime, no serialization needed.
       const runtime = await runtimeFactory.create();
@@ -219,4 +258,6 @@ ${muxTypes}
       }
     },
   });
+  retargetableStates.set(codeExecutionTool, state);
+  return codeExecutionTool;
 }
