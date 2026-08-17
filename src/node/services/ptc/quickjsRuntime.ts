@@ -28,42 +28,95 @@ function generateCallId(): string {
 /** Guest globals used for per-reaction attribution (see REACTION_TAGGING_SCRIPT). */
 const EVAL_GENERATION_GLOBAL = "__muxEvalGeneration";
 const REACTION_OWNER_GLOBAL = "__muxReactionOwner";
+const RETAIN_GENERATION_FN = "__muxRetainGeneration";
+const RELEASE_GENERATION_FN = "__muxReleaseGeneration";
+const WRAP_PROMISE_FN = "__muxWrapPromise";
 
 /**
  * Installed once per context: tags every promise reaction with the eval
  * generation that REGISTERED it. Persistent mounts share one context across
  * evals, and a capability promise from eval N can settle while eval M runs —
  * QuickJS's job queue carries no per-job ownership, so registration is the
- * only point where the owner is knowable. The wrapper sets the owner global
- * for the duration of the callback; host entry points (console, capability
- * calls) read it to route records to the owning eval's context. catch()/
- * finally() delegate to then() per spec, so patching then() covers them.
- * Best-effort observability, not a security boundary: guests can overwrite
- * the patch, and await-registered continuations use the engine-internal
- * reaction path (no .then call), falling back to the drain context.
+ * only point where the owner is knowable.
+ *
+ * Mechanics:
+ * - Promise.prototype.then is patched (catch()/finally() delegate to then()
+ *   per spec) to wrap callbacks: the owner global is set for the callback's
+ *   duration, and a restore job is enqueued AFTER the callback instead of
+ *   restoring synchronously — so jobs the callback itself enqueued (await
+ *   resumptions it resolved) still run under its owner (one-hop ownership
+ *   propagation).
+ * - Each tagged registration retains its owner's attribution context via a
+ *   host refcount (RETAIN/RELEASE_GENERATION_FN) so contexts live exactly as
+ *   long as outstanding reactions, not a fixed eval count.
+ * - Capability promises are wrapped in a Promise SUBCLASS (WRAP_PROMISE_FN):
+ *   `await` on a non-%Promise%-constructor promise goes through the thenable
+ *   path, which calls the PATCHED then — so await continuations on
+ *   capability promises are tagged too, not just explicit .then chains.
+ *
+ * Host entry points (console, capability calls) read the owner global to
+ * route records to the owning eval's context. Best-effort observability, not
+ * a security boundary: guests can overwrite the patch, and exotic untagged
+ * chains (await on plain guest promises) fall back to the drain context.
  */
 const REACTION_TAGGING_SCRIPT = `
 (() => {
   const origThen = Promise.prototype.then;
+  const origResolve = Promise.resolve.bind(Promise);
+  const retain = globalThis.${RETAIN_GENERATION_FN};
+  const release = globalThis.${RELEASE_GENERATION_FN};
+  // Monotonic count of tagged-callback runs; guards deferred restores.
+  let tagEpoch = 0;
   Promise.prototype.then = function (onFulfilled, onRejected) {
     const owner =
       globalThis.${REACTION_OWNER_GLOBAL} !== undefined
         ? globalThis.${REACTION_OWNER_GLOBAL}
         : globalThis.${EVAL_GENERATION_GLOBAL};
+    if (owner === undefined) {
+      return origThen.call(this, onFulfilled, onRejected);
+    }
+    let released = false;
+    const releaseOnce = () => {
+      if (!released) { released = true; release(owner); }
+    };
     const wrap = (fn) =>
       typeof fn === "function"
         ? function (value) {
             const prev = globalThis.${REACTION_OWNER_GLOBAL};
             globalThis.${REACTION_OWNER_GLOBAL} = owner;
+            tagEpoch += 1;
+            const myEpoch = tagEpoch;
             try {
-              return fn(value);
+              return fn.call(this, value);
             } finally {
-              globalThis.${REACTION_OWNER_GLOBAL} = prev;
+              releaseOnce();
+              // Deferred one-hop restore: jobs this callback enqueued run
+              // before the restore job, inheriting its owner. Epoch-guarded
+              // so a restore from an EARLIER callback in a settlement
+              // cascade cannot clear the owner out from under a LATER
+              // callback's still-queued continuations (the host resets the
+              // owner at every drain-batch boundary regardless).
+              origThen.call(origResolve(), () => {
+                if (tagEpoch === myEpoch) {
+                  globalThis.${REACTION_OWNER_GLOBAL} = prev;
+                }
+              });
             }
           }
         : fn;
-    return origThen.call(this, wrap(onFulfilled), wrap(onRejected));
+    const wrappedFulfilled = wrap(onFulfilled);
+    const wrappedRejected = wrap(onRejected);
+    if (wrappedFulfilled === onFulfilled && wrappedRejected === onRejected) {
+      return origThen.call(this, onFulfilled, onRejected);
+    }
+    retain(owner);
+    return origThen.call(this, wrappedFulfilled, wrappedRejected);
   };
+  // Subclass wrapper for capability promises: \`await\` on a promise whose
+  // constructor is not %Promise% takes the spec's thenable path, which calls
+  // the PATCHED then — tagging await continuations at registration time.
+  class MuxCapabilityPromise extends Promise {}
+  globalThis.${WRAP_PROMISE_FN} = (promise) => MuxCapabilityPromise.resolve(promise);
 })();
 `;
 
@@ -74,10 +127,18 @@ interface AttributionContext {
   eventHandler: ((event: PTCEvent) => void) | undefined;
 }
 
-/** Bound on retained per-eval attribution contexts (persistent mounts run
- * many evals; reactions rarely outlive a handful of calls). Evicted
- * generations fall back to the drain context. */
-const MAX_GENERATION_CONTEXTS = 8;
+/** Attribution context plus the number of outstanding tagged reactions that
+ * still reference it (guest-driven retain/release). */
+interface GenerationContextEntry {
+  context: AttributionContext;
+  refs: number;
+}
+
+/** Soft cap on retained IDLE (refs === 0) attribution contexts. Generations
+ * with outstanding reactions are always retained; a hard cap bounds memory
+ * against pathological never-settling registrations. */
+const MAX_IDLE_GENERATION_CONTEXTS = 8;
+const MAX_GENERATION_CONTEXTS = 64;
 
 /**
  * QuickJS-based JavaScript runtime for PTC.
@@ -102,9 +163,10 @@ export class QuickJSRuntime implements IJSRuntime {
   private activeEvalGeneration: number | null = null;
   /** Attribution sinks per eval generation. Tagged reactions route their
    * console output and nested capability records to the eval that REGISTERED
-   * them, no matter which eval's drain executes the job. Bounded by
-   * MAX_GENERATION_CONTEXTS (oldest evicted; fallback is the drain context). */
-  private readonly generationContexts = new Map<number, AttributionContext>();
+   * them, no matter which eval's drain executes the job. Retention is
+   * refcount-driven (outstanding tagged reactions), with a soft cap on idle
+   * entries and a hard memory bound; see pruneGenerationContexts. */
+  private readonly generationContexts = new Map<number, GenerationContextEntry>();
   /** True only while eval()'s returned-value resolve loop coordinates VM
    * access (evalCodeAsync completed, VM idle at the top level). Settlements
    * may touch the VM directly ONLY then: during asyncified suspension the
@@ -137,7 +199,12 @@ export class QuickJSRuntime implements IJSRuntime {
   // persistent mount may legitimately still be settling.
   private readonly pendingHostPromises = new Set<Promise<void>>();
 
-  private constructor(private readonly ctx: QuickJSAsyncContext) {}
+  private constructor(private readonly ctx: QuickJSAsyncContext) {
+    // Install per-reaction attribution before ANY registration or eval:
+    // registerPromiseFunction wraps its returned promises via the guest
+    // helper this script defines.
+    this.setupReactionTagging();
+  }
 
   static async create(): Promise<QuickJSRuntime> {
     // Create the async variant manually due to bun's package export resolution issues.
@@ -309,6 +376,7 @@ export class QuickJSRuntime implements IJSRuntime {
             // attribution captured at call time above.
             run();
             this.ctx.runtime.executePendingJobs();
+            this.clearReactionOwner();
             return;
           }
           // Between evals: fall back to the ORIGINATING eval's attribution
@@ -323,6 +391,7 @@ export class QuickJSRuntime implements IJSRuntime {
           try {
             run();
             this.ctx.runtime.executePendingJobs();
+            this.clearReactionOwner();
           } finally {
             this.toolCalls = prevToolCalls;
             this.consoleOutput = prevConsoleOutput;
@@ -417,8 +486,20 @@ export class QuickJSRuntime implements IJSRuntime {
       // reported as unhandled.
       deferred.settled.catch(() => undefined);
 
-      // Ownership of deferred.handle transfers to the wrapper (return value).
-      return deferred.handle;
+      // Hand the guest a tagged capability promise (Promise subclass) so
+      // `await` continuations are attributed at registration time; see
+      // REACTION_TAGGING_SCRIPT. Fall back to the raw promise if wrapping
+      // fails (attribution degrades; behavior does not).
+      const wrapFnHandle = this.ctx.getProp(this.ctx.global, WRAP_PROMISE_FN);
+      const wrapResult = this.ctx.callFunction(wrapFnHandle, this.ctx.undefined, deferred.handle);
+      wrapFnHandle.dispose();
+      if (wrapResult.error) {
+        wrapResult.error.dispose();
+        // Ownership of deferred.handle transfers to the wrapper (return value).
+        return deferred.handle;
+      }
+      deferred.handle.dispose();
+      return wrapResult.value;
     });
 
     this.ctx.setProp(this.ctx.global, name, fnHandle);
@@ -553,10 +634,10 @@ export class QuickJSRuntime implements IJSRuntime {
       this.abortController.abort();
     }
 
-    // Set up console capturing + reaction tagging (only once)
+    // Set up console capturing (only once; reaction tagging is installed in
+    // the constructor because registrations precede the first eval)
     if (!this.consoleSetup) {
       this.setupConsole();
-      this.setupReactionTagging();
       this.consoleSetup = true;
     }
 
@@ -600,15 +681,14 @@ export class QuickJSRuntime implements IJSRuntime {
     // (REACTION_TAGGING_SCRIPT). Placed after the drain: drained reactions
     // belong to prior generations.
     this.generationContexts.set(this.activeEvalGeneration, {
-      toolCalls: this.toolCalls,
-      consoleOutput: this.consoleOutput,
-      eventHandler: this.eventHandler,
+      context: {
+        toolCalls: this.toolCalls,
+        consoleOutput: this.consoleOutput,
+        eventHandler: this.eventHandler,
+      },
+      refs: 0,
     });
-    while (this.generationContexts.size > MAX_GENERATION_CONTEXTS) {
-      const oldest: number | undefined = this.generationContexts.keys().next().value;
-      if (oldest === undefined) break;
-      this.generationContexts.delete(oldest);
-    }
+    this.pruneGenerationContexts();
     const generationHandle = this.ctx.newNumber(this.activeEvalGeneration);
     this.ctx.setProp(this.ctx.global, EVAL_GENERATION_GLOBAL, generationHandle);
     generationHandle.dispose();
@@ -678,6 +758,21 @@ export class QuickJSRuntime implements IJSRuntime {
       // start), not to future evals: persistent mounts reuse this runtime
       // across calls, and a sticky flag would poison every later eval.
       this.abortRequested = false;
+      // Run microtasks this eval enqueued BEFORE dropping its generation:
+      // fire-and-forget reactions and internal thenable jobs (an `await` on
+      // a capability promise registers through the patched then here) must
+      // tag with THIS eval as owner, not whichever eval drains them later.
+      if (!this.disposed) {
+        const leftoverJobs = this.ctx.runtime.executePendingJobs();
+        if (leftoverJobs.error) {
+          // Fire-and-forget guest job failed; surfacing it would mask the
+          // eval result. Drop it — same policy as the gate's drain.
+          leftoverJobs.error.dispose();
+        } else {
+          leftoverJobs.dispose();
+        }
+        this.clearReactionOwner();
+      }
       // Settlements arriving from here on are LATE (post-eval) and must be
       // queued; see settleInVm in registerPromiseFunction.
       this.directSettleAllowed = false;
@@ -907,6 +1002,24 @@ export class QuickJSRuntime implements IJSRuntime {
 
   /** Install the promise-reaction tagging patch; see REACTION_TAGGING_SCRIPT. */
   private setupReactionTagging(): void {
+    // Host refcount endpoints must exist before the script captures them.
+    const retainFn = this.ctx.newFunction(RETAIN_GENERATION_FN, (genHandle) => {
+      const gen: unknown = this.ctx.dump(genHandle) as unknown;
+      if (typeof gen !== "number") return;
+      const entry = this.generationContexts.get(gen);
+      if (entry) entry.refs += 1;
+    });
+    this.ctx.setProp(this.ctx.global, RETAIN_GENERATION_FN, retainFn);
+    retainFn.dispose();
+    const releaseFn = this.ctx.newFunction(RELEASE_GENERATION_FN, (genHandle) => {
+      const gen: unknown = this.ctx.dump(genHandle) as unknown;
+      if (typeof gen !== "number") return;
+      const entry = this.generationContexts.get(gen);
+      if (entry && entry.refs > 0) entry.refs -= 1;
+    });
+    this.ctx.setProp(this.ctx.global, RELEASE_GENERATION_FN, releaseFn);
+    releaseFn.dispose();
+
     const result = this.ctx.evalCode(REACTION_TAGGING_SCRIPT);
     if (result.error) {
       const errObj: unknown = this.ctx.dump(result.error) as unknown;
@@ -929,15 +1042,23 @@ export class QuickJSRuntime implements IJSRuntime {
     }
   }
 
+  /** Reset the guest owner global at a drain-batch boundary: the deferred
+   * one-hop restore inside REACTION_TAGGING_SCRIPT can leave a stale owner
+   * when tagged callbacks from different owners interleave in one batch. */
+  private clearReactionOwner(): void {
+    if (this.disposed) return;
+    this.ctx.setProp(this.ctx.global, REACTION_OWNER_GLOBAL, this.ctx.undefined);
+  }
+
   /** Attribution sinks for the code executing RIGHT NOW: the registering
    * eval's context when inside a tagged reaction, else the current drain
    * context (the runtime's mutable fields, possibly swapped by settleInVm). */
   private currentAttribution(): AttributionContext {
     const owner = this.readReactionOwner();
     if (owner !== undefined) {
-      const context = this.generationContexts.get(owner);
-      if (context) {
-        return context;
+      const entry = this.generationContexts.get(owner);
+      if (entry) {
+        return entry.context;
       }
     }
     return {
@@ -945,6 +1066,30 @@ export class QuickJSRuntime implements IJSRuntime {
       consoleOutput: this.consoleOutput,
       eventHandler: this.eventHandler,
     };
+  }
+
+  /** Retention policy for attribution contexts: generations with outstanding
+   * tagged reactions (refs > 0) are retained so a reaction can settle any
+   * number of evals later; idle entries beyond a soft cap are evicted
+   * oldest-first. A hard cap bounds memory against pathological
+   * never-settling registrations (evicted reactions fall back to the drain
+   * context). The active generation is never evicted. */
+  private pruneGenerationContexts(): void {
+    const evict = (spare: number, includeRetained: boolean) => {
+      for (const [gen, entry] of this.generationContexts) {
+        if (spare <= 0) break;
+        if (gen === this.activeEvalGeneration) continue;
+        if (!includeRetained && entry.refs > 0) continue;
+        this.generationContexts.delete(gen);
+        spare -= 1;
+      }
+    };
+    let idle = 0;
+    for (const [gen, entry] of this.generationContexts) {
+      if (entry.refs === 0 && gen !== this.activeEvalGeneration) idle += 1;
+    }
+    evict(idle - MAX_IDLE_GENERATION_CONTEXTS, false);
+    evict(this.generationContexts.size - MAX_GENERATION_CONTEXTS, true);
   }
 
   /**

@@ -702,6 +702,103 @@ describe("QuickJSRuntime", () => {
       expect(second.toolCalls.map((c) => c.toolName)).not.toContain("nestedCap");
     });
 
+    it("attributes await continuations registered by a prior eval to that eval", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+
+      // Eval 1 fire-and-forgets an async function that AWAITS the capability
+      // promise: the continuation is registered via the engine's internal
+      // reaction path, not an explicit .then call.
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        (async () => {
+          const v = await globalThis.p;
+          console.log("await-owned", v);
+        })();
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+      expect(first.consoleOutput).toHaveLength(0);
+
+      // Eval 2 parks in its resolve loop; the prior eval's promise settles
+      // during that drain window.
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveP).toBeDefined();
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveUnrelated).toBeDefined();
+      resolveUnrelated?.("done");
+      const second = await evalPromise;
+      expect(second.success).toBe(true);
+      expect(second.result).toBe("done");
+
+      // The await continuation belongs to eval 1 (which started the async
+      // function), not to the eval whose drain executed it.
+      expect(first.consoleOutput.some((c) => c.args[0] === "await-owned")).toBe(true);
+      expect(second.consoleOutput.some((c) => c.args[0] === "await-owned")).toBe(false);
+    });
+
+    it("retains a registering eval's attribution context across many later evals", async () => {
+      let resolveP: ((value: string) => void) | undefined;
+      let resolveUnrelated: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveP = resolve;
+          })
+      );
+      runtime.registerPromiseFunction(
+        "unrelatedCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveUnrelated = resolve;
+          })
+      );
+
+      const first = await runtime.eval(`
+        globalThis.p = lateCap();
+        globalThis.p.then((v) => console.log("retained-owner", v));
+        return "stored";
+      `);
+      expect(first.success).toBe(true);
+
+      // Push well past the idle-context soft cap: the registering generation
+      // must be retained because its reaction is still outstanding.
+      for (let i = 0; i < 12; i++) {
+        const filler = await runtime.eval(`return ${i};`);
+        expect(filler.success).toBe(true);
+      }
+
+      const evalPromise = runtime.eval("return unrelatedCap();");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveP).toBeDefined();
+      resolveP?.("late");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(resolveUnrelated).toBeDefined();
+      resolveUnrelated?.("done");
+      const last = await evalPromise;
+      expect(last.success).toBe(true);
+
+      expect(first.consoleOutput.some((c) => c.args[0] === "retained-owner")).toBe(true);
+      expect(last.consoleOutput.some((c) => c.args[0] === "retained-owner")).toBe(false);
+    });
+
     it("queues a prior-eval settlement arriving during an unrelated asyncified call", async () => {
       const mutex = new AsyncMutex();
       runtime.setPendingJobGate((run) => {
