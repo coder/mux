@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { QuickJSRuntime, QuickJSRuntimeFactory } from "./quickjsRuntime";
 import type { PTCEvent } from "./types";
+import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 
 describe("QuickJSRuntime", () => {
   let runtime: QuickJSRuntime;
@@ -489,6 +490,87 @@ describe("QuickJSRuntime", () => {
       expect(gatedRuns.length).toBe(1);
       // Running the gated job must be safe.
       for (const run of gatedRuns) run();
+    });
+
+    it("lets a later eval consume a promise stored by a prior eval (settlement mid-eval)", async () => {
+      // Mirror SandboxMount's gate: serialize gated runs on the mount lock.
+      const mutex = new AsyncMutex();
+      runtime.setPendingJobGate((run) => {
+        void (async () => {
+          await using _lock = await mutex.acquire();
+          run();
+        })();
+      });
+
+      let resolveHost: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveHost = resolve;
+          })
+      );
+
+      const first = await runtime.eval('globalThis.p = lateCap(); return "stored";');
+      expect(first.success).toBe(true);
+
+      // The next code_execution call holds the mount lock for its whole
+      // register→eval→persist sequence; settle while ITS eval is running.
+      // Routing this settlement through the gate would self-deadlock (the
+      // gate waits on the lock the awaiting eval holds).
+      {
+        await using _lock = await mutex.acquire();
+        const evalPromise = runtime.eval("return globalThis.p;");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        expect(resolveHost).toBeDefined();
+        resolveHost?.("late-value");
+        const second = await evalPromise;
+        expect(second.success).toBe(true);
+        expect(second.result).toBe("late-value");
+      }
+    });
+
+    it("drains a gate-queued settlement at eval start when the gate lost the lock race", async () => {
+      const mutex = new AsyncMutex();
+      runtime.setPendingJobGate((run) => {
+        void (async () => {
+          await using _lock = await mutex.acquire();
+          run();
+        })();
+      });
+
+      let resolveHost: ((value: string) => void) | undefined;
+      runtime.registerPromiseFunction(
+        "lateCap",
+        () =>
+          new Promise<string>((resolve) => {
+            resolveHost = resolve;
+          })
+      );
+
+      const first = await runtime.eval('globalThis.q = lateCap(); return "stored";');
+      expect(first.success).toBe(true);
+
+      {
+        await using _lock = await mutex.acquire();
+        // Settle BETWEEN evals while the next call already holds the lock:
+        // the settlement is handed to the gate, which cannot run yet.
+        expect(resolveHost).toBeDefined();
+        resolveHost?.("queued-value");
+        await new Promise((resolve) => setTimeout(resolve, 10));
+
+        // The eval must land the queued settlement itself at start.
+        const second = await runtime.eval("return globalThis.q;");
+        expect(second.success).toBe(true);
+        expect(second.result).toBe("queued-value");
+      }
+
+      // After release, the gate's drain finds an empty queue and must no-op;
+      // the runtime stays usable.
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      const third = await runtime.eval("return 3;");
+      expect(third.success).toBe(true);
+      expect(third.result).toBe(3);
     });
 
     it("re-registering an object retargets guest-saved method references", async () => {

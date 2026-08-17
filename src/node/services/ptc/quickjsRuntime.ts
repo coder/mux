@@ -43,6 +43,13 @@ export class QuickJSRuntime implements IJSRuntime {
    * routed through the pending-job gate instead of touching the VM directly. */
   private evalGeneration = 0;
   private activeEvalGeneration: number | null = null;
+  /** Late settlements handed to the pending-job gate but not yet run. eval()
+   * drains this at start: the gate serializes on the scope lock, so a
+   * settlement queued between calls can lose the lock race to the next
+   * code_execution call — without the drain, that eval could never consume
+   * the guest-visible promise (the tracked host promise resolves at gate
+   * hand-off, so the resolve loop has nothing left to wait on). */
+  private readonly queuedLateSettlements: Array<() => void> = [];
   /** Current registration per registerObject name; guest methods dispatch
    * through this at call time so re-registration retargets saved references. */
   private readonly registeredObjects = new Map<
@@ -197,11 +204,6 @@ export class QuickJSRuntime implements IJSRuntime {
       const toolCalls = this.toolCalls;
       const consoleOutput = this.consoleOutput;
       const eventHandler = this.eventHandler;
-      // Generation of the eval this capability originated from: settlement
-      // may touch the VM directly only while that same eval is still running
-      // (its resolve loop coordinates); otherwise the VM-facing settlement
-      // must be routed through the pending-job gate.
-      const originGeneration = this.activeEvalGeneration;
 
       eventHandler?.({
         type: "tool-call-start",
@@ -212,11 +214,14 @@ export class QuickJSRuntime implements IJSRuntime {
       });
 
       // VM-facing settlement: marshal + resolve/reject + drain continuations.
-      // Runs directly when the ORIGINATING eval is still active (routing
-      // through the gate would deadlock: the gate serializes on the mount
-      // lock held by that very call, whose resolve loop awaits this
-      // settlement). Any later settlement goes through the gate so it cannot
-      // re-enter the shared QuickJS context while another eval is running.
+      // Runs directly while ANY eval is active: that eval's resolve loop
+      // coordinates VM access and may itself be awaiting this settlement
+      // (e.g. a later call returning a promise stored by a prior call), so
+      // routing through the gate would deadlock — the gate serializes on the
+      // mount lock held by that very eval. Settlements between evals go
+      // through the gate so they cannot re-enter the shared QuickJS context
+      // unserialized; they are queued so the next eval can drain them if its
+      // call wins the mount-lock race against the gate.
       const settleInVm = (run: () => void) => {
         const guarded = () => {
           if (this.disposed) return;
@@ -240,10 +245,14 @@ export class QuickJSRuntime implements IJSRuntime {
             this.eventHandler = prevEventHandler;
           }
         };
-        if (this.activeEvalGeneration === originGeneration && originGeneration !== null) {
+        if (this.activeEvalGeneration !== null) {
+          // Attribution stays bound to the ORIGINATING eval either way: for a
+          // different active generation, guarded() swaps in the captured
+          // per-eval state for the duration of the drain.
           guarded();
         } else if (this.pendingJobGate) {
-          this.pendingJobGate(guarded);
+          this.queuedLateSettlements.push(guarded);
+          this.pendingJobGate(() => this.drainQueuedLateSettlements());
         } else {
           guarded();
         }
@@ -479,6 +488,15 @@ export class QuickJSRuntime implements IJSRuntime {
       this.abortController?.abort();
     }, timeoutMs);
 
+    // Land late settlements whose gate callback lost the mount-lock race to
+    // this call (the lock is already held by our code_execution invocation,
+    // so the gate cannot run until we return). Must happen before guest code
+    // runs so a promise stored by a prior eval is consumable here; the gate's
+    // eventual drain then finds an empty queue and no-ops. Placed after the
+    // interrupt handler + timer setup so the drain runs under THIS eval's
+    // deadline, not a stale one.
+    this.drainQueuedLateSettlements();
+
     // Wrap code in function to allow return statements.
     // With asyncify, async host functions appear synchronous to QuickJS,
     // so we don't need an async IIFE. Using evalCodeAsync handles the suspension.
@@ -559,6 +577,9 @@ export class QuickJSRuntime implements IJSRuntime {
     if (!this.disposed) {
       this.ctx.dispose();
       this.disposed = true;
+      // Queued late settlements would no-op anyway (guarded checks disposed);
+      // drop them so their closures are not retained.
+      this.queuedLateSettlements.length = 0;
     }
   }
 
@@ -571,6 +592,17 @@ export class QuickJSRuntime implements IJSRuntime {
   private assertNotDisposed(method: string): void {
     if (this.disposed) {
       throw new Error(`Cannot call ${method} on disposed QuickJSRuntime`);
+    }
+  }
+
+  /** Run queued late settlements in arrival order. Called from eval() start
+   * (under the caller's mount lock) and from the pending-job gate (under the
+   * gate's own lock acquisition) — whichever wins the race; the loser sees an
+   * empty queue. Each entry is a guarded() that no-ops after dispose. */
+  private drainQueuedLateSettlements(): void {
+    while (this.queuedLateSettlements.length > 0) {
+      const run = this.queuedLateSettlements.shift();
+      run?.();
     }
   }
 
