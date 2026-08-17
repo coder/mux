@@ -284,6 +284,28 @@ describe("SandboxHostService", () => {
     await host.disposeScope("ws-serial");
   });
 
+  test("dropScope: workspace removal disposes the mount without writing to disk", async () => {
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-drop",
+      sessionDir: tmp.path,
+    });
+    const write = await mount.runtime.eval("vars.x = 1; return vars.x;");
+    expect(write.success).toBe(true);
+
+    // Record disk state, then drop: the mount must be disposed and NO new
+    // files may appear (the caller is deleting the session directory).
+    const before = readdirSync(tmp.path, { recursive: true }).length;
+    await host.dropScope("ws-drop");
+    expect(mount.isDisposed).toBe(true);
+    expect(host.hasScope("ws-drop")).toBe(false);
+    const after = readdirSync(tmp.path, { recursive: true }).length;
+    expect(after).toBe(before);
+  });
+
   test("discardScope: context reset discards vars instead of restoring the last snapshot", async () => {
     using tmp = new DisposableTempDir("sandbox-host-test");
     const host = new SandboxHostService();

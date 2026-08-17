@@ -5209,6 +5209,13 @@ export class WorkspaceService extends EventEmitter {
       // the resulting stream-abort event would otherwise be recorded on the timeline after the
       // delete, recreating the session directory for a workspace the user removed.
       this.disposeSession(workspaceId);
+
+      // Drop any persistent sandbox mount BEFORE deleting the session
+      // directory: dropScope disposes the runtime without disk writes and
+      // waits for in-flight evaluation, so a late vars snapshot cannot
+      // recreate the directory (and the QuickJS runtime is not leaked in the
+      // process-wide singleton).
+      await sandboxHostService.dropScope(workspaceId);
       try {
         await this.timelineRecorder.closeWorkspace(workspaceId);
         timelineClosed = true;

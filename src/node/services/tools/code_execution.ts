@@ -171,20 +171,23 @@ ${muxTypes}
           // Persist the shared vars namespace after each call on persistent
           // mounts so state survives crashes/restarts (turn-boundary snapshots
           // are the Track 2 refinement; per-call is the safe foundation).
+          // Failed/timed-out/aborted evals may still have mutated vars before
+          // failing and the live guest keeps those mutations, so persist after
+          // failures too — memory and disk must agree.
           if (mount?.lifetime === "persistent" && mount.grants.vars) {
-            if (result.success) {
+            try {
               await mount.persistVars();
-            } else {
-              // Failed/timed-out/aborted evals may still have mutated vars
-              // before failing, and the live guest keeps those mutations —
-              // persist best-effort so a restart cannot resurrect older state
-              // (memory and disk must agree). Never mask the eval result with
-              // a snapshot error.
-              try {
-                await mount.persistVars();
-              } catch (persistError) {
-                log.warn("code_execution: post-failure vars snapshot failed", { persistError });
-              }
+            } catch (persistError) {
+              // Vars became unsnapshottable (e.g. guest created a cycle then
+              // threw). Leaving the live mount would make memory and disk
+              // permanently disagree; dispose it so the next acquire rebuilds
+              // from the last durable snapshot. Never mask the eval result
+              // with a snapshot error.
+              log.warn(
+                "code_execution: vars snapshot failed; disposing mount so the next call restores the last durable snapshot",
+                { persistError }
+              );
+              mount.dispose();
             }
           }
           return result;

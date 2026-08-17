@@ -305,6 +305,25 @@ export class SandboxHostService {
   }
 
   /**
+   * Drop a scope entirely (workspace removal): dispose the runtime and forget
+   * journals WITHOUT any disk writes. The caller is deleting the session
+   * directory — a snapshot here would recreate it, and an in-flight exclusive
+   * run must finish first (the lock serializes) so it cannot persist into the
+   * deleted directory afterwards.
+   */
+  async dropScope(scopeKey: string): Promise<void> {
+    await using _guard = await this.lockFor(scopeKey).acquire();
+    const mount = this.persistentMounts.get(scopeKey);
+    this.persistentMounts.delete(scopeKey);
+    this.journals.delete(scopeKey);
+    // The scope lock stays in the map (see scopeLocks doc): deleting it while
+    // waiters hold references could let two locks govern the same scope.
+    if (mount && !mount.isDisposed) {
+      mount.dispose();
+    }
+  }
+
+  /**
    * Discard a scope's sandbox state (context reset): dispose the mount
    * WITHOUT snapshotting current vars, and supersede any earlier snapshot
    * with an empty one so the next mount starts fresh instead of restoring

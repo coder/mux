@@ -659,6 +659,49 @@ describe("createCodeExecutionTool", () => {
       await host2.disposeScope("ws-failed-eval");
     });
 
+    it("recovers from unsnapshottable vars by rebuilding the mount from the last durable snapshot", async () => {
+      using tmp = new DisposableTempDir("code-exec-persistent");
+      const host = new SandboxHostService();
+      const mountProvider = () =>
+        host.acquireMount({
+          lifetime: "persistent",
+          runtimeFactory,
+          scopeKey: "ws-cyclic-vars",
+          sessionDir: tmp.path,
+        });
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        mountProvider
+      );
+
+      const seed = (await tool.execute!(
+        { code: "vars.state = 'durable'; return vars.state;" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(seed.success).toBe(true);
+
+      // Guest makes vars cyclic (unsnapshottable) and throws: the snapshot
+      // fails, so the live mount must be disposed rather than kept with state
+      // that disk can never reflect.
+      const poisoned = (await tool.execute!(
+        { code: "vars.self = vars; throw new Error('boom');" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(poisoned.success).toBe(false);
+
+      // Next call rebuilds the mount from the last durable snapshot: the
+      // cyclic mutation is gone, the seeded value is restored.
+      const recovered = (await tool.execute!(
+        { code: "return { state: vars.state, self: typeof vars.self };" },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(recovered.success).toBe(true);
+      expect(recovered.result).toEqual({ state: "durable", self: "undefined" });
+      await host.disposeScope("ws-cyclic-vars");
+    });
+
     it("clearTypeCaches forces regeneration", async () => {
       const mockTools: Record<string, Tool> = {
         file_read: createMockTool("file_read", z.object({ filePath: z.string() }), () => ({
