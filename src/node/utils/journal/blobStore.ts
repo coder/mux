@@ -34,15 +34,21 @@ export class BlobStore {
     const blobPath = this.pathFor(ref);
 
     try {
-      await fs.access(blobPath);
-      return { ref, size: buffer.byteLength }; // store-once: already present
+      // Store-once, but verify: an existing path whose bytes no longer match
+      // the addressed content (torn write, disk corruption) must be replaced,
+      // otherwise get() rejects it forever and no future put() could repair it.
+      const existing = await fs.readFile(blobPath);
+      if (existing.equals(buffer)) {
+        return { ref, size: buffer.byteLength };
+      }
+      log.warn(`BlobStore: existing blob ${ref} is corrupted; rewriting`);
     } catch {
-      // Not present yet - write below.
+      // Not present (or unreadable) yet - write below.
     }
 
     await fs.mkdir(path.dirname(blobPath), { recursive: true });
     // Atomic install: write to a unique temp file, then rename. Rename over an
-    // existing blob is fine because content-addressed files are byte-identical.
+    // existing (possibly corrupt) blob both installs and self-heals.
     const tempPath = `${blobPath}.tmp-${process.pid}-${crypto.randomBytes(4).toString("hex")}`;
     await fs.writeFile(tempPath, buffer);
     await fs.rename(tempPath, blobPath);

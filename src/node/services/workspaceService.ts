@@ -4040,6 +4040,7 @@ export class WorkspaceService extends EventEmitter {
 
       const enrichedMetadata = this.enrichFrontendMetadata(completeMetadata);
       this.getOrCreateSession(workspaceId).emitMetadata(enrichedMetadata);
+      eventSpine.emit("workspace.created", { workspaceId });
       return Ok({ metadata: enrichedMetadata });
     } catch (error) {
       await this.config.removeWorkspace(workspaceId).catch(() => undefined);
@@ -4731,6 +4732,7 @@ export class WorkspaceService extends EventEmitter {
         session.emitMetadata(this.enrichFrontendMetadata(completeMetadata));
       }
 
+      eventSpine.emit("workspace.created", { workspaceId });
       return Ok(enrichedMetadata);
     } catch (error) {
       initLogger?.logComplete(-1);
@@ -8252,6 +8254,7 @@ export class WorkspaceService extends EventEmitter {
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
       session.emitMetadata(enrichedMetadata);
 
+      eventSpine.emit("workspace.created", { workspaceId: newWorkspaceId });
       return Ok({ metadata: enrichedMetadata, projectPath: foundProjectPath });
     } catch (error) {
       const message = getErrorMessage(error);

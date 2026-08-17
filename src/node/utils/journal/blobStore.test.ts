@@ -41,6 +41,22 @@ describe("BlobStore", () => {
     expect(await store.get(ref)).toBeNull();
   });
 
+  test("put repairs a corrupted existing blob instead of trusting the path", async () => {
+    using tmp = new DisposableTempDir("blobstore-test");
+    const store = new BlobStore(tmp.path);
+    const { ref } = await store.put("legit content");
+    const hash = ref.slice("sha256:".length);
+    const blobPath = path.join(tmp.path, hash.slice(0, 2), hash);
+    await fs.writeFile(blobPath, "tampered");
+    expect(await store.get(ref)).toBeNull();
+
+    // Re-putting the original content must rewrite the corrupt file so the
+    // blob becomes readable again (otherwise the ref is poisoned forever).
+    const again = await store.put("legit content");
+    expect(again.ref).toBe(ref);
+    expect(await store.getText(ref)).toBe("legit content");
+  });
+
   test("rejects malformed refs (crash-fast on programmer error)", async () => {
     using tmp = new DisposableTempDir("blobstore-test");
     const store = new BlobStore(tmp.path);

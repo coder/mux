@@ -3429,6 +3429,30 @@ export class AIService extends EventEmitter {
                     nextSystemTokens = await nextTokenizer.countTokens(nextSystem);
                   }
 
+                  // Waterfall hook point: the fallback request is rebuilt from
+                  // scratch, so middleware-applied tool restrictions / prompt
+                  // context from the primary run would otherwise be lost — run
+                  // request.assemble over the rebuilt request too (see the
+                  // primary-path run above).
+                  if (eventSpine.hasMiddleware("request.assemble")) {
+                    const nextAssembleCtx: RequestAssembleContext = {
+                      workspaceId,
+                      modelString: nextModelString,
+                      systemMessage: nextSystem,
+                      tools: nextTools,
+                    };
+                    await eventSpine.run("request.assemble", nextAssembleCtx);
+                    nextTools = nextAssembleCtx.tools;
+                    if (nextAssembleCtx.systemMessage !== nextSystem) {
+                      nextSystem = nextAssembleCtx.systemMessage;
+                      const nextTokenizer = await getTokenizerForModel(
+                        nextModelString,
+                        nextCapabilityModelString
+                      );
+                      nextSystemTokens = await nextTokenizer.countTokens(nextSystem);
+                    }
+                  }
+
                   const { providerRequestMessages: nextProviderRequestMessages } =
                     prepareProviderRequestMessages(
                       fallbackSourceMessages,
