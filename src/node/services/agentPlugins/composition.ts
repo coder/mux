@@ -1,0 +1,245 @@
+import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+
+import type {
+  WorkspaceComposition,
+  WorkspaceCompositionEntry,
+  WorkspaceCompositionPlugin,
+} from "@/common/orpc/schemas/agentPlugins";
+import type { MCPServerInfo } from "@/common/types/mcp";
+import type { Runtime } from "@/node/runtime/Runtime";
+import { discoverAgentDefinitions } from "@/node/services/agentDefinitions/agentDefinitionsService";
+import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import { getErrorMessage } from "@/common/utils/errors";
+import { log } from "@/node/services/log";
+import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
+
+import { discoverWorkspaceAgentPlugins, type AgentPluginInfo } from "./discovery";
+
+/**
+ * Workspace composition inspector (the `--dump-config` analog): computes the
+ * effective set of skills, agents, workflows, MCP servers, slash commands, and
+ * hooks by layer, including which entry shadowed which.
+ *
+ * The composition reuses the production loaders (skill/agent/workflow
+ * discovery, MCP config layers) rather than forking parallel loading paths, so
+ * what it reports is what streams actually load. Plugin discovery/validation
+ * itself is NOT experiment-gated — the `plugins` and `diagnostics` sections
+ * are always populated — but plugin artifacts only join the per-kind layers
+ * when the agent-plugins experiment is enabled, mirroring load behavior.
+ */
+export interface BuildWorkspaceCompositionArgs {
+  runtime: Runtime;
+  /** Execution/discovery path of the workspace (host checkout for local workspaces). */
+  workspacePath: string;
+  muxHome: string;
+  projectTrusted: boolean;
+  agentPluginsEnabled: boolean;
+  /** MCP servers split by config layer (see MCPConfigService.listServerLayers). */
+  listMcpServerLayers: () => Promise<{
+    plugin: Record<string, MCPServerInfo>;
+    global: Record<string, MCPServerInfo>;
+    project: Record<string, MCPServerInfo>;
+  }>;
+}
+
+/** Layer label for one entry: built-in | global | project | plugin:<name>. */
+function sourceLabel(scope: string, pluginName?: string): string {
+  return pluginName !== undefined ? `plugin:${pluginName}` : scope;
+}
+
+/**
+ * Mark shadowed entries: within each name, the first entry (highest
+ * precedence) is effective and later ones record who overrode them. Entries
+ * must arrive in precedence order within each name group.
+ */
+function markShadowed(entries: WorkspaceCompositionEntry[]): WorkspaceCompositionEntry[] {
+  const effectiveSourceByName = new Map<string, string>();
+  return entries.map((entry) => {
+    const winner = effectiveSourceByName.get(entry.name);
+    if (winner === undefined) {
+      effectiveSourceByName.set(entry.name, entry.source);
+      return entry;
+    }
+    return { ...entry, shadowedBy: winner };
+  });
+}
+
+function summarizePlugin(plugin: AgentPluginInfo): WorkspaceCompositionPlugin {
+  const components: string[] = [
+    ...(plugin.skillsDir !== undefined ? ["skills"] : []),
+    ...(plugin.mcpConfigPath !== undefined ? ["mcp"] : []),
+    ...(plugin.agentsDir !== undefined ? ["agents"] : []),
+    ...(plugin.workflowsDir !== undefined ? ["workflows"] : []),
+    ...(plugin.hooksPath !== undefined ? ["hooks"] : []),
+    ...((plugin.manifest.contributes?.slashCommands?.length ?? 0) > 0 ? ["slashCommands"] : []),
+  ];
+  return {
+    name: plugin.name,
+    scope: plugin.scope,
+    rootPath: plugin.rootPath,
+    components,
+    ...(plugin.manifest.version !== undefined ? { version: plugin.manifest.version } : {}),
+  };
+}
+
+/** Shell tool hooks (hooks.ts): project .mux/<file> shadows user ~/.mux/<file>. */
+const SHELL_HOOK_FILENAMES = ["tool_hook", "tool_pre", "tool_post"] as const;
+
+async function collectShellHookEntries(
+  workspacePath: string
+): Promise<WorkspaceCompositionEntry[]> {
+  const entries: WorkspaceCompositionEntry[] = [];
+  // hooks.ts resolves user-level hooks against ~/.mux (homedir), not MUX_HOME.
+  const layers: Array<{ dir: string; source: string }> = [
+    { dir: path.join(workspacePath, ".mux"), source: "project" },
+    { dir: path.join(os.homedir(), ".mux"), source: "global" },
+  ];
+  for (const hookName of SHELL_HOOK_FILENAMES) {
+    for (const layer of layers) {
+      try {
+        const stat = await fsPromises.stat(path.join(layer.dir, hookName));
+        if (!stat.isFile()) continue;
+      } catch {
+        continue;
+      }
+      entries.push({ name: hookName, source: layer.source, description: "shell tool hook" });
+    }
+  }
+  return entries;
+}
+
+/** Plugin workflow scripts encode their provider as plugin://<name>/... */
+function workflowSourceLabel(scope: string, canonicalScriptPath?: string): string {
+  if (canonicalScriptPath?.startsWith("plugin://")) {
+    const remainder = canonicalScriptPath.slice("plugin://".length);
+    const pluginName = remainder.slice(0, remainder.indexOf("/"));
+    if (pluginName.length > 0) {
+      return `plugin:${pluginName}`;
+    }
+  }
+  return scope;
+}
+
+export async function buildWorkspaceComposition(
+  args: BuildWorkspaceCompositionArgs
+): Promise<WorkspaceComposition> {
+  // Plugin discovery + manifest validation runs unconditionally (inspection is
+  // not gated); only the per-kind layers below honor the experiment gate.
+  const { plugins, diagnostics } = await discoverWorkspaceAgentPlugins({
+    workspacePath: args.workspacePath,
+    muxHome: args.muxHome,
+    projectTrusted: args.projectTrusted,
+  });
+
+  const includeAgentPlugins = args.agentPluginsEnabled;
+
+  const skillDescriptors = await discoverAgentSkills(args.runtime, args.workspacePath, {
+    dedupeByName: false,
+    includeAgentPlugins,
+  });
+  const skills = markShadowed(
+    skillDescriptors.map((skill) => ({
+      name: skill.name,
+      source: sourceLabel(skill.scope, skill.pluginName),
+      description: skill.description,
+    }))
+  );
+
+  const agentDescriptors = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
+    dedupeById: false,
+    includeAgentPlugins,
+  });
+  const agents = markShadowed(
+    agentDescriptors.map((agent) => ({
+      name: agent.id,
+      source: sourceLabel(agent.scope, agent.pluginName),
+      ...(agent.description !== undefined ? { description: agent.description } : {}),
+    }))
+  );
+
+  // Workflow discovery already dedupes by skill name and plugin identity, so
+  // these are effective entries only (skill shadowing shows up under skills).
+  let workflows: WorkspaceCompositionEntry[] = [];
+  try {
+    const availableWorkflows = await discoverWorkflowScripts({
+      runtime: args.runtime,
+      workspacePath: args.workspacePath,
+      projectTrusted: args.projectTrusted,
+      includeAgentPlugins,
+    });
+    workflows = availableWorkflows.map((workflow) => ({
+      name: workflow.descriptor.name,
+      source: workflowSourceLabel(
+        workflow.descriptor.scope,
+        workflow.descriptor.canonicalScriptPath
+      ),
+      description: workflow.descriptor.description,
+    }));
+  } catch (error) {
+    log.warn(`Composition inspector: workflow enumeration failed: ${getErrorMessage(error)}`);
+  }
+
+  // MCP layers in precedence order (project config > global config > plugin).
+  const serverLayers = await args.listMcpServerLayers();
+  const mcpEntry = (
+    key: string,
+    info: MCPServerInfo,
+    layer: string
+  ): WorkspaceCompositionEntry => ({
+    name: key,
+    source: info.plugin !== undefined ? `plugin:${info.plugin.pluginName}` : layer,
+  });
+  const mcpServers = markShadowed([
+    ...Object.entries(serverLayers.project).map(([key, info]) => mcpEntry(key, info, "project")),
+    ...Object.entries(serverLayers.global).map(([key, info]) => mcpEntry(key, info, "global")),
+    ...Object.entries(serverLayers.plugin).map(([key, info]) => mcpEntry(key, info, "plugin")),
+  ]);
+
+  // Contributed slash commands load only when the experiment is enabled. The
+  // loading path (collectPluginSlashCommands) applies the same first-wins rule;
+  // here every declaration is listed so duplicate names show up as shadowed.
+  const slashCommands = includeAgentPlugins
+    ? markShadowed(
+        plugins.flatMap((plugin) =>
+          (plugin.manifest.contributes?.slashCommands ?? []).map((command) => ({
+            name: command.name,
+            source: `plugin:${plugin.name}`,
+            ...(command.description !== undefined ? { description: command.description } : {}),
+          }))
+        )
+      )
+    : [];
+
+  const hooks = [
+    ...markShadowed(await collectShellHookEntries(args.workspacePath)),
+    // Plugin hooks all run (no shadowing between plugins).
+    ...(includeAgentPlugins
+      ? plugins
+          .filter((plugin) => plugin.hooksPath !== undefined)
+          .map((plugin) => ({
+            name: "hooks.js",
+            source: `plugin:${plugin.name}`,
+            description: "sandboxed plugin hooks",
+          }))
+      : []),
+  ];
+
+  return {
+    agentPluginsEnabled: args.agentPluginsEnabled,
+    plugins: plugins.map(summarizePlugin),
+    diagnostics: diagnostics.map((diagnostic) => ({
+      path: diagnostic.path,
+      scope: diagnostic.scope,
+      severity: diagnostic.severity,
+      message: diagnostic.message,
+    })),
+    skills,
+    agents,
+    workflows,
+    mcpServers,
+    slashCommands,
+    hooks,
+  };
+}

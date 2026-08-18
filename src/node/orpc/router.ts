@@ -125,6 +125,7 @@ import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { workflowRunStreamHub } from "@/node/services/workflows/workflowRunStreamHub";
+import { buildWorkspaceComposition } from "@/node/services/agentPlugins/composition";
 import { discoverWorkspaceAgentPlugins } from "@/node/services/agentPlugins/discovery";
 import { collectPluginSlashCommands } from "@/node/services/agentPlugins/slashCommands";
 import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
@@ -5729,6 +5730,49 @@ export const router = (authToken?: string) => {
                 projectTrusted: isWorkspaceProjectTrusted(context.config, metadata),
               });
               return collectPluginSlashCommands(plugins);
+            }),
+        },
+        // Composition inspector: effective skills/agents/workflows/MCP servers/
+        // slash commands/hooks by layer, with shadowing. Works regardless of the
+        // agent-plugins experiment (the gate only controls plugin LOADING).
+        composition: {
+          get: t
+            .input(schemas.workspace.plugins.composition.get.input)
+            .output(schemas.workspace.plugins.composition.get.output)
+            .handler(async ({ context, input, signal }) => {
+              await context.aiService.waitForInit(input.workspaceId, signal);
+              const metadataResult = await context.aiService.getWorkspaceMetadata(
+                input.workspaceId
+              );
+              if (!metadataResult.success) throw new Error(metadataResult.error);
+              const metadata = metadataResult.data;
+              const runtimeContextResult = context.aiService.createWorkspaceRuntimeContext(
+                input.workspaceId,
+                metadata
+              );
+              if (!runtimeContextResult.success) {
+                throw new Error(formatSendMessageError(runtimeContextResult.error).message);
+              }
+              const { runtime, workspacePath, hostCheckoutRoot } = runtimeContextResult.data;
+              const projectTrusted = isWorkspaceProjectTrusted(context.config, metadata);
+              const agentPlugins = hostCheckoutRoot
+                ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
+                : null;
+              return buildWorkspaceComposition({
+                runtime,
+                // Plugin containers anchor at the host checkout root when there is
+                // one; loaders still discover through the workspace runtime path.
+                workspacePath: hostCheckoutRoot ?? workspacePath,
+                muxHome: context.config.rootDir,
+                projectTrusted,
+                agentPluginsEnabled: context.experimentsService.isExperimentEnabled(
+                  EXPERIMENT_IDS.AGENT_PLUGINS
+                ),
+                listMcpServerLayers: () =>
+                  context.mcpConfigService.listServerLayers(metadata.projectPath, projectTrusted, {
+                    agentPlugins,
+                  }),
+              });
             }),
         },
       },

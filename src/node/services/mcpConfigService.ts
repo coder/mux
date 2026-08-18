@@ -255,6 +255,25 @@ export class MCPConfigService {
     trusted = false,
     options?: { agentPlugins?: AgentPluginsMcpContext | null }
   ): Promise<Record<string, MCPServerInfo>> {
+    const layers = await this.listServerLayers(projectPath, trusted, options);
+    // Repo overrides win by server name over global config, which wins over plugin servers.
+    return { ...layers.plugin, ...layers.global, ...layers.project };
+  }
+
+  /**
+   * List configured servers split by config layer (plugin < global < project,
+   * later layers win on key collision). Used by listServers and by the plugin
+   * composition inspector, which needs shadowed entries too.
+   */
+  async listServerLayers(
+    projectPath?: string,
+    trusted = false,
+    options?: { agentPlugins?: AgentPluginsMcpContext | null }
+  ): Promise<{
+    plugin: Record<string, MCPServerInfo>;
+    global: Record<string, MCPServerInfo>;
+    project: Record<string, MCPServerInfo>;
+  }> {
     let pluginServers: Record<string, MCPServerInfo> = {};
     if (this.agentPluginsMcpProvider && options?.agentPlugins !== null) {
       const pluginContext = options?.agentPlugins ?? {
@@ -271,23 +290,15 @@ export class MCPConfigService {
 
     const globalCfg = await this.getGlobalConfig();
 
-    if (!projectPath) {
-      return { ...pluginServers, ...globalCfg.servers };
-    }
-
-    if (!trusted) {
-      log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
-      return { ...pluginServers, ...globalCfg.servers };
+    if (!projectPath || !trusted) {
+      if (projectPath && !trusted) {
+        log.debug("[MCP] Skipping project-local MCP config for untrusted project", { projectPath });
+      }
+      return { plugin: pluginServers, global: globalCfg.servers, project: {} };
     }
 
     const repoCfg = await this.getRepoOverrideConfig(projectPath);
-
-    // Repo overrides win by server name.
-    return {
-      ...pluginServers,
-      ...globalCfg.servers,
-      ...repoCfg.servers,
-    };
+    return { plugin: pluginServers, global: globalCfg.servers, project: repoCfg.servers };
   }
 
   async addServer(

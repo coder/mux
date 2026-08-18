@@ -7,6 +7,7 @@ import { sendMessageCommand } from "./send-message";
 import { consolidateMemoryCommand } from "./consolidate-memory";
 import { replayVerifyCommand } from "./replay-verify";
 import { cacheAuditCommand } from "./cache-audit";
+import { pluginsCommand } from "./plugins";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -82,6 +83,16 @@ switch (command) {
     await cacheAuditCommand(workspaceId);
     break;
   }
+  case "plugins": {
+    const workspaceId = positionals[1];
+    if (!workspaceId) {
+      console.error("Error: workspace ID required");
+      console.log("Usage: bun debug plugins <workspace-id>");
+      process.exit(1);
+    }
+    await pluginsCommand(workspaceId);
+    break;
+  }
   default:
     console.log("Usage:");
     console.log("  bun debug list-workspaces");
@@ -90,5 +101,6 @@ switch (command) {
     console.log("  bun debug consolidate-memory <workspace-id> [--dry-run]");
     console.log("  bun debug replay-verify <workspace-id>");
     console.log("  bun debug cache-audit <workspace-id>");
+    console.log("  bun debug plugins <workspace-id>");
     process.exit(1);
 }
