@@ -488,9 +488,28 @@ export async function discoverAgentDefinitions(
 
   // Return all discovered agents (including those disabled by front-matter).
   // Filtering is applied at higher layers (e.g., agents.list) so Settings can still surface opt-in agents.
-  // Sort is stable, so same-name duplicates keep precedence order in dedupeById: false mode.
   const agents = dedupeById ? Array.from(byId.values()) : discovered;
-  return agents.sort((a, b) => a.name.localeCompare(b.name));
+  // Sort same-ID duplicates as one group keyed by the WINNING (first
+  // discovered, highest precedence) definition's display name: sorting on each
+  // row's own name could reorder rows within an ID group, and composition
+  // consumers treat the first row per ID as the effective definition.
+  const groupNameById = new Map<string, string>();
+  for (const agent of agents) {
+    if (!groupNameById.has(agent.id)) {
+      groupNameById.set(agent.id, agent.name);
+    }
+  }
+  return agents.sort((a, b) => {
+    const byGroupName = (groupNameById.get(a.id) ?? a.name).localeCompare(
+      groupNameById.get(b.id) ?? b.name
+    );
+    if (byGroupName !== 0) {
+      return byGroupName;
+    }
+    // Same group name, different IDs: keep the order deterministic. Same ID:
+    // 0 lets the stable sort preserve discovery (precedence) order.
+    return a.id.localeCompare(b.id);
+  });
 }
 
 export interface ReadAgentDefinitionOptions {

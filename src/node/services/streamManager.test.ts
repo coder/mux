@@ -982,6 +982,8 @@ describe("StreamManager - OpenAI GPT-5.6 cached system instructions", () => {
     workspaceId: string;
     staleRouteProvider: string;
     initialMetadataPatch?: Record<string, unknown>;
+    onStreamConstructed?: () => Promise<void>;
+    failStreamConstruction?: boolean;
   }): Promise<Record<string, unknown>> {
     const streamManager = new StreamManager(
       historyService,
@@ -999,15 +1001,18 @@ describe("StreamManager - OpenAI GPT-5.6 cached system instructions", () => {
     await appendPartialAssistantForTests(options.workspaceId, messageId, historySequence);
     const processStreamWithCleanup = getProcessStreamWithCleanupForTests(streamManager);
 
-    const createStreamResult = mock(() =>
-      createStreamResultForTests(
+    const createStreamResult = mock(() => {
+      if (options.failStreamConstruction) {
+        throw new Error("stream construction failed for tests");
+      }
+      return createStreamResultForTests(
         (async function* () {
           await Promise.resolve();
           yield { type: "text-delta", text: "fallback answer" };
           yield { type: "finish", finishReason: "stop" };
         })()
-      )
-    );
+      );
+    });
     expect(Reflect.set(streamManager, "createStreamResult", createStreamResult)).toBe(true);
 
     const prepare = mock((nextModelString: string, _options?: ModelFallbackPrepareOptions) =>
@@ -1021,6 +1026,9 @@ describe("StreamManager - OpenAI GPT-5.6 cached system instructions", () => {
           thinkingLevel: "off",
           ...(options.initialMetadataPatch
             ? { initialMetadataPatch: options.initialMetadataPatch }
+            : {}),
+          ...(options.onStreamConstructed
+            ? { onStreamConstructed: options.onStreamConstructed }
             : {}),
         })
       )
@@ -1081,6 +1089,28 @@ describe("StreamManager - OpenAI GPT-5.6 cached system instructions", () => {
     });
 
     expect(request.system).toBe("You are a helpful assistant");
+  });
+
+  test("onStreamConstructed fires after successful construction, never on failure", async () => {
+    // Durable side effects hung on this callback (the superseding fallback
+    // turn envelope) must describe a stream that exists: called exactly once
+    // on success, not at all when createStreamResult throws.
+    const onSuccess = mock(() => Promise.resolve());
+    await runRefusalFallbackForTests({
+      workspaceId: "fallback-envelope-success-workspace",
+      staleRouteProvider: "openai",
+      onStreamConstructed: onSuccess,
+    });
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+
+    const onFailure = mock(() => Promise.resolve());
+    await runRefusalFallbackForTests({
+      workspaceId: "fallback-envelope-failure-workspace",
+      staleRouteProvider: "openai",
+      onStreamConstructed: onFailure,
+      failStreamConstruction: true,
+    });
+    expect(onFailure).not.toHaveBeenCalled();
   });
 });
 

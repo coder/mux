@@ -211,6 +211,31 @@ describe("agentDefinitionsService", () => {
     expect(bar!.scope).toBe("global");
   });
 
+  test("dedupeById: false keeps precedence order within same-ID groups despite name sorting", async () => {
+    using project = new DisposableTempDir("agent-defs-project");
+    const projectAgentsRoot = path.join(project.path, ".mux", "agents");
+    const globalAgentsRoot = path.join(project.path, "global-agents");
+    // Same ID, different display names, chosen so a per-row name sort would
+    // place the lower-precedence global row ("Alpha") BEFORE the project
+    // winner ("Zulu"). Composition consumers treat the first row per ID as
+    // effective, so precedence must survive the sort.
+    await writeAgent(projectAgentsRoot, "dup", "Zulu (project)");
+    await writeAgent(globalAgentsRoot, "dup", "Alpha (global)");
+
+    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const runtime = new LocalRuntime(project.path);
+    const agents = await discoverAgentDefinitions(runtime, project.path, {
+      roots,
+      dedupeById: false,
+    });
+
+    const dupRows = agents.filter((agent) => agent.id === "dup");
+    expect(dupRows.map((agent) => agent.scope)).toEqual(["project", "global"]);
+    // Same-ID rows stay adjacent (grouped) rather than scattered by name.
+    const dupIndices = agents.flatMap((agent, index) => (agent.id === "dup" ? [index] : []));
+    expect(dupIndices[1]).toBe(dupIndices[0] + 1);
+  });
+
   test("readAgentDefinition resolves project before global", async () => {
     using project = new DisposableTempDir("agent-defs-project");
     using global = new DisposableTempDir("agent-defs-global");

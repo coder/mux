@@ -26,6 +26,26 @@ import { BlobStore } from "./blobStore";
 export const DURABLE_EVENTS_FILE_NAME = "durable-events.jsonl";
 export const BLOBS_DIR_NAME = "blobs";
 
+/**
+ * Process-wide journal registry keyed by resolved session dir. Multiple
+ * producers (turn envelopes, hook context, sandbox vars snapshots) append to
+ * the same durable-events.jsonl; independent instances would each cache their
+ * own next sequence number and could reuse or regress `seq`, corrupting the
+ * journal's global event ordering. All live writers must obtain their journal
+ * here. Entries are tiny (a seq counter + paths) and live for the process.
+ */
+const sharedJournals = new Map<string, DurableEventJournal>();
+
+export function sharedDurableEventJournal(sessionDir: string): DurableEventJournal {
+  const key = path.resolve(sessionDir);
+  let journal = sharedJournals.get(key);
+  if (!journal) {
+    journal = new DurableEventJournal(sessionDir);
+    sharedJournals.set(key, journal);
+  }
+  return journal;
+}
+
 export class DurableEventJournal {
   private readonly journal: Journal<DurableEvent>;
   /** Blob store for content-addressed payloads referenced from rows. */

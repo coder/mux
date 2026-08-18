@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { DurableEventJournal } from "./durableEventJournal";
+import { DurableEventJournal, sharedDurableEventJournal } from "./durableEventJournal";
 
 describe("DurableEventJournal", () => {
   test("appends drafts for every schema kind and reads them back in order", async () => {
@@ -92,5 +92,27 @@ describe("DurableEventJournal", () => {
     } catch (e) {
       expect(String(e)).toContain("failed schema validation");
     }
+  });
+
+  test("interleaved writers through the shared registry keep seq strictly increasing", async () => {
+    using tmp = new DisposableTempDir("shared-journal");
+    // Two producers (turn envelopes + sandbox snapshots) obtaining the journal
+    // independently for the same session dir must share one seq counter.
+    const writerA = sharedDurableEventJournal(tmp.path);
+    const writerB = sharedDurableEventJournal(tmp.path);
+    expect(writerB).toBe(writerA);
+
+    const draft = (text: string) =>
+      ({
+        workspaceId: "ws",
+        kind: "hook-context",
+        data: { hookId: "plugin:demo", placement: "system-prompt", text },
+      }) as const;
+    await writerA.append(draft("a1"));
+    await writerB.append(draft("b1"));
+    await writerA.append(draft("a2"));
+
+    const rows = await writerA.read();
+    expect(rows.map((row) => row.seq)).toEqual([0, 1, 2]);
   });
 });

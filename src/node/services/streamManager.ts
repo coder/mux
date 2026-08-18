@@ -259,6 +259,15 @@ export interface PreparedModelFallback {
   rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
   forcedFirstStepToolNames?: string[];
   /**
+   * Invoked once the fallback stream has been constructed successfully (but
+   * before it is consumed). Durable side effects that must describe the
+   * request that actually streams — e.g. the superseding turn envelope —
+   * belong here, not in prepare(): a prepare that succeeds but whose stream
+   * construction fails must leave no trace, or replay verification would
+   * attribute an unstarted fallback identity. Must not throw.
+   */
+  onStreamConstructed?: () => Promise<void>;
+  /**
    * Pinned providers-config snapshot the fallback request was built from
    * (see AIService's pinCoderWireProvidersConfig). The swap's request-config
    * rebuild and metadata resolution must read THIS snapshot, not the live
@@ -2757,6 +2766,10 @@ export class StreamManager extends EventEmitter {
         terminalNote: `Configured fallback model ${nextModelString} could not be started: ${getErrorMessage(error)}`,
       };
     }
+
+    // The fallback stream exists now; durable side effects describing this
+    // request identity (superseding turn envelope) may be recorded.
+    await prepared.data.onStreamConstructed?.();
 
     workspaceLog.warn(
       preserveParts

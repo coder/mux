@@ -24,7 +24,10 @@ import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager, type ModelFallbackOptions, type StreamTextOnChunk } from "./streamManager";
 import { emitTurnEnvelope } from "./turnEnvelope";
-import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import {
+  sharedDurableEventJournal,
+  type DurableEventJournal,
+} from "@/node/utils/journal/durableEventJournal";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
@@ -555,12 +558,6 @@ export class AIService extends EventEmitter {
 
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
-  /**
-   * Per-workspace durable-event journals for turn-envelope rows. Cached so one
-   * Journal instance owns the file per workspace (race-free seq assignment;
-   * see Journal's single-writer expectation).
-   */
-  private readonly durableEventJournals = new Map<string, DurableEventJournal>();
   private taskService?: TaskService;
   private memoryService?: MemoryService;
   private timelineService?: ToolConfiguration["timelineService"];
@@ -951,14 +948,13 @@ export class AIService extends EventEmitter {
     }
   }
 
-  /** Lazily bind the durable-event journal to the workspace's session dir. */
+  /**
+   * Journal for the workspace's session dir — always the process-shared
+   * instance so sequence assignment stays coordinated with the sandbox host's
+   * vars-snapshot writer (independent instances would corrupt seq ordering).
+   */
   private durableEventJournalFor(workspaceId: string): DurableEventJournal {
-    let journal = this.durableEventJournals.get(workspaceId);
-    if (!journal) {
-      journal = new DurableEventJournal(this.config.getSessionDir(workspaceId));
-      this.durableEventJournals.set(workspaceId, journal);
-    }
-    return journal;
+    return sharedDurableEventJournal(this.config.getSessionDir(workspaceId));
   }
 
   isMockModeEnabled(): boolean {
@@ -3810,7 +3806,9 @@ export class AIService extends EventEmitter {
                   // needs its own envelope: pairSessionTurns compares the LAST
                   // envelope per requestHistorySequence, so this row supersedes
                   // the primary one and replay-verify/cache-audit see the
-                  // request that actually streamed. Never fails the prepare.
+                  // request that actually streamed. Deferred to
+                  // onStreamConstructed: a prepare whose stream construction
+                  // later fails must not supersede the primary envelope.
                   // Same step-0 scoping as the primary envelope: fingerprint
                   // only the tools the first fallback step actually sends.
                   const nextFirstStepToolNames = new Set(
@@ -3818,25 +3816,31 @@ export class AIService extends EventEmitter {
                       ? nextForcedFirstStepToolNames
                       : nextToolNamesForSentinel
                   );
-                  await emitTurnEnvelope({
-                    journal: this.durableEventJournalFor(workspaceId),
-                    workspaceId,
-                    systemMessage: nextSystem,
-                    tools: Object.fromEntries(
-                      Object.entries(nextTools).filter(([name]) => nextFirstStepToolNames.has(name))
-                    ),
-                    modelString: nextModelString,
-                    thinkingLevel: nextThinkingLevel,
-                    providerOptions: nextMergedProviderOptions,
-                    requestHistorySequence,
-                    wireProviderName: next.wireProviderName,
-                    anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-                    planContentForTransition,
-                    planFilePath,
-                    postCompactionAttachments,
-                  });
+                  const emitFallbackEnvelope = async (): Promise<void> => {
+                    await emitTurnEnvelope({
+                      journal: this.durableEventJournalFor(workspaceId),
+                      workspaceId,
+                      systemMessage: nextSystem,
+                      tools: Object.fromEntries(
+                        Object.entries(nextTools).filter(([name]) =>
+                          nextFirstStepToolNames.has(name)
+                        )
+                      ),
+                      modelString: nextModelString,
+                      thinkingLevel: nextThinkingLevel,
+                      providerOptions: nextMergedProviderOptions,
+                      requestHistorySequence,
+                      wireProviderName: next.wireProviderName,
+                      anthropicCacheTtl:
+                        effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+                      planContentForTransition,
+                      planFilePath,
+                      postCompactionAttachments,
+                    });
+                  };
 
                   return Ok({
+                    onStreamConstructed: emitFallbackEnvelope,
                     model: next.model,
                     // RAW identity (matching the main path's raw modelString):
                     // StreamManager keys createCachedSystemMessage /

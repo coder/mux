@@ -24,7 +24,10 @@
 import assert from "node:assert";
 import type { IJSRuntime, IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { resolveCapabilityGrants, type CapabilityGrants } from "@/common/types/capabilityGrants";
-import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import {
+  sharedDurableEventJournal,
+  type DurableEventJournal,
+} from "@/node/utils/journal/durableEventJournal";
 import { AsyncMutex } from "@/node/utils/concurrency/asyncMutex";
 import { log } from "@/node/services/log";
 
@@ -195,7 +198,6 @@ function grantsKey(grants: CapabilityGrants): string {
 
 export class SandboxHostService {
   private readonly persistentMounts = new Map<string, SandboxMount>();
-  private readonly journals = new Map<string, DurableEventJournal>();
   /** Per-scope mutex serializing acquisition, exclusive runs, and disposal.
    * Kept for the process lifetime (bounded by workspace count). */
   private readonly scopeLocks = new Map<string, AsyncMutex>();
@@ -283,7 +285,7 @@ export class SandboxHostService {
       await this.disposeScopeLocked(scopeKey);
     }
 
-    const journal = this.journalFor(scopeKey, sessionDir);
+    const journal = this.journalFor(sessionDir);
     const runtime = await options.runtimeFactory.create();
     const mount = new SandboxMount(
       runtime,
@@ -340,7 +342,6 @@ export class SandboxHostService {
   private async disposeScopeLocked(scopeKey: string): Promise<void> {
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
-    this.journals.delete(scopeKey);
     if (!mount || mount.isDisposed) return;
     if (mount.grants.vars) {
       try {
@@ -364,7 +365,6 @@ export class SandboxHostService {
     await using _guard = await this.lockFor(scopeKey).acquire();
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
-    this.journals.delete(scopeKey);
     // The scope lock stays in the map (see scopeLocks doc): deleting it while
     // waiters hold references could let two locks govern the same scope.
     if (mount && !mount.isDisposed) {
@@ -382,8 +382,7 @@ export class SandboxHostService {
     await using _guard = await this.lockFor(scopeKey).acquire();
     const mount = this.persistentMounts.get(scopeKey);
     this.persistentMounts.delete(scopeKey);
-    const journal = this.journals.get(scopeKey) ?? new DurableEventJournal(sessionDir);
-    this.journals.delete(scopeKey);
+    const journal = this.journalFor(sessionDir);
     if (mount && !mount.isDisposed) {
       mount.dispose();
     }
@@ -419,16 +418,12 @@ export class SandboxHostService {
       mount.dispose();
     }
     this.persistentMounts.clear();
-    this.journals.clear();
   }
 
-  private journalFor(scopeKey: string, sessionDir: string): DurableEventJournal {
-    let journal = this.journals.get(scopeKey);
-    if (!journal) {
-      journal = new DurableEventJournal(sessionDir);
-      this.journals.set(scopeKey, journal);
-    }
-    return journal;
+  private journalFor(sessionDir: string): DurableEventJournal {
+    // Process-shared per session dir: aiService's turn-envelope writer appends
+    // to the same file, and independent seq caches would corrupt ordering.
+    return sharedDurableEventJournal(sessionDir);
   }
 
   /** Set up `vars` and restore the latest snapshot if one exists (self-heal:
