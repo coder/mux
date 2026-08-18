@@ -37,7 +37,11 @@ import {
 } from "@/common/utils/messages/compactionBoundary";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import type { HistoryService } from "@/node/services/historyService";
-import { hashToolSchema } from "@/node/services/turnEnvelope";
+import {
+  hashToolSchema,
+  isProviderDefinedToolRecord,
+  providerToolFingerprint,
+} from "@/node/services/turnEnvelope";
 import { buildReplayRequest } from "./replayRequestBuilder";
 
 export const DEVTOOLS_LOG_FILE_NAME = "devtools.jsonl";
@@ -291,15 +295,22 @@ function manifestFromRecordedTools(tools: unknown): Array<{ name: string; schema
   }
   return tools
     .flatMap((tool) => {
-      const record = tool as { name?: unknown; inputSchema?: unknown };
-      if (typeof record.name !== "string") {
+      const record = tool as { name?: unknown; inputSchema?: unknown; args?: unknown };
+      const name = record.name;
+      if (typeof name !== "string") {
         return [];
       }
-      // The wire inputSchema is already plain JSON schema (post asSchema);
-      // schema-less entries (provider-defined tools) fingerprint like the
-      // manifest's empty-schema fallback in turnEnvelope.extractJsonSchema.
+      // Provider-defined tools serialize as {type, id, args} with no
+      // inputSchema; fingerprint the wire identity exactly like
+      // turnEnvelope.buildToolsetManifest does at request time.
+      if (isProviderDefinedToolRecord(record)) {
+        return [
+          { name, schemaHash: hashToolSchema(providerToolFingerprint(record.id, record.args)) },
+        ];
+      }
+      // The wire inputSchema is already plain JSON schema (post asSchema).
       const schema = record.inputSchema ?? asSchema(undefined).jsonSchema;
-      return [{ name: record.name, schemaHash: hashToolSchema(schema) }];
+      return [{ name, schemaHash: hashToolSchema(schema) }];
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 }

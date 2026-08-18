@@ -31,6 +31,33 @@ export function hashToolSchema(jsonSchema: unknown): string {
 }
 
 /**
+ * Canonical fingerprint input for provider-defined tools (e.g. Anthropic
+ * web_search). Their client-side `inputSchema` never reaches the wire — the
+ * provider request serializes only `{type, id, args}` — so both the envelope
+ * (runtime tool) and replay (wire record) sides must fingerprint the wire
+ * identity, or replay verification can never match. `args` belongs in the
+ * fingerprint: changing e.g. `maxUses` changes the provider request, which is
+ * exactly what the cache-bust auditor must attribute.
+ */
+export function providerToolFingerprint(id: unknown, args: unknown): unknown {
+  return { providerToolId: id, args: args ?? null };
+}
+
+/** Runtime and wire provider-tool records both carry a string `id` and `type`. */
+export function isProviderDefinedToolRecord(
+  record: unknown
+): record is { type: string; id: string; args?: unknown } {
+  if (record === null || typeof record !== "object") {
+    return false;
+  }
+  const candidate = record as { type?: unknown; id?: unknown };
+  return (
+    typeof candidate.id === "string" &&
+    (candidate.type === "provider" || candidate.type === "provider-defined")
+  );
+}
+
+/**
  * Extract the JSON schema from a runtime tool entry without ever throwing.
  * Tool maps mix shapes that `asSchema` alone cannot normalize — passing a
  * plain object to `asSchema` makes it assume a lazy-schema function and call
@@ -88,9 +115,16 @@ export function buildToolsetManifest(
   return Object.keys(tools)
     .sort()
     .map((name) => {
+      const tool = tools[name];
+      // Provider-defined tools fingerprint by wire identity (id + args): their
+      // client-side inputSchema is never serialized to the provider, so replay
+      // reconstruction from wire records could not reproduce it.
+      if (isProviderDefinedToolRecord(tool)) {
+        return { name, schemaHash: hashToolSchema(providerToolFingerprint(tool.id, tool.args)) };
+      }
       // stableStringify sorts keys so the hash is insensitive to property
       // insertion order.
-      const inputJsonSchema = extractJsonSchema(tools[name]);
+      const inputJsonSchema = extractJsonSchema(tool);
       return { name, schemaHash: hashToolSchema(inputJsonSchema) };
     });
 }

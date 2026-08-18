@@ -17,7 +17,12 @@ import {
   DURABLE_EVENTS_FILE_NAME,
   DurableEventJournal,
 } from "@/node/utils/journal/durableEventJournal";
-import { buildToolsetManifest, emitTurnEnvelope } from "./turnEnvelope";
+import {
+  buildToolsetManifest,
+  emitTurnEnvelope,
+  hashToolSchema,
+  providerToolFingerprint,
+} from "./turnEnvelope";
 
 const SHA256_HEX = /^[0-9a-f]{64}$/;
 
@@ -56,6 +61,35 @@ describe("buildToolsetManifest", () => {
       zebra: makeTool(jsonSchema({ type: "object", properties: { c: {} } })),
     });
     expect(different[0].schemaHash).not.toBe(manifest[1].schemaHash);
+  });
+
+  test("provider-defined tools fingerprint by wire identity, matching replay reconstruction", () => {
+    // Runtime shape (AI SDK provider tool): type/id/args plus a client-side
+    // inputSchema that never reaches the wire.
+    const runtimeTool = {
+      type: "provider",
+      id: "anthropic.web_search_20250305",
+      args: { maxUses: 1000 },
+      inputSchema: z.object({ query: z.string() }),
+    };
+    const manifest = buildToolsetManifest({
+      web_search: runtimeTool as unknown as Parameters<typeof buildToolsetManifest>[0][string],
+    });
+
+    // The contract: envelope hash == hash of the wire identity, so replay
+    // (which only sees {type, id, args}) reproduces it exactly.
+    expect(manifest[0].schemaHash).toBe(
+      hashToolSchema(providerToolFingerprint("anthropic.web_search_20250305", { maxUses: 1000 }))
+    );
+
+    // args participate in the fingerprint: config changes are cache-relevant.
+    const changedArgs = buildToolsetManifest({
+      web_search: {
+        ...runtimeTool,
+        args: { maxUses: 5 },
+      } as unknown as Parameters<typeof buildToolsetManifest>[0][string],
+    });
+    expect(changedArgs[0].schemaHash).not.toBe(manifest[0].schemaHash);
   });
 
   test("fingerprints legacy .parameters/.schema tool shapes and tolerates sparse entries", () => {
