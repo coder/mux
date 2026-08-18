@@ -25,6 +25,12 @@ describe("subProjects", () => {
     expect(isPathDescendant("C:\\Repo", "c:\\repo\\packages\\api")).toBe(true);
   });
 
+  test("treats Windows UNC paths as case-insensitive", () => {
+    expect(
+      isPathDescendant("\\\\server\\share\\Repo", "\\\\SERVER\\Share\\repo\\packages\\api")
+    ).toBe(true);
+  });
+
   test("derives one-level parentage from registered project paths", () => {
     const projects = new Map<string, ProjectConfig>([
       ["/repo", project()],

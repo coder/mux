@@ -254,6 +254,29 @@ describe("agentSkillsService", () => {
     ]);
   });
 
+  test("ancestor discovery compares Windows UNC boundaries case-insensitively", () => {
+    class WindowsPathRuntime extends LocalRuntime {
+      override normalizePath(targetPath: string, basePath: string): string {
+        return path.win32.resolve(basePath, targetPath);
+      }
+    }
+
+    const checkoutRoot = "\\\\server\\share\\repo";
+    const workspacePath = "\\\\SERVER\\Share\\Repo\\packages\\app";
+    const roots = getDefaultAgentSkillsRoots(new WindowsPathRuntime(workspacePath), workspacePath, {
+      projectSearchRoot: checkoutRoot,
+    });
+
+    expect(roots.projectRoots).toEqual([
+      path.win32.join(workspacePath, ".mux", "skills"),
+      path.win32.join(workspacePath, ".agents", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo\\packages", ".mux", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo\\packages", ".agents", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo", ".mux", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo", ".agents", "skills"),
+    ]);
+  });
+
   test("ancestor discovery fails closed when the boundary is not a parent", () => {
     const workspacePath = "/workspace/project/packages/app";
     const roots = getDefaultAgentSkillsRoots(new LocalRuntime(workspacePath), workspacePath, {

@@ -4,10 +4,11 @@ import { PlatformPaths } from "@/common/utils/paths";
 export function normalizeForDescendantComparison(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   // Windows paths are case-insensitive, and user input / persisted config can
-  // differ in drive-letter or segment casing. Treat drive-letter paths as
-  // case-insensitive so hierarchy derivation is stable on Windows while POSIX
-  // paths keep their normal case-sensitive semantics.
-  return /^[a-z]:\//i.test(normalized) ? normalized.toLowerCase() : normalized;
+  // differ in segment casing. Treat drive-letter and UNC paths case-insensitively
+  // so hierarchy derivation is stable while POSIX paths keep their normal semantics.
+  return /^[a-z]:\//i.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
 }
 
 export function isPathDescendant(parentPath: string, candidatePath: string): boolean {
