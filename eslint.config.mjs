@@ -834,10 +834,16 @@ const localPlugin = {
         // one exists (typed params/bindings count) and stays within the same
         // function boundary. Returns { type } on evidence, null otherwise.
         const knownValueEvidence = (expression, boundary, visitedVariables) => {
-          if (expression.type === "TSAsExpression" || expression.type === "TSTypeAssertion") {
+          // See through `!`/`satisfies` so a wrapped assertion like
+          // `(value as Foo)!` is still recognized as the evidence assertion.
+          const withoutPassthroughs = unwrapPassthroughWrappers(expression);
+          if (
+            withoutPassthroughs.type === "TSAsExpression" ||
+            withoutPassthroughs.type === "TSTypeAssertion"
+          ) {
             // An assertion to a broad type destroys evidence; a narrower one is evidence.
-            return broadTypeKind(expression.typeAnnotation) === null
-              ? { type: expression.typeAnnotation }
+            return broadTypeKind(withoutPassthroughs.typeAnnotation) === null
+              ? { type: withoutPassthroughs.typeAnnotation }
               : null;
           }
           const unwrapped = unwrapAssertions(expression);
