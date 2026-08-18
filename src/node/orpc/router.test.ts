@@ -56,6 +56,210 @@ describe("router workspace goal validation", () => {
   });
 });
 
+describe("router agent skill routes", () => {
+  test("subproject workspaces inherit parent skills with nearest precedence", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-router-skills-test-"));
+    try {
+      const checkoutRoot = path.join(tempDir, "checkout");
+      const packagesRoot = path.join(checkoutRoot, "packages");
+      const subProjectPath = path.join(packagesRoot, "app");
+      const writeSkill = (root: string, name: string, description: string, body: string): void => {
+        const skillDir = path.join(root, name);
+        fs.mkdirSync(skillDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(skillDir, "SKILL.md"),
+          `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`
+        );
+      };
+
+      fs.mkdirSync(subProjectPath, { recursive: true });
+      writeSkill(
+        path.join(checkoutRoot, ".mux", "skills"),
+        "parent-only",
+        "from checkout",
+        "parent body"
+      );
+      writeSkill(
+        path.join(checkoutRoot, ".mux", "skills"),
+        "shared",
+        "from checkout",
+        "checkout body"
+      );
+      writeSkill(
+        path.join(packagesRoot, ".agents", "skills"),
+        "shared",
+        "from packages",
+        "packages body"
+      );
+
+      const outsideRoot = path.join(tempDir, "outside-skills");
+      writeSkill(outsideRoot, "escaped", "outside checkout", "outside body");
+      fs.symlinkSync(
+        path.join(outsideRoot, "escaped"),
+        path.join(checkoutRoot, ".mux", "skills", "escaped"),
+        "dir"
+      );
+
+      const context = {
+        config: new Config(tempDir),
+        aiService: {
+          waitForInit: mock(async () => undefined),
+          resolveMuxToolScopeForWorkspace: mock(() => ({
+            type: "project",
+            muxHome: tempDir,
+            projectRoot: subProjectPath,
+            projectStorageAuthority: "host-local",
+            checkoutRoot,
+          })),
+          getWorkspaceMetadata: mock(async () => ({
+            success: true,
+            data: {
+              id: "workspace-1",
+              name: "workspace-1",
+              projectPath: checkoutRoot,
+              namedWorkspacePath: checkoutRoot,
+              subProjectPath,
+              runtimeConfig: { type: "local", srcBaseDir: tempDir },
+            },
+          })),
+        },
+        experimentsService: {
+          isExperimentEnabled: mock(() => false),
+        },
+      } as unknown as ORPCContext;
+      const client = createRouterClient(router(), { context });
+
+      const skills = await client.agentSkills.list({ workspaceId: "workspace-1" });
+      expect(skills.find((skill) => skill.name === "parent-only")).toMatchObject({
+        description: "from checkout",
+        scope: "project",
+      });
+      expect(skills.find((skill) => skill.name === "shared")).toMatchObject({
+        description: "from packages",
+        scope: "project",
+      });
+
+      expect(skills.find((skill) => skill.name === "escaped")).toBeUndefined();
+      await expect(
+        client.agentSkills.get({ workspaceId: "workspace-1", skillName: "escaped" })
+      ).rejects.toThrow("Agent skill not found");
+
+      await expect(
+        client.agentSkills.get({ workspaceId: "workspace-1", skillName: "parent-only" })
+      ).resolves.toMatchObject({ body: "parent body\n" });
+      await expect(
+        client.agentSkills.get({ workspaceId: "workspace-1", skillName: "shared" })
+      ).resolves.toMatchObject({ body: "packages body\n" });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("devcontainer workspaces read inherited skills from host-local storage", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-router-devcontainer-skills-"));
+    try {
+      const checkoutRoot = path.join(tempDir, "checkout");
+      const subProjectPath = path.join(checkoutRoot, "packages", "app");
+      const skillDir = path.join(checkoutRoot, ".mux", "skills", "parent-only");
+      fs.mkdirSync(subProjectPath, { recursive: true });
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, "SKILL.md"),
+        "---\nname: parent-only\ndescription: Parent skill\n---\nHost parent body\n"
+      );
+
+      const context = {
+        config: new Config(tempDir),
+        aiService: {
+          waitForInit: mock(async () => undefined),
+          resolveMuxToolScopeForWorkspace: mock(() => ({
+            type: "project",
+            muxHome: tempDir,
+            projectRoot: subProjectPath,
+            projectStorageAuthority: "host-local",
+            checkoutRoot,
+          })),
+          getWorkspaceMetadata: mock(async () => ({
+            success: true,
+            data: {
+              id: "workspace-1",
+              name: "workspace-1",
+              projectPath: checkoutRoot,
+              namedWorkspacePath: checkoutRoot,
+              subProjectPath,
+              runtimeConfig: {
+                type: "devcontainer",
+                configPath: ".devcontainer/devcontainer.json",
+              },
+            },
+          })),
+        },
+        experimentsService: {
+          isExperimentEnabled: mock(() => false),
+        },
+      } as unknown as ORPCContext;
+      const client = createRouterClient(router(), { context });
+
+      await expect(client.agentSkills.list({ workspaceId: "workspace-1" })).resolves.toContainEqual(
+        expect.objectContaining({
+          name: "parent-only",
+          description: "Parent skill",
+          scope: "project",
+        })
+      );
+      await expect(
+        client.agentSkills.get({ workspaceId: "workspace-1", skillName: "parent-only" })
+      ).resolves.toMatchObject({ body: "Host parent body\n" });
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("project-path discovery inherits skills from a registered parent", async () => {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "mux-router-project-skills-test-"));
+    try {
+      const parentProjectPath = path.join(tempDir, "checkout");
+      const subProjectPath = path.join(parentProjectPath, "packages", "app");
+      const skillDir = path.join(parentProjectPath, ".mux", "skills", "parent-only");
+      fs.mkdirSync(subProjectPath, { recursive: true });
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(skillDir, "SKILL.md"),
+        "---\nname: parent-only\ndescription: Parent skill\n---\nParent body\n"
+      );
+
+      const config = new Config(tempDir);
+      await config.editConfig((current) => {
+        current.projects.set(parentProjectPath, { workspaces: [] });
+        current.projects.set(subProjectPath, {
+          workspaces: [],
+          parentProjectPath,
+        });
+        return current;
+      });
+      const context = {
+        config,
+        experimentsService: {
+          isExperimentEnabled: mock(() => false),
+        },
+      } as unknown as ORPCContext;
+      const client = createRouterClient(router(), { context });
+
+      await expect(
+        client.agentSkills.list({ projectPath: subProjectPath })
+      ).resolves.toContainEqual(
+        expect.objectContaining({
+          name: "parent-only",
+          description: "Parent skill",
+          scope: "project",
+        })
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
 async function waitForRouterCondition(
   description: string,
   predicate: () => boolean
@@ -121,6 +325,7 @@ describe("router workflow routes", () => {
     enabled: boolean;
     workspacePath?: string;
     subProjectPath?: string;
+    runtimeConfig?: { type: "devcontainer"; configPath: string };
   }): ORPCContext {
     const workspacePath = options.workspacePath ?? projectPath;
     return {
@@ -128,6 +333,13 @@ describe("router workflow routes", () => {
       config,
       aiService: {
         waitForInit: mock(async () => undefined),
+        resolveMuxToolScopeForWorkspace: mock((_metadata, _runtime, executionPath) => ({
+          type: "project",
+          muxHome: tempDir,
+          projectRoot: executionPath,
+          projectStorageAuthority: "host-local",
+          checkoutRoot: workspacePath,
+        })),
         getWorkspaceMetadata: mock(async () => ({
           success: true,
           data: {
@@ -136,7 +348,7 @@ describe("router workflow routes", () => {
             projectPath,
             namedWorkspacePath: workspacePath,
             ...(options.subProjectPath != null ? { subProjectPath: options.subProjectPath } : {}),
-            runtimeConfig: { type: "local", srcBaseDir: tempDir },
+            runtimeConfig: options.runtimeConfig ?? { type: "local", srcBaseDir: tempDir },
           },
         })),
       },
@@ -346,6 +558,66 @@ describe("router workflow routes", () => {
 
     expect(result.status).toBe("completed");
     expect(result.result).toEqual({ reportMarkdown: "subproject:workflow routes" });
+  });
+
+  test("discovers and starts skill workflows inherited by a subproject", async () => {
+    const subProjectPath = path.join(projectPath, "packages", "app");
+    const skillDir = path.join(projectPath, ".mux", "skills", "parent-flow");
+    fs.mkdirSync(subProjectPath, { recursive: true });
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "SKILL.md"),
+      "---\nname: parent-flow\ndescription: Parent workflow\n---\nRun the parent workflow.\n"
+    );
+    fs.writeFileSync(
+      path.join(skillDir, "workflow.js"),
+      `export const meta = { description: "Parent workflow" };\nexport default function workflow({ args }) { return { reportMarkdown: "parent:" + args.topic }; }\n`
+    );
+    const client = createRouterClient(router(), {
+      context: createContext({ enabled: true, subProjectPath }),
+    });
+
+    const scripts = await client.workflows.listScripts({ workspaceId: "workspace-1" });
+    expect(scripts).toContainEqual(
+      expect.objectContaining({
+        descriptor: expect.objectContaining({ scope: "project" }),
+        scriptPath: "skill://parent-flow/workflow.js",
+      })
+    );
+
+    const result = await client.workflows.start({
+      workspaceId: "workspace-1",
+      scriptPath: "skill://parent-flow/workflow.js",
+      args: { topic: "workflow routes" },
+    });
+    expect(result.status).toBe("completed");
+    expect(result.result).toEqual({ reportMarkdown: "parent:workflow routes" });
+
+    const devcontainerClient = createRouterClient(router(), {
+      context: createContext({
+        enabled: true,
+        subProjectPath,
+        runtimeConfig: {
+          type: "devcontainer",
+          configPath: ".devcontainer/devcontainer.json",
+        },
+      }),
+    });
+    await expect(
+      devcontainerClient.workflows.listScripts({ workspaceId: "workspace-1" })
+    ).resolves.toContainEqual(
+      expect.objectContaining({ scriptPath: "skill://parent-flow/workflow.js" })
+    );
+    await expect(
+      devcontainerClient.workflows.start({
+        workspaceId: "workspace-1",
+        scriptPath: "skill://parent-flow/workflow.js",
+        args: { topic: "devcontainer" },
+      })
+    ).resolves.toMatchObject({
+      status: "completed",
+      result: { reportMarkdown: "parent:devcontainer" },
+    });
   });
 
   test("persists workflow slash invocations before returning", async () => {

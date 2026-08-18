@@ -28,18 +28,17 @@ npx skills add https://github.com/anthropics/skills --skill frontend-design
 
 ## Where skills live
 
-Mux discovers skills from five roots:
+Mux discovers skills from these locations:
 
-- **Workspace-local**: `.mux/skills/<skill-name>/SKILL.md` (in the workspace working directory)
-- **Workspace-local (cross-tool)**: `.agents/skills/<skill-name>/SKILL.md` (in the workspace working directory)
+- **Project**: `.mux/skills/<skill-name>/SKILL.md`
+- **Project (cross-tool)**: `.agents/skills/<skill-name>/SKILL.md`
 - **Global (Mux-specific)**: `~/.mux/skills/<skill-name>/SKILL.md`
 - **Universal (cross-tool)**: `~/.agents/skills/<skill-name>/SKILL.md`
 - **Built-in**: shipped with Mux
 
-If a skill exists in multiple locations, the precedence order is:
-**workspace-local (`.mux/skills`) > workspace-local (`.agents/skills`) > global (`~/.mux/skills`) > universal (`~/.agents/skills`) > built-in**.
+For a workspace that executes in a subproject, Mux checks the working directory and each parent directory through the checkout root. It never searches above the checkout. A nearer project definition wins over a farther one; within the same directory, `.mux/skills` wins over `.agents/skills`.
 
-Built-in skills behave like any other skill for precedence purposes: you can override them by creating a skill with the same name in any higher-precedence workspace-local or global root.
+After project skills, the remaining precedence order is **global (`~/.mux/skills`) > universal (`~/.agents/skills`) > built-in**. Built-in skills behave like any other skill for precedence purposes, so any project or global skill with the same name overrides them.
 
 <Info>
   Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
@@ -53,7 +52,7 @@ Many repositories already ship skills in Claude Code's directories. Enable the *
 - **Workspace-local**: `.claude/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.claude/skills/<skill-name>/SKILL.md`
 
-Compat roots have the lowest precedence within their scope (`.mux/skills` > `.agents/skills` > `.claude/skills`, and likewise for the global roots), and they are read-only: Mux never writes or deletes skills in `.claude` directories. Skills that package Mux workflow scripts are not discovered from `.claude` roots.
+Within the same directory, compat roots have the lowest precedence (`.mux/skills` > `.agents/skills` > `.claude/skills`); a nearer directory still wins over a farther one. The global roots use the same convention order. Compat roots are read-only: Mux never writes or deletes skills in `.claude` directories. Skills that package Mux workflow scripts are not discovered from `.claude` roots.
 
 ### Agent Plugins (experiment)
 

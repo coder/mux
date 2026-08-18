@@ -226,26 +226,36 @@ describe("resolveSkillStorageContext", () => {
     expect(hostGlobalStat.isDirectory).toBe(true);
   });
 
-  it("returns project-runtime context when project storage authority is runtime", () => {
+  it("returns project-runtime roots through the checkout boundary", () => {
     using tempDir = new TestTempDir("skill-storage-context-project-runtime");
     const runtime = new LocalRuntime(tempDir.path);
+    const checkoutRoot = "/remote/workspace";
+    const workspacePath = "/remote/workspace/packages/app";
 
     const context = resolveSkillStorageContext({
       runtime,
-      workspacePath: "/remote/workspace",
+      workspacePath,
       muxScope: {
         type: "project",
         muxHome: tempDir.path,
-        projectRoot: "/host/project",
+        projectRoot: "/host/project/packages/app",
         projectStorageAuthority: "runtime",
+        checkoutRoot,
       },
     });
 
     expect(context.kind).toBe("project-runtime");
     expect(context.containment).toEqual({
       kind: "runtime",
-      root: "/remote/workspace",
+      root: checkoutRoot,
     });
-    expect(context.roots).toBeUndefined();
+    expect(context.roots?.projectRoots).toEqual([
+      "/remote/workspace/packages/app/.mux/skills",
+      "/remote/workspace/packages/app/.agents/skills",
+      "/remote/workspace/packages/.mux/skills",
+      "/remote/workspace/packages/.agents/skills",
+      "/remote/workspace/.mux/skills",
+      "/remote/workspace/.agents/skills",
+    ]);
   });
 });

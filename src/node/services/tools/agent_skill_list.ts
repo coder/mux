@@ -19,6 +19,7 @@ import { discoverAgentPlugins } from "@/node/services/agentPlugins/discovery";
 import {
   discoverAgentSkills,
   getDefaultAgentSkillsRoots,
+  getProjectSkillRoots,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
@@ -183,18 +184,29 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
         if (skillCtx.kind === "project-runtime") {
           // Runtime discovery mirrors the shared default roots contract so project-runtime
           // listings include .mux/skills and .agents/skills plus ~/.mux/skills and ~/.agents/skills.
-          const roots = getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath, {
-            includeClaudeSkills,
-            includeAgentPlugins,
-          });
+          const roots =
+            skillCtx.roots ??
+            getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath, {
+              includeClaudeSkills,
+              includeAgentPlugins,
+            });
 
           const discovered = await discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
             roots,
             containment: skillCtx.containment,
             dedupeByName: false,
           });
+          const seenByScope = new Set<string>();
           const skills = discovered
             .filter((skill) => skill.scope !== "built-in")
+            .filter((skill) => {
+              const scopeKey = `${skill.scope}:${skill.name}`;
+              if (seenByScope.has(scopeKey)) {
+                return false;
+              }
+              seenByScope.add(scopeKey);
+              return true;
+            })
             .filter((skill) => includeUnadvertised === true || skill.advertise !== false)
             .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -244,29 +256,17 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           });
         }
         if (muxScope.type === "project") {
+          if (skillCtx.roots == null) {
+            throw new Error("Project-local skill context requires explicit roots");
+          }
+          const containmentRoot = muxScope.checkoutRoot ?? muxScope.projectRoot;
           roots.unshift(
-            {
-              // Project skills listed first so they appear before global ones.
-              skillsRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
-              containmentRoot: muxScope.projectRoot,
-              scope: "project",
-            },
-            {
-              skillsRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
-              containmentRoot: muxScope.projectRoot,
-              scope: "project",
-            },
-            // claude-skills-compat: lowest-precedence project root, contained at projectRoot
-            // exactly like the other project roots.
-            ...(includeClaudeSkills
-              ? [
-                  {
-                    skillsRoot: path.join(muxScope.projectRoot, ".claude", "skills"),
-                    containmentRoot: muxScope.projectRoot,
-                    scope: "project" as const,
-                  },
-                ]
-              : [])
+            ...getProjectSkillRoots(skillCtx.roots).map((skillsRoot) => ({
+              // Project skills are nearest-directory first, before global ones.
+              skillsRoot,
+              containmentRoot,
+              scope: "project" as const,
+            }))
           );
         }
 
@@ -321,6 +321,7 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
         }
 
         const skills: AgentSkillDescriptor[] = [];
+        const seenByScope = new Set<string>();
         for (const { skillsRoot, containmentRoot, scope, isPlugin } of roots) {
           let skillsRootReal: string;
           try {
@@ -363,6 +364,12 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             if (!descriptor) {
               continue;
             }
+
+            const scopeKey = `${scope}:${descriptor.name}`;
+            if (seenByScope.has(scopeKey)) {
+              continue;
+            }
+            seenByScope.add(scopeKey);
 
             if (includeUnadvertised !== true && descriptor.advertise === false) {
               continue;

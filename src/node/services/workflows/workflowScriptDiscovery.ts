@@ -6,6 +6,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
 import { getBuiltInSkillDescriptors } from "@/node/services/agentSkills/builtInSkillDefinitions";
+import type { SkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { log } from "@/node/services/log";
 
 import { buildWorkflowScriptDescriptor } from "./WorkflowService";
@@ -18,9 +19,12 @@ const WORKFLOW_SKILL_ENTRY = "workflow.js";
 export interface DiscoverWorkflowScriptsInput {
   runtime: Runtime;
   workspacePath: string;
+  /** Inclusive checkout/repository boundary for inherited project skills. */
+  projectSearchRoot?: string;
   projectTrusted: boolean;
   /** agent-plugins experiment: also enumerate plugin skills and plugin workflows/ scripts. */
   includeAgentPlugins?: boolean;
+  skillStorageContext?: SkillStorageContext;
 }
 
 /**
@@ -55,10 +59,22 @@ export async function discoverWorkflowScripts(
   // readAgentSkill resolves by precedence (project > global > built-in) when names collide.
   getBuiltInSkillDescriptors().forEach(addSkill);
   try {
+    const skillCtx = input.skillStorageContext;
     (
-      await discoverAgentSkills(input.runtime, input.workspacePath, {
-        includeAgentPlugins: input.includeAgentPlugins,
-      })
+      await discoverAgentSkills(
+        skillCtx?.runtime ?? input.runtime,
+        skillCtx?.workspacePath ?? input.workspacePath,
+        skillCtx != null
+          ? { roots: skillCtx.roots, containment: skillCtx.containment }
+          : {
+              projectSearchRoot: input.projectSearchRoot,
+              containment: {
+                kind: "runtime",
+                root: input.projectSearchRoot ?? input.workspacePath,
+              },
+              includeAgentPlugins: input.includeAgentPlugins,
+            }
+      )
     ).forEach(addSkill);
   } catch (error) {
     log.warn(`Workflow script discovery: failed to enumerate skills: ${getErrorMessage(error)}`);
@@ -70,8 +86,10 @@ export async function discoverWorkflowScripts(
         scriptPath,
         runtime: input.runtime,
         workspacePath: input.workspacePath,
+        projectSearchRoot: input.projectSearchRoot,
         projectTrusted: input.projectTrusted,
         includeAgentPlugins: input.includeAgentPlugins,
+        skillStorageContext: input.skillStorageContext,
       });
       available.push({
         descriptor: buildWorkflowScriptDescriptor(resolved),

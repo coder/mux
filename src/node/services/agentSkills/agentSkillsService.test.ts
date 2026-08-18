@@ -231,6 +231,18 @@ describe("agentSkillsService", () => {
     expect(defaultRoots.globalRoot).toBe("~/.mux/skills");
   });
 
+  test("ancestor discovery fails closed when the boundary is not a parent", () => {
+    const workspacePath = "/workspace/project/packages/app";
+    const roots = getDefaultAgentSkillsRoots(new LocalRuntime(workspacePath), workspacePath, {
+      projectSearchRoot: "/different/checkout",
+    });
+
+    expect(roots.projectRoots).toEqual([
+      "/workspace/project/packages/app/.mux/skills",
+      "/workspace/project/packages/app/.agents/skills",
+    ]);
+  });
+
   test("project skills override global skills", async () => {
     using project = new DisposableTempDir("agent-skills-project");
     using global = new DisposableTempDir("agent-skills-global");
@@ -271,6 +283,72 @@ describe("agentSkillsService", () => {
     const bar = skills.find((s) => s.name === "bar");
     expect(bar).toBeDefined();
     expect(bar!.scope).toBe("global");
+  });
+
+  test("subprojects inherit ancestor skills with nearest-directory precedence", async () => {
+    using checkout = new DisposableTempDir("agent-skills-subproject-checkout");
+    using muxHome = new DisposableTempDir("agent-skills-subproject-mux-home");
+
+    const packagesRoot = path.join(checkout.path, "packages");
+    const subprojectRoot = path.join(packagesRoot, "app");
+    await fs.mkdir(subprojectRoot, { recursive: true });
+
+    await writeSkill(path.join(checkout.path, ".mux", "skills"), "parent-only", "from checkout");
+    await writeSkill(path.join(checkout.path, ".mux", "skills"), "shared", "from checkout");
+    await writeSkill(path.join(packagesRoot, ".agents", "skills"), "shared", "from packages");
+    await writeSkill(path.join(muxHome.path, "skills"), "parent-only", "from global");
+
+    const context = resolveSkillStorageContext({
+      runtime: new LocalRuntime(subprojectRoot),
+      workspacePath: subprojectRoot,
+      muxScope: {
+        type: "project",
+        muxHome: muxHome.path,
+        projectRoot: subprojectRoot,
+        projectStorageAuthority: "host-local",
+        checkoutRoot: checkout.path,
+      },
+    });
+
+    if (context.roots == null) {
+      throw new Error("Expected project-local skill roots");
+    }
+
+    const skills = await discoverAgentSkills(context.runtime, context.workspacePath, {
+      roots: context.roots,
+      containment: context.containment,
+    });
+
+    expect(skills.find((skill) => skill.name === "parent-only")).toMatchObject({
+      description: "from checkout",
+      scope: "project",
+    });
+    expect(skills.find((skill) => skill.name === "shared")).toMatchObject({
+      description: "from packages",
+      scope: "project",
+    });
+
+    const inherited = await readAgentSkill(
+      context.runtime,
+      context.workspacePath,
+      SkillNameSchema.parse("parent-only"),
+      {
+        roots: context.roots,
+        containment: context.containment,
+      }
+    );
+    expect(inherited.skillDir).toBe(path.join(checkout.path, ".mux", "skills", "parent-only"));
+
+    const nearest = await readAgentSkill(
+      context.runtime,
+      context.workspacePath,
+      SkillNameSchema.parse("shared"),
+      {
+        roots: context.roots,
+        containment: context.containment,
+      }
+    );
+    expect(nearest.skillDir).toBe(path.join(packagesRoot, ".agents", "skills", "shared"));
   });
 
   test("explicit global-only roots exclude workspace-local skills from discovery", async () => {
@@ -407,6 +485,51 @@ describe("agentSkillsService", () => {
       description: "from remote runtime",
       scope: "project",
     });
+  });
+
+  test("remote subprojects inherit skills through the runtime checkout root", async () => {
+    using runtimeBase = new DisposableTempDir("agent-skills-remote-subproject");
+
+    const localCheckoutRoot = path.join(runtimeBase.path, "workspace");
+    const localPackagesRoot = path.join(localCheckoutRoot, "packages");
+    const localSubprojectRoot = path.join(localPackagesRoot, "app");
+    await fs.mkdir(localSubprojectRoot, { recursive: true });
+    await writeSkill(
+      path.join(localCheckoutRoot, ".mux", "skills"),
+      "parent-only",
+      "from checkout"
+    );
+    await writeSkill(path.join(localCheckoutRoot, ".mux", "skills"), "shared", "from checkout");
+    await writeSkill(path.join(localPackagesRoot, ".agents", "skills"), "shared", "from packages");
+
+    const remoteCheckoutRoot = "/remote/workspace";
+    const remoteSubprojectRoot = "/remote/workspace/packages/app";
+    const runtime = new RemotePathMappedRuntime(localCheckoutRoot, remoteCheckoutRoot);
+    const roots = getDefaultAgentSkillsRoots(runtime, remoteSubprojectRoot, {
+      projectSearchRoot: remoteCheckoutRoot,
+    });
+    const containment = { kind: "runtime" as const, root: remoteCheckoutRoot };
+
+    const skills = await discoverAgentSkills(runtime, remoteSubprojectRoot, {
+      roots,
+      containment,
+    });
+    expect(skills.find((skill) => skill.name === "parent-only")).toMatchObject({
+      description: "from checkout",
+      scope: "project",
+    });
+    expect(skills.find((skill) => skill.name === "shared")).toMatchObject({
+      description: "from packages",
+      scope: "project",
+    });
+
+    const resolved = await readAgentSkill(
+      runtime,
+      remoteSubprojectRoot,
+      SkillNameSchema.parse("parent-only"),
+      { roots, containment }
+    );
+    expect(resolved.skillDir).toBe("/remote/workspace/.mux/skills/parent-only");
   });
 
   test("docker-like remote runtimes keep global skills on the runtime filesystem", async () => {

@@ -19,6 +19,10 @@ import {
   type AgentSkillsRoots,
 } from "@/node/services/agentSkills/agentSkillsService";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
+import type {
+  ProjectSkillContainment,
+  SkillStorageContext,
+} from "@/node/services/agentSkills/skillStorageContext";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import {
   ensureRuntimePathWithinWorkspace,
@@ -48,6 +52,8 @@ export interface ResolveWorkflowScriptInput {
   scriptSource?: string | null;
   runtime: Runtime;
   workspacePath: string;
+  /** Inclusive checkout/repository boundary for inherited project skills. */
+  projectSearchRoot?: string;
   projectTrusted: boolean;
   roots?: AgentSkillsRoots;
   /**
@@ -55,6 +61,9 @@ export interface ResolveWorkflowScriptInput {
    * scripts. Loading third-party plugin code stays gated behind the experiment.
    */
   includeAgentPlugins?: boolean;
+  containment?: ProjectSkillContainment;
+  /** Separate skill I/O context when workflow files execute in another runtime. */
+  skillStorageContext?: SkillStorageContext;
 }
 
 const SKILL_SCRIPT_PATH_PREFIX = "skill://";
@@ -136,13 +145,26 @@ async function resolveSkillWorkflowScript(
   const parsed = parseSkillWorkflowScriptPath(input.scriptPath);
   assertJavaScriptWorkflowPath(parsed.relativePath);
 
-  const resolvedSkill = await readAgentSkill(input.runtime, input.workspacePath, parsed.skillName, {
-    ...(input.roots != null ? { roots: input.roots } : {}),
-    ...(input.includeAgentPlugins != null
-      ? { includeAgentPlugins: input.includeAgentPlugins }
-      : {}),
-    containment: { kind: "runtime", root: input.workspacePath },
-  });
+  const skillDiscoveryRuntime = input.skillStorageContext?.runtime ?? input.runtime;
+  const skillWorkspacePath = input.skillStorageContext?.workspacePath ?? input.workspacePath;
+  const skillRoots = input.roots ?? input.skillStorageContext?.roots;
+  const projectSearchRoot =
+    skillRoots?.projectSearchRoot ?? input.projectSearchRoot ?? skillWorkspacePath;
+  const resolvedSkill = await readAgentSkill(
+    skillDiscoveryRuntime,
+    skillWorkspacePath,
+    parsed.skillName,
+    {
+      ...(skillRoots != null ? { roots: skillRoots } : { projectSearchRoot }),
+      ...(input.includeAgentPlugins != null
+        ? { includeAgentPlugins: input.includeAgentPlugins }
+        : {}),
+      containment:
+        input.containment ??
+        input.skillStorageContext?.containment ??
+        ({ kind: "runtime", root: projectSearchRoot } as const),
+    }
+  );
 
   if (resolvedSkill.package.scope === "project" && !input.projectTrusted) {
     throw new Error("Project trust is required to run project skill workflow scripts");
@@ -201,13 +223,23 @@ async function resolveSkillWorkflowScript(
 export async function discoverWorkflowPlugins(input: {
   runtime: Runtime;
   workspacePath: string;
+  projectSearchRoot?: string;
   projectTrusted: boolean;
   roots?: AgentSkillsRoots;
+  skillStorageContext?: SkillStorageContext;
 }): Promise<AgentPluginInfo[]> {
   const roots =
     input.roots ??
-    getDefaultAgentSkillsRoots(input.runtime, input.workspacePath, { includeAgentPlugins: true });
-  const localRuntime = new LocalRuntime(input.workspacePath);
+    input.skillStorageContext?.roots ??
+    getDefaultAgentSkillsRoots(input.runtime, input.workspacePath, {
+      includeAgentPlugins: true,
+      projectSearchRoot: input.projectSearchRoot,
+    });
+  const projectContainmentRoot =
+    input.skillStorageContext?.containment.kind === "local"
+      ? input.skillStorageContext.containment.root
+      : (input.projectSearchRoot ?? input.workspacePath);
+  const localRuntime = new LocalRuntime(projectContainmentRoot);
 
   const containers: AgentPluginContainer[] = [];
   const addContainers = async (
@@ -237,7 +269,7 @@ export async function discoverWorkflowPlugins(input: {
   for (const plugin of plugins) {
     if (plugin.scope === "project") {
       try {
-        await ensurePathContained(input.workspacePath, plugin.rootPath);
+        await ensurePathContained(projectContainmentRoot, plugin.rootPath);
       } catch {
         continue;
       }

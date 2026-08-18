@@ -15,6 +15,7 @@ import {
   recordBackgroundWorkflowRunReference,
   requireWorkspaceId,
 } from "./toolUtils";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 
 function requireWorkflowService(config: ToolConfiguration) {
@@ -87,6 +88,16 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const workflowService = requireWorkflowService(config);
       const toolCallId = options.toolCallId;
 
+      const skillCtx =
+        config.muxScope?.type === "project"
+          ? resolveSkillStorageContext({
+              runtime: config.runtime,
+              workspacePath: config.cwd,
+              muxScope: config.muxScope,
+              includeAgentPlugins: config.experiments?.agentPlugins === true,
+            })
+          : null;
+      const roots = config.agentSkillsRoots ?? skillCtx?.roots;
       const script = await resolveWorkflowScript({
         scriptPath: args.script_path,
         scriptSource: args.script_source,
@@ -94,7 +105,8 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
         workspacePath: config.cwd,
         projectTrusted: config.trusted === true,
         includeAgentPlugins: config.experiments?.agentPlugins === true,
-        ...(config.agentSkillsRoots != null ? { roots: config.agentSkillsRoots } : {}),
+        ...(roots != null ? { roots } : {}),
+        ...(skillCtx != null ? { skillStorageContext: skillCtx } : {}),
       });
       const createdRun: { id: string | null } = { id: null };
       const startInput = {

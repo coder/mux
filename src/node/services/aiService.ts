@@ -205,6 +205,7 @@ import {
   DEFAULT_WORKFLOW_AGENT_ID,
   WorkflowTaskServiceAdapter,
 } from "@/node/services/workflows/WorkflowTaskServiceAdapter";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { resolveWorkflowScript } from "@/node/services/workflows/workflowScriptResolver";
 import { isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 
@@ -411,7 +412,7 @@ function resolveMuxToolScope(
   config: Config,
   metadata: WorkspaceMetadata,
   workspacePath: string,
-  /** Host checkout root when known (subProjectPath workspaces execute in a subdirectory). */
+  /** Checkout root in the project storage authority's filesystem. */
   checkoutRoot?: string | null
 ): MuxToolScope {
   const projectConfig = config.loadConfigOrDefault().projects.get(metadata.projectPath);
@@ -1225,7 +1226,13 @@ export class AIService extends EventEmitter {
   createWorkspaceRuntimeContext(
     workspaceId: string,
     metadata: WorkspaceMetadata
-  ): Result<WorkspaceRuntimeContext & { hostCheckoutRoot: string | null }, SendMessageError> {
+  ): Result<
+    WorkspaceRuntimeContext & {
+      hostCheckoutRoot: string | null;
+      projectCheckoutRoot: string | null;
+    },
+    SendMessageError
+  > {
     const workspace = this.config.findWorkspace(workspaceId);
     if (!workspace) {
       return Err({ type: "unknown", raw: `Workspace ${workspaceId} not found in config` });
@@ -1285,15 +1292,18 @@ export class AIService extends EventEmitter {
         : // Multi-project containers start at their shared root so sibling repos remain addressable.
           runtime.getWorkspacePath(metadata.projectPath, metadata.name));
 
+    const projectCheckoutRoot = singleProjectContext
+      ? resolveWorkspaceRootPath(metadataWithPath, runtime)
+      : null;
     // Agent Plugin containers use the host checkout root, not a subproject directory.
     const hostCheckoutRoot =
-      singleProjectContext &&
+      projectCheckoutRoot != null &&
       metadata.runtimeConfig.type !== "ssh" &&
       metadata.runtimeConfig.type !== "docker"
-        ? resolveWorkspaceRootPath(metadataWithPath, runtime)
+        ? projectCheckoutRoot
         : null;
 
-    return Ok({ runtime, workspacePath, hostCheckoutRoot });
+    return Ok({ runtime, workspacePath, hostCheckoutRoot, projectCheckoutRoot });
   }
 
   private ensureMultiProjectRuntimeExecutionEnabled(
@@ -1347,26 +1357,19 @@ export class AIService extends EventEmitter {
   }
 
   /**
-   * Resolve the MuxToolScope a workspace's tools receive, including the host
-   * checkout root that anchors Agent Plugins containers (agent-plugins
-   * experiment). Public so AgentSession's slash-skill snapshot materialization
-   * resolves skills with the same roots/containment as the skill read tool:
-   * for subProjectPath workspaces the execution path is a subdirectory of the
-   * checkout, and default discovery there misses checkout-level plugin
-   * containers. Mirrors streamMessage's hostCheckoutRoot gating.
+   * Resolve the MuxToolScope a workspace's tools receive, including the checkout
+   * boundary used for subproject skill inheritance. Host-local scopes also use
+   * this root to anchor Agent Plugins containers.
    */
   resolveMuxToolScopeForWorkspace(
     metadata: WorkspaceMetadata,
     runtime: Runtime,
     workspacePath: string
   ): MuxToolScope {
-    const hostCheckoutRoot =
-      !isMultiProject(metadata) &&
-      metadata.runtimeConfig.type !== "ssh" &&
-      metadata.runtimeConfig.type !== "docker"
-        ? resolveWorkspaceRootPath(metadata, runtime)
-        : null;
-    return resolveMuxToolScope(this.config, metadata, workspacePath, hostCheckoutRoot);
+    const projectCheckoutRoot = !isMultiProject(metadata)
+      ? resolveWorkspaceRootPath(metadata, runtime)
+      : null;
+    return resolveMuxToolScope(this.config, metadata, workspacePath, projectCheckoutRoot);
   }
 
   /** Stream a message conversation to the AI model. */
@@ -1764,7 +1767,8 @@ export class AIService extends EventEmitter {
       if (!runtimeContextResult.success) {
         return runtimeContextResult;
       }
-      const { runtime, workspacePath, hostCheckoutRoot } = runtimeContextResult.data;
+      const { runtime, workspacePath, hostCheckoutRoot, projectCheckoutRoot } =
+        runtimeContextResult.data;
 
       // Wait for init to complete before any runtime I/O operations
       // (SSH/devcontainer may not be ready until init finishes pulling the container)
@@ -2047,7 +2051,19 @@ export class AIService extends EventEmitter {
         });
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
-      const muxScope = resolveMuxToolScope(this.config, metadata, workspacePath, hostCheckoutRoot);
+      const muxScope = resolveMuxToolScope(
+        this.config,
+        metadata,
+        workspacePath,
+        projectCheckoutRoot
+      );
+
+      const workflowSkillStorageContext = resolveSkillStorageContext({
+        runtime,
+        workspacePath,
+        muxScope,
+        includeAgentPlugins: this.isAgentPluginsEnabled(),
+      });
 
       const desktopSessionManager = this.desktopSessionManager;
       let desktopCapabilityPromise: ReturnType<DesktopSessionManager["getCapability"]> | undefined;
@@ -2364,8 +2380,10 @@ export class AIService extends EventEmitter {
                   scriptPath,
                   runtime,
                   workspacePath,
+                  projectSearchRoot: projectCheckoutRoot ?? workspacePath,
                   projectTrusted: getWorkflowProjectTrusted(),
                   includeAgentPlugins: this.isAgentPluginsEnabled(),
+                  skillStorageContext: workflowSkillStorageContext,
                 }),
               // Background workflow tools outlive the model turn that started them. Feed the
               // terminal result back as a hidden user turn so the parent agent continues

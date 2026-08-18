@@ -9,7 +9,12 @@ import {
   WorkflowRunToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import { createWorkflowRunTool } from "./workflow_run";
-import { TestTempDir, createIsolatedAgentSkillsRoots, createTestToolConfig } from "./testHelpers";
+import {
+  TestTempDir,
+  createIsolatedAgentSkillsRoots,
+  createTestToolConfig,
+  writeProjectSkill,
+} from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
@@ -188,6 +193,60 @@ describe("workflow_run tool", () => {
       })
     );
     expect(capturedSource).not.toContain("stale");
+  });
+
+  test("starts a skill workflow inherited by a subproject", async () => {
+    using checkout = new TestTempDir("test-workflow-run-tool-subproject-skill");
+    using muxHome = new TestTempDir("test-workflow-run-tool-subproject-mux-home");
+    const subprojectRoot = path.join(checkout.path, "packages", "app");
+    await fs.mkdir(subprojectRoot, { recursive: true });
+    await writeProjectSkill(checkout.path, "parent-flow", {
+      files: {
+        "workflow.js":
+          "export default function workflow() { return { reportMarkdown: 'parent workflow' }; }",
+      },
+    });
+
+    const startWorkflow = mock(async (input: { script: { source: string } }) => ({
+      runId: "wfr_parent_skill",
+      status: "completed" as const,
+      result: { reportMarkdown: input.script.source },
+    }));
+    const tool = createWorkflowRunTool({
+      ...createTestToolConfig(subprojectRoot, {
+        workspaceId: "workspace-1",
+        muxScope: {
+          type: "project",
+          muxHome: muxHome.path,
+          projectRoot: subprojectRoot,
+          projectStorageAuthority: "host-local",
+          checkoutRoot: checkout.path,
+        },
+      }),
+      trusted: true,
+      workflowService: {
+        startWorkflow,
+        getRun: mock(async () => null),
+      },
+    });
+
+    await tool.execute!(
+      {
+        script_path: "skill://parent-flow/workflow.js",
+        args: {},
+        run_in_background: false,
+      },
+      mockToolCallOptions
+    );
+
+    expect(startWorkflow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        script: expect.objectContaining({
+          source: expect.stringContaining("parent workflow"),
+          scope: "project",
+        }),
+      })
+    );
   });
 
   test("starts a built-in skill workflow by explicit skill script_path", async () => {

@@ -5,7 +5,11 @@ import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
 
-import type { AgentSkillsRoots } from "./agentSkillsService";
+import {
+  buildProjectSkillRoots,
+  getDefaultAgentSkillsRoots,
+  type AgentSkillsRoots,
+} from "./agentSkillsService";
 
 export type SkillStorageKind = "global-local" | "project-local" | "project-runtime";
 
@@ -23,12 +27,25 @@ export interface SkillStorageContext {
 }
 
 function buildProjectLocalRoots(
+  runtime: Runtime,
   muxScope: Extract<MuxToolScope, { type: "project" }>,
   options?: { includeClaudeSkills?: boolean; includeAgentPlugins?: boolean }
 ): AgentSkillsRoots {
+  const projectSearchRoot = muxScope.checkoutRoot ?? muxScope.projectRoot;
+
   return {
     projectRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
     projectUniversalRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
+    ...(projectSearchRoot !== muxScope.projectRoot
+      ? {
+          // Subprojects inherit skills from every ancestor through the checkout
+          // root. The ordered list keeps the nearest definition authoritative.
+          projectSearchRoot,
+          projectRoots: buildProjectSkillRoots(runtime, muxScope.projectRoot, projectSearchRoot, {
+            includeClaudeSkills: options?.includeClaudeSkills,
+          }),
+        }
+      : {}),
     globalRoot: path.join(muxScope.muxHome, "skills"),
     universalRoot: "~/.agents/skills",
     // claude-skills-compat experiment: read-only roots at lowest precedence within each scope.
@@ -118,33 +135,40 @@ export function resolveSkillStorageContext(input: {
     };
   }
 
+  const projectSearchRoot = input.muxScope.checkoutRoot ?? input.workspacePath;
   if (input.muxScope.projectStorageAuthority === "runtime") {
     return {
       kind: "project-runtime",
       runtime: input.runtime,
       workspacePath: input.workspacePath,
+      roots: getDefaultAgentSkillsRoots(input.runtime, input.workspacePath, {
+        includeClaudeSkills: input.includeClaudeSkills,
+        includeAgentPlugins: input.includeAgentPlugins,
+        projectSearchRoot,
+      }),
       containment: {
         kind: "runtime",
-        root: input.workspacePath,
+        root: projectSearchRoot,
       },
     };
   }
 
+  const projectRuntime = resolveProjectLocalRuntime({
+    runtime: input.runtime,
+    muxScope: input.muxScope,
+  });
   return {
     kind: "project-local",
-    runtime: resolveProjectLocalRuntime({
-      runtime: input.runtime,
-      muxScope: input.muxScope,
-    }),
+    runtime: projectRuntime,
     workspacePath: input.workspacePath,
-    roots: buildProjectLocalRoots(input.muxScope, {
+    roots: buildProjectLocalRoots(projectRuntime, input.muxScope, {
       includeClaudeSkills: input.includeClaudeSkills,
       includeAgentPlugins: input.includeAgentPlugins,
     }),
     containment: {
       kind: "local",
       // The checkout root (when present) contains projectRoot, so this stays a
-      // correct repo boundary while also covering checkout-level plugin roots.
+      // correct repo boundary while also covering inherited and plugin roots.
       root: input.muxScope.checkoutRoot ?? input.muxScope.projectRoot,
     },
   };

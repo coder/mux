@@ -5,7 +5,9 @@ import * as path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import {
   TestTempDir,
   TrueRemotePathMappedRuntime,
@@ -65,6 +67,67 @@ describe("resolveWorkflowScript", () => {
     expect(resolved.source).toContain("RemoteResearch");
     expect(resolved.scope).toBe("project");
     expect(resolved.resolvedPath).toBe(`${remoteWorkspacePath}/.mux/skills/research/workflow.js`);
+  });
+
+  test("resolves an inherited skill workflow through a remote checkout boundary", async () => {
+    using tempDir = new TestTempDir("workflow-script-remote-inherited-skill");
+    const localSubprojectPath = path.join(tempDir.path, "packages", "app");
+    const remoteCheckoutPath = "/remote/workspace";
+    const remoteSubprojectPath = "/remote/workspace/packages/app";
+    await fs.mkdir(localSubprojectPath, { recursive: true });
+    await writeProjectSkill(tempDir.path, "parent-flow", {
+      files: { "workflow.js": "export const meta = { name: 'ParentFlow' };" },
+    });
+
+    const resolved = await resolveWorkflowScript({
+      scriptPath: "skill://parent-flow/workflow.js",
+      runtime: new TrueRemotePathMappedRuntime(tempDir.path, remoteCheckoutPath),
+      workspacePath: remoteSubprojectPath,
+      projectSearchRoot: remoteCheckoutPath,
+      projectTrusted: true,
+    });
+
+    expect(resolved.source).toContain("ParentFlow");
+    expect(resolved.resolvedPath).toBe("/remote/workspace/.mux/skills/parent-flow/workflow.js");
+  });
+
+  test("uses host-local skill storage for devcontainer workflow skills", async () => {
+    using tempDir = new TestTempDir("workflow-script-devcontainer-inherited-skill");
+    const checkoutRoot = path.join(tempDir.path, "checkout");
+    const subprojectRoot = path.join(checkoutRoot, "packages", "app");
+    await fs.mkdir(subprojectRoot, { recursive: true });
+    await writeProjectSkill(checkoutRoot, "parent-flow", {
+      files: { "workflow.js": "export const meta = { name: 'HostParentFlow' };" },
+    });
+
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: path.join(tempDir.path, "src-base"),
+      configPath: path.join(tempDir.path, ".devcontainer", "devcontainer.json"),
+    });
+    const skillStorageContext = resolveSkillStorageContext({
+      runtime,
+      workspacePath: "/workspace/packages/app",
+      muxScope: {
+        type: "project",
+        muxHome: path.join(tempDir.path, "mux-home"),
+        projectRoot: subprojectRoot,
+        projectStorageAuthority: "host-local",
+        checkoutRoot,
+      },
+    });
+
+    const resolved = await resolveWorkflowScript({
+      scriptPath: "skill://parent-flow/workflow.js",
+      runtime,
+      workspacePath: "/workspace/packages/app",
+      projectTrusted: true,
+      skillStorageContext,
+    });
+
+    expect(resolved.source).toContain("HostParentFlow");
+    expect(resolved.resolvedPath).toBe(
+      path.join(checkoutRoot, ".mux", "skills", "parent-flow", "workflow.js")
+    );
   });
 
   test("blocks project skill workflow scripts when the project is untrusted", async () => {

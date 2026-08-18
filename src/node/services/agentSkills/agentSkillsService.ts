@@ -48,6 +48,14 @@ export interface AgentSkillsRoots {
   projectUniversalRoot?: string;
   /** Workspace .claude/skills (claude-skills-compat experiment; read-only). */
   projectClaudeRoot?: string;
+  /**
+   * Ordered project roots for subprojects: nearest directory first, then each
+   * ancestor through the checkout root. When present, this replaces the three
+   * singular project roots above for discovery while writes still target projectRoot.
+   */
+  projectRoots?: string[];
+  /** Inclusive checkout/repository boundary for inherited project roots. */
+  projectSearchRoot?: string;
   globalRoot: string;
   universalRoot?: string;
   /** ~/.claude/skills (claude-skills-compat experiment; read-only). */
@@ -58,10 +66,56 @@ export interface AgentSkillsRoots {
   globalPluginRoots?: string[];
 }
 
+function getProjectDirectories(
+  runtime: Runtime,
+  projectPath: string,
+  projectSearchRoot: string
+): string[] {
+  const start = runtime.normalizePath(".", projectPath);
+  const boundary = runtime.normalizePath(".", projectSearchRoot);
+  const directories: string[] = [];
+  let current = start;
+
+  while (true) {
+    directories.push(current);
+    if (current === boundary) {
+      return directories;
+    }
+
+    const parent = runtime.normalizePath("..", current);
+    if (parent === current) {
+      // Fail closed when the supplied boundary is not an ancestor. A malformed
+      // scope must not make discovery walk arbitrary filesystem parents.
+      return [start];
+    }
+    current = parent;
+  }
+}
+
+export function buildProjectSkillRoots(
+  runtime: Runtime,
+  projectPath: string,
+  projectSearchRoot: string,
+  options?: { includeClaudeSkills?: boolean }
+): string[] {
+  // Directory distance wins before root convention, so a subproject's
+  // .agents/skill overrides a checkout-level .mux/skill with the same name.
+  return getProjectDirectories(runtime, projectPath, projectSearchRoot).flatMap((directory) => [
+    runtime.normalizePath(".mux/skills", directory),
+    runtime.normalizePath(".agents/skills", directory),
+    ...(options?.includeClaudeSkills ? [runtime.normalizePath(".claude/skills", directory)] : []),
+  ]);
+}
+
 export function getDefaultAgentSkillsRoots(
   runtime: Runtime,
   workspacePath: string,
-  options?: { includeClaudeSkills?: boolean; includeAgentPlugins?: boolean }
+  options?: {
+    includeClaudeSkills?: boolean;
+    includeAgentPlugins?: boolean;
+    /** Inclusive checkout/repository root for subproject ancestor discovery. */
+    projectSearchRoot?: string;
+  }
 ): AgentSkillsRoots {
   if (!workspacePath) {
     throw new Error("getDefaultAgentSkillsRoots: workspacePath is required");
@@ -70,6 +124,14 @@ export function getDefaultAgentSkillsRoots(
   return {
     projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
     projectUniversalRoot: runtime.normalizePath(".agents/skills", workspacePath),
+    ...(options?.projectSearchRoot != null
+      ? {
+          projectSearchRoot: options.projectSearchRoot,
+          projectRoots: buildProjectSkillRoots(runtime, workspacePath, options.projectSearchRoot, {
+            includeClaudeSkills: options.includeClaudeSkills,
+          }),
+        }
+      : {}),
     globalRoot: `${runtime.getMuxHome()}/skills`,
     universalRoot: UNIVERSAL_SKILLS_ROOT,
     // Claude roots are added only when the experiment is enabled so the default
@@ -85,8 +147,8 @@ export function getDefaultAgentSkillsRoots(
     ...(options?.includeAgentPlugins && !(runtime instanceof RemoteRuntime)
       ? {
           projectPluginRoots: [
-            runtime.normalizePath(".mux/plugins", workspacePath),
-            runtime.normalizePath(".agents/plugins", workspacePath),
+            runtime.normalizePath(".mux/plugins", options.projectSearchRoot ?? workspacePath),
+            runtime.normalizePath(".agents/plugins", options.projectSearchRoot ?? workspacePath),
           ],
           globalPluginRoots: [`${runtime.getMuxHome()}/plugins`, UNIVERSAL_PLUGINS_ROOT],
         }
@@ -94,13 +156,13 @@ export function getDefaultAgentSkillsRoots(
   };
 }
 
-function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
-  // Precedence within project scope: .mux > .agents > .claude.
-  const orderedRoots = [
-    roots.projectRoot,
-    roots.projectUniversalRoot,
-    roots.projectClaudeRoot,
-  ].filter((root): root is string => root != null && root.length > 0);
+export function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
+  // Precedence: nearest directory first, then .mux > .agents > .claude.
+  const orderedRoots =
+    roots.projectRoots ??
+    [roots.projectRoot, roots.projectUniversalRoot, roots.projectClaudeRoot].filter(
+      (root): root is string => root != null && root.length > 0
+    );
 
   return Array.from(new Set(orderedRoots));
 }
@@ -209,9 +271,10 @@ async function buildScanCandidates(
     // without project containment (UI list/get default discovery) must not
     // resolve a committed .mux/plugins/<name> symlink outside the checkout —
     // otherwise the UI would offer plugin skills that stream discovery and
-    // the skill tools reject. Default containers derive from workspacePath,
-    // so it is the correct fallback anchor.
-    projectContainmentRoot: containment.kind === "local" ? containment.root : workspacePath,
+    // the skill tools reject. Inherited discovery anchors containers and
+    // containment at the same checkout boundary.
+    projectContainmentRoot:
+      containment.kind === "local" ? containment.root : (roots.projectSearchRoot ?? workspacePath),
   });
   const globalPluginCandidates = await buildPluginScanCandidates({
     containers: roots.globalPluginRoots ?? [],
@@ -453,6 +516,8 @@ export async function discoverAgentSkills(
     includeClaudeSkills?: boolean;
     /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
     includeAgentPlugins?: boolean;
+    /** Inclusive checkout/repository root for subproject ancestor discovery. */
+    projectSearchRoot?: string;
   }
 ): Promise<AgentSkillDescriptor[]> {
   if (!workspacePath) {
@@ -464,6 +529,7 @@ export async function discoverAgentSkills(
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
       includeAgentPlugins: options?.includeAgentPlugins,
+      projectSearchRoot: options?.projectSearchRoot,
     });
 
   const containment = resolveProjectSkillContainment(options);
@@ -583,6 +649,8 @@ export async function discoverAgentSkillsDiagnostics(
     includeClaudeSkills?: boolean;
     /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
     includeAgentPlugins?: boolean;
+    /** Inclusive checkout/repository root for subproject ancestor discovery. */
+    projectSearchRoot?: string;
   }
 ): Promise<DiscoverAgentSkillsDiagnosticsResult> {
   if (!workspacePath) {
@@ -594,6 +662,7 @@ export async function discoverAgentSkillsDiagnostics(
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
       includeAgentPlugins: options?.includeAgentPlugins,
+      projectSearchRoot: options?.projectSearchRoot,
     });
 
   const containment = resolveProjectSkillContainment(options);
@@ -790,6 +859,8 @@ export async function readAgentSkill(
     includeClaudeSkills?: boolean;
     /** agent-plugins experiment: also scan Agent Plugins skills (used only when `roots` is absent). */
     includeAgentPlugins?: boolean;
+    /** Inclusive checkout/repository root for subproject ancestor discovery. */
+    projectSearchRoot?: string;
   }
 ): Promise<ResolvedAgentSkill> {
   if (!workspacePath) {
@@ -801,6 +872,7 @@ export async function readAgentSkill(
     getDefaultAgentSkillsRoots(runtime, workspacePath, {
       includeClaudeSkills: options?.includeClaudeSkills,
       includeAgentPlugins: options?.includeAgentPlugins,
+      projectSearchRoot: options?.projectSearchRoot,
     });
 
   const containment = resolveProjectSkillContainment(options);

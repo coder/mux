@@ -184,6 +184,58 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("lists skills inherited from parent directories of a subproject", async () => {
+    using homeDir = new TestTempDir("test-agent-skill-list-subproject-home");
+    using checkout = new TestTempDir("test-agent-skill-list-subproject-checkout");
+    using muxHomeDir = new TestTempDir("test-agent-skill-list-subproject-mux-home");
+
+    await withHomeDir(homeDir.path, async () => {
+      await withMuxRoot(muxHomeDir.path, async () => {
+        const packagesRoot = path.join(checkout.path, "packages");
+        const subprojectRoot = path.join(packagesRoot, "app");
+        await fs.mkdir(subprojectRoot, { recursive: true });
+        await writeSkill(path.join(checkout.path, ".mux", "skills"), "parent-only", {
+          description: "from checkout",
+        });
+        await writeSkill(path.join(checkout.path, ".mux", "skills"), "shared", {
+          description: "from checkout",
+        });
+        await writeSkill(path.join(packagesRoot, ".agents", "skills"), "shared", {
+          description: "from packages",
+        });
+
+        const tool = createAgentSkillListTool(
+          createTestToolConfig(subprojectRoot, {
+            muxScope: {
+              type: "project",
+              muxHome: muxHomeDir.path,
+              projectRoot: subprojectRoot,
+              projectStorageAuthority: "host-local",
+              checkoutRoot: checkout.path,
+            },
+          })
+        );
+        const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        expect(getSkill(result.skills, "parent-only")).toMatchObject({
+          description: "from checkout",
+          scope: "project",
+        });
+        const sharedSkills = result.skills.filter((skill) => skill.name === "shared");
+        expect(sharedSkills).toHaveLength(1);
+        expect(sharedSkills[0]).toMatchObject({
+          description: "from packages",
+          scope: "project",
+        });
+      });
+    });
+  });
+
   it("hides .claude/skills roots when the claude-skills-compat experiment is off", async () => {
     using homeDir = new TestTempDir("test-agent-skill-list-claude-off-home");
     using project = new TestTempDir("test-agent-skill-list-claude-off-project");
@@ -903,6 +955,54 @@ describe("agent_skill_list", () => {
       if (result.success) {
         expect(Array.isArray(result.skills)).toBe(true);
       }
+    });
+
+    it("dedupes inherited project skills to the nearest runtime definition", async () => {
+      using checkout = new TestTempDir("test-agent-skill-list-runtime-subproject-checkout");
+      using muxHome = new TestTempDir("test-agent-skill-list-runtime-subproject-mux-home");
+      const packagesRoot = path.join(checkout.path, "packages");
+      const subprojectRoot = path.join(packagesRoot, "app");
+      const remoteCheckoutRoot = "/remote/workspace";
+      const remoteSubprojectRoot = "/remote/workspace/packages/app";
+      await fs.mkdir(subprojectRoot, { recursive: true });
+      await writeSkill(path.join(checkout.path, ".mux", "skills"), "shared", {
+        description: "from checkout",
+      });
+      await writeSkill(path.join(packagesRoot, ".agents", "skills"), "shared", {
+        description: "from packages",
+      });
+
+      const runtime = new TrueRemotePathMappedRuntime(checkout.path, remoteCheckoutRoot);
+      const tool = createAgentSkillListTool({
+        ...createTestToolConfig(subprojectRoot, {
+          workspaceId: "regular-workspace",
+          runtime,
+          muxScope: {
+            type: "project",
+            muxHome: muxHome.path,
+            projectRoot: subprojectRoot,
+            projectStorageAuthority: "runtime",
+            checkoutRoot: remoteCheckoutRoot,
+          },
+        }),
+        cwd: remoteSubprojectRoot,
+      });
+
+      const result = (await tool.execute!(
+        { includeUnadvertised: true },
+        mockToolCallOptions
+      )) as AgentSkillListToolResult;
+      expect(result.success).toBe(true);
+      if (!result.success) {
+        return;
+      }
+
+      const sharedSkills = result.skills.filter((skill) => skill.name === "shared");
+      expect(sharedSkills).toHaveLength(1);
+      expect(sharedSkills[0]).toMatchObject({
+        description: "from packages",
+        scope: "project",
+      });
     });
 
     it("lists host-global skills in SSH project-runtime mode", async () => {

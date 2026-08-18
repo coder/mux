@@ -35,6 +35,7 @@ import {
   extractCookieValues,
   getFirstHeaderValue,
 } from "./authMiddleware";
+import { resolveWorkspaceCreationScope } from "@/common/utils/subProjects";
 import { createAsyncMessageQueue } from "@/common/utils/asyncMessageQueue";
 import { clearLogFiles, getLogFilePath } from "@/node/services/log";
 import type { LogEntry } from "@/node/services/logBuffer";
@@ -95,6 +96,8 @@ import {
   discoverAgentSkillsDiagnostics,
   readAgentSkill,
 } from "@/node/services/agentSkills/agentSkillsService";
+import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
+import type { SkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import {
   discoverAgentDefinitions,
   getSkipScopesAboveForKnownScope,
@@ -292,6 +295,56 @@ async function resolveAgentDiscoveryContext(
   return { runtime, discoveryPath: input.projectPath! };
 }
 
+async function resolveAgentSkillDiscoveryContext(
+  context: ORPCContext,
+  input: { projectPath?: string; workspaceId?: string; disableWorkspaceAgents?: boolean },
+  options: { includeClaudeSkills: boolean; includeAgentPlugins: boolean }
+): Promise<SkillStorageContext> {
+  const resolved = await resolveAgentDiscoveryContext(context, input);
+  if (resolved.metadata == null) {
+    const projectPath = input.projectPath ?? resolved.discoveryPath;
+    const creationScope = resolveWorkspaceCreationScope(
+      projectPath,
+      context.config.loadConfigOrDefault().projects
+    );
+    return resolveSkillStorageContext({
+      runtime: resolved.runtime,
+      workspacePath: resolved.discoveryPath,
+      muxScope: {
+        type: "project",
+        muxHome: context.config.rootDir,
+        projectRoot: resolved.discoveryPath,
+        projectStorageAuthority: "host-local",
+        checkoutRoot: creationScope.projectPath,
+      },
+      ...options,
+    });
+  }
+
+  const workspacePath =
+    input.disableWorkspaceAgents === true
+      ? resolved.discoveryPath
+      : appendSubProjectRelativePath(
+          resolved.metadata,
+          resolved.runtime,
+          resolveWorkspaceRootPath(resolved.metadata, resolved.runtime)
+        );
+  const muxScope = context.aiService.resolveMuxToolScopeForWorkspace(
+    resolved.metadata,
+    resolved.runtime,
+    workspacePath
+  );
+  return resolveSkillStorageContext({
+    runtime: resolved.runtime,
+    workspacePath,
+    muxScope:
+      input.disableWorkspaceAgents === true && muxScope.type === "project"
+        ? { ...muxScope, checkoutRoot: workspacePath }
+        : muxScope,
+    ...options,
+  });
+}
+
 /**
  * Agent Plugins MCP context for an optional workspaceId input (agent-plugins
  * experiment). Returns undefined (project-level default: scan under
@@ -419,6 +472,8 @@ export async function resolveWorkflowContext(
   workflowExecutionProjectPath: string;
   runtime: Runtime;
   workspacePath: string;
+  projectSearchRoot: string;
+  skillStorageContext: SkillStorageContext;
 }> {
   assert(workspaceId.length > 0, "resolveWorkflowContext: workspaceId is required");
   assertDynamicWorkflowsEnabled(context);
@@ -451,12 +506,23 @@ export async function resolveWorkflowContext(
       )
     : appendSubProjectRelativePath(metadata, runtime, workspaceRootPath);
   const workspacePath = workflowExecutionProjectPath;
+  const includeAgentPlugins = context.experimentsService.isExperimentEnabled(
+    EXPERIMENT_IDS.AGENT_PLUGINS
+  );
+  const skillStorageContext = resolveSkillStorageContext({
+    runtime,
+    workspacePath,
+    muxScope: context.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath),
+    includeAgentPlugins,
+  });
   const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
 
   return {
     workflowExecutionProjectPath,
     runtime,
     workspacePath,
+    projectSearchRoot: workspaceRootPath,
+    skillStorageContext,
     projectTrusted,
     service: new WorkflowService({
       notifyInterruptedBackgroundRunTerminal:
@@ -488,10 +554,10 @@ export async function resolveWorkflowContext(
           scriptPath,
           runtime,
           workspacePath,
+          projectSearchRoot: workspaceRootPath,
           projectTrusted: resolveWorkflowProjectTrusted(),
-          includeAgentPlugins: context.experimentsService.isExperimentEnabled(
-            EXPERIMENT_IDS.AGENT_PLUGINS
-          ),
+          includeAgentPlugins,
+          skillStorageContext,
         }),
       onRunStatusChanged: (event) => context.workspaceService.emitWorkflowRunActivity(event),
       ...(options.onBackgroundRunTerminal != null
@@ -1902,16 +1968,17 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return discoverAgentSkills(runtime, discoveryPath, {
-            // claude-skills-compat experiment: surface read-only .claude skills in the UI listing.
+          const skillCtx = await resolveAgentSkillDiscoveryContext(context, input, {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
             ),
-            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
             includeAgentPlugins: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.AGENT_PLUGINS
             ),
+          });
+          return discoverAgentSkills(skillCtx.runtime, skillCtx.workspacePath, {
+            roots: skillCtx.roots,
+            containment: skillCtx.containment,
           });
         }),
       listDiagnostics: t
@@ -1922,16 +1989,22 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const diagnostics = await discoverAgentSkillsDiagnostics(runtime, discoveryPath, {
+          const skillCtx = await resolveAgentSkillDiscoveryContext(context, input, {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
             ),
-            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
             includeAgentPlugins: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.AGENT_PLUGINS
             ),
           });
+          const diagnostics = await discoverAgentSkillsDiagnostics(
+            skillCtx.runtime,
+            skillCtx.workspacePath,
+            {
+              roots: skillCtx.roots,
+              containment: skillCtx.containment,
+            }
+          );
           return diagnostics;
         }),
       get: t
@@ -1942,16 +2015,23 @@ export const router = (authToken?: string) => {
           if (input.workspaceId) {
             await context.aiService.waitForInit(input.workspaceId);
           }
-          const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          const result = await readAgentSkill(runtime, discoveryPath, input.skillName, {
+          const skillCtx = await resolveAgentSkillDiscoveryContext(context, input, {
             includeClaudeSkills: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.CLAUDE_SKILLS_COMPAT
             ),
-            // agent-plugins experiment: surface read-only plugin skills alongside other skills.
             includeAgentPlugins: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.AGENT_PLUGINS
             ),
           });
+          const result = await readAgentSkill(
+            skillCtx.runtime,
+            skillCtx.workspacePath,
+            input.skillName,
+            {
+              roots: skillCtx.roots,
+              containment: skillCtx.containment,
+            }
+          );
           return result.package;
         }),
     },
@@ -2064,16 +2144,25 @@ export const router = (authToken?: string) => {
               manualFollowUp: true,
             });
           }
-          const { service, workflowExecutionProjectPath, projectTrusted, runtime, workspacePath } =
-            await resolveWorkflowContext(context, input.workspaceId, { onBackgroundRunTerminal });
+          const {
+            service,
+            workflowExecutionProjectPath,
+            projectTrusted,
+            runtime,
+            workspacePath,
+            projectSearchRoot,
+            skillStorageContext,
+          } = await resolveWorkflowContext(context, input.workspaceId, { onBackgroundRunTerminal });
           const script = await resolveWorkflowScript({
             scriptPath: input.scriptPath,
             runtime,
             workspacePath,
+            projectSearchRoot,
             projectTrusted,
             includeAgentPlugins: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.AGENT_PLUGINS
             ),
+            skillStorageContext,
           });
           if (input.rawCommand != null) {
             await context.workspaceService.prepareManualWorkflowInvocation(input.workspaceId);
@@ -2239,17 +2328,17 @@ export const router = (authToken?: string) => {
         .input(schemas.workflows.listScripts.input)
         .output(schemas.workflows.listScripts.output)
         .handler(async ({ context, input }) => {
-          const { runtime, workspacePath, projectTrusted } = await resolveWorkflowContext(
-            context,
-            input.workspaceId
-          );
+          const { runtime, workspacePath, projectSearchRoot, projectTrusted, skillStorageContext } =
+            await resolveWorkflowContext(context, input.workspaceId);
           return discoverWorkflowScripts({
             runtime,
             workspacePath,
+            projectSearchRoot,
             projectTrusted,
             includeAgentPlugins: context.experimentsService.isExperimentEnabled(
               EXPERIMENT_IDS.AGENT_PLUGINS
             ),
+            skillStorageContext,
           });
         }),
     },

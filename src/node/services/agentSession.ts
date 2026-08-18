@@ -6514,20 +6514,17 @@ export class AgentSession {
         const includeAgentPlugins =
           typeof this.aiService.isAgentPluginsEnabled === "function" &&
           this.aiService.isAgentPluginsEnabled();
-        // agent-plugins experiment: resolve host-local project workspaces through
-        // the same storage context as the skill read tool so checkout-level
-        // plugin containers stay reachable — for subProjectPath workspaces the
-        // execution path is a subdirectory of the checkout and default
-        // discovery misses them. disableWorkspaceAgents keeps default
-        // discovery: it anchors at projectPath, which is already the
-        // checkout-level root the UI lists in that mode.
+        // Resolve project workspaces through the same storage context as the
+        // skill tools so subprojects inherit checkout-level skills and plugins
+        // across host-local and runtime-backed workspaces. disableWorkspaceAgents
+        // keeps default projectPath discovery.
         const muxScope =
           !disableWorkspaceAgents &&
           typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
             ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
             : null;
         const skillCtx =
-          muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
+          muxScope?.type === "project"
             ? resolveSkillStorageContext({
                 runtime,
                 workspacePath: skillDiscoveryPath,
