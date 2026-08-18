@@ -8,7 +8,7 @@
  */
 
 import crypto from "node:crypto";
-import { asSchema, type Tool } from "ai";
+import { asSchema, type FlexibleSchema, type Tool } from "ai";
 import { stableStringify } from "@/common/utils/stableStringify";
 import { log } from "@/node/services/log";
 import type { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
@@ -27,10 +27,20 @@ export function buildToolsetManifest(
   return Object.keys(tools)
     .sort()
     .map((name) => {
+      // Tool maps can contain adapter shapes outside the AI SDK v5 `Tool`
+      // type: v3-style tools declare `.parameters`, some custom adapters use
+      // `.schema`, and sparse maps can hold undefined entries. Fall back
+      // through the known schema properties so distinct tools never collapse
+      // to one fingerprint and a missing entry never throws mid-emission.
+      const rawTool: unknown = tools[name];
+      const record = rawTool as
+        | { inputSchema?: unknown; parameters?: unknown; schema?: unknown }
+        | undefined;
+      const schema = record?.inputSchema ?? record?.parameters ?? record?.schema;
       // asSchema normalizes every FlexibleSchema form (zod v3/v4, jsonSchema()
       // wrappers, undefined) into a JSON schema; stableStringify sorts keys so
       // the hash is insensitive to property insertion order.
-      const inputJsonSchema = asSchema(tools[name].inputSchema).jsonSchema;
+      const inputJsonSchema = asSchema(schema as FlexibleSchema<unknown> | undefined).jsonSchema;
       return { name, schemaHash: sha256Hex(stableStringify(inputJsonSchema)) };
     });
 }

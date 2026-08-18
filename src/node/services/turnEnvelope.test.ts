@@ -49,6 +49,32 @@ describe("buildToolsetManifest", () => {
     });
     expect(different[0].schemaHash).not.toBe(manifest[1].schemaHash);
   });
+
+  test("fingerprints legacy .parameters/.schema tool shapes and tolerates sparse entries", () => {
+    // v3-style adapters declare schemas via `.parameters` or `.schema` instead
+    // of `.inputSchema`. These shapes fall outside the AI SDK v5 `Tool` type,
+    // so the double cast simulates the runtime object.
+    const legacy = (key: "parameters" | "schema", schema: FlexibleSchema<unknown>): Tool =>
+      ({ description: "legacy tool", [key]: schema }) as unknown as Tool;
+
+    const manifest = buildToolsetManifest({
+      a: legacy("parameters", z.object({ value: z.string() })),
+      b: legacy("parameters", z.object({ other: z.number() })),
+      c: legacy("schema", z.object({ other: z.number() })),
+    });
+    // Distinct legacy shapes must not collapse to one fingerprint.
+    expect(manifest[0].schemaHash).not.toBe(manifest[1].schemaHash);
+    // The same logical schema fingerprints identically regardless of which
+    // property (`.inputSchema`, `.parameters`, `.schema`) declared it.
+    expect(manifest[2].schemaHash).toBe(manifest[1].schemaHash);
+    const modern = buildToolsetManifest({ a: makeTool(z.object({ value: z.string() })) });
+    expect(modern[0].schemaHash).toBe(manifest[0].schemaHash);
+
+    // A sparse map entry must not throw; it hashes as the empty schema.
+    const sparse = buildToolsetManifest({ ghost: undefined } as unknown as Record<string, Tool>);
+    expect(sparse).toHaveLength(1);
+    expect(sparse[0].schemaHash).toMatch(SHA256_HEX);
+  });
 });
 
 describe("emitTurnEnvelope", () => {
