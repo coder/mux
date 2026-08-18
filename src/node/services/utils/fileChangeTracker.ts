@@ -22,6 +22,27 @@ export interface EditedFileAttachment {
 }
 
 /**
+ * Result of a side-effect-free change-detection pass.
+ *
+ * `commit()` advances the tracker's stored state to the detected
+ * content/mtime. Callers must invoke it only AFTER the notification derived
+ * from `attachments` has been durably persisted (appended to chat.jsonl).
+ * On abort or append failure, skip `commit()` so a retry re-detects the same
+ * changes instead of silently dropping them forever.
+ */
+export interface FileChangeDetection {
+  attachments: EditedFileAttachment[];
+  commit: () => void;
+}
+
+/** Internal: one detected change plus the state commit() would store. */
+interface DetectedChange {
+  attachment: EditedFileAttachment;
+  canonicalPath: string;
+  detectedState: FileState;
+}
+
+/**
  * Build the durable <system-file-update> notification for externally edited files.
  *
  * Appended to chat.jsonl at turn start — BEFORE the request is built from
@@ -111,14 +132,17 @@ export class FileChangeTracker {
   }
 
   /**
-   * Check all tracked files for external modifications.
-   * Updates internal state for changed files and returns diff attachments.
+   * Check all tracked files for external modifications WITHOUT mutating
+   * tracked state. Stored state advances only via the returned `commit()` —
+   * see FileChangeDetection for the persist-first contract. If detection
+   * mutated state eagerly, an aborted turn or failed history append would
+   * make retries see mtime <= tracked timestamp and drop the change forever.
    */
-  async getChangedAttachments(): Promise<EditedFileAttachment[]> {
+  async getChangedAttachments(): Promise<FileChangeDetection> {
     await this.normalizeTrackedPaths();
 
     const checks = Array.from(this.fileState.entries()).map(
-      async ([filePath, state]): Promise<EditedFileAttachment | null> => {
+      async ([filePath, state]): Promise<DetectedChange | null> => {
         try {
           const canonicalPath = await this.canonicalize(filePath);
           const trackedState = this.fileState.get(canonicalPath) ?? state;
@@ -129,13 +153,14 @@ export class FileChangeTracker {
           const diff = computeDiff(trackedState.content, currentContent);
           if (!diff) return null; // Content identical despite mtime change
 
-          // Update stored state
-          this.fileState.set(canonicalPath, { content: currentContent, timestamp: currentMtime });
-
           return {
-            type: "edited_text_file",
-            filename: canonicalPath,
-            snippet: diff,
+            attachment: {
+              type: "edited_text_file",
+              filename: canonicalPath,
+              snippet: diff,
+            },
+            canonicalPath,
+            detectedState: { content: currentContent, timestamp: currentMtime },
           };
         } catch {
           // File deleted or inaccessible, skip
@@ -144,7 +169,20 @@ export class FileChangeTracker {
       }
     );
 
-    const results = await Promise.all(checks);
-    return results.filter((r): r is EditedFileAttachment => r !== null);
+    const detected = (await Promise.all(checks)).filter((r): r is DetectedChange => r !== null);
+
+    return {
+      attachments: detected.map((d) => d.attachment),
+      commit: () => {
+        for (const { canonicalPath, detectedState } of detected) {
+          const existing = this.fileState.get(canonicalPath);
+          // Don't clobber state recorded after detection (e.g. a fresh
+          // record() from a tool read) with the older detection snapshot.
+          if (existing == null || existing.timestamp < detectedState.timestamp) {
+            this.fileState.set(canonicalPath, detectedState);
+          }
+        }
+      },
+    };
   }
 }

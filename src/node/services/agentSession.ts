@@ -4048,20 +4048,23 @@ export class AgentSession {
     // and append the <system-file-update> notification as a durable row. The
     // provider request is built purely from chat.jsonl, so anything the model
     // sees must be logged first — there is no request-time injection path.
-    // FileChangeTracker updates its stored state on detection, so a retry of
-    // this turn cannot append a duplicate notification row.
-    const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
+    // Detection is side-effect-free; tracker state advances via commit() only
+    // AFTER the notification row is durably appended. A retry after a startup
+    // abort or append failure therefore re-detects the same change (nothing is
+    // dropped), while a successful append cannot produce a duplicate row.
+    const fileChangeDetection = await this.fileChangeTracker.getChangedAttachments();
     if (isStartupAbortRequested()) {
       return Ok(undefined);
     }
-    if (changedFileAttachments.length > 0) {
+    if (fileChangeDetection.attachments.length > 0) {
       const notificationAppendResult = await this.historyService.appendToHistory(
         this.workspaceId,
-        createFileChangeNotificationMessage(changedFileAttachments)
+        createFileChangeNotificationMessage(fileChangeDetection.attachments)
       );
       if (!notificationAppendResult.success) {
         return Err(createUnknownSendMessageError(notificationAppendResult.error));
       }
+      fileChangeDetection.commit();
     }
 
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
@@ -6756,9 +6759,9 @@ export class AgentSession {
     }
   }
 
-  /** Delegate to FileChangeTracker for external file change detection. */
+  /** Delegate to FileChangeTracker for external file change detection (side-effect-free). */
   async getChangedFileAttachments(): Promise<EditedFileAttachment[]> {
-    return this.fileChangeTracker.getChangedAttachments();
+    return (await this.fileChangeTracker.getChangedAttachments()).attachments;
   }
 
   async appendHeartbeatContextResetBoundary(params: {
