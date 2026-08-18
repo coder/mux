@@ -4,6 +4,7 @@ import type { Runtime } from "@/node/runtime/Runtime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
 import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalMuxHome";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
+import { normalizeForDescendantComparison } from "@/common/utils/subProjects";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 
@@ -73,12 +74,16 @@ function getProjectDirectories(
 ): string[] {
   const start = runtime.normalizePath(".", projectPath);
   const boundary = runtime.normalizePath(".", projectSearchRoot);
+  const normalizedBoundary = normalizeForDescendantComparison(boundary);
   const directories: string[] = [];
   let current = start;
 
   while (true) {
     directories.push(current);
-    if (current === boundary) {
+    // Registered Windows project paths may differ only by casing. Use the same
+    // comparison semantics as project hierarchy derivation so inheritance still
+    // stops at the configured checkout boundary.
+    if (normalizeForDescendantComparison(current) === normalizedBoundary) {
       return directories;
     }
 

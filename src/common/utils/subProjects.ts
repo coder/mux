@@ -1,7 +1,7 @@
 import type { ProjectConfig } from "@/common/types/project";
 import { PlatformPaths } from "@/common/utils/paths";
 
-function normalizeForDescendantComparison(value: string): string {
+export function normalizeForDescendantComparison(value: string): string {
   const normalized = value.replace(/\\/g, "/").replace(/\/+$/, "");
   // Windows paths are case-insensitive, and user input / persisted config can
   // differ in drive-letter or segment casing. Treat drive-letter paths as
