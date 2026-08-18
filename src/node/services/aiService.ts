@@ -3912,17 +3912,52 @@ export class AIService extends EventEmitter {
           ? forcedFirstStepToolNames
           : (computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(toolsForStream))
       );
+
+      // Fold a PREPARING-window pending thinking override into the ACTUAL
+      // request build, not just the envelope: message preparation is
+      // thinking-level-dependent (Anthropic signed-reasoning transforms), so
+      // recording the new level while streaming old-level messages would make
+      // wire and replay diverge — or send an invalid extended-thinking
+      // request. Consuming pending here (applied set below) is safe:
+      // createStreamAtomically seeds streamInfo.thinkingLevel from `applied`,
+      // and prepareStep simply sees no pending to re-apply.
+      let streamThinkingLevel = effectiveThinkingLevel;
+      let streamProviderOptions = mergedProviderOptions;
+      let streamFinalMessages = finalMessages;
+      const pendingPreparingLevel = activeTurnThinkingOverride?.pending;
+      if (pendingPreparingLevel != null && activeTurnThinkingOverride != null) {
+        const folded = computeRebuiltProviderOptions(pendingPreparingLevel, effectiveThinkingLevel);
+        activeTurnThinkingOverride.pending = undefined;
+        if (folded != null) {
+          const { providerRequestMessages: foldedRequestMessages } = prepareProviderRequestMessages(
+            messages,
+            wireProviderName,
+            folded.effectiveLevel
+          );
+          streamFinalMessages = await prepareMessagesForProvider({
+            messagesWithSentinel: addInterruptedSentinel(foldedRequestMessages),
+            effectiveAgentId,
+            toolNamesForSentinel,
+            planContentForTransition,
+            planFilePath,
+            postCompactionAttachments,
+            providerForMessages: wireProviderName,
+            effectiveThinkingLevel: folded.effectiveLevel,
+            modelString,
+            providersConfig: requestProvidersConfig,
+            anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+            workspaceId,
+          });
+          streamProviderOptions = folded.providerOptions;
+          streamThinkingLevel = folded.effectiveLevel;
+          activeTurnThinkingOverride.applied = folded.effectiveLevel;
+          // Keep the mid-turn rebuild baseline in sync so a later identical
+          // request is correctly treated as a no-op.
+          currentEffectiveLevelRef.current = folded.effectiveLevel;
+        }
+      }
+
       const emitPrimaryEnvelope = async (): Promise<void> => {
-        // A thinking override set during PREPARING is consumed by prepareStep
-        // at step 0: the wire request streams with rebuilt options while the
-        // locals here still hold pre-override values. Preview the fold with
-        // the pure recompute (never the ref-mutating rebuild closure, which
-        // would make prepareStep skip the real application).
-        const pendingLevel = activeTurnThinkingOverride?.pending;
-        const previewed =
-          pendingLevel != null
-            ? computeRebuiltProviderOptions(pendingLevel, effectiveThinkingLevel)
-            : null;
         await emitTurnEnvelope({
           journal: this.durableEventJournalFor(workspaceId),
           workspaceId,
@@ -3931,8 +3966,8 @@ export class AIService extends EventEmitter {
             Object.entries(toolsForStream).filter(([name]) => firstStepToolNames.has(name))
           ),
           modelString,
-          thinkingLevel: previewed?.effectiveLevel ?? effectiveThinkingLevel,
-          providerOptions: previewed?.providerOptions ?? mergedProviderOptions,
+          thinkingLevel: streamThinkingLevel,
+          providerOptions: streamProviderOptions,
           // Replay pairing key + request-time inputs that are model-visible but
           // not derivable from chat.jsonl: the resolved wire provider (instance-
           // typed gateways need live metadata), the per-send Anthropic cache TTL,
@@ -3954,7 +3989,7 @@ export class AIService extends EventEmitter {
       const startStreamStartedAt = Date.now();
       const streamResult = await this.streamManager.startStream(
         workspaceId,
-        finalMessages,
+        streamFinalMessages,
         modelResult.data.model,
         modelString,
         historySequence,
@@ -3977,13 +4012,13 @@ export class AIService extends EventEmitter {
           ...(acpPromptId != null ? { acpPromptId } : {}),
           ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
-        mergedProviderOptions,
+        streamProviderOptions,
         maxOutputTokens,
         effectiveToolPolicy,
         streamToken, // Pass the pre-generated stream token
         hasQueuedMessages,
         metadata.name,
-        effectiveThinkingLevel,
+        streamThinkingLevel,
         requestHeaders,
         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
         resolvedOverrides.standard,
