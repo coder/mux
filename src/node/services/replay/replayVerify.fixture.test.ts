@@ -41,7 +41,6 @@ async function readFixtureEnvelopes(): Promise<TurnEnvelopeEvent[]> {
 }
 
 beforeAll(async () => {
-  // eslint-disable-next-line no-restricted-syntax, no-restricted-globals
   if (process.env.MUX_REGENERATE_REPLAY_FIXTURE === "1") {
     await generateReplayFixtureSession();
   }
