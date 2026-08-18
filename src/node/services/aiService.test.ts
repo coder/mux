@@ -40,7 +40,7 @@ import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
 
 import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
 import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages";
-import type { LanguageModel, Tool } from "ai";
+import { jsonSchema, tool, type LanguageModel, type Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import type { MuxToolScope } from "@/common/types/toolScope";
@@ -69,6 +69,7 @@ import * as agentResolution from "./agentResolution";
 import * as streamContextBuilder from "./streamContextBuilder";
 import * as messagePipeline from "./messagePipeline";
 import { MemoryMetaService } from "@/node/services/memoryMeta";
+import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { MemoryService, projectMemoryDirName } from "@/node/services/memoryService";
 import * as toolAssembly from "./toolAssembly";
 import type { ToolModelUsageEvent } from "@/common/utils/tools/tools";
@@ -4285,6 +4286,113 @@ describe("AIService.streamMessage model parameter overrides", () => {
     expect(providerOptions.google).toBeDefined();
     expect(providerOptions.google).toHaveProperty("thinkingConfig");
     expect(providerOptions.openai).toBeUndefined();
+  });
+});
+
+describe("AIService.streamMessage turn envelope", () => {
+  interface TurnEnvelopeHarness {
+    service: AIService;
+    config: Config;
+    startStreamCalls: unknown[][];
+  }
+
+  function createHarness(
+    muxHomePath: string,
+    metadata: WorkspaceMetadata,
+    options?: { allTools?: Record<string, Tool> }
+  ): TurnEnvelopeHarness {
+    const { config, historyService, initStateManager, service } = createBasicAIService(muxHomePath);
+    const startStreamCalls: unknown[][] = [];
+    stubCommonStreamMessageDependencies({
+      service,
+      config,
+      historyService,
+      initStateManager,
+      metadata,
+      startStreamCalls,
+      allTools: options?.allTools,
+    });
+    return { service, config, startStreamCalls };
+  }
+
+  async function streamTurn(harness: TurnEnvelopeHarness, workspaceId: string): Promise<void> {
+    const result = await harness.service.streamMessage({
+      messages: [createMuxMessage("user-message", "user", "hello")],
+      workspaceId,
+      modelString: "openai:gpt-5.2",
+      thinkingLevel: "off",
+    });
+    expect(result.success).toBe(true);
+  }
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  it("appends one turn-envelope row per assistant turn with a deduped prompt blob", async () => {
+    using muxHome = new DisposableTempDir("ai-service-turn-envelope");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-turn-envelope";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    // Keys deliberately out of order: the manifest must sort by name.
+    const allTools: Record<string, Tool> = {
+      zebra_tool: tool({
+        description: "z",
+        inputSchema: jsonSchema({ type: "object", properties: { a: {} } }),
+      }),
+      alpha_tool: tool({
+        description: "a",
+        inputSchema: jsonSchema({ type: "object", properties: { b: {} } }),
+      }),
+    };
+    const harness = createHarness(muxHome.path, metadata, { allTools });
+
+    // Two turns (e.g. a retry/continuation) must each emit their own row.
+    await streamTurn(harness, workspaceId);
+    await streamTurn(harness, workspaceId);
+    expect(harness.startStreamCalls).toHaveLength(2);
+
+    const journal = new DurableEventJournal(harness.config.getSessionDir(workspaceId));
+    const events = await journal.read();
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.id)).size).toBe(2);
+    for (const event of events) {
+      expect(event.kind).toBe("turn-envelope");
+      if (event.kind !== "turn-envelope") continue;
+      expect(event.workspaceId).toBe(workspaceId);
+      expect(event.data.modelString).toBe("openai:gpt-5.2");
+      expect(event.data.toolsetManifest.map((entry) => entry.name)).toEqual([
+        "alpha_tool",
+        "zebra_tool",
+      ]);
+      // Identical requests fingerprint identically; the prompt text itself
+      // round-trips through the content-addressed blob store.
+      expect(event.data.systemPromptHash).toBe(
+        events[0].kind === "turn-envelope" ? events[0].data.systemPromptHash : ""
+      );
+      expect(await journal.blobs.getText(event.data.systemPromptHash)).toBe("test-system-message");
+    }
+  });
+
+  it("never fails the turn when the session dir is unwritable", async () => {
+    using muxHome = new DisposableTempDir("ai-service-turn-envelope-unwritable");
+    const projectPath = path.join(muxHome.path, "project");
+    await fs.mkdir(projectPath, { recursive: true });
+
+    const workspaceId = "workspace-turn-envelope-unwritable";
+    const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
+    const harness = createHarness(muxHome.path, metadata);
+
+    // A regular file where the session dir should be makes every journal write
+    // fail (ENOTDIR); the turn must still stream.
+    const sessionDir = harness.config.getSessionDir(workspaceId);
+    await fs.mkdir(path.dirname(sessionDir), { recursive: true });
+    await fs.writeFile(sessionDir, "not a directory", "utf-8");
+
+    await streamTurn(harness, workspaceId);
+    expect(harness.startStreamCalls).toHaveLength(1);
   });
 });
 

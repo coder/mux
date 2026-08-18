@@ -23,6 +23,8 @@ import type { ModelMessage, MuxMessage, MuxMessageMetadata } from "@/common/type
 import { createMuxMessage } from "@/common/types/message";
 import type { Config } from "@/node/config";
 import { StreamManager, type ModelFallbackOptions, type StreamTextOnChunk } from "./streamManager";
+import { emitTurnEnvelope } from "./turnEnvelope";
+import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 import { runLanguageModelCleanup } from "./languageModelCleanup";
 import type { InitStateManager } from "./initStateManager";
 import type { SendMessageError } from "@/common/types/errors";
@@ -552,6 +554,12 @@ export class AIService extends EventEmitter {
 
   // Debug: captured LLM request payloads for last send per workspace
   private lastLlmRequestByWorkspace = new Map<string, DebugLlmRequestSnapshot>();
+  /**
+   * Per-workspace durable-event journals for turn-envelope rows. Cached so one
+   * Journal instance owns the file per workspace (race-free seq assignment;
+   * see Journal's single-writer expectation).
+   */
+  private readonly durableEventJournals = new Map<string, DurableEventJournal>();
   private taskService?: TaskService;
   private memoryService?: MemoryService;
   private timelineService?: ToolConfiguration["timelineService"];
@@ -940,6 +948,16 @@ export class AIService extends EventEmitter {
     } catch (error) {
       log.error("Failed to create sessions directory:", error);
     }
+  }
+
+  /** Lazily bind the durable-event journal to the workspace's session dir. */
+  private durableEventJournalFor(workspaceId: string): DurableEventJournal {
+    let journal = this.durableEventJournals.get(workspaceId);
+    if (!journal) {
+      journal = new DurableEventJournal(this.config.getSessionDir(workspaceId));
+      this.durableEventJournals.set(workspaceId, journal);
+    }
+    return journal;
   }
 
   isMockModeEnabled(): boolean {
@@ -3806,6 +3824,20 @@ export class AIService extends EventEmitter {
               effectiveMuxProviderOptions.xai?.searchParameters
             )?.filter((toolName) => toolName in toolsForStream)
           : undefined;
+
+      // Durable turn envelope: fingerprint the FINAL request identity (post
+      // request.assemble middleware, post tool-policy rebuild) before streaming
+      // starts, so session logs can reconstruct what the provider request
+      // contained ("model-visible ⟹ logged"). Emission never fails the turn.
+      await emitTurnEnvelope({
+        journal: this.durableEventJournalFor(workspaceId),
+        workspaceId,
+        systemMessage,
+        tools: toolsForStream,
+        modelString,
+        thinkingLevel: effectiveThinkingLevel,
+        providerOptions: mergedProviderOptions,
+      });
 
       emitStartupBreadcrumb("starting_stream");
       const startStreamStartedAt = Date.now();
