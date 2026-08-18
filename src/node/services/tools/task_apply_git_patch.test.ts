@@ -271,9 +271,105 @@ describe("task_apply_git_patch tool", () => {
     expect(lookup).toMatchObject({
       artifactWorkspaceId: intermediateWorkspaceId,
       artifactSessionDir: intermediateSessionDir,
+      relation: "descendant",
       artifact: { childTaskId, parentWorkspaceId: intermediateWorkspaceId },
     });
   });
+
+  it("marks nested descendant artifacts applied when an ancestor integrates them", async () => {
+    const childRepo = path.join(rootDir, "nested-child");
+    const targetRepo = path.join(rootDir, "nested-target");
+    for (const repo of [childRepo, targetRepo]) {
+      await fsPromises.mkdir(repo, { recursive: true });
+      initGitRepo(repo);
+    }
+    await commitFile(childRepo, "README.md", "hello", "base");
+    await commitFile(targetRepo, "README.md", "hello", "base");
+    const baseSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+    await commitFile(childRepo, "README.md", "hello\nnested", "nested child change");
+    const headSha = execSync("git rev-parse HEAD", { cwd: childRepo, encoding: "utf-8" }).trim();
+
+    const muxRoot = path.join(rootDir, "nested-integration-mux");
+    const sessionsDir = path.join(muxRoot, "sessions");
+    const rootWorkspaceId = "root-integrator";
+    const intermediateWorkspaceId = "intermediate-parent";
+    const childTaskId = "nested-editing-child";
+    const rootSessionDir = path.join(sessionsDir, rootWorkspaceId);
+    const intermediateSessionDir = path.join(sessionsDir, intermediateWorkspaceId);
+    await fsPromises.mkdir(rootSessionDir, { recursive: true });
+    await fsPromises.mkdir(intermediateSessionDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(muxRoot, "config.json"),
+      JSON.stringify({
+        projects: [
+          [
+            targetRepo,
+            {
+              workspaces: [
+                {
+                  id: rootWorkspaceId,
+                  name: "root",
+                  path: targetRepo,
+                  runtimeConfig: { type: "local" },
+                },
+                {
+                  id: intermediateWorkspaceId,
+                  name: "intermediate",
+                  path: targetRepo,
+                  parentWorkspaceId: rootWorkspaceId,
+                  runtimeConfig: { type: "local" },
+                },
+                {
+                  id: childTaskId,
+                  name: "child",
+                  path: childRepo,
+                  parentWorkspaceId: intermediateWorkspaceId,
+                  runtimeConfig: { type: "local" },
+                },
+              ],
+            },
+          ],
+        ],
+      }),
+      "utf-8"
+    );
+    await writePatchArtifact({
+      sessionDir: intermediateSessionDir,
+      workspaceId: intermediateWorkspaceId,
+      childTaskId,
+      projectArtifacts: [
+        await buildReadyProjectArtifact({
+          sessionDir: intermediateSessionDir,
+          childTaskId,
+          storageKey: "nested-target",
+          projectPath: targetRepo,
+          projectName: "nested-target",
+          childRepo,
+          baseSha,
+          headSha,
+        }),
+      ],
+    });
+
+    const result = await applyTaskGitPatchArtifact(
+      {
+        workspaceId: rootWorkspaceId,
+        cwd: targetRepo,
+        runtime: createRuntime({ type: "local", srcBaseDir: "/tmp" }),
+        runtimeTempDir: path.join(rootDir, "nested-integration-tmp"),
+        workspaceSessionDir: rootSessionDir,
+      },
+      { task_id: childTaskId, three_way: true }
+    );
+
+    expect(result.success).toBe(true);
+    expect(execSync("git log -1 --format=%s", { cwd: targetRepo, encoding: "utf-8" }).trim()).toBe(
+      "nested child change"
+    );
+    const artifact = await readSubagentGitPatchArtifact(intermediateSessionDir, childTaskId);
+    expect(artifact?.projectArtifacts[0]?.appliedAtMs).toBeDefined();
+    expect(await readSubagentGitPatchArtifact(rootSessionDir, childTaskId)).toBeNull();
+  }, 20_000);
 
   it("applies all ready project patches in primary-first order", async () => {
     const childRepoA = path.join(rootDir, "child-a");

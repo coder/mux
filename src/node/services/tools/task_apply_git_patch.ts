@@ -297,6 +297,7 @@ export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
   artifact: SubagentGitPatchArtifact;
   artifactWorkspaceId: string;
   artifactSessionDir: string;
+  relation: "direct" | "descendant" | "ancestor";
   note?: string;
 } | null> {
   assert(
@@ -317,6 +318,7 @@ export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
     return {
       artifact: direct,
       artifactWorkspaceId: params.workspaceId,
+      relation: "direct",
       artifactSessionDir: params.workspaceSessionDir,
     };
   }
@@ -370,6 +372,7 @@ export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
           return {
             artifact,
             artifactWorkspaceId: childParentWorkspaceId,
+            relation: "descendant",
             artifactSessionDir,
             note: `Patch artifact loaded from descendant parent workspace ${childParentWorkspaceId}.`,
           };
@@ -421,6 +424,7 @@ export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
       return {
         artifact,
         artifactWorkspaceId: parent,
+        relation: "ancestor",
         artifactSessionDir: parentSessionDir,
         note: `Patch artifact loaded from ancestor workspace ${parent}.`,
       };
@@ -1646,7 +1650,10 @@ async function applyTaskGitPatchArtifactUnlocked(
   let artifact = artifactLookup.artifact;
   const artifactWorkspaceId = artifactLookup.artifactWorkspaceId;
   const artifactSessionDir = artifactLookup.artifactSessionDir;
-  const isReplay = artifactWorkspaceId !== workspaceId;
+  // Applying a descendant's patch from an ancestor is the canonical integration path and must
+  // persist its applied watermark. Only applying an ancestor-owned artifact into a descendant is
+  // replay behavior that leaves the source metadata unchanged.
+  const isReplay = artifactLookup.relation === "ancestor";
   const artifactLookupNote = artifactLookup.note;
 
   if (artifact.parentWorkspaceId !== artifactWorkspaceId) {
