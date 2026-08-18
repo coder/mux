@@ -144,6 +144,7 @@ import {
 } from "@/common/utils/thinking/policy";
 import type {
   ActiveTurnThinkingOverride,
+  RebuildFirstStepForThinkingLevel,
   RebuildProviderOptionsForThinkingLevel,
 } from "@/node/services/thinkingOverride";
 
@@ -3823,7 +3824,10 @@ export class AIService extends EventEmitter {
                       ? nextForcedFirstStepToolNames
                       : nextToolNamesForSentinel
                   );
-                  const emitFallbackEnvelope = async (): Promise<void> => {
+                  const emitFallbackEnvelopeWith = async (
+                    thinkingLevelForEnvelope: string,
+                    providerOptionsForEnvelope: unknown
+                  ): Promise<void> => {
                     await emitTurnEnvelope({
                       journal: this.durableEventJournalFor(workspaceId),
                       workspaceId,
@@ -3834,8 +3838,8 @@ export class AIService extends EventEmitter {
                         )
                       ),
                       modelString: nextModelString,
-                      thinkingLevel: nextThinkingLevel,
-                      providerOptions: nextMergedProviderOptions,
+                      thinkingLevel: thinkingLevelForEnvelope,
+                      providerOptions: providerOptionsForEnvelope,
                       requestHistorySequence,
                       sentinelToolNames: nextToolNamesForSentinel,
                       wireProviderName: next.wireProviderName,
@@ -3846,9 +3850,39 @@ export class AIService extends EventEmitter {
                       postCompactionAttachments,
                     });
                   };
+                  const emitFallbackEnvelope = (): Promise<void> =>
+                    emitFallbackEnvelopeWith(nextThinkingLevel, nextMergedProviderOptions);
+                  // Same step-0 race closure as the primary path, bound to the
+                  // fallback request's own build inputs.
+                  const rebuildNextFirstStepForThinkingLevel: RebuildFirstStepForThinkingLevel =
+                    async (effectiveLevel, providerOptionsForEnvelope) => {
+                      const { providerRequestMessages: racedNextMessages } =
+                        prepareProviderRequestMessages(
+                          fallbackSourceMessages,
+                          next.wireProviderName,
+                          effectiveLevel
+                        );
+                      const rebuiltFinal = await prepareMessagesForProvider({
+                        messagesWithSentinel: addInterruptedSentinel(racedNextMessages),
+                        effectiveAgentId,
+                        toolNamesForSentinel: nextToolNamesForSentinel,
+                        planContentForTransition,
+                        planFilePath,
+                        postCompactionAttachments,
+                        providerForMessages: next.wireProviderName,
+                        effectiveThinkingLevel: effectiveLevel,
+                        modelString: nextModelString,
+                        providersConfig: nextProvidersConfig,
+                        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+                        workspaceId,
+                      });
+                      await emitFallbackEnvelopeWith(effectiveLevel, providerOptionsForEnvelope);
+                      return rebuiltFinal;
+                    };
 
                   return Ok({
                     onStreamConstructed: emitFallbackEnvelope,
+                    rebuildFirstStepForThinkingLevel: rebuildNextFirstStepForThinkingLevel,
                     model: next.model,
                     // RAW identity (matching the main path's raw modelString):
                     // StreamManager keys createCachedSystemMessage /
@@ -3966,7 +4000,10 @@ export class AIService extends EventEmitter {
         // against the level just applied.
       }
 
-      const emitPrimaryEnvelope = async (): Promise<void> => {
+      const emitPrimaryEnvelopeWith = async (
+        thinkingLevel: string,
+        providerOptions: unknown
+      ): Promise<void> => {
         await emitTurnEnvelope({
           journal: this.durableEventJournalFor(workspaceId),
           workspaceId,
@@ -3975,8 +4012,8 @@ export class AIService extends EventEmitter {
             Object.entries(toolsForStream).filter(([name]) => firstStepToolNames.has(name))
           ),
           modelString,
-          thinkingLevel: streamThinkingLevel,
-          providerOptions: streamProviderOptions,
+          thinkingLevel,
+          providerOptions,
           // Replay pairing key + request-time inputs that are model-visible but
           // not derivable from chat.jsonl: the resolved wire provider (instance-
           // typed gateways need live metadata), the per-send Anthropic cache TTL,
@@ -3992,6 +4029,39 @@ export class AIService extends EventEmitter {
           planFilePath,
           postCompactionAttachments,
         });
+      };
+      const emitPrimaryEnvelope = (): Promise<void> =>
+        emitPrimaryEnvelopeWith(streamThinkingLevel, streamProviderOptions);
+      // Step-0 rebuild for a thinking override that raced stream setup
+      // (written during startStream's awaits, after the quiescence loop):
+      // rebuild the wire messages under the consumed level and supersede the
+      // envelope so replay pairing (last row per sequence) sees the request
+      // that actually streamed.
+      const rebuildFirstStepForThinkingLevel: RebuildFirstStepForThinkingLevel = async (
+        effectiveLevel,
+        providerOptions
+      ) => {
+        const { providerRequestMessages: racedRequestMessages } = prepareProviderRequestMessages(
+          messages,
+          wireProviderName,
+          effectiveLevel
+        );
+        const rebuiltFinal = await prepareMessagesForProvider({
+          messagesWithSentinel: addInterruptedSentinel(racedRequestMessages),
+          effectiveAgentId,
+          toolNamesForSentinel,
+          planContentForTransition,
+          planFilePath,
+          postCompactionAttachments,
+          providerForMessages: wireProviderName,
+          effectiveThinkingLevel: effectiveLevel,
+          modelString,
+          providersConfig: requestProvidersConfig,
+          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+          workspaceId,
+        });
+        await emitPrimaryEnvelopeWith(effectiveLevel, providerOptions);
+        return rebuiltFinal;
       };
 
       emitStartupBreadcrumb("starting_stream");
@@ -4047,7 +4117,8 @@ export class AIService extends EventEmitter {
         rebuildProviderOptionsForThinkingLevel,
         forcedFirstStepToolNames,
         requestProvidersConfig,
-        emitPrimaryEnvelope
+        emitPrimaryEnvelope,
+        rebuildFirstStepForThinkingLevel
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 
