@@ -192,13 +192,11 @@ async function main() {
     // Wait for completion
     await new Promise<void>((resolve) => {
       const checkInterval = setInterval(() => {
-        /* eslint-disable local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern */
-        const streamManager = (
-          aiService as unknown as {
-            streamManager: { workspaceStreams: Map<string, { state: string }> };
-          }
-        ).streamManager;
-        /* eslint-enable local/no-chained-type-assertions */
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
+        const aiServiceInternals = aiService as unknown as {
+          streamManager: { workspaceStreams: Map<string, { state: string }> };
+        };
+        const streamManager = aiServiceInternals.streamManager;
         const stream = streamManager.workspaceStreams.get(workspaceId);
         if (!stream || stream.state === "completed" || stream.state === "error") {
           clearInterval(checkInterval);

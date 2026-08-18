@@ -259,9 +259,21 @@ function parseWorkflowSlashArgs(argsText: string | undefined): unknown {
 // Command Dispatcher
 // ============================================================================
 
+/** Compiles only when T is a subset of U; used to pin constants to the parser's union. */
+type SubsetOf<T extends U, U> = T;
+
+// A typo or stale entry in WORKSPACE_ONLY_COMMAND_TYPE_LIST fails this subset
+// constraint at compile time instead of being silently dropped by Extract
+// (which would leave the dispatch switch exhaustive while the real command
+// falls through unhandled).
+type CheckedWorkspaceOnlyCommandType = SubsetOf<
+  WorkspaceOnlyCommandType,
+  NonNullable<ParsedCommand>["type"]
+>;
+
 type WorkspaceOnlyParsedCommand = Extract<
   NonNullable<ParsedCommand>,
-  { type: WorkspaceOnlyCommandType }
+  { type: CheckedWorkspaceOnlyCommandType }
 >;
 
 /**
