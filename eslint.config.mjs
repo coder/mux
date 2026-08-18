@@ -602,9 +602,27 @@ const localPlugin = {
           node.typeAnnotation.type === "TSTypeReference" &&
           node.typeAnnotation.typeName.type === "Identifier" &&
           node.typeAnnotation.typeName.name === "const";
+        // Non-null and satisfies wrappers are transparent links in a chain:
+        // `(x as unknown)! as T` fabricates evidence exactly like
+        // `x as unknown as T`, so traverse them in both walk directions.
+        const isPassthrough = (node) =>
+          node.type === "TSNonNullExpression" || node.type === "TSSatisfiesExpression";
+        const unwrapPassthrough = (node) => {
+          let current = node;
+          while (isPassthrough(current)) {
+            current = current.expression;
+          }
+          return current;
+        };
         const check = (node) => {
           // Report once, from the outermost assertion of a chain.
-          if (isAssertion(node.parent) && node.parent.expression === node) {
+          let child = node;
+          let parent = node.parent;
+          while (isPassthrough(parent) && parent.expression === child) {
+            child = parent;
+            parent = parent.parent;
+          }
+          if (isAssertion(parent) && parent.expression === child) {
             return;
           }
           let assertionCount = 0;
@@ -613,7 +631,7 @@ const localPlugin = {
           while (isAssertion(current)) {
             assertionCount += 1;
             hasNonConstAssertion ||= !isConstAssertion(current);
-            current = current.expression;
+            current = unwrapPassthrough(current.expression);
           }
           if (assertionCount > 1 && hasNonConstAssertion) {
             context.report({ node, messageId: "chained" });
