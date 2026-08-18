@@ -29,6 +29,18 @@ import tseslint from "typescript-eslint";
  * broad local aliases become common.
  */
 
+/**
+ * Unwrap only the transparent wrappers (non-null, satisfies) while keeping
+ * assertions intact — for walks that must see assertion nodes themselves.
+ */
+function unwrapPassthroughWrappers(expression) {
+  let current = expression;
+  while (current.type === "TSNonNullExpression" || current.type === "TSSatisfiesExpression") {
+    current = current.expression;
+  }
+  return current;
+}
+
 /** Unwrap assertion-like wrappers to reach the underlying value expression. */
 function unwrapAssertions(expression) {
   let current = expression;
@@ -882,7 +894,9 @@ const localPlugin = {
           }
           const boundary = functionBoundary(declarator);
           const declaredType = declarator.id.typeAnnotation?.typeAnnotation;
-          const init = declarator.init;
+          // `const tmp = (value as unknown)!` widens exactly like
+          // `const tmp = value as unknown`; see through transparent wrappers.
+          const init = unwrapPassthroughWrappers(declarator.init);
           const initAssertion =
             init.type === "TSAsExpression" || init.type === "TSTypeAssertion" ? init : null;
           const initBroadKind =
@@ -1006,16 +1020,20 @@ const localPlugin = {
         },
       },
       create(context) {
+        // Visit every alias declaration (module, function, block, namespace
+        // scope), not just Program.body, then evaluate once at Program:exit
+        // so transitive chains resolve regardless of declaration order.
+        const AMBIGUOUS = Symbol("ambiguous");
+        const aliasesByName = new Map();
+        const allAliases = [];
         return {
-          Program(node) {
-            const aliases = new Map();
-            for (const statement of node.body) {
-              const declaration =
-                statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
-              if (declaration?.type === "TSTypeAliasDeclaration") {
-                aliases.set(declaration.id.name, declaration);
-              }
-            }
+          TSTypeAliasDeclaration(node) {
+            allAliases.push(node);
+            // Name-based resolution is scope-insensitive; treat duplicate
+            // names as unresolvable rather than guessing which shadows which.
+            aliasesByName.set(node.id.name, aliasesByName.has(node.id.name) ? AMBIGUOUS : node);
+          },
+          "Program:exit"() {
             const resolvesToUnknown = (type, visited) => {
               if (type.type === "TSUnknownKeyword") {
                 return true;
@@ -1024,13 +1042,13 @@ const localPlugin = {
               if (name === null || visited.has(name) || typeArgumentsOf(type).length > 0) {
                 return false;
               }
-              const alias = aliases.get(name);
-              if (alias === undefined || alias.typeParameters != null) {
+              const alias = aliasesByName.get(name);
+              if (alias === undefined || alias === AMBIGUOUS || alias.typeParameters != null) {
                 return false;
               }
               return resolvesToUnknown(alias.typeAnnotation, new Set([...visited, name]));
             };
-            for (const alias of aliases.values()) {
+            for (const alias of allAliases) {
               if (resolvesToUnknown(alias.typeAnnotation, new Set([alias.id.name]))) {
                 context.report({
                   node: alias.id,
