@@ -60,7 +60,7 @@ import type { CodexOauthService } from "@/node/services/codexOauthService";
 import type { CoderOauthService } from "@/node/services/coderOauthService";
 import type { WorkspaceGoalService } from "@/node/services/workspaceGoalService";
 import type { BackgroundProcessManager } from "@/node/services/backgroundProcessManager";
-import type { FileState, EditedFileAttachment } from "@/node/services/agentSession";
+import type { FileState } from "@/node/services/agentSession";
 import { log } from "./log";
 import {
   addInterruptedSentinel,
@@ -269,7 +269,6 @@ export interface StreamMessageOptions {
   /** Tool names that should be delegated back to ACP clients for this request. */
   delegatedToolNames?: string[];
   recordFileState?: (filePath: string, state: FileState) => Promise<void>;
-  changedFileAttachments?: EditedFileAttachment[];
   postCompactionAttachments?: PostCompactionAttachment[] | null;
   /**
    * Resolver for the session-segment memory context (memory experiment):
@@ -1368,7 +1367,6 @@ export class AIService extends EventEmitter {
       acpPromptId,
       delegatedToolNames,
       recordFileState,
-      changedFileAttachments,
       postCompactionAttachments,
       resolveMemoryContext,
       experiments,
@@ -2908,11 +2906,7 @@ export class AIService extends EventEmitter {
         toolNamesForSentinel,
         planContentForTransition,
         planFilePath,
-        changedFileAttachments,
         postCompactionAttachments,
-        runtime,
-        workspacePath,
-        abortSignal: combinedAbortSignal,
         providerForMessages: wireProviderName,
         effectiveThinkingLevel,
         modelString,
@@ -3610,11 +3604,7 @@ export class AIService extends EventEmitter {
                     toolNamesForSentinel: nextToolNamesForSentinel,
                     planContentForTransition,
                     planFilePath,
-                    changedFileAttachments,
                     postCompactionAttachments,
-                    runtime,
-                    workspacePath,
-                    abortSignal: combinedAbortSignal,
                     providerForMessages: next.wireProviderName,
                     effectiveThinkingLevel: nextThinkingLevel,
                     // RAW fallback identity, matching the main path's raw

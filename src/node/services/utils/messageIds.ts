@@ -45,6 +45,6 @@ export const createTaskReportMessageId = (): string =>
 export const createTaskFailureMessageId = (): string =>
   `task-failure-${Date.now()}-${randomSuffix(9)}`;
 
-/** File @mention block message IDs: file-at-mentions-{timestamp}-{index} */
-export const createFileAtMentionMessageId = (timestamp: number, index: number): string =>
-  `file-at-mentions-${timestamp}-${index}`;
+/** External file-change notification message IDs: file-change-{timestamp}-{random} */
+export const createFileChangeNotificationMessageId = (): string =>
+  `file-change-${Date.now()}-${randomSuffix(9)}`;

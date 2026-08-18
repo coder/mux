@@ -5,7 +5,6 @@
 
 import type { ModelMessage, AssistantModelMessage, ToolModelMessage } from "ai";
 import type { MuxMessage } from "@/common/types/message";
-import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { MAX_POST_COMPACTION_INJECTION_CHARS } from "@/common/constants/attachments";
 import { hasProviderReplayableContent } from "@/common/utils/messages/providerEligibility";
@@ -206,44 +205,10 @@ ${planContent}
   return result;
 }
 
-/**
- * Inject file change notifications as a synthetic user message.
- * When files are modified externally (by user or linter), append a notification at the end
- * so the model is aware of changes without busting the system message cache.
- *
- * @param messages The conversation history
- * @param changedFileAttachments Files that were modified externally
- * @returns Messages with file change notification appended if any files changed
- */
-export function injectFileChangeNotifications(
-  messages: MuxMessage[],
-  changedFileAttachments?: EditedFileAttachment[]
-): MuxMessage[] {
-  if (!changedFileAttachments || changedFileAttachments.length === 0) {
-    return messages;
-  }
-
-  const notice = changedFileAttachments
-    .map(
-      (att) =>
-        `Note: ${att.filename} was modified, either by the user or by a linter.\n` +
-        `This change was intentional, so make sure to take it into account as you proceed ` +
-        `(i.e., don't revert it unless the user asks you to). Here are the relevant changes:\n${att.snippet}`
-    )
-    .join("\n\n");
-
-  const syntheticMessage: MuxMessage = {
-    id: `file-change-${Date.now()}`,
-    role: "user",
-    parts: [{ type: "text", text: `<system-file-update>\n${notice}\n</system-file-update>` }],
-    metadata: {
-      timestamp: Date.now(),
-      synthetic: true,
-    },
-  };
-
-  return [...messages, syntheticMessage];
-}
+// NOTE: File-change notifications are no longer injected at request time.
+// AgentSession appends the <system-file-update> row durably to chat.jsonl at
+// turn start (see createFileChangeNotificationMessage in fileChangeTracker.ts),
+// keeping the provider request a pure function of the session log.
 
 function findLatestLegacyCompactionSummaryIndex(messages: MuxMessage[]): number {
   for (let i = messages.length - 1; i >= 0; i -= 1) {

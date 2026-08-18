@@ -1,5 +1,8 @@
 import { stat, readFile, realpath } from "fs/promises";
+import assert from "@/common/utils/assert";
 import { computeDiff } from "@/node/utils/diff";
+import { createMuxMessage, type MuxMessage } from "@/common/types/message";
+import { createFileChangeNotificationMessageId } from "@/node/services/utils/messageIds";
 
 /**
  * Represents a file's content and modification timestamp.
@@ -19,9 +22,42 @@ export interface EditedFileAttachment {
 }
 
 /**
+ * Build the durable <system-file-update> notification for externally edited files.
+ *
+ * Appended to chat.jsonl at turn start — BEFORE the request is built from
+ * history — so the provider request stays a pure function of the session log
+ * (anything model-visible must exist as a durable history row first). There is
+ * intentionally no request-time injection path for these notifications.
+ */
+export function createFileChangeNotificationMessage(
+  changedFileAttachments: EditedFileAttachment[]
+): MuxMessage {
+  assert(changedFileAttachments.length > 0, "file change notification requires attachments");
+
+  const notice = changedFileAttachments
+    .map(
+      (att) =>
+        `Note: ${att.filename} was modified, either by the user or by a linter.\n` +
+        `This change was intentional, so make sure to take it into account as you proceed ` +
+        `(i.e., don't revert it unless the user asks you to). Here are the relevant changes:\n${att.snippet}`
+    )
+    .join("\n\n");
+
+  return createMuxMessage(
+    createFileChangeNotificationMessageId(),
+    "user",
+    `<system-file-update>\n${notice}\n</system-file-update>`,
+    {
+      timestamp: Date.now(),
+      synthetic: true,
+    }
+  );
+}
+
+/**
  * Tracks file content state and detects external modifications.
  *
- * Used to inject diffs of externally-edited files as context attachments
+ * Used to append diffs of externally-edited files as durable history rows
  * before each LLM query.
  */
 export class FileChangeTracker {

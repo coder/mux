@@ -781,8 +781,9 @@ export interface MuxMetadata {
 
   /**
    * @file mention snapshot token(s) this message provides content for.
-   * When present, injectFileAtMentions() skips re-reading these tokens,
-   * preserving prompt cache stability across turns.
+   * Marks send-time materialized snapshot rows (the only @mention expansion
+   * path); requests are built purely from history, so these rows carry the
+   * file content and preserve prompt cache stability across turns.
    */
   fileAtMentionSnapshot?: string[];
 

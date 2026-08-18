@@ -16,17 +16,13 @@ import { extractToolMediaAsUserMessages } from "@/node/utils/messages/extractToo
 import { sanitizeAnthropicPdfFilenames } from "@/node/utils/messages/sanitizeAnthropicDocumentFilename";
 import { convertDataUriFilePartsForSdk } from "@/node/utils/messages/convertDataUriFilePartsForSdk";
 import type { MuxMessage } from "@/common/types/message";
-import type { EditedFileAttachment } from "@/node/services/agentSession";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 import type { ThinkingLevel } from "@/common/types/thinking";
-import type { Runtime } from "@/node/runtime/Runtime";
-import { injectFileAtMentions } from "./fileAtMentions";
 import {
   transformModelMessages,
   validateAnthropicCompliance,
   injectAgentTransition,
-  injectFileChangeNotifications,
   injectPostCompactionAttachments,
 } from "@/browser/utils/messages/modelMessageTransform";
 import { normalizeLegacyToolSearchMessages } from "@/common/utils/tools/toolCatalog";
@@ -45,16 +41,8 @@ export interface PrepareMessagesOptions {
   planContentForTransition?: string;
   /** Plan file path for transition context. */
   planFilePath?: string;
-  /** File-change attachments for notification injection. */
-  changedFileAttachments?: EditedFileAttachment[];
   /** Post-compaction attachments (plan file, loaded skills, edited files). */
   postCompactionAttachments?: PostCompactionAttachment[] | null;
-  /** Runtime for file I/O (used by @file mention injection). */
-  runtime: Runtime;
-  /** Workspace path for file resolution. */
-  workspacePath: string;
-  /** Abort signal for async operations. */
-  abortSignal: AbortSignal;
   /** Canonical provider name for provider-specific transforms. */
   providerForMessages: string;
   /** Thinking level for provider-specific behavior. */
@@ -79,20 +67,25 @@ export interface PrepareMessagesOptions {
  *
  * Transforms pre-filtered `MuxMessage[]` into provider-ready `ModelMessage[]` by:
  * 1. Injecting agent-transition context (plan→exec handoff)
- * 2. Injecting file-change notifications
- * 3. Injecting post-compaction attachments
- * 4. Expanding @file mentions into synthetic user messages
- * 5. Redacting heavy tool outputs
- * 6. Sanitizing tool inputs
- * 7. Inlining SVG attachments as text
- * 8. Sanitizing PDF filenames for Anthropic
- * 9. Extracting tool-result media as user message attachments
- * 10. Rewriting data-URI file parts to SDK-safe inline base64
- * 11. Converting to Vercel AI SDK ModelMessage format
- * 12. Self-healing: filtering empty/whitespace assistant messages
- * 13. Applying provider-specific message transforms
- * 14. Applying cache control headers
- * 15. Validating Anthropic compliance (logs warnings only)
+ * 2. Injecting post-compaction attachments
+ * 3. Redacting heavy tool outputs
+ * 4. Sanitizing tool inputs
+ * 5. Inlining SVG attachments as text
+ * 6. Sanitizing PDF filenames for Anthropic
+ * 7. Extracting tool-result media as user message attachments
+ * 8. Rewriting data-URI file parts to SDK-safe inline base64
+ * 9. Converting to Vercel AI SDK ModelMessage format
+ * 10. Self-healing: filtering empty/whitespace assistant messages
+ * 11. Applying provider-specific message transforms
+ * 12. Applying cache control headers
+ * 13. Validating Anthropic compliance (logs warnings only)
+ *
+ * Log purity: this pipeline never reads live workspace state (disk, file
+ * trackers). File-change notifications and @file mention snapshots are
+ * materialized into chat.jsonl by AgentSession before the request is built,
+ * so replaying the same history always produces the same provider messages.
+ * Old histories that predate send-time @mention materialization simply keep
+ * their @mentions as plain text — they still build, just without file content.
  */
 export async function prepareMessagesForProvider(
   opts: PrepareMessagesOptions
@@ -103,11 +96,7 @@ export async function prepareMessagesForProvider(
     toolNamesForSentinel,
     planContentForTransition,
     planFilePath,
-    changedFileAttachments,
     postCompactionAttachments,
-    runtime,
-    workspacePath,
-    abortSignal,
     providerForMessages,
     effectiveThinkingLevel,
     modelString,
@@ -127,29 +116,15 @@ export async function prepareMessagesForProvider(
     planContentForTransition ? planFilePath : undefined
   );
 
-  // Inject file change notifications as user messages (preserves system message cache)
-  const messagesWithFileChanges = injectFileChangeNotifications(
-    messagesWithAgentContext,
-    changedFileAttachments
-  );
-
   // Inject post-compaction attachments (plan file, loaded skills, edited files) after compaction summary
   const messagesWithPostCompaction = injectPostCompactionAttachments(
-    messagesWithFileChanges,
+    messagesWithAgentContext,
     postCompactionAttachments
   );
 
-  // Expand @file mentions (e.g. @src/foo.ts#L1-20) into in-memory synthetic user messages.
-  // Keeps chat history clean while giving the model immediate file context.
-  const messagesWithFileAtMentions = await injectFileAtMentions(messagesWithPostCompaction, {
-    runtime,
-    workspacePath,
-    abortSignal,
-  });
-
   // Apply centralized tool-output redaction BEFORE converting to provider ModelMessages.
   // Keeps the persisted/UI history intact while trimming heavy fields for the request.
-  const redactedForProvider = applyToolOutputRedaction(messagesWithFileAtMentions);
+  const redactedForProvider = applyToolOutputRedaction(messagesWithPostCompaction);
   log.debug_obj(`${workspaceId}/2a_redacted_messages.json`, redactedForProvider);
 
   // Sanitize tool inputs to ensure they are valid objects (not strings or arrays).

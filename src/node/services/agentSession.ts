@@ -51,6 +51,7 @@ import {
 } from "@/node/services/utils/messageIds";
 import {
   FileChangeTracker,
+  createFileChangeNotificationMessage,
   type FileState,
   type EditedFileAttachment,
 } from "@/node/services/utils/fileChangeTracker";
@@ -4043,6 +4044,26 @@ export class AgentSession {
       return Ok(undefined);
     }
 
+    // Detect external file edits (timestamp-based polling) BEFORE reading history
+    // and append the <system-file-update> notification as a durable row. The
+    // provider request is built purely from chat.jsonl, so anything the model
+    // sees must be logged first — there is no request-time injection path.
+    // FileChangeTracker updates its stored state on detection, so a retry of
+    // this turn cannot append a duplicate notification row.
+    const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
+    if (isStartupAbortRequested()) {
+      return Ok(undefined);
+    }
+    if (changedFileAttachments.length > 0) {
+      const notificationAppendResult = await this.historyService.appendToHistory(
+        this.workspaceId,
+        createFileChangeNotificationMessage(changedFileAttachments)
+      );
+      if (!notificationAppendResult.success) {
+        return Err(createUnknownSendMessageError(notificationAppendResult.error));
+      }
+    }
+
     const historyResult = await this.historyService.getHistoryFromLatestBoundary(this.workspaceId);
     if (isStartupAbortRequested()) {
       return Ok(undefined);
@@ -4095,13 +4116,6 @@ export class AgentSession {
       modelString,
       options
     );
-
-    if (isStartupAbortRequested()) {
-      return Ok(undefined);
-    }
-
-    // Check for external file edits (timestamp-based polling)
-    const changedFileAttachments = await this.fileChangeTracker.getChangedAttachments();
 
     if (isStartupAbortRequested()) {
       return Ok(undefined);
@@ -4196,8 +4210,6 @@ export class AgentSession {
       delegatedToolNames,
       muxMetadata: streamMuxMetadata,
       recordFileState,
-      changedFileAttachments:
-        changedFileAttachments.length > 0 ? changedFileAttachments : undefined,
       postCompactionAttachments,
       // Invoked by AIService after runtime.ensureReady() (project-scope
       // listing needs a running runtime). Still ordered after the
