@@ -37,7 +37,13 @@ export type TaskApplyGitPatchResult = z.infer<typeof TaskApplyGitPatchToolResult
 
 export type TaskApplyGitPatchConfiguration = Pick<
   ToolConfiguration,
-  "workspaceId" | "cwd" | "runtime" | "runtimeTempDir" | "workspaceSessionDir" | "trusted"
+  | "workspaceId"
+  | "cwd"
+  | "runtime"
+  | "runtimeTempDir"
+  | "workspaceSessionDir"
+  | "trusted"
+  | "taskService"
 >;
 
 interface AppliedCommit {
@@ -347,6 +353,43 @@ export async function findGitPatchArtifactInWorkspaceOrAncestors(params: {
     for (const workspace of project.workspaces) {
       if (!workspace.id) continue;
       parentById.set(workspace.id, workspace.parentWorkspaceId);
+    }
+  }
+
+  const childParentWorkspaceId = parentById.get(params.childTaskId);
+  if (childParentWorkspaceId && childParentWorkspaceId !== params.workspaceId) {
+    const descendantVisited = new Set<string>([params.childTaskId]);
+    let currentDescendant = params.childTaskId;
+    for (let i = 0; i < MAX_PARENT_WORKSPACE_DEPTH; i++) {
+      const parent = parentById.get(currentDescendant);
+      if (!parent) break;
+      if (parent === params.workspaceId) {
+        const artifactSessionDir = configService.getSessionDir(childParentWorkspaceId);
+        const artifact = await readSubagentGitPatchArtifact(artifactSessionDir, params.childTaskId);
+        if (artifact) {
+          return {
+            artifact,
+            artifactWorkspaceId: childParentWorkspaceId,
+            artifactSessionDir,
+            note: `Patch artifact loaded from descendant parent workspace ${childParentWorkspaceId}.`,
+          };
+        }
+        break;
+      }
+      if (descendantVisited.has(parent)) {
+        log.warn(
+          "task_apply_git_patch: possible parentWorkspaceId cycle during descendant lookup",
+          {
+            workspaceId: params.workspaceId,
+            childTaskId: params.childTaskId,
+            current: currentDescendant,
+            parent,
+          }
+        );
+        break;
+      }
+      descendantVisited.add(parent);
+      currentDescendant = parent;
     }
   }
 
@@ -1531,6 +1574,26 @@ export async function applyTaskGitPatchArtifact(
     pendingGenerationPollIntervalMs?: number;
     pendingGenerationOnPoll?: () => void;
   } = {}
+): Promise<TaskApplyGitPatchResult> {
+  const parsedArgs = TaskApplyGitPatchToolArgsSchema.parse(args);
+  if (config.taskService == null) {
+    return await applyTaskGitPatchArtifactUnlocked(config, parsedArgs, options);
+  }
+  return await config.taskService.withGitPatchArtifactOperationLock(parsedArgs.task_id, async () =>
+    applyTaskGitPatchArtifactUnlocked(config, parsedArgs, options)
+  );
+}
+
+async function applyTaskGitPatchArtifactUnlocked(
+  config: TaskApplyGitPatchConfiguration,
+  args: TaskApplyGitPatchArgs,
+  options: {
+    abortSignal?: AbortSignal;
+    allowAlreadyApplied?: boolean;
+    pendingGenerationWaitMs?: number;
+    pendingGenerationPollIntervalMs?: number;
+    pendingGenerationOnPoll?: () => void;
+  }
 ): Promise<TaskApplyGitPatchResult> {
   const workspaceId = requireWorkspaceId(config, "task_apply_git_patch");
   assert(config.cwd, "task_apply_git_patch requires cwd");

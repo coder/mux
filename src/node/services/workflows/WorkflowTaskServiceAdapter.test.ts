@@ -544,6 +544,57 @@ describe("WorkflowTaskServiceAdapter", () => {
     ]);
   });
 
+  test("holds the stable child patch lock across workflow dry-run and real apply", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const events: string[] = [];
+    const taskService = {
+      create,
+      waitForAgentReport,
+      withGitPatchArtifactOperationLock: async <T>(
+        taskId: string,
+        operation: () => Promise<T>
+      ): Promise<T> => {
+        events.push(`lock:${taskId}:start`);
+        const result = await operation();
+        events.push(`lock:${taskId}:end`);
+        return result;
+      },
+    };
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService,
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      getProjectTrusted: () => true,
+      applyPatchArtifact: async (args) => {
+        events.push(args.dry_run === true ? "apply:dry-run" : "apply:real");
+        return {
+          success: true,
+          taskId: args.task_id,
+          projectResults: [],
+        };
+      },
+    });
+
+    await adapter.applyPatch({
+      id: "apply-impl",
+      sourceTaskId: "task_impl",
+      target: "parent",
+      threeWay: true,
+      force: false,
+    });
+
+    expect(events).toEqual([
+      "lock:task_impl:start",
+      "apply:dry-run",
+      "apply:real",
+      "lock:task_impl:end",
+    ]);
+  });
+
   test("returns dry-run conflicts without applying workflow patches", async () => {
     const create = mock(async () =>
       Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })

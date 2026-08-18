@@ -2079,6 +2079,11 @@ export class TaskService {
     return await this.withTaskTreeLifecycleLocks([workspaceId], operation);
   }
 
+  withGitPatchArtifactOperationLock<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    assert(taskId.length > 0, "withGitPatchArtifactOperationLock requires taskId");
+    return this.gitPatchArtifactService.withOperationLock(taskId, operation);
+  }
+
   private async withTaskTreeLifecycleLocks<T>(
     workspaceIds: readonly string[],
     operation: () => Promise<T>
@@ -6791,7 +6796,9 @@ export class TaskService {
           });
           delete nextRecord.terminalAttentionNotifiedAt;
         }
-        if (this.workspaceTurnRequiresDirectParentDelivery(nextRecord)) {
+        const requiresDirectParentDelivery =
+          this.workspaceTurnRequiresDirectParentDelivery(nextRecord);
+        if (requiresDirectParentDelivery) {
           nextRecord.directParentResultDeliveryRequiredAt = getIsoNow();
           if (resettleStaleTerminal) {
             await this.deletePersistentChildWorkspaceTurnAttention(current);
@@ -6799,6 +6806,13 @@ export class TaskService {
           if (resettleStaleTerminal) {
             delete nextRecord.directParentResultDeliveredAt;
           }
+        }
+        if (requiresDirectParentDelivery && nextRecord.status === "completed") {
+          // Persistent exec children reuse one stable task ID. Refresh their artifact before the
+          // continuation becomes inactive so task_remove cannot race the background format-patch.
+          await this.maybeStartPatchGenerationForReportedTask(nextRecord.workspaceId, {
+            refreshForContinuation: true,
+          });
         }
         await this.taskHandleStore.upsertWorkspaceTurn(nextRecord);
         await this.updateAgentTaskExecutionState(
@@ -8486,16 +8500,38 @@ export class TaskService {
         });
       }
 
-      const tombstoneResult = await this.persistRemovedAgentTaskTombstones(taskId);
-      if (!tombstoneResult.success) {
-        return Ok({ status: "error", action: "remove", ...target, error: tombstoneResult.error });
-      }
-      const result = await this.workspaceService.removeWhileTaskTreeLocked(taskId, true);
-      return Ok(
-        result.success
-          ? { status: "removed", action: "remove", ...target }
-          : { status: "error", action: "remove", ...target, error: result.error }
-      );
+      return await this.gitPatchArtifactService.withOperationLock(taskId, async () => {
+        // The task can become inactive before its background format-patch job finishes. Wait for the
+        // in-process job, then refuse removal if a restart left a durable pending marker behind; the
+        // child worktree is the source needed to recover that artifact.
+        await this.gitPatchArtifactService.waitForGeneration(taskId);
+        const parentWorkspaceId = entry.workspace.parentWorkspaceId;
+        if (parentWorkspaceId) {
+          const patchArtifact = await readSubagentGitPatchArtifact(
+            this.config.getSessionDir(parentWorkspaceId),
+            taskId
+          );
+          if (patchArtifact?.status === "pending") {
+            return Ok({
+              status: "error",
+              action: "remove",
+              ...target,
+              error: "Cannot remove the sub-agent while its git patch artifact is still pending.",
+            });
+          }
+        }
+
+        const tombstoneResult = await this.persistRemovedAgentTaskTombstones(taskId);
+        if (!tombstoneResult.success) {
+          return Ok({ status: "error", action: "remove", ...target, error: tombstoneResult.error });
+        }
+        const result = await this.workspaceService.removeWhileTaskTreeLocked(taskId, true);
+        return Ok(
+          result.success
+            ? { status: "removed", action: "remove", ...target }
+            : { status: "error", action: "remove", ...target, error: result.error }
+        );
+      });
     });
   }
 
@@ -11670,7 +11706,10 @@ export class TaskService {
     await this.cleanupReportedLeafTask(workspaceId);
   }
 
-  private async maybeStartPatchGenerationForReportedTask(workspaceId: string): Promise<void> {
+  private async maybeStartPatchGenerationForReportedTask(
+    workspaceId: string,
+    options?: { refreshForContinuation?: boolean }
+  ): Promise<void> {
     assert(
       workspaceId.length > 0,
       "maybeStartPatchGenerationForReportedTask: workspaceId must be non-empty"
@@ -11686,7 +11725,8 @@ export class TaskService {
       await this.gitPatchArtifactService.maybeStartGeneration(
         parentWorkspaceId,
         workspaceId,
-        (wsId) => this.requestReportedTaskCleanupRecheck(wsId)
+        (wsId) => this.requestReportedTaskCleanupRecheck(wsId),
+        options
       );
     } catch (error: unknown) {
       log.error("Failed to start subagent git patch generation", {

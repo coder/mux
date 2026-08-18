@@ -104,6 +104,7 @@ interface WorkflowTaskServiceLike {
     workspaceId: string,
     options?: { workflowRunId?: string }
   ): Promise<string[]>;
+  withGitPatchArtifactOperationLock?<T>(taskId: string, operation: () => Promise<T>): Promise<T>;
   markWorkflowRunEnded?(workflowRunId: string): Promise<void>;
 }
 
@@ -187,38 +188,44 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     // Applying one patch mutates HEAD, so complete each dry-run + real apply pair before
     // checking the next patch. This preserves the old Orchestrator conflict model.
     await using _lock = await this.patchApplyMutex.acquire();
-    const applyPatchArtifact = this.resolvePatchArtifactApplier();
-    const baseArgs: TaskApplyGitPatchArgs = {
-      task_id: spec.sourceTaskId,
-      ...(spec.projectPath != null ? { project_path: spec.projectPath } : {}),
-      ...(spec.expectedHeadSha != null ? { expected_head_sha: spec.expectedHeadSha } : {}),
-      three_way: spec.threeWay,
-      force: spec.force,
+    const apply = async (): Promise<TaskApplyGitPatchResult> => {
+      const applyPatchArtifact = this.resolvePatchArtifactApplier();
+      const baseArgs: TaskApplyGitPatchArgs = {
+        task_id: spec.sourceTaskId,
+        ...(spec.projectPath != null ? { project_path: spec.projectPath } : {}),
+        ...(spec.expectedHeadSha != null ? { expected_head_sha: spec.expectedHeadSha } : {}),
+        three_way: spec.threeWay,
+        force: spec.force,
+      };
+
+      const dryRun = await applyPatchArtifact(
+        {
+          ...baseArgs,
+          dry_run: true,
+        },
+        options
+      );
+      if (!dryRun.success) {
+        return dryRun;
+      }
+
+      const pathViolation = await this.getAllowedPatchPathViolation(spec);
+      if (pathViolation != null) {
+        return { success: false, taskId: spec.sourceTaskId, error: pathViolation };
+      }
+
+      return await applyPatchArtifact(
+        {
+          ...baseArgs,
+          dry_run: false,
+        },
+        options
+      );
     };
 
-    const dryRun = await applyPatchArtifact(
-      {
-        ...baseArgs,
-        dry_run: true,
-      },
-      options
-    );
-    if (!dryRun.success) {
-      return dryRun;
-    }
-
-    const pathViolation = await this.getAllowedPatchPathViolation(spec);
-    if (pathViolation != null) {
-      return { success: false, taskId: spec.sourceTaskId, error: pathViolation };
-    }
-
-    return await applyPatchArtifact(
-      {
-        ...baseArgs,
-        dry_run: false,
-      },
-      options
-    );
+    return this.taskService.withGitPatchArtifactOperationLock == null
+      ? await apply()
+      : await this.taskService.withGitPatchArtifactOperationLock(spec.sourceTaskId, apply);
   }
 
   private resolvePatchArtifactApplier(): WorkflowPatchArtifactApplier {
@@ -233,6 +240,9 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
       await applyTaskGitPatchArtifact(
         {
           ...patchToolConfig,
+          // applyPatch holds the stable-child lock across dry-run, policy validation, and apply.
+          // Do not reacquire the non-reentrant lock inside the shared tool implementation.
+          taskService: undefined,
           trusted: true,
         },
         args,

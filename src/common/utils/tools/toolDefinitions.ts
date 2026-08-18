@@ -946,7 +946,7 @@ export const TaskSendMessageToolArgsSchema = z
     task_id: z
       .string()
       .min(1)
-      .describe("Active descendant sub-agent task ID returned by task or task_list."),
+      .describe("Descendant sub-agent task ID returned by task or task_list."),
     message: z.string().trim().min(1).describe("Updated guidance to send to the sub-agent."),
     queue_dispatch_mode: z
       .enum(["tool-end", "turn-end"])

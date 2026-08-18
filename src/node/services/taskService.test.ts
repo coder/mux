@@ -19,6 +19,7 @@ import * as subagentGitPatchArtifacts from "@/node/services/subagentGitPatchArti
 import {
   getSubagentGitPatchMboxPath,
   readSubagentGitPatchArtifact,
+  upsertSubagentGitPatchArtifact,
 } from "@/node/services/subagentGitPatchArtifacts";
 import {
   readSubagentReportArtifact,
@@ -1541,6 +1542,148 @@ describe("TaskService", () => {
         ?.directParentResultDeliveredAt
     ).toBeDefined();
   });
+
+  test("exec continuation refreshes the stable child patch artifact from the last applied head", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["execcontinuationhandle", "execcontinuationturn"]);
+    const projectPath = path.join(rootDir, "repo");
+    const parentId = "parent-exec-continuation";
+    const childId = "child-exec-continuation";
+    const parentPath = path.join(projectPath, "parent");
+    const childPath = path.join(projectPath, "child");
+    await fsPromises.mkdir(parentPath, { recursive: true });
+    await fsPromises.mkdir(childPath, { recursive: true });
+
+    initGitRepo(childPath);
+    const launchBaseCommitSha = execSync("git rev-parse HEAD", {
+      cwd: childPath,
+      encoding: "utf-8",
+    }).trim();
+    execSync("bash -lc 'echo \"first\" >> README.md'", { cwd: childPath, stdio: "ignore" });
+    execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
+    execSync('git commit -m "first child change"', { cwd: childPath, stdio: "ignore" });
+    const firstPatchHeadSha = execSync("git rev-parse HEAD", {
+      cwd: childPath,
+      encoding: "utf-8",
+    }).trim();
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentId, {
+          runtimeConfig: { type: "local" },
+        }),
+        projectWorkspace(projectPath, "child", childId, {
+          parentWorkspaceId: parentId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "reported",
+          reportedAt: "2026-08-18T00:00:00.000Z",
+          runtimeConfig: { type: "local" },
+          taskBaseCommitSha: launchBaseCommitSha,
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const parentSessionDir = config.getSessionDir(parentId);
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: parentId,
+      workspaceSessionDir: parentSessionDir,
+      childTaskId: childId,
+      updater: () => ({
+        childTaskId: childId,
+        parentWorkspaceId: parentId,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        status: "ready",
+        projectArtifacts: [
+          {
+            projectPath,
+            projectName: "repo",
+            storageKey: "repo",
+            status: "ready",
+            baseCommitSha: launchBaseCommitSha,
+            headCommitSha: firstPatchHeadSha,
+            commitCount: 1,
+            mboxPath: getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo"),
+            appliedAtMs: 3,
+          },
+        ],
+        readyProjectCount: 1,
+        failedProjectCount: 0,
+        skippedProjectCount: 0,
+        totalCommitCount: 1,
+      }),
+    });
+
+    const sendMessage = mock(async (...args: unknown[]): Promise<Result<void>> => {
+      const internal = args[3] as { onAccepted?: () => Promise<void> | void } | undefined;
+      await internal?.onAccepted?.();
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ sendMessage });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const continuation = await taskService.createWorkspaceTurn({
+      ownerWorkspaceId: parentId,
+      prompt: "Make the follow-up fix.",
+      title: "Exec continuation",
+      allowAgentWorkspace: true,
+      workspace: { mode: "existing", workspaceId: childId },
+    });
+    expect(continuation.success).toBe(true);
+    if (!continuation.success) return;
+
+    execSync("bash -lc 'echo \"second\" >> README.md'", { cwd: childPath, stdio: "ignore" });
+    execSync("git add README.md", { cwd: childPath, stdio: "ignore" });
+    execSync('git commit -m "second continuation change"', { cwd: childPath, stdio: "ignore" });
+    const continuationHeadSha = execSync("git rev-parse HEAD", {
+      cwd: childPath,
+      encoding: "utf-8",
+    }).trim();
+
+    await (
+      taskService as unknown as { handleStreamEnd: (event: StreamEndEvent) => Promise<void> }
+    ).handleStreamEnd({
+      type: "stream-end",
+      workspaceId: childId,
+      messageId: "msg-exec-continuation-result",
+      metadata: {
+        model: "test-model",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: continuation.data.taskId,
+          ownerWorkspaceId: parentId,
+          turnId: "execcontinuationturn",
+        },
+      },
+      parts: [{ type: "text", text: "Implemented the follow-up fix." }],
+    });
+
+    const patchPath = getSubagentGitPatchMboxPath(parentSessionDir, childId, "repo");
+    const startedAt = Date.now();
+    let artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    while (artifact?.status === "pending") {
+      if (Date.now() - startedAt > 20_000) {
+        throw new Error(`Timed out waiting for continuation patch: ${JSON.stringify(artifact)}`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      artifact = await readSubagentGitPatchArtifact(parentSessionDir, childId);
+    }
+
+    expect(artifact?.status).toBe("ready");
+    expect(artifact?.projectArtifacts[0]).toMatchObject({
+      baseCommitSha: firstPatchHeadSha,
+      headCommitSha: continuationHeadSha,
+      commitCount: 1,
+    });
+    const patch = await fsPromises.readFile(patchPath, "utf-8");
+    expect(patch).toContain("Subject: [PATCH] second continuation change");
+    expect(patch).not.toContain("Subject: [PATCH] first child change");
+  }, 20_000);
 
   test("late direct-parent snapshot consumption suppresses duplicate continuation delivery", async () => {
     const config = await createTestConfig(rootDir);
@@ -13094,6 +13237,165 @@ describe("TaskService", () => {
     expect(ancestorEntered).toBe(true);
   });
 
+  test("task removal waits for active patch generation before deleting the child", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-remove-active-patch";
+    const childTaskId = "child-remove-active-patch";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "reported",
+          reportedAt: "2026-08-18T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: parentWorkspaceId,
+      workspaceSessionDir: config.getSessionDir(parentWorkspaceId),
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        status: "skipped",
+        projectArtifacts: [
+          {
+            projectPath,
+            projectName: "repo",
+            storageKey: "repo",
+            status: "skipped",
+            commitCount: 0,
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 1,
+        totalCommitCount: 0,
+      }),
+    });
+
+    let releaseGeneration: (() => void) | undefined;
+    const generation = new Promise<void>((resolve) => {
+      releaseGeneration = resolve;
+    });
+    const remove = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+    const gitPatchArtifactService = (
+      taskService as unknown as {
+        gitPatchArtifactService: { pendingJobsByTaskId: Map<string, Promise<void>> };
+      }
+    ).gitPatchArtifactService;
+    gitPatchArtifactService.pendingJobsByTaskId.set(childTaskId, generation);
+
+    const removal = taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId);
+    await Promise.resolve();
+    expect(remove).not.toHaveBeenCalled();
+
+    releaseGeneration?.();
+    expect(await removal).toMatchObject(
+      Ok({ status: "removed", action: "remove", taskId: childTaskId })
+    );
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  test("task removal preserves an inactive child while its patch artifact is pending", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-remove-pending-patch";
+    const childTaskId = "child-remove-pending-patch";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          agentId: "exec",
+          agentType: "exec",
+          taskStatus: "reported",
+          reportedAt: "2026-08-18T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: parentWorkspaceId,
+      workspaceSessionDir: config.getSessionDir(parentWorkspaceId),
+      childTaskId,
+      updater: () => ({
+        childTaskId,
+        parentWorkspaceId,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        status: "pending",
+        projectArtifacts: [
+          {
+            projectPath,
+            projectName: "repo",
+            storageKey: "repo",
+            status: "pending",
+          },
+        ],
+        readyProjectCount: 0,
+        failedProjectCount: 0,
+        skippedProjectCount: 0,
+        totalCommitCount: 0,
+      }),
+    });
+
+    const remove = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
+    ).toEqual(
+      Ok({
+        status: "error",
+        action: "remove",
+        taskId: childTaskId,
+        workspaceId: childTaskId,
+        displayName: "child",
+        error: "Cannot remove the sub-agent while its git patch artifact is still pending.",
+      })
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, childTaskId)).toBeDefined();
+
+    await upsertSubagentGitPatchArtifact({
+      workspaceId: parentWorkspaceId,
+      workspaceSessionDir: config.getSessionDir(parentWorkspaceId),
+      childTaskId,
+      updater: (existing) => {
+        assert(existing, "pending artifact must exist");
+        return {
+          ...existing,
+          updatedAtMs: 2,
+          projectArtifacts: existing.projectArtifacts.map((projectArtifact) => ({
+            ...projectArtifact,
+            status: "skipped" as const,
+            commitCount: 0,
+          })),
+        };
+      },
+    });
+
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, childTaskId)
+    ).toMatchObject(Ok({ status: "removed", action: "remove", taskId: childTaskId }));
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
   test("task removal waits for inactive-child reawakening and then rejects the active child", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["racehandle", "raceturn"]);
@@ -15775,7 +16077,12 @@ describe("TaskService", () => {
 
     expect(report).toEqual({ reportMarkdown: "persisted report", title: "persisted title" });
     expect(findWorkspaceInConfig(config, childId)?.taskStatus).toBe("reported");
-    expect(patchGeneration).toHaveBeenCalledWith(parentId, childId, expect.any(Function));
+    expect(patchGeneration).toHaveBeenCalledWith(
+      parentId,
+      childId,
+      expect.any(Function),
+      undefined
+    );
   });
 
   test("waitForAgentReport returns persisted report after workspace is removed", async () => {
