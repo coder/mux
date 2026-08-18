@@ -25,6 +25,8 @@ interface ResolveAgentInheritanceChainOptions {
   agentDefinition: AgentDefinitionPackage;
   workspaceId: string;
   maxDepth?: number;
+  /** agent-plugins experiment: also resolve base agents contributed by Agent Plugins. */
+  includeAgentPlugins?: boolean;
 }
 
 /**
@@ -78,6 +80,7 @@ export async function resolveAgentInheritanceChain(
 
     try {
       currentDefinition = await readAgentDefinition(runtime, workspacePath, baseId, {
+        includeAgentPlugins: options.includeAgentPlugins,
         skipScopesAbove,
       });
     } catch (error) {

@@ -57,6 +57,8 @@ export interface ResolveAgentOptions {
   emitError: (event: ErrorEvent) => void;
   /** Whether the advisor-tool experiment is enabled (from ExperimentsService). */
   isAdvisorExperimentEnabled?: boolean;
+  /** agent-plugins experiment: also resolve agents contributed by Agent Plugins. */
+  includeAgentPlugins?: boolean;
 }
 
 /** Result of agent resolution — all computed values needed by the stream pipeline. */
@@ -188,6 +190,7 @@ export async function resolveAgentForStream(
     cfg,
     emitError,
     isAdvisorExperimentEnabled,
+    includeAgentPlugins,
   } = opts;
 
   const workspaceLog = log.withFields({ workspaceId, workspaceName: metadata.name });
@@ -234,7 +237,8 @@ export async function resolveAgentForStream(
         const definition = await readAgentDefinition(
           discovery.runtime,
           discovery.workspacePath,
-          candidateAgentId
+          candidateAgentId,
+          { includeAgentPlugins }
         );
         if (definition.scope === "project") {
           agentDefinition = definition;
@@ -266,7 +270,9 @@ export async function resolveAgentForStream(
       agentDiscoveryPaths: agentDiscoveryCandidates.map((candidate) => candidate.workspacePath),
       disableWorkspaceAgents,
     });
-    agentDefinition = await readAgentDefinition(agentDiscoveryRuntime, agentDiscoveryPath, "exec");
+    agentDefinition = await readAgentDefinition(agentDiscoveryRuntime, agentDiscoveryPath, "exec", {
+      includeAgentPlugins,
+    });
   }
 
   // Keep agent ID aligned with the actual definition used (may fall back to exec).
@@ -283,6 +289,7 @@ export async function resolveAgentForStream(
         agentDiscoveryPath,
         agentDefinition.id,
         {
+          includeAgentPlugins,
           skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
         }
       );
@@ -315,7 +322,8 @@ export async function resolveAgentForStream(
         agentDefinition = await readAgentDefinition(
           agentDiscoveryRuntime,
           agentDiscoveryPath,
-          "exec"
+          "exec",
+          { includeAgentPlugins }
         );
         effectiveAgentId = agentDefinition.id;
       }
@@ -335,6 +343,7 @@ export async function resolveAgentForStream(
     agentId: agentDefinition.id,
     agentDefinition,
     workspaceId,
+    includeAgentPlugins,
   });
 
   const agentIsPlanLike = isPlanLikeInResolvedChain(agentsForInheritance);

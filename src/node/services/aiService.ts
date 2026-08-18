@@ -1893,6 +1893,7 @@ export class AIService extends EventEmitter {
         cfg,
         emitError: (event) => this.emit("error", event),
         isAdvisorExperimentEnabled: advisorExperimentEnabled,
+        includeAgentPlugins: agentPluginsExperimentEnabled,
       });
       recordStartupPhaseTiming("resolveAgentForStreamMs", resolveAgentForStreamStartedAt);
       if (!agentResult.success) {

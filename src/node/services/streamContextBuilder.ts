@@ -535,6 +535,7 @@ export async function buildStreamSystemContext(
     agentDiscoveryPath,
     agentDefinition.id,
     {
+      includeAgentPlugins: opts.agentPluginsEnabled,
       skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
     }
   );
@@ -547,6 +548,7 @@ export async function buildStreamSystemContext(
         agentDiscoveryPath,
         agentDefinition.id,
         {
+          includeAgentPlugins: opts.agentPluginsEnabled,
           skipScopesAbove: getSkipScopesAboveForKnownScope(agentDefinition.scope),
         }
       );
@@ -584,6 +586,7 @@ export async function buildStreamSystemContext(
       workspacePath: agentDiscoveryPath,
       cfg,
       loadDesktopCapability,
+      includeAgentPlugins: opts.agentPluginsEnabled,
     });
   }
 
@@ -684,6 +687,8 @@ export async function discoverAvailableSubagentsForToolContext(args: {
   cfg: ProjectsConfig;
   roots?: AgentDefinitionsRoots;
   loadDesktopCapability?: () => Promise<DesktopCapability>;
+  /** agent-plugins experiment: also discover agents contributed by Agent Plugins. */
+  includeAgentPlugins?: boolean;
 }): Promise<Awaited<ReturnType<typeof discoverAgentDefinitions>>> {
   assert(args, "discoverAvailableSubagentsForToolContext: args is required");
   assert(args.runtime, "discoverAvailableSubagentsForToolContext: runtime is required");
@@ -695,6 +700,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
 
   const discovered = await discoverAgentDefinitions(args.runtime, args.workspacePath, {
     roots: args.roots,
+    includeAgentPlugins: args.includeAgentPlugins,
   });
 
   let desktopAvailablePromise: Promise<boolean> | undefined;
@@ -721,6 +727,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
           descriptor.id,
           {
             roots: args.roots,
+            includeAgentPlugins: args.includeAgentPlugins,
             skipScopesAbove: getSkipScopesAboveForKnownScope(descriptor.scope),
           }
         );

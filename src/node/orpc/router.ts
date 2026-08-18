@@ -489,6 +489,9 @@ export async function resolveWorkflowContext(
           runtime,
           workspacePath,
           projectTrusted: resolveWorkflowProjectTrusted(),
+          includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+            EXPERIMENT_IDS.AGENT_PLUGINS
+          ),
         }),
       onRunStatusChanged: (event) => context.workspaceService.emitWorkflowRunActivity(event),
       ...(options.onBackgroundRunTerminal != null
@@ -2068,6 +2071,9 @@ export const router = (authToken?: string) => {
             runtime,
             workspacePath,
             projectTrusted,
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
+            ),
           });
           if (input.rawCommand != null) {
             await context.workspaceService.prepareManualWorkflowInvocation(input.workspaceId);
