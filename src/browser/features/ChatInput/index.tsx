@@ -321,6 +321,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     EXPERIMENT_IDS.WORKSPACE_HEARTBEATS
   );
   const memoryExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.MEMORY);
+  const agentPluginsExperimentEnabled = useExperimentValue(EXPERIMENT_IDS.AGENT_PLUGINS);
   const memoryConsolidationExperimentEnabled = useExperimentValue(
     EXPERIMENT_IDS.MEMORY_CONSOLIDATION
   );
@@ -1903,12 +1904,14 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   ]);
 
   // Agent Plugins: load manifest-contributed slash commands for suggestions.
-  // The backend returns [] when the agent-plugins experiment is disabled.
+  // Subscribes to the reactive experiment value so toggling agent-plugins in
+  // Settings immediately loads/clears commands without remounting the composer
+  // (the backend also returns [] while the experiment is disabled).
   useEffect(() => {
     let isMounted = true;
 
     const loadPluginCommands = async () => {
-      if (!api || variant !== "workspace" || !workspaceId) {
+      if (!api || variant !== "workspace" || !workspaceId || !agentPluginsExperimentEnabled) {
         if (isMounted) setPluginCommandDescriptors([]);
         return;
       }
@@ -1926,7 +1929,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     return () => {
       isMounted = false;
     };
-  }, [api, variant, workspaceId]);
+  }, [api, variant, workspaceId, agentPluginsExperimentEnabled]);
 
   // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {

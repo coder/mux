@@ -42,6 +42,7 @@ import {
   type SandboxHostService,
   type SandboxMount,
 } from "@/node/services/sandbox/sandboxHostService";
+import { QuickJSRuntimeFactory } from "@/node/services/ptc/quickjsRuntime";
 import type { IJSRuntimeFactory } from "@/node/services/ptc/runtime";
 import { ensurePathContained } from "@/node/services/tools/skillFileUtils";
 import {
@@ -122,13 +123,12 @@ interface AgentPluginHookServiceDeps {
   computeContainers?: typeof computeAgentPluginContainers;
 }
 
-async function loadQuickJSRuntimeFactory(): Promise<IJSRuntimeFactory> {
-  // Dynamic import keeps the ~10MB QuickJS WASM stack off startup paths (same
-  // rationale as toolAssembly.getPTCModules; workspaceService imports this
-  // module for lifecycle disposal).
-  // eslint-disable-next-line no-restricted-syntax
-  const quickjs = await import("@/node/services/ptc/quickjsRuntime");
-  return new quickjs.QuickJSRuntimeFactory();
+function loadQuickJSRuntimeFactory(): Promise<IJSRuntimeFactory> {
+  // The heavy QuickJS WASM stack loads at first runtime creation
+  // (QuickJSRuntime.create), not at module import — the static import adds
+  // only JS glue to the startup graph, so factory construction stays cheap
+  // and lazy behind the runtimeFactoryLoader seam.
+  return Promise.resolve(new QuickJSRuntimeFactory());
 }
 
 export class AgentPluginHookService {

@@ -3794,6 +3794,28 @@ export class AIService extends EventEmitter {
                       return { effectiveLevel: effective, providerOptions: merged };
                     };
 
+                  // The fallback request is a different request identity
+                  // (model, system prompt, toolset, provider options), so it
+                  // needs its own envelope: pairSessionTurns compares the LAST
+                  // envelope per requestHistorySequence, so this row supersedes
+                  // the primary one and replay-verify/cache-audit see the
+                  // request that actually streamed. Never fails the prepare.
+                  await emitTurnEnvelope({
+                    journal: this.durableEventJournalFor(workspaceId),
+                    workspaceId,
+                    systemMessage: nextSystem,
+                    tools: nextTools,
+                    modelString: nextModelString,
+                    thinkingLevel: nextThinkingLevel,
+                    providerOptions: nextMergedProviderOptions,
+                    requestHistorySequence,
+                    wireProviderName: next.wireProviderName,
+                    anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+                    planContentForTransition,
+                    planFilePath,
+                    postCompactionAttachments,
+                  });
+
                   return Ok({
                     model: next.model,
                     // RAW identity (matching the main path's raw modelString):
