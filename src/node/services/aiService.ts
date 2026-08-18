@@ -3830,6 +3830,7 @@ export class AIService extends EventEmitter {
                       thinkingLevel: nextThinkingLevel,
                       providerOptions: nextMergedProviderOptions,
                       requestHistorySequence,
+                      sentinelToolNames: nextToolNamesForSentinel,
                       wireProviderName: next.wireProviderName,
                       anthropicCacheTtl:
                         effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
@@ -3918,6 +3919,10 @@ export class AIService extends EventEmitter {
         // typed gateways need live metadata), the per-send Anthropic cache TTL,
         // and the injected plan-transition / post-compaction content.
         requestHistorySequence,
+        // Sentinel names are recorded separately: forced first-step scoping
+        // narrows the wire manifest while the sentinel lists the full active
+        // set, so replay cannot derive one from the other.
+        sentinelToolNames: toolNamesForSentinel,
         wireProviderName,
         anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
         planContentForTransition,

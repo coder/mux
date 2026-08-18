@@ -574,7 +574,13 @@ export async function replayVerifySession(params: {
         modelString: envelope.data.modelString,
         thinkingLevel: envelope.data.thinkingLevel as ThinkingLevel,
         effectiveAgentId: turn.message.metadata?.agentId ?? "exec",
-        toolNamesForSentinel: envelope.data.toolsetManifest.map((entry) => entry.name),
+        // Prefer the independently-recorded sentinel names: forced first-step
+        // scoping (e.g. xAI search) narrows the wire manifest while the live
+        // sentinel listed the full active set. Manifest names remain the
+        // legacy fallback for rows written before sentinelToolNames existed.
+        toolNamesForSentinel:
+          envelope.data.sentinelToolNames ??
+          envelope.data.toolsetManifest.map((entry) => entry.name),
         routeProvider: turn.message.metadata?.routeProvider,
         providersConfig: params.providersConfig,
         wireProviderName: envelope.data.wireProviderName,

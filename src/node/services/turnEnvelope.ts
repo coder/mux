@@ -145,6 +145,12 @@ export async function emitTurnEnvelope(params: {
   providerOptions: unknown;
   /** Join key for replay pairing; omit when unknown (empty request history). */
   requestHistorySequence?: number;
+  /**
+   * Agent-transition sentinel tool names when they differ from the wire
+   * toolset (forced first-step scoping); replay rebuilds sentinel text from
+   * these, never from the narrowed manifest.
+   */
+  sentinelToolNames?: string[];
   /** Resolved wire provider name (instance-typed gateways are not derivable offline). */
   wireProviderName?: string;
   /** Per-send Anthropic cache TTL override; omit for the default TTL. */
@@ -187,6 +193,9 @@ export async function emitTurnEnvelope(params: {
         thinkingLevel: params.thinkingLevel,
         ...(params.requestHistorySequence != null && params.requestHistorySequence >= 0
           ? { requestHistorySequence: params.requestHistorySequence }
+          : {}),
+        ...(params.sentinelToolNames != null
+          ? { sentinelToolNames: params.sentinelToolNames }
           : {}),
         ...(params.wireProviderName != null ? { wireProviderName: params.wireProviderName } : {}),
         ...(params.anthropicCacheTtl != null

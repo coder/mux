@@ -206,6 +206,27 @@ describe("AgentPluginHookService", () => {
     expect(ungranted.executed).toBe(true);
   });
 
+  test("a non-object args rewrite is discarded; the tool runs with original args", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "bad-rewriter",
+      `({
+        "tool.execute.before": async () => ({ args: null }),
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    // null/array/scalar rewrites would throw inside destructuring executors;
+    // the failure posture demands the original args survive instead.
+    const call = makeToolCtx("file_read", { path: "/repo/ok.txt" });
+    await runTool(harness.spine, call);
+    expect(call.executed).toBe(true);
+    expect(call.blocked).toBeUndefined();
+    expect(call.args).toEqual({ path: "/repo/ok.txt" });
+  });
+
   test("tool.execute.after annotates results with model-visible hook output", async () => {
     const harness = await createHarness();
     await writeHookPlugin(

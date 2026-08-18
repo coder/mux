@@ -32,6 +32,13 @@ export const TurnEnvelopeDataSchema = z.object({
   systemPromptHash: BlobRefSchema,
   /** Sorted by tool name; schemaHash fingerprints the tool's input schema. */
   toolsetManifest: z.array(z.object({ name: z.string(), schemaHash: z.string() })),
+  /**
+   * Tool names the agent-transition sentinel advertised, when they differ from
+   * the wire manifest: forced first-step scoping (e.g. xAI search) narrows the
+   * wire toolset while the sentinel still lists the full active set, so replay
+   * cannot derive one from the other.
+   */
+  sentinelToolNames: z.array(z.string()).optional(),
   modelString: z.string(),
   providerOptionsHash: z.string(),
   thinkingLevel: z.string(),

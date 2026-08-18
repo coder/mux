@@ -241,6 +241,30 @@ describe("emitTurnEnvelope", () => {
     expect(await listBlobFiles(tmp.path)).toHaveLength(1);
   });
 
+  test("sentinelToolNames persist independently of the narrowed wire manifest", async () => {
+    using tmp = new DisposableTempDir("turn-envelope-test");
+    const journal = new DurableEventJournal(tmp.path);
+    // Forced first-step scoping: the wire manifest carries only the forced
+    // tool while the sentinel advertised the full active set.
+    await emitTurnEnvelope({
+      journal,
+      workspaceId: "ws-1",
+      systemMessage: "prompt",
+      tools: { web_search: makeTool(z.object({ query: z.string() })) },
+      modelString: "xai:grok-test",
+      thinkingLevel: "off",
+      providerOptions: {},
+      sentinelToolNames: ["bash", "file_read", "web_search"],
+    });
+
+    const events = await journal.read();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    if (event.kind !== "turn-envelope") throw new Error("expected turn-envelope");
+    expect(event.data.toolsetManifest.map((entry) => entry.name)).toEqual(["web_search"]);
+    expect(event.data.sentinelToolNames).toEqual(["bash", "file_read", "web_search"]);
+  });
+
   test("providerOptionsHash is stable across key order but tracks content", async () => {
     using tmp = new DisposableTempDir("turn-envelope-options-hash");
     const journal = new DurableEventJournal(tmp.path);

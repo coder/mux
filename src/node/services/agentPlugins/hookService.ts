@@ -378,9 +378,20 @@ export class AgentPluginHookService {
       return;
     }
     // JSON round-trip means a present `args` key is an intentional rewrite
-    // (JSON cannot carry undefined).
+    // (JSON cannot carry undefined). Only plain objects are accepted: tool
+    // executors destructure their input, and a null/array/scalar rewrite
+    // would bypass the AI SDK's input validation and throw inside the tool —
+    // a malformed hook must stay an isolated failure (keep original args).
     if (Object.hasOwn(output, "args")) {
-      ctx.args = output.args;
+      const rewrite = output.args;
+      if (rewrite !== null && typeof rewrite === "object" && !Array.isArray(rewrite)) {
+        ctx.args = rewrite;
+      } else {
+        log.warn(
+          `Agent plugin hooks: '${state.pluginName}' tool.execute.before returned a non-object args rewrite; keeping original args`,
+          { toolName: ctx.toolName }
+        );
+      }
     }
   }
 
