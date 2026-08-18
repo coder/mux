@@ -1,8 +1,16 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
-import { jsonSchema, tool, type FlexibleSchema, type Tool } from "ai";
+import {
+  dynamicTool,
+  jsonSchema,
+  tool,
+  type FlexibleSchema,
+  type JSONSchema7,
+  type Tool,
+} from "ai";
 import { z } from "zod";
+import { sanitizeToolSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   BLOBS_DIR_NAME,
@@ -74,6 +82,90 @@ describe("buildToolsetManifest", () => {
     const sparse = buildToolsetManifest({ ghost: undefined } as unknown as Record<string, Tool>);
     expect(sparse).toHaveLength(1);
     expect(sparse[0].schemaHash).toMatch(SHA256_HEX);
+  });
+
+  test("fingerprints MCP dynamic tools and bare jsonSchema-wrapper objects", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { value: { type: "string" } },
+      additionalProperties: false,
+    };
+
+    const manifest = buildToolsetManifest({
+      // Real MCP shape: mcpClient.ts builds tools via dynamicTool + jsonSchema().
+      mcp: dynamicTool({
+        description: "mcp tool",
+        inputSchema: jsonSchema(schema),
+        execute: () => Promise.resolve("ok"),
+      }),
+      // Wrapper exposing only a jsonSchema payload, without the AI SDK schema
+      // symbol — asSchema would call it as a function and throw.
+      bare: { description: "bare wrapper", inputSchema: { jsonSchema: schema } } as unknown as Tool,
+      reference: makeTool(jsonSchema(schema)),
+    });
+
+    expect(manifest.map((entry) => entry.name)).toEqual(["bare", "mcp", "reference"]);
+    // The same logical schema fingerprints identically regardless of wrapper shape.
+    expect(new Set(manifest.map((entry) => entry.schemaHash)).size).toBe(1);
+    expect(manifest[0].schemaHash).toMatch(SHA256_HEX);
+  });
+
+  test("fingerprints plain JSON Schema objects on .parameters/.schema", () => {
+    const schema: JSONSchema7 = {
+      type: "object",
+      properties: { value: { type: "string" } },
+      additionalProperties: false,
+    };
+
+    const manifest = buildToolsetManifest({
+      viaParameters: { description: "plain", parameters: schema } as unknown as Tool,
+      viaSchema: { description: "plain", schema } as unknown as Tool,
+      viaWrapper: makeTool(jsonSchema(schema)),
+    });
+    // A plain JSON Schema is already the model-visible schema, so it must
+    // fingerprint identically to the same schema behind a jsonSchema() wrapper.
+    expect(new Set(manifest.map((entry) => entry.schemaHash)).size).toBe(1);
+
+    const different = buildToolsetManifest({
+      viaParameters: {
+        description: "plain",
+        parameters: { type: "object", properties: { other: { type: "number" } } },
+      } as unknown as Tool,
+    });
+    expect(different[0].schemaHash).not.toBe(manifest[0].schemaHash);
+  });
+
+  test("fingerprints OpenAI-sanitized tools by their sanitized (model-visible) schema", () => {
+    // `minimum` is stripped by sanitizeToolSchemaForOpenAI; the fingerprint
+    // must track the sanitized schema the provider actually receives.
+    const unsanitized: JSONSchema7 = {
+      type: "object",
+      properties: { count: { type: "number", minimum: 1 } },
+      additionalProperties: false,
+    };
+    const stripped: JSONSchema7 = {
+      type: "object",
+      properties: { count: { type: "number" } },
+      additionalProperties: false,
+    };
+
+    const mcpTool = dynamicTool({
+      description: "mcp tool",
+      inputSchema: jsonSchema(unsanitized),
+      execute: () => Promise.resolve("ok"),
+    });
+    const v3Tool = { description: "v3 tool", parameters: unsanitized } as unknown as Tool;
+
+    const manifest = buildToolsetManifest({
+      mcpSanitized: sanitizeToolSchemaForOpenAI(mcpTool),
+      v3Sanitized: sanitizeToolSchemaForOpenAI(v3Tool),
+      strippedReference: makeTool(jsonSchema(stripped)),
+      original: mcpTool,
+    });
+    const byName = Object.fromEntries(manifest.map((entry) => [entry.name, entry.schemaHash]));
+    expect(byName.mcpSanitized).toBe(byName.strippedReference);
+    expect(byName.v3Sanitized).toBe(byName.strippedReference);
+    expect(byName.original).not.toBe(byName.strippedReference);
   });
 });
 
