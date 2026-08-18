@@ -5,8 +5,16 @@ import { SkillNameSchema } from "@/common/orpc/schemas";
 import type { AgentSkillScope, SkillName } from "@/common/types/agentSkill";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
 import {
+  discoverAgentPlugins,
+  type AgentPluginContainer,
+  type AgentPluginInfo,
+} from "@/node/services/agentPlugins/discovery";
+import { isValidAgentPluginName } from "@/node/services/agentPlugins/manifest";
+import {
+  getDefaultAgentSkillsRoots,
   readAgentSkill,
   type AgentSkillsRoots,
 } from "@/node/services/agentSkills/agentSkillsService";
@@ -16,10 +24,10 @@ import {
   ensureRuntimePathWithinWorkspace,
   resolveContainedSkillFilePathOnRuntime,
 } from "@/node/services/tools/runtimeSkillPathUtils";
-import { isAbsolutePathAny } from "@/node/services/tools/skillFileUtils";
+import { ensurePathContained, isAbsolutePathAny } from "@/node/services/tools/skillFileUtils";
 import { readFileString } from "@/node/utils/runtime/helpers";
 
-export type WorkflowScriptSourceKind = "skill" | "workspace-file" | "inline";
+export type WorkflowScriptSourceKind = "skill" | "workspace-file" | "inline" | "plugin";
 
 export interface ResolvedWorkflowScript {
   requestedScriptPath: string;
@@ -29,6 +37,8 @@ export interface ResolvedWorkflowScript {
   sourceKind: WorkflowScriptSourceKind;
   scope?: AgentSkillScope;
   skillName?: SkillName;
+  /** Agent Plugins: contributing plugin name (plugin:// scripts only). */
+  pluginName?: string;
   relativePath?: string;
   resolvedPath?: string;
 }
@@ -40,10 +50,16 @@ export interface ResolveWorkflowScriptInput {
   workspacePath: string;
   projectTrusted: boolean;
   roots?: AgentSkillsRoots;
+  /**
+   * agent-plugins experiment: allow plugin skill workflows and `plugin://`
+   * scripts. Loading third-party plugin code stays gated behind the experiment.
+   */
+  includeAgentPlugins?: boolean;
 }
 
 const SKILL_SCRIPT_PATH_PREFIX = "skill://";
 const INLINE_SCRIPT_PATH_PREFIX = "inline://";
+const PLUGIN_SCRIPT_PATH_PREFIX = "plugin://";
 
 export async function resolveWorkflowScript(
   input: ResolveWorkflowScriptInput
@@ -73,6 +89,10 @@ export async function resolveWorkflowScript(
 
   if (scriptPath.startsWith(SKILL_SCRIPT_PATH_PREFIX)) {
     return await resolveSkillWorkflowScript({ ...input, scriptPath });
+  }
+
+  if (scriptPath.startsWith(PLUGIN_SCRIPT_PATH_PREFIX)) {
+    return await resolvePluginWorkflowScript({ ...input, scriptPath });
   }
 
   return await resolveWorkspaceFileWorkflowScript({ ...input, scriptPath });
@@ -118,6 +138,9 @@ async function resolveSkillWorkflowScript(
 
   const resolvedSkill = await readAgentSkill(input.runtime, input.workspacePath, parsed.skillName, {
     ...(input.roots != null ? { roots: input.roots } : {}),
+    ...(input.includeAgentPlugins != null
+      ? { includeAgentPlugins: input.includeAgentPlugins }
+      : {}),
     containment: { kind: "runtime", root: input.workspacePath },
   });
 
@@ -167,6 +190,134 @@ async function resolveSkillWorkflowScript(
     relativePath: parsed.relativePath,
     resolvedPath,
   });
+}
+
+/**
+ * Discover plugins eligible to provide `plugin://` workflow scripts. Project
+ * containers apply only for trusted projects (running project plugin code is
+ * running repo-controlled code); global containers always apply. Plugin
+ * discovery is host-filesystem-only, so remote runtimes resolve none.
+ */
+export async function discoverWorkflowPlugins(input: {
+  runtime: Runtime;
+  workspacePath: string;
+  projectTrusted: boolean;
+  roots?: AgentSkillsRoots;
+}): Promise<AgentPluginInfo[]> {
+  const roots =
+    input.roots ??
+    getDefaultAgentSkillsRoots(input.runtime, input.workspacePath, { includeAgentPlugins: true });
+  const localRuntime = new LocalRuntime(input.workspacePath);
+
+  const containers: AgentPluginContainer[] = [];
+  const addContainers = async (
+    containerPaths: string[],
+    scope: AgentPluginContainer["scope"]
+  ): Promise<void> => {
+    for (const containerPath of containerPaths) {
+      try {
+        // Container paths may be tilde-form (e.g. ~/.agents/plugins).
+        containers.push({ path: await localRuntime.resolvePath(containerPath), scope });
+      } catch {
+        // Unresolvable container: skip, like plugin skill discovery does.
+      }
+    }
+  };
+
+  if (input.projectTrusted) {
+    await addContainers(roots.projectPluginRoots ?? [], "project");
+  }
+  await addContainers(roots.globalPluginRoots ?? [], "global");
+
+  const { plugins } = await discoverAgentPlugins(containers);
+
+  // Project plugin roots keep the repo-symlink posture: a committed
+  // .mux/plugins/<name> symlink must not resolve outside the checkout.
+  const eligible: AgentPluginInfo[] = [];
+  for (const plugin of plugins) {
+    if (plugin.scope === "project") {
+      try {
+        await ensurePathContained(input.workspacePath, plugin.rootPath);
+      } catch {
+        continue;
+      }
+    }
+    eligible.push(plugin);
+  }
+  return eligible;
+}
+
+async function resolvePluginWorkflowScript(
+  input: ResolveWorkflowScriptInput & { scriptPath: string }
+): Promise<ResolvedWorkflowScript> {
+  // LOADING third-party plugin code stays behind the agent-plugins experiment
+  // even though manifest parsing/inspection works unconditionally.
+  if (input.includeAgentPlugins !== true) {
+    throw new Error("plugin:// workflow scripts require the agent-plugins experiment");
+  }
+
+  const parsed = parsePluginWorkflowScriptPath(input.scriptPath);
+  assertJavaScriptWorkflowPath(parsed.relativePath);
+
+  const plugins = await discoverWorkflowPlugins(input);
+  // First match in container precedence order wins (project before global).
+  const plugin = plugins.find(
+    (candidate) => candidate.name === parsed.pluginName && candidate.workflowsDir != null
+  );
+  if (plugin?.workflowsDir == null) {
+    throw new Error(`Plugin workflow script not found: ${input.scriptPath}`);
+  }
+
+  // Realpath containment inside the plugin's workflows dir: symlinked entries
+  // cannot escape the contribution directory.
+  let resolvedPath: string;
+  try {
+    resolvedPath = await ensurePathContained(
+      plugin.workflowsDir,
+      path.join(plugin.workflowsDir, parsed.relativePath)
+    );
+  } catch (error) {
+    throw new Error(`Plugin workflow script not readable: ${getErrorMessage(error)}`);
+  }
+
+  const localRuntime = new LocalRuntime(input.workspacePath);
+  const stat = await localRuntime.stat(resolvedPath);
+  assertRegularJavaScriptFile(stat.isDirectory, parsed.relativePath);
+  const sizeValidation = validateFileSize(stat);
+  if (sizeValidation != null) {
+    throw new Error(sizeValidation.error);
+  }
+
+  const source = await readFileString(localRuntime, resolvedPath);
+  return buildResolvedScript({
+    requestedScriptPath: input.scriptPath,
+    canonicalScriptPath: `${PLUGIN_SCRIPT_PATH_PREFIX}${plugin.name}/${parsed.relativePath}`,
+    source,
+    sourceKind: "plugin",
+    scope: plugin.scope,
+    pluginName: plugin.name,
+    relativePath: parsed.relativePath,
+    resolvedPath,
+  });
+}
+
+function parsePluginWorkflowScriptPath(scriptPath: string): {
+  pluginName: string;
+  relativePath: string;
+} {
+  const remainder = scriptPath.slice(PLUGIN_SCRIPT_PATH_PREFIX.length);
+  const slashIndex = remainder.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === remainder.length - 1) {
+    throw new Error("plugin:// workflow script paths must include a relative .js file path");
+  }
+
+  const pluginName = remainder.slice(0, slashIndex);
+  if (!isValidAgentPluginName(pluginName)) {
+    throw new Error(`Invalid workflow plugin name: ${pluginName}`);
+  }
+
+  const relativePath = normalizeRelativeWorkflowPath(remainder.slice(slashIndex + 1), "plugin");
+  return { pluginName, relativePath };
 }
 
 async function resolveWorkspaceFileWorkflowScript(
@@ -221,22 +372,22 @@ function parseSkillWorkflowScriptPath(scriptPath: string): {
     throw new Error(`Invalid workflow skill name: ${parsedName.error.message}`);
   }
 
-  const relativePath = normalizeSkillRelativePath(remainder.slice(slashIndex + 1));
+  const relativePath = normalizeRelativeWorkflowPath(remainder.slice(slashIndex + 1), "skill");
   return { skillName: parsedName.data, relativePath };
 }
 
-function normalizeSkillRelativePath(filePath: string): string {
+function normalizeRelativeWorkflowPath(filePath: string, scheme: "skill" | "plugin"): string {
   if (isAbsolutePathAny(filePath) || filePath.startsWith("~")) {
-    throw new Error(`Invalid skill workflow path (must be relative): ${filePath}`);
+    throw new Error(`Invalid ${scheme} workflow path (must be relative): ${filePath}`);
   }
 
   const normalized = path.posix.normalize(filePath.replaceAll("\\", "/"));
   const stripped = normalized.startsWith("./") ? normalized.slice(2) : normalized;
   if (stripped === "" || stripped === "." || stripped.endsWith("/")) {
-    throw new Error("skill:// workflow script paths must include a relative .js file path");
+    throw new Error(`${scheme}:// workflow script paths must include a relative .js file path`);
   }
   if (stripped === ".." || stripped.startsWith("../") || stripped.includes("/../")) {
-    throw new Error(`Invalid skill workflow path (path traversal): ${filePath}`);
+    throw new Error(`Invalid ${scheme} workflow path (path traversal): ${filePath}`);
   }
   return stripped;
 }

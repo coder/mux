@@ -916,7 +916,12 @@ export function buildWorkflowScriptDescriptor(
     name: getWorkflowScriptDefinitionName(script),
     description:
       parseWorkflowDescription(script.source) ?? `Workflow script ${script.canonicalScriptPath}`,
-    scope: script.sourceKind === "skill" ? (script.scope ?? "global") : "project",
+    // Skill and plugin scripts carry their discovery scope (project/global/built-in);
+    // workspace-file and inline scripts are project-trust-gated by definition.
+    scope:
+      script.sourceKind === "skill" || script.sourceKind === "plugin"
+        ? (script.scope ?? "global")
+        : "project",
     sourcePath: script.canonicalScriptPath,
     requestedScriptPath: script.requestedScriptPath,
     canonicalScriptPath: script.canonicalScriptPath,

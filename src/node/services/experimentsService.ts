@@ -29,6 +29,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** Parse the persisted overrides file contents (shared by the service and CLI reads). */
+async function readOverridesFile(filePath: string): Promise<Map<ExperimentId, boolean>> {
+  const overrides = new Map<ExperimentId, boolean>();
+  try {
+    const raw = await fs.readFile(filePath, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+
+    if (!isRecord(parsed) || parsed.version !== OVERRIDES_FILE_VERSION) {
+      return overrides;
+    }
+
+    const persisted = parsed.overrides;
+    if (!isRecord(persisted)) {
+      return overrides;
+    }
+
+    for (const [key, value] of Object.entries(persisted)) {
+      if (!(key in EXPERIMENTS) || typeof value !== "boolean") {
+        continue;
+      }
+
+      overrides.set(key as ExperimentId, value);
+    }
+  } catch {
+    // Ignore missing/corrupt overrides
+  }
+  return overrides;
+}
+
+/**
+ * One-shot read of a persisted experiment override for standalone CLIs
+ * (debug/workflow) that run without an ExperimentsService instance. Applies
+ * the same file format and platform-support semantics as the service.
+ */
+export async function readPersistedExperimentEnabled(
+  experimentId: ExperimentId,
+  options?: { muxHome?: string; platform?: NodeJS.Platform }
+): Promise<boolean> {
+  assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
+
+  if (!isExperimentSupportedOnPlatform(experimentId, options?.platform ?? process.platform)) {
+    return false;
+  }
+
+  const muxHome = options?.muxHome ?? getMuxHome();
+  const overrides = await readOverridesFile(path.join(muxHome, OVERRIDES_FILE_NAME));
+  return overrides.get(experimentId) === true;
+}
+
 /**
  * Backend experiments service.
  *
@@ -143,28 +192,8 @@ export class ExperimentsService {
   }
 
   private async loadOverridesFromDisk(): Promise<void> {
-    try {
-      const raw = await fs.readFile(this.overridesFilePath, "utf-8");
-      const parsed = JSON.parse(raw) as unknown;
-
-      if (!isRecord(parsed) || parsed.version !== OVERRIDES_FILE_VERSION) {
-        return;
-      }
-
-      const overrides = parsed.overrides;
-      if (!isRecord(overrides)) {
-        return;
-      }
-
-      for (const [key, value] of Object.entries(overrides)) {
-        if (!(key in EXPERIMENTS) || typeof value !== "boolean") {
-          continue;
-        }
-
-        this.overrides.set(key as ExperimentId, value);
-      }
-    } catch {
-      // Ignore missing/corrupt overrides
+    for (const [experimentId, enabled] of await readOverridesFile(this.overridesFilePath)) {
+      this.overrides.set(experimentId, enabled);
     }
   }
 

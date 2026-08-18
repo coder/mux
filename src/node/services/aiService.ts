@@ -2360,6 +2360,7 @@ export class AIService extends EventEmitter {
                   runtime,
                   workspacePath,
                   projectTrusted: getWorkflowProjectTrusted(),
+                  includeAgentPlugins: this.isAgentPluginsEnabled(),
                 }),
               // Background workflow tools outlive the model turn that started them. Feed the
               // terminal result back as a hidden user turn so the parent agent continues

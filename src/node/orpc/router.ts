@@ -2234,7 +2234,14 @@ export const router = (authToken?: string) => {
             context,
             input.workspaceId
           );
-          return discoverWorkflowScripts({ runtime, workspacePath, projectTrusted });
+          return discoverWorkflowScripts({
+            runtime,
+            workspacePath,
+            projectTrusted,
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
+            ),
+          });
         }),
     },
     providers: {

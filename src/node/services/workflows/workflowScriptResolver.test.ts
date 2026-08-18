@@ -281,4 +281,106 @@ describe("resolveWorkflowScript", () => {
       })
     ).rejects.toThrow(".js");
   });
+
+  describe("plugin:// workflow scripts", () => {
+    async function writePluginWithWorkflow(
+      containerPath: string,
+      pluginName: string,
+      workflowFile: string,
+      source = "export const meta = { name: 'plugin-flow' };"
+    ): Promise<void> {
+      const pluginDir = path.join(containerPath, pluginName);
+      await fs.mkdir(pluginDir, { recursive: true });
+      await fs.writeFile(
+        path.join(pluginDir, "plugin.json"),
+        JSON.stringify({
+          $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+          name: pluginName,
+        }),
+        "utf-8"
+      );
+      await writeWorkflowFile(path.join(pluginDir, "workflows"), workflowFile, source);
+    }
+
+    function pluginRoots(tempDir: TestTempDir, containerPath: string) {
+      return {
+        ...createIsolatedAgentSkillsRoots(tempDir.path),
+        projectPluginRoots: [containerPath],
+      };
+    }
+
+    test("resolves a plugin workflow when the agent-plugins experiment is enabled", async () => {
+      using tempDir = new TestTempDir("workflow-script-plugin");
+      const container = path.join(tempDir.path, ".mux", "plugins");
+      await writePluginWithWorkflow(container, "my-plugin", "release.js");
+
+      const resolved = await resolveWorkflowScript({
+        scriptPath: "plugin://my-plugin/release.js",
+        runtime: new LocalRuntime(tempDir.path),
+        workspacePath: tempDir.path,
+        projectTrusted: true,
+        includeAgentPlugins: true,
+        roots: pluginRoots(tempDir, container),
+      });
+
+      expect(resolved.sourceKind).toBe("plugin");
+      expect(resolved.pluginName).toBe("my-plugin");
+      expect(resolved.scope).toBe("project");
+      expect(resolved.canonicalScriptPath).toBe("plugin://my-plugin/release.js");
+      expect(resolved.source).toContain("plugin-flow");
+    });
+
+    test("rejects plugin workflows without the agent-plugins experiment", async () => {
+      using tempDir = new TestTempDir("workflow-script-plugin-gated");
+      const container = path.join(tempDir.path, ".mux", "plugins");
+      await writePluginWithWorkflow(container, "my-plugin", "release.js");
+
+      await expect(
+        resolveWorkflowScript({
+          scriptPath: "plugin://my-plugin/release.js",
+          runtime: new LocalRuntime(tempDir.path),
+          workspacePath: tempDir.path,
+          projectTrusted: true,
+          roots: pluginRoots(tempDir, container),
+        })
+      ).rejects.toThrow("agent-plugins experiment");
+    });
+
+    test("project plugin workflows are not resolvable for untrusted projects", async () => {
+      using tempDir = new TestTempDir("workflow-script-plugin-untrusted");
+      const container = path.join(tempDir.path, ".mux", "plugins");
+      await writePluginWithWorkflow(container, "my-plugin", "release.js");
+
+      await expect(
+        resolveWorkflowScript({
+          scriptPath: "plugin://my-plugin/release.js",
+          runtime: new LocalRuntime(tempDir.path),
+          workspacePath: tempDir.path,
+          projectTrusted: false,
+          includeAgentPlugins: true,
+          roots: pluginRoots(tempDir, container),
+        })
+      ).rejects.toThrow("not found");
+    });
+
+    test("rejects traversal and non-js plugin workflow paths", async () => {
+      using tempDir = new TestTempDir("workflow-script-plugin-invalid");
+      const container = path.join(tempDir.path, ".mux", "plugins");
+      await writePluginWithWorkflow(container, "my-plugin", "release.js");
+      const input = {
+        runtime: new LocalRuntime(tempDir.path),
+        workspacePath: tempDir.path,
+        projectTrusted: true,
+        includeAgentPlugins: true,
+        roots: pluginRoots(tempDir, container),
+      };
+
+      await expect(
+        resolveWorkflowScript({ ...input, scriptPath: "plugin://my-plugin/../release.js" })
+      ).rejects.toThrow("path traversal");
+      await expect(
+        resolveWorkflowScript({ ...input, scriptPath: "plugin://my-plugin/release.ts" })
+      ).rejects.toThrow(".js");
+    });
+  });
 });

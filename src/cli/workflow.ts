@@ -233,6 +233,8 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
     // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,
     workspaceHeartbeats: experimentIds.includes(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS),
+    // Loading third-party plugin code stays an explicit per-invocation opt-in.
+    agentPlugins: experimentIds.includes(EXPERIMENT_IDS.AGENT_PLUGINS),
   };
 }
 
@@ -461,6 +463,7 @@ function createWorkflowService(input: {
         runtime,
         workspacePath: input.ctx.workspacePath,
         projectTrusted: input.ctx.projectTrusted,
+        includeAgentPlugins: experiments.agentPlugins,
       }),
     getCurrentProjectTrusted: () => input.ctx.projectTrusted,
     runnerId: input.ctx.workspaceId,
@@ -504,6 +507,7 @@ async function runWorkflow(scriptPath: string, options: WorkflowCLIOptions): Pro
       runtime,
       workspacePath: ctx.workspacePath,
       projectTrusted: ctx.projectTrusted,
+      includeAgentPlugins: buildExperimentsObject(options.experiment).agentPlugins,
     });
     const result = await workflowService.startWorkflow({
       script,

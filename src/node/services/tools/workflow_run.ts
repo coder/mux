@@ -93,6 +93,7 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
         runtime: config.runtime,
         workspacePath: config.cwd,
         projectTrusted: config.trusted === true,
+        includeAgentPlugins: config.experiments?.agentPlugins === true,
         ...(config.agentSkillsRoots != null ? { roots: config.agentSkillsRoots } : {}),
       });
       const createdRun: { id: string | null } = { id: null };

@@ -1,3 +1,5 @@
+import * as fsPromises from "node:fs/promises";
+
 import type { AgentSkillDescriptor, SkillName } from "@/common/types/agentSkill";
 import type { AvailableWorkflow } from "@/common/types/workflow";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -8,7 +10,7 @@ import { log } from "@/node/services/log";
 
 import { buildWorkflowScriptDescriptor } from "./WorkflowService";
 import { parseWorkflowMetadata, summarizeWorkflowArgs } from "./workflowMetadata";
-import { resolveWorkflowScript } from "./workflowScriptResolver";
+import { discoverWorkflowPlugins, resolveWorkflowScript } from "./workflowScriptResolver";
 
 /** Conventional entry file for a workflow-bearing skill (e.g. deep-research). */
 const WORKFLOW_SKILL_ENTRY = "workflow.js";
@@ -17,6 +19,8 @@ export interface DiscoverWorkflowScriptsInput {
   runtime: Runtime;
   workspacePath: string;
   projectTrusted: boolean;
+  /** agent-plugins experiment: also enumerate plugin skills and plugin workflows/ scripts. */
+  includeAgentPlugins?: boolean;
 }
 
 /**
@@ -51,19 +55,23 @@ export async function discoverWorkflowScripts(
   // readAgentSkill resolves by precedence (project > global > built-in) when names collide.
   getBuiltInSkillDescriptors().forEach(addSkill);
   try {
-    (await discoverAgentSkills(input.runtime, input.workspacePath)).forEach(addSkill);
+    (
+      await discoverAgentSkills(input.runtime, input.workspacePath, {
+        includeAgentPlugins: input.includeAgentPlugins,
+      })
+    ).forEach(addSkill);
   } catch (error) {
     log.warn(`Workflow script discovery: failed to enumerate skills: ${getErrorMessage(error)}`);
   }
 
-  const available: AvailableWorkflow[] = [];
-  for (const skillName of skillNames) {
+  const tryPush = async (available: AvailableWorkflow[], scriptPath: string): Promise<void> => {
     try {
       const resolved = await resolveWorkflowScript({
-        scriptPath: `skill://${skillName}/${WORKFLOW_SKILL_ENTRY}`,
+        scriptPath,
         runtime: input.runtime,
         workspacePath: input.workspacePath,
         projectTrusted: input.projectTrusted,
+        includeAgentPlugins: input.includeAgentPlugins,
       });
       available.push({
         descriptor: buildWorkflowScriptDescriptor(resolved),
@@ -74,10 +82,49 @@ export async function discoverWorkflowScripts(
       // Skip non-workflow skills (no workflow.js), untrusted project skills, AND scripts whose
       // arg metadata fails to parse/summarize — keeping the whole body in the per-skill catch so
       // one malformed workflow can't abort discovery and hide every other workflow.
-      continue;
+    }
+  };
+
+  const available: AvailableWorkflow[] = [];
+  for (const skillName of skillNames) {
+    await tryPush(available, `skill://${skillName}/${WORKFLOW_SKILL_ENTRY}`);
+  }
+
+  // Agent Plugins: standalone workflows/ contributions, addressed as
+  // plugin://<name>/<file>.js. Same per-script failure isolation as skills.
+  if (input.includeAgentPlugins === true) {
+    try {
+      const plugins = await discoverWorkflowPlugins(input);
+      const seenPluginNames = new Set<string>();
+      for (const plugin of plugins) {
+        if (plugin.workflowsDir == null) continue;
+        // The resolver picks the first plugin matching a name, so duplicate
+        // names in lower-precedence containers cannot contribute here either.
+        if (seenPluginNames.has(plugin.name)) continue;
+        seenPluginNames.add(plugin.name);
+
+        for (const fileName of await listWorkflowScriptFiles(plugin.workflowsDir)) {
+          await tryPush(available, `plugin://${plugin.name}/${fileName}`);
+        }
+      }
+    } catch (error) {
+      log.warn(`Workflow script discovery: failed to enumerate plugins: ${getErrorMessage(error)}`);
     }
   }
 
   available.sort((a, b) => a.descriptor.name.localeCompare(b.descriptor.name));
   return available;
+}
+
+/** Top-level *.js entries of a plugin workflows/ dir (host-local, sorted). */
+async function listWorkflowScriptFiles(workflowsDir: string): Promise<string[]> {
+  try {
+    const entries = await fsPromises.readdir(workflowsDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith(".js"))
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch {
+    return [];
+  }
 }
