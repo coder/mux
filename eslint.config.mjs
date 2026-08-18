@@ -226,9 +226,7 @@ const localPlugin = {
           }
 
           if (expression.type === "TemplateLiteral" && expression.expressions.length === 0) {
-            return expression.quasis
-              .map((quasi) => quasi.value.cooked ?? quasi.value.raw)
-              .join("");
+            return expression.quasis.map((quasi) => quasi.value.cooked ?? quasi.value.raw).join("");
           }
 
           return null;
@@ -271,9 +269,7 @@ const localPlugin = {
 
           const staticValue = getStaticString(expression);
           if (staticValue !== null) {
-            return (
-              staticValue.includes("\n") || staticValue.length > MAX_NATIVE_TOOLTIP_LENGTH
-            );
+            return staticValue.includes("\n") || staticValue.length > MAX_NATIVE_TOOLTIP_LENGTH;
           }
 
           return true;
@@ -332,6 +328,90 @@ const localPlugin = {
                 node: titleAttribute,
                 messageId: "useTooltip",
               });
+            }
+          },
+        };
+      },
+    },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // Chained assertions like `x as unknown as T` fabricate type evidence:
+    // the detour through `unknown` bypasses TypeScript's assertion overlap
+    // check, so any value can be relabeled as any type. Fix the source type,
+    // or validate untrusted input at the boundary (type guard / zod) instead.
+    // Chains made only of `as const` are allowed.
+    "no-chained-type-assertions": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Disallow chained type assertions (e.g. `x as unknown as T`)",
+        },
+        messages: {
+          chained:
+            "Chained type assertions discard type evidence. Keep the original precise type, fix the source type, or parse/validate untrusted input at its boundary before narrowing.",
+        },
+      },
+      create(context) {
+        const isAssertion = (node) =>
+          node.type === "TSAsExpression" || node.type === "TSTypeAssertion";
+        const isConstAssertion = (node) =>
+          node.typeAnnotation.type === "TSTypeReference" &&
+          node.typeAnnotation.typeName.type === "Identifier" &&
+          node.typeAnnotation.typeName.name === "const";
+        const check = (node) => {
+          // Report once, from the outermost assertion of a chain.
+          if (isAssertion(node.parent) && node.parent.expression === node) {
+            return;
+          }
+          let assertionCount = 0;
+          let hasNonConstAssertion = false;
+          let current = node;
+          while (isAssertion(current)) {
+            assertionCount += 1;
+            hasNonConstAssertion ||= !isConstAssertion(current);
+            current = current.expression;
+          }
+          if (assertionCount > 1 && hasNonConstAssertion) {
+            context.report({ node, messageId: "chained" });
+          }
+        };
+        return {
+          TSAsExpression: check,
+          TSTypeAssertion: check,
+        };
+      },
+    },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // `...(cond ? { x } : {})` hides property omission behind an empty-object
+    // spread; the compiler sees `x` as merely optional instead of knowing when
+    // it is present. Only fires inside object literals (JSX spread attributes
+    // are exempt).
+    "no-conditional-empty-object-spread": {
+      meta: {
+        type: "suggestion",
+        docs: {
+          description:
+            "Disallow object spreads that conditionally spread an empty object to omit fields",
+        },
+        messages: {
+          avoid:
+            "Conditional empty-object spread hides property omission. Build the object in separate statements and add the property only when present.",
+        },
+      },
+      create(context) {
+        const isEmptyObjectExpression = (node) =>
+          node.type === "ObjectExpression" && node.properties.length === 0;
+        return {
+          SpreadElement(node) {
+            if (node.parent.type !== "ObjectExpression") {
+              return;
+            }
+            const argument = node.argument;
+            if (
+              argument.type === "ConditionalExpression" &&
+              (isEmptyObjectExpression(argument.consequent) ||
+                isEmptyObjectExpression(argument.alternate))
+            ) {
+              context.report({ node, messageId: "avoid" });
             }
           },
         };
@@ -499,6 +579,17 @@ export default defineConfig([
       "local/no-cross-boundary-imports": "error",
 
       "local/no-native-interactive-tooltips": "error",
+
+      // Anti-slop ports (see localPlugin). Chained assertions are banned in
+      // production code; test/story/mock files are exempt (casting partial
+      // doubles through `unknown` is the standard mock idiom), and
+      // pre-existing violations are grandfathered in a ratchet block below.
+      "local/no-chained-type-assertions": "error",
+      // Implemented but not enforced: 629 existing occurrences across 145
+      // files use `...(cond ? { x } : {})` deliberately to omit keys
+      // (omitted-vs-undefined matters for JSON serialization and spread
+      // merging). Flip to "error" only after a codebase-wide cleanup.
+      "local/no-conditional-empty-object-spread": "off",
 
       // Allow console for this app (it's a dev tool)
       "no-console": "off",
@@ -817,6 +908,63 @@ export default defineConfig([
         tryResolveBase: "readonly",
         tryGit: "readonly",
       },
+    },
+  },
+  {
+    // Test/story/mock files: casting partial doubles through `unknown` is the
+    // standard mocking idiom, so the chained-assertion ban is production-only.
+    files: [
+      "**/*.test.ts",
+      "**/*.test.tsx",
+      "**/*.stories.ts",
+      "**/*.stories.tsx",
+      "src/browser/stories/**",
+    ],
+    rules: {
+      "local/no-chained-type-assertions": "off",
+    },
+  },
+  {
+    // Ratchet: pre-existing chained-assertion sites grandfathered when
+    // local/no-chained-type-assertions was introduced. Do NOT add new files;
+    // shrink this list by fixing the underlying types.
+    files: [
+      "src/browser/features/RightSidebar/CodeReview/HunkViewer.tsx",
+      "src/browser/features/RightSidebar/RightSidebar.tsx",
+      "src/browser/features/Settings/Sections/MCPSettingsSection.tsx",
+      "src/browser/stores/WorkspaceStore.ts",
+      "src/browser/utils/powerMode/PowerModeEngine.ts",
+      "src/browser/utils/ui/keybinds.ts",
+      "src/cli/debug/replay-history.ts",
+      "src/cli/proxifyOrpc.ts",
+      "src/cli/run.ts",
+      "src/cli/server.ts",
+      "src/common/orpc/schemas/result.ts",
+      "src/common/utils/ai/cacheStrategy.ts",
+      "src/common/utils/ai/modelCapabilities.ts",
+      "src/common/utils/tools/schemaSanitizer.ts",
+      "src/common/utils/tools/tools.ts",
+      "src/node/acp/adapter.ts",
+      "src/node/acp/serverConnection.ts",
+      "src/node/bench/headlessEnvironment.ts",
+      "src/node/config.ts",
+      "src/node/runtime/DevcontainerRuntime.ts",
+      "src/node/runtime/LocalBaseRuntime.ts",
+      "src/node/runtime/RemoteRuntime.ts",
+      "src/node/runtime/transports/SSH2Transport.ts",
+      "src/node/services/agentSession.testHarness.ts",
+      "src/node/services/agentSession.ts",
+      "src/node/services/analytics/analyticsService.ts",
+      "src/node/services/mcpOauthService.ts",
+      "src/node/services/mcpServerManager.ts",
+      "src/node/services/providerModelFactory.ts",
+      "src/node/services/tools/advisor.ts",
+      "src/node/services/tools/withHooks.ts",
+      "src/node/services/workspaceGoalService.ts",
+      "src/node/utils/main/workerPool.ts",
+    ],
+    rules: {
+      "local/no-chained-type-assertions": "off",
     },
   },
   {
