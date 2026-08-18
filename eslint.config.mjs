@@ -876,36 +876,67 @@ const localPlugin = {
           // references stay unresolvable (conservative: miss, never
           // false-positive).
           for (const identifier of variable.identifiers) {
-            const property =
-              identifier.parent.type === "AssignmentPattern" &&
-              identifier.parent.left === identifier
-                ? identifier.parent.parent
-                : identifier.parent;
-            if (property.type !== "Property" || property.parent.type !== "ObjectPattern") {
+            // Walk outward through (possibly nested) object patterns,
+            // collecting the member path innermost-first, until we reach the
+            // pattern that carries the annotation:
+            //   { nested: { value } }: { nested: { value: Foo } }
+            // yields path [value, nested] anchored at the outer annotation.
+            // Array patterns and computed keys abort (conservative).
+            const path = [];
+            let node = identifier;
+            let annotation = null;
+            let annotatedPattern = null;
+            for (;;) {
+              let holder = node.parent;
+              if (holder.type === "AssignmentPattern" && holder.left === node) {
+                node = holder;
+                holder = node.parent;
+              }
+              if (
+                holder.type !== "Property" ||
+                holder.parent.type !== "ObjectPattern" ||
+                holder.key.type !== "Identifier" ||
+                holder.computed
+              ) {
+                break;
+              }
+              path.push(holder.key.name);
+              node = holder.parent;
+              const patternAnnotation = node.typeAnnotation?.typeAnnotation;
+              if (patternAnnotation != null) {
+                annotation = patternAnnotation;
+                annotatedPattern = node;
+                break;
+              }
+            }
+            if (annotation === null || functionBoundary(annotatedPattern) !== boundary) {
               continue;
             }
-            const pattern = property.parent;
-            const annotation = pattern.typeAnnotation?.typeAnnotation;
-            if (
-              annotation == null ||
-              annotation.type !== "TSTypeLiteral" ||
-              property.key.type !== "Identifier" ||
-              functionBoundary(pattern) !== boundary
-            ) {
+            // Resolve the path outermost-first through inline type literals;
+            // named type references stay unresolvable (conservative).
+            let memberType = annotation;
+            for (let i = path.length - 1; i >= 0; i -= 1) {
+              if (memberType.type !== "TSTypeLiteral") {
+                memberType = null;
+                break;
+              }
+              const keyName = path[i];
+              const member = memberType.members.find(
+                (candidate) =>
+                  candidate.type === "TSPropertySignature" &&
+                  candidate.key.type === "Identifier" &&
+                  candidate.key.name === keyName &&
+                  candidate.typeAnnotation != null
+              );
+              if (member === undefined) {
+                memberType = null;
+                break;
+              }
+              memberType = member.typeAnnotation.typeAnnotation;
+            }
+            if (memberType === null) {
               continue;
             }
-            const keyName = property.key.name;
-            const member = annotation.members.find(
-              (candidate) =>
-                candidate.type === "TSPropertySignature" &&
-                candidate.key.type === "Identifier" &&
-                candidate.key.name === keyName &&
-                candidate.typeAnnotation != null
-            );
-            if (member === undefined) {
-              continue;
-            }
-            const memberType = member.typeAnnotation.typeAnnotation;
             return broadTypeKind(memberType) === null ? { type: memberType } : null;
           }
           const declarator = variableDeclarator(variable);
