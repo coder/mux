@@ -222,6 +222,7 @@ export class AnalyticsService {
     let workerDir = currentDir;
     let workerFile = "analyticsWorker.js";
 
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const isBun = !!(process as unknown as { isBun?: boolean }).isBun;
     if (isBun && path.extname(__filename) === ".ts") {
       workerFile = "analyticsWorker.ts";

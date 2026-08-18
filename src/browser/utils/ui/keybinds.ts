@@ -23,6 +23,7 @@ export function isMac(): boolean {
     interface MinimalAPI {
       platform?: string;
     }
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const api = (window as unknown as { api?: MinimalAPI }).api;
     if (api?.platform != null) {
       return api.platform === "darwin";
@@ -37,6 +38,7 @@ export function isMac(): boolean {
         platform?: string;
       };
     }
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const nav = navigator as unknown as MinimalNavigator;
     const platform = nav.userAgentData?.platform ?? nav.platform ?? nav.userAgent ?? "";
     return /mac|iphone|ipad|ipod/i.test(platform);

@@ -1078,8 +1078,12 @@ const localPlugin = {
           FunctionDeclaration: checkParameters,
           FunctionExpression: checkParameters,
           TSDeclareFunction: checkParameters,
+          TSEmptyBodyFunctionExpression: checkParameters,
           TSMethodSignature: checkParameters,
           TSFunctionType: checkParameters,
+          TSCallSignatureDeclaration: checkParameters,
+          TSConstructSignatureDeclaration: checkParameters,
+          TSConstructorType: checkParameters,
         };
       },
     },
@@ -1137,6 +1141,13 @@ export default defineConfig([
       "react-hooks": reactHooks,
       tailwindcss,
       local: localPlugin,
+    },
+    linterOptions: {
+      // Grandfathered anti-slop violations are marked with per-site
+      // eslint-disable-next-line directives. Erroring on unused directives
+      // makes that a true shrink-only ratchet: fixing a site forces removal
+      // of its directive, and the directive cannot silently outlive the code.
+      reportUnusedDisableDirectives: "error",
     },
     settings: {
       react: {
@@ -1260,8 +1271,9 @@ export default defineConfig([
 
       // Anti-slop ports (see localPlugin). Chained assertions are banned in
       // production code; test/story/mock files are exempt (casting partial
-      // doubles through `unknown` is the standard mock idiom), and
-      // pre-existing violations are grandfathered in a ratchet block below.
+      // doubles through `unknown` is the standard mock idiom). Pre-existing
+      // violations carry per-site eslint-disable-next-line directives so new
+      // violations fail lint even in files that contain grandfathered ones.
       "local/no-chained-type-assertions": "error",
       // Implemented but not enforced: 629 existing occurrences across 145
       // files use `...(cond ? { x } : {})` deliberately to omit keys
@@ -1615,63 +1627,6 @@ export default defineConfig([
       "local/no-known-value-widening": "off",
       "local/no-widen-then-assert": "off",
       "local/no-object-parameters": "off",
-    },
-  },
-  {
-    // Ratchet: pre-existing object-parameter sites grandfathered when
-    // local/no-object-parameters was introduced. Do NOT add new files;
-    // shrink this list by giving the parameters real types.
-    files: [
-      "src/browser/hooks/useDraftWorkspaceSettings.ts",
-      "src/browser/utils/messages/transcriptRenderProjection.ts",
-      "src/common/utils/providerOutputSanitization.ts",
-      "src/node/runtime/runtimeFactory.ts",
-    ],
-    rules: {
-      "local/no-object-parameters": "off",
-    },
-  },
-  {
-    // Ratchet: pre-existing chained-assertion sites grandfathered when
-    // local/no-chained-type-assertions was introduced. Do NOT add new files;
-    // shrink this list by fixing the underlying types.
-    files: [
-      "src/browser/features/RightSidebar/CodeReview/HunkViewer.tsx",
-      "src/browser/features/RightSidebar/RightSidebar.tsx",
-      "src/browser/features/Settings/Sections/MCPSettingsSection.tsx",
-      "src/browser/stores/WorkspaceStore.ts",
-      "src/browser/utils/powerMode/PowerModeEngine.ts",
-      "src/browser/utils/ui/keybinds.ts",
-      "src/cli/debug/replay-history.ts",
-      "src/cli/proxifyOrpc.ts",
-      "src/cli/run.ts",
-      "src/cli/server.ts",
-      "src/common/orpc/schemas/result.ts",
-      "src/common/utils/ai/cacheStrategy.ts",
-      "src/common/utils/ai/modelCapabilities.ts",
-      "src/common/utils/tools/schemaSanitizer.ts",
-      "src/common/utils/tools/tools.ts",
-      "src/node/acp/adapter.ts",
-      "src/node/acp/serverConnection.ts",
-      "src/node/bench/headlessEnvironment.ts",
-      "src/node/config.ts",
-      "src/node/runtime/DevcontainerRuntime.ts",
-      "src/node/runtime/LocalBaseRuntime.ts",
-      "src/node/runtime/RemoteRuntime.ts",
-      "src/node/runtime/transports/SSH2Transport.ts",
-      "src/node/services/agentSession.testHarness.ts",
-      "src/node/services/agentSession.ts",
-      "src/node/services/analytics/analyticsService.ts",
-      "src/node/services/mcpOauthService.ts",
-      "src/node/services/mcpServerManager.ts",
-      "src/node/services/providerModelFactory.ts",
-      "src/node/services/tools/advisor.ts",
-      "src/node/services/tools/withHooks.ts",
-      "src/node/services/workspaceGoalService.ts",
-      "src/node/utils/main/workerPool.ts",
-    ],
-    rules: {
-      "local/no-chained-type-assertions": "off",
     },
   },
   {

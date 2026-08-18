@@ -87,7 +87,9 @@ export function getModelCapabilities(modelString: string): ModelCapabilities | n
   const normalized = normalizeToCanonical(modelString);
   const lookupKeys = generateLookupKeys(normalized);
 
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const modelsExtraRecord = modelsExtra as unknown as Record<string, RawModelCapabilitiesData>;
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const modelsDataRecord = modelsData as unknown as Record<string, RawModelCapabilitiesData>;
 
   // Merge models.json (upstream) + models-extra.ts (local overrides). Extras win.

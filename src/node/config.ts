@@ -1479,6 +1479,7 @@ export class Config {
             if (legacy && workspace.bestOf == null) {
               // Keep downgrade-only metadata on disk without exposing it to current runtime types,
               // UI grouping, or provider-facing task schemas.
+              // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
               (workspace as unknown as Record<string, unknown>).bestOf = { ...legacy.bestOf };
             }
           }

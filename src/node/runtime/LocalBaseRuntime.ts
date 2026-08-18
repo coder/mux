@@ -117,8 +117,11 @@ export abstract class LocalBaseRuntime implements Runtime {
     const disposable = new DisposableProcess(childProcess);
 
     // Convert Node.js streams to Web Streams
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const stdout = Readable.toWeb(childProcess.stdout) as unknown as ReadableStream<Uint8Array>;
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const stderr = Readable.toWeb(childProcess.stderr) as unknown as ReadableStream<Uint8Array>;
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const stdin = Writable.toWeb(childProcess.stdin) as unknown as WritableStream<Uint8Array>;
 
     // No stream cleanup in DisposableProcess - streams close naturally when process exits
@@ -216,6 +219,7 @@ export abstract class LocalBaseRuntime implements Runtime {
     const nodeStream = fs.createReadStream(expandedPath);
 
     // Handle errors by wrapping in a transform
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     const webStream = Readable.toWeb(nodeStream) as unknown as ReadableStream<Uint8Array>;
 
     return new ReadableStream<Uint8Array>({

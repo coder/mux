@@ -55,6 +55,7 @@ export function runBackgroundInit(
   runtime: Runtime,
   params: WorkspaceInitParams,
   workspaceId: string,
+  // eslint-disable-next-line local/no-object-parameters -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   logger?: { error: (msg: string, ctx: object) => void }
 ): void {
   void runFullInit(runtime, params).catch((error: unknown) => {

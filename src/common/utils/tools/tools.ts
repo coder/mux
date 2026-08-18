@@ -379,7 +379,7 @@ export type ToolFactory = (config: ToolConfiguration) => Tool;
  */
 function augmentToolDescription(baseTool: Tool, additionalInstructions: string): Tool {
   // Access the tool as a record to get its properties
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const baseToolRecord = baseTool as any as Record<string, unknown>;
   const originalDescription =
     typeof baseToolRecord.description === "string" ? baseToolRecord.description : "";
@@ -397,7 +397,7 @@ function wrapToolExecuteWithModelOnlyNotifications(
   engine: NotificationEngine
 ): Tool {
   // Access the tool as a record to get its properties.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const baseToolRecord = baseTool as any as Record<string, unknown>;
   const originalExecute = baseToolRecord.execute;
 
@@ -410,7 +410,7 @@ function wrapToolExecuteWithModelOnlyNotifications(
   // Avoid mutating cached tools in place (e.g. MCP tools cached per workspace).
   // Repeated getToolsForModel() calls should not stack wrappers.
   const wrappedTool = cloneToolPreservingDescriptors(baseTool);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
 
   wrappedToolRecord.execute = async (args: unknown, options: unknown) => {

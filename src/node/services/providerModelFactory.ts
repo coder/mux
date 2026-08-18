@@ -2175,6 +2175,7 @@ export class ProviderModelFactory {
         const resolvedApiKey = creds.apiKey;
 
         // Lazy-load and create provider using factoryName from definition
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         const providerModule = (await providerDef.import()) as unknown as Record<
           string,
           (config: Record<string, unknown>) => (modelId: string) => LanguageModel

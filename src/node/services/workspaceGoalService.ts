@@ -1838,6 +1838,7 @@ export class WorkspaceGoalService {
     if (typeof maybeConfig.loadProvidersConfig !== "function") {
       return null;
     }
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
   }
 

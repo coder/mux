@@ -1143,6 +1143,7 @@ export class McpOauthService {
       saveTokens: async (tokens) => {
         await this.saveTokens({
           serverUrl: flow.serverUrlForStoreKey,
+          // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           tokens: tokens as unknown as MCPOAuthTokens,
         });
       },
@@ -1191,6 +1192,7 @@ export class McpOauthService {
         return Promise.resolve(flow.clientInformation ?? undefined);
       },
       saveClientInformation: async (clientInformation) => {
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         const next = clientInformation as unknown as MCPOAuthClientInformation;
         flow.clientInformation = next;
 
@@ -1210,11 +1212,13 @@ export class McpOauthService {
     return {
       tokens: async () => {
         const creds = await this.getValidStoredCredentials({ serverUrl: input.serverUrl });
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         return creds?.tokens as unknown as MCPOAuthTokens | undefined;
       },
       saveTokens: async (tokens) => {
         await this.saveTokens({
           serverUrl: input.serverUrl,
+          // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           tokens: tokens as unknown as MCPOAuthTokens,
         });
       },
@@ -1255,11 +1259,13 @@ export class McpOauthService {
       },
       clientInformation: async () => {
         const creds = await this.getValidStoredCredentials({ serverUrl: input.serverUrl });
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         return creds?.clientInformation as unknown as MCPOAuthClientInformation | undefined;
       },
       saveClientInformation: async (clientInformation) => {
         await this.saveClientInformation({
           serverUrl: input.serverUrl,
+          // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           clientInformation: clientInformation as unknown as MCPOAuthClientInformation,
         });
       },

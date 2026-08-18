@@ -346,6 +346,7 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
   // Clone tools and add cache control ONLY to the last tool
   // Anthropic caches everything up to the cache breakpoint, so marking
   // only the last tool will cache all tools
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const cachedTools = {} as unknown as T;
   for (const [key, existingTool] of Object.entries(tools)) {
     if (key === lastToolKey) {
@@ -356,12 +357,14 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
           existingTool
         ) as ProviderNativeTool;
         cachedProviderTool.providerOptions = cacheOpts;
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         cachedTools[key as keyof T] = cachedProviderTool as unknown as T[keyof T];
       } else if (existingTool.execute == null) {
         // Some MCP/dynamic tools are valid without execute handlers (provider-/client-executed).
         // Keep their runtime shape and attach cache control without forcing recreation.
         const cachedDynamicTool = cloneToolPreservingDescriptors(existingTool);
         cachedDynamicTool.providerOptions = cacheOpts;
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         cachedTools[key as keyof T] = cachedDynamicTool as unknown as T[keyof T];
       } else {
         assert(
@@ -385,10 +388,12 @@ export function applyCacheControlToTools<T extends Record<string, Tool>>(
             Object.defineProperty(cachedTool, marker, descriptor);
           }
         }
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         cachedTools[key as keyof T] = cachedTool as unknown as T[keyof T];
       }
     } else {
       // Other tools are copied as-is
+      // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
       cachedTools[key as keyof T] = existingTool as unknown as T[keyof T];
     }
   }

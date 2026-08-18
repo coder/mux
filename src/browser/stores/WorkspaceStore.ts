@@ -1613,6 +1613,7 @@ export class WorkspaceStore {
         this.states.bump(workspaceId);
       }, 0);
 
+      // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
       this.deltaIdleHandles.set(workspaceId, handle as unknown as number);
       return;
     }
@@ -1833,6 +1834,7 @@ export class WorkspaceStore {
       if (typeof cancelIdleCallback === "function") {
         cancelIdleCallback(handle);
       } else {
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         clearTimeout(handle as unknown as number);
       }
       this.deltaIdleHandles.delete(workspaceId);

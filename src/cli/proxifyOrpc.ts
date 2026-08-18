@@ -563,7 +563,9 @@ export function proxifyOrpc(router: AppRouter, options: ProxifyOrpcOptions): App
     return createORPCClient(link);
   };
 
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return createRouterProxy(
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     router as unknown as OrpcRouterLike,
     createClient,
     []
@@ -582,6 +584,7 @@ function createRouterProxy(
 
     if (isProcedure(value)) {
       result[key] = createProcedureProxy(
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         value as unknown as OrpcProcedureLike,
         createClient,
         newPath

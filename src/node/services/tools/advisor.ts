@@ -259,6 +259,7 @@ export function createAdvisorTool(config: ToolConfiguration): Tool {
         // instances. buildProviderOptions returns provider SDK option types;
         // streamText accepts the same JSON-shaped values through its shared
         // providerOptions slot.
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         const providerOptions = buildProviderOptions(
           optionsModelString,
           effectiveReasoningLevel

@@ -73,7 +73,7 @@ export function withHooks<TParameters, TResult>(
   config: HookConfig
 ): Tool<TParameters, TResult> {
   // Access the tool as a record to get its properties.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const toolRecord = tool as any as Record<string, unknown>;
   const originalExecute = toolRecord.execute;
 
@@ -90,7 +90,7 @@ export function withHooks<TParameters, TResult>(
   // Avoid mutating cached tools in place (e.g. MCP tools cached per workspace).
   // Repeated getToolsForModel() calls should not stack wrappers.
   const wrappedTool = cloneToolPreservingDescriptors(tool) as Tool<TParameters, TResult>;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const wrappedToolRecord = wrappedTool as any as Record<string, unknown>;
 
   wrappedToolRecord.execute = async (args: TParameters, options: unknown) => {
@@ -342,6 +342,7 @@ function appendHookOutput<T>(
       hook_duration_ms: durationMs,
       hook_path: hookPath,
     };
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     return errorResult as unknown as MayHaveHookOutput<T>;
   }
 
@@ -376,5 +377,6 @@ function appendHookOutput<T>(
     hook_duration_ms: durationMs,
     hook_path: hookPath,
   };
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return wrapped as unknown as MayHaveHookOutput<T>;
 }

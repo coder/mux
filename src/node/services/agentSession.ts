@@ -3507,6 +3507,7 @@ export class AgentSession {
         return null;
       }
 
+      // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
       return maybeConfig.loadProvidersConfig() as unknown as ProvidersConfigMap | null;
     } catch {
       // Best-effort read: if config cannot be loaded, keep null and rely on

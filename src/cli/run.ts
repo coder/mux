@@ -1393,6 +1393,7 @@ async function main(): Promise<number> {
           }
         }
         if (finalEvent && isStreamEnd(finalEvent)) {
+          // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           const parts = (finalEvent as unknown as { parts?: unknown[] }).parts ?? [];
           for (const part of parts) {
             if (part && typeof part === "object" && "type" in part && part.type === "text") {

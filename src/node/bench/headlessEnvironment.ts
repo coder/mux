@@ -33,7 +33,9 @@ function createMockBrowserWindow(): {
 } {
   const sentEvents: Array<{ channel: string; data: unknown }> = [];
 
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   const mockWindow = {
+    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     webContents: {
       send: (channel: string, data: unknown) => {
         sentEvents.push({ channel, data });

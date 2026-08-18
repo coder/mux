@@ -3015,6 +3015,7 @@ export class MCPServerManager {
             },
           });
 
+        // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
         const tools = wrapRawTools(rawTools as unknown as Record<string, Tool>);
         const negotiatedPrior = readyClient.priorDiscovery();
 
@@ -3264,6 +3265,7 @@ export class MCPServerManager {
           },
         });
 
+      // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
       const tools = wrapRawTools(rawTools as unknown as Record<string, Tool>);
       const negotiatedPrior = activeClient.priorDiscovery();
       this.storeEraVerdict(verdictKey, negotiatedPrior);

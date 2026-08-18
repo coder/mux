@@ -227,6 +227,7 @@ function getMCPOAuthAPI(api: ReturnType<typeof useAPI>["api"]): MCPOAuthAPI | nu
     return null;
   }
 
+  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return maybeOauth as unknown as MCPOAuthAPI;
 }
 
