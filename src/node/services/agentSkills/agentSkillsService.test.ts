@@ -533,6 +533,33 @@ describe("agentSkillsService", () => {
     });
   });
 
+  test("remote ancestor discovery uses canonical POSIX parents", () => {
+    using runtimeBase = new DisposableTempDir("agent-skills-remote-parent-walk");
+
+    class BaseNormalizeRemoteRuntime extends RemotePathMappedRuntime {
+      override normalizePath(targetPath: string, basePath: string): string {
+        return RemoteRuntime.prototype.normalizePath.call(this, targetPath, basePath);
+      }
+    }
+
+    const remoteCheckoutRoot = "/remote/workspace";
+    const remoteSubprojectRoot = "/remote/workspace/packages/app";
+    const roots = getDefaultAgentSkillsRoots(
+      new BaseNormalizeRemoteRuntime(runtimeBase.path, remoteCheckoutRoot),
+      remoteSubprojectRoot,
+      { projectSearchRoot: remoteCheckoutRoot }
+    );
+
+    expect(roots.projectRoots).toEqual([
+      "/remote/workspace/packages/app/.mux/skills",
+      "/remote/workspace/packages/app/.agents/skills",
+      "/remote/workspace/packages/.mux/skills",
+      "/remote/workspace/packages/.agents/skills",
+      "/remote/workspace/.mux/skills",
+      "/remote/workspace/.agents/skills",
+    ]);
+  });
+
   test("remote subprojects inherit skills through the runtime checkout root", async () => {
     using runtimeBase = new DisposableTempDir("agent-skills-remote-subproject");
 

@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import * as fs from "node:fs/promises";
 
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -72,8 +73,8 @@ function getProjectDirectories(
   projectPath: string,
   projectSearchRoot: string
 ): string[] {
-  const start = runtime.normalizePath(".", projectPath);
-  const boundary = runtime.normalizePath(".", projectSearchRoot);
+  const start = runtime.normalizePath(".", projectPath).replaceAll("\\", "/");
+  const boundary = runtime.normalizePath(".", projectSearchRoot).replaceAll("\\", "/");
   const normalizedBoundary = normalizeForDescendantComparison(boundary);
   const directories: string[] = [];
   let current = start;
@@ -87,7 +88,10 @@ function getProjectDirectories(
       return directories;
     }
 
-    const parent = runtime.normalizePath("..", current);
+    // Runtime.normalizePath intentionally does not collapse `..` for every
+    // runtime (notably SSH/Docker). Project paths use POSIX separators after the
+    // normalization above, so dirname guarantees each iteration moves upward.
+    const parent = path.posix.dirname(current);
     if (parent === current) {
       // Fail closed when the supplied boundary is not an ancestor. A malformed
       // scope must not make discovery walk arbitrary filesystem parents.
