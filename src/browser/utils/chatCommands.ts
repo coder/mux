@@ -839,6 +839,11 @@ export async function processSlashCommand(
           api: client,
           workspaceId: context.workspaceId,
         } as CommandHandlerContext);
+      default:
+        // parsed.type spans the full command union; WORKSPACE_ONLY_COMMAND_TYPES
+        // is a runtime Set the compiler cannot narrow by, so non-workspace
+        // commands reach here and fall through to the handlers below.
+        break;
     }
   }
 

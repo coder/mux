@@ -79,18 +79,25 @@ export function getSubAgentStatusPresentation(workspace: FrontendWorkspaceMetada
   icon: typeof Clock3;
   iconClassName: string;
 } {
-  switch (workspace.taskExecutionStatus) {
-    case "queued":
-      return { label: "Queued", icon: Clock3, iconClassName: "text-muted" };
-    case "starting":
-    case "running":
-      return { label: "Running", icon: LoaderCircle, iconClassName: "text-success animate-spin" };
-    case "completed":
-      return { label: "Completed", icon: CheckCircle2, iconClassName: "text-success" };
-    case "interrupted":
-      return { label: "Interrupted", icon: CircleSlash2, iconClassName: "text-muted" };
-    case "error":
-      return { label: "Failed", icon: CircleX, iconClassName: "text-danger" };
+  // No execution status (never-reawakened sub-agent) falls through to taskStatus.
+  if (workspace.taskExecutionStatus !== undefined) {
+    switch (workspace.taskExecutionStatus) {
+      case "queued":
+        return { label: "Queued", icon: Clock3, iconClassName: "text-muted" };
+      case "starting":
+      case "running":
+        return {
+          label: "Running",
+          icon: LoaderCircle,
+          iconClassName: "text-success animate-spin",
+        };
+      case "completed":
+        return { label: "Completed", icon: CheckCircle2, iconClassName: "text-success" };
+      case "interrupted":
+        return { label: "Interrupted", icon: CircleSlash2, iconClassName: "text-muted" };
+      case "error":
+        return { label: "Failed", icon: CircleX, iconClassName: "text-danger" };
+    }
   }
   switch (workspace.taskStatus) {
     case "queued":

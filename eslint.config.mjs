@@ -1211,6 +1211,18 @@ export default defineConfig([
       // Highlight unnecessary assertions to keep code idiomatic
       "@typescript-eslint/no-unnecessary-type-assertion": "error",
 
+      // Switches over union types must handle every member (or declare an
+      // explicit default). Pairs with the Record<Enum, Value> mapping rule:
+      // adding a union member then surfaces every switch that needs updating.
+      "@typescript-eslint/switch-exhaustiveness-check": [
+        "error",
+        {
+          // A default case counts as handling the rest; without this the rule
+          // would force enumerating members that intentionally share one path.
+          considerDefaultExhaustiveForUnions: true,
+        },
+      ],
+
       // Encourage readonly where possible to surface unintended mutations
       "@typescript-eslint/prefer-readonly": [
         "error",
