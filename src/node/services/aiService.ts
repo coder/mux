@@ -3913,7 +3913,7 @@ export class AIService extends EventEmitter {
           : (computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(toolsForStream))
       );
 
-      // Fold a PREPARING-window pending thinking override into the ACTUAL
+      // Fold PREPARING-window pending thinking overrides into the ACTUAL
       // request build, not just the envelope: message preparation is
       // thinking-level-dependent (Anthropic signed-reasoning transforms), so
       // recording the new level while streaming old-level messages would make
@@ -3921,40 +3921,49 @@ export class AIService extends EventEmitter {
       // request. Consuming pending here (applied set below) is safe:
       // createStreamAtomically seeds streamInfo.thinkingLevel from `applied`,
       // and prepareStep simply sees no pending to re-apply.
+      // Loop until pending is quiescent: setActiveTurnThinkingLevel can write
+      // a NEW pending while the awaited message rebuild runs, and stamping the
+      // first level after the await would leave step 0 rebuilding only
+      // provider options while the messages stay at the stale level.
       let streamThinkingLevel = effectiveThinkingLevel;
       let streamProviderOptions = mergedProviderOptions;
       let streamFinalMessages = finalMessages;
-      const pendingPreparingLevel = activeTurnThinkingOverride?.pending;
-      if (pendingPreparingLevel != null && activeTurnThinkingOverride != null) {
-        const folded = computeRebuiltProviderOptions(pendingPreparingLevel, effectiveThinkingLevel);
+      while (activeTurnThinkingOverride?.pending != null) {
+        const pendingPreparingLevel = activeTurnThinkingOverride.pending;
         activeTurnThinkingOverride.pending = undefined;
-        if (folded != null) {
-          const { providerRequestMessages: foldedRequestMessages } = prepareProviderRequestMessages(
-            messages,
-            wireProviderName,
-            folded.effectiveLevel
-          );
-          streamFinalMessages = await prepareMessagesForProvider({
-            messagesWithSentinel: addInterruptedSentinel(foldedRequestMessages),
-            effectiveAgentId,
-            toolNamesForSentinel,
-            planContentForTransition,
-            planFilePath,
-            postCompactionAttachments,
-            providerForMessages: wireProviderName,
-            effectiveThinkingLevel: folded.effectiveLevel,
-            modelString,
-            providersConfig: requestProvidersConfig,
-            anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
-            workspaceId,
-          });
-          streamProviderOptions = folded.providerOptions;
-          streamThinkingLevel = folded.effectiveLevel;
-          activeTurnThinkingOverride.applied = folded.effectiveLevel;
-          // Keep the mid-turn rebuild baseline in sync so a later identical
-          // request is correctly treated as a no-op.
-          currentEffectiveLevelRef.current = folded.effectiveLevel;
+        const folded = computeRebuiltProviderOptions(pendingPreparingLevel, streamThinkingLevel);
+        if (folded == null) {
+          // No-op fold (same effective level / non-foldable variant swap):
+          // re-check pending — a change may have raced the previous rebuild.
+          continue;
         }
+        const { providerRequestMessages: foldedRequestMessages } = prepareProviderRequestMessages(
+          messages,
+          wireProviderName,
+          folded.effectiveLevel
+        );
+        streamFinalMessages = await prepareMessagesForProvider({
+          messagesWithSentinel: addInterruptedSentinel(foldedRequestMessages),
+          effectiveAgentId,
+          toolNamesForSentinel,
+          planContentForTransition,
+          planFilePath,
+          postCompactionAttachments,
+          providerForMessages: wireProviderName,
+          effectiveThinkingLevel: folded.effectiveLevel,
+          modelString,
+          providersConfig: requestProvidersConfig,
+          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl,
+          workspaceId,
+        });
+        streamProviderOptions = folded.providerOptions;
+        streamThinkingLevel = folded.effectiveLevel;
+        activeTurnThinkingOverride.applied = folded.effectiveLevel;
+        // Keep the mid-turn rebuild baseline in sync so a later identical
+        // request is correctly treated as a no-op.
+        currentEffectiveLevelRef.current = folded.effectiveLevel;
+        // Loop re-checks pending: a change during the awaits above re-folds
+        // against the level just applied.
       }
 
       const emitPrimaryEnvelope = async (): Promise<void> => {
