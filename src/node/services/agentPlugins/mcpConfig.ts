@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import * as fsPromises from "node:fs/promises";
-import * as os from "node:os";
 import * as path from "node:path";
 
 import type { MCPServerInfo, MCPStdioServerInfo } from "@/common/types/mcp";
@@ -12,7 +11,7 @@ import { isMultiProject } from "@/common/utils/multiProject";
 import { log } from "@/node/services/log";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import type { AgentPluginContainer, AgentPluginDiagnostic, AgentPluginInfo } from "./discovery";
-import { discoverAgentPlugins } from "./discovery";
+import { computeAgentPluginContainers, discoverAgentPlugins } from "./discovery";
 import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
 
 /**
@@ -641,16 +640,11 @@ export function createAgentPluginsMcpProvider(ctx: {
     }
 
     const projectRoot = args.projectRoot;
-    const containers: AgentPluginContainer[] = [];
-    if (projectRoot !== undefined && args.trusted && path.isAbsolute(projectRoot)) {
-      containers.push({ path: path.join(projectRoot, ".mux", "plugins"), scope: "project" });
-      containers.push({
-        path: path.join(projectRoot, ".agents", "plugins"),
-        scope: "project",
-      });
-    }
-    containers.push({ path: path.join(ctx.muxHome, "plugins"), scope: "global" });
-    containers.push({ path: path.join(os.homedir(), ".agents", "plugins"), scope: "global" });
+    const containers: AgentPluginContainer[] = computeAgentPluginContainers({
+      muxHome: ctx.muxHome,
+      projectRoot,
+      projectTrusted: args.trusted,
+    });
 
     const merged: Record<string, MCPServerInfo> = {};
     try {

@@ -1,4 +1,5 @@
 import * as fsPromises from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
 import { getErrorMessage } from "@/common/utils/errors";
@@ -46,6 +47,10 @@ export interface AgentPluginInfo {
   skillsDir?: string;
   /** Canonical `mcp.json` path; present only when it exists, is a regular file, and stays inside the root (§6.2). */
   mcpConfigPath?: string;
+  /** Canonical `hooks.js` path (Tier-1 sandboxed plugin hooks, agent-plugins
+   * experiment); present only when it exists, is a regular file, and stays
+   * inside the root. Resolved with the same §6.2 component rules as mcp.json. */
+  hooksPath?: string;
 }
 
 export interface AgentPluginDiagnostic {
@@ -234,6 +239,15 @@ async function discoverPluginAt(args: {
     diagnostics,
   });
 
+  const hooksPath = await resolveComponentPath({
+    rootReal,
+    relativePath: "hooks.js",
+    expectKind: "file",
+    componentLabel: "hooks.js",
+    scope,
+    diagnostics,
+  });
+
   return {
     name: validation.manifest.name,
     scope,
@@ -243,7 +257,29 @@ async function discoverPluginAt(args: {
     manifest: validation.manifest,
     ...(skillsDir !== undefined ? { skillsDir } : {}),
     ...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
+    ...(hooksPath !== undefined ? { hooksPath } : {}),
   };
+}
+
+/**
+ * Canonical container list for one discovery pass (shared by plugin MCP config
+ * and plugin hooks so both consult identical locations with identical Project
+ * Trust gating): project containers are consulted only for trusted projects
+ * with an absolute host checkout root; global containers always apply.
+ */
+export function computeAgentPluginContainers(args: {
+  muxHome: string;
+  projectRoot?: string;
+  projectTrusted: boolean;
+}): AgentPluginContainer[] {
+  const containers: AgentPluginContainer[] = [];
+  if (args.projectRoot !== undefined && args.projectTrusted && path.isAbsolute(args.projectRoot)) {
+    containers.push({ path: path.join(args.projectRoot, ".mux", "plugins"), scope: "project" });
+    containers.push({ path: path.join(args.projectRoot, ".agents", "plugins"), scope: "project" });
+  }
+  containers.push({ path: path.join(args.muxHome, "plugins"), scope: "global" });
+  containers.push({ path: path.join(os.homedir(), ".agents", "plugins"), scope: "global" });
+  return containers;
 }
 
 /**

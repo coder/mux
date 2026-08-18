@@ -45,6 +45,8 @@ describe("validatePluginManifest", () => {
       repository: "https://github.com/example/hello-plugin",
       license: "MIT",
       keywords: ["testing", "example"],
+      // Carried through opaquely for Mux namespace consumers (plugin hooks).
+      extensions: { "com.example.tool": { anything: [1, 2, 3] } },
     });
     expect(result.warnings).toEqual([]);
   });
@@ -72,6 +74,14 @@ describe("validatePluginManifest", () => {
       if (!result.ok) throw new Error("expected ok");
       expect(result.warnings.some((w) => w.includes("extensions"))).toBe(true);
     }
+  });
+
+  test("object extensions are carried through for namespace consumers", () => {
+    const extensions = { mux: { hooks: { tools: ["file_read"] } } };
+    const result = validatePluginManifest(minimalManifest({ extensions }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.manifest.extensions).toEqual(extensions);
   });
 
   test("extension namespace member contents are never validated", () => {

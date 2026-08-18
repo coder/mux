@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { DisposableTempDir } from "@/node/services/tempDir";
-import { discoverAgentPlugins } from "./discovery";
+import { computeAgentPluginContainers, discoverAgentPlugins } from "./discovery";
 import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
 
 async function writePlugin(
@@ -211,6 +211,34 @@ describe("discoverAgentPlugins", () => {
     expect(result.plugins[0].mcpConfigPath).toBeDefined();
   });
 
+  test("resolves hooks.js as a component path when present", async () => {
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    const pluginDir = await writePlugin(container, "hooky");
+    await fs.writeFile(path.join(pluginDir, "hooks.js"), "({})", "utf8");
+
+    const result = await discoverAgentPlugins([{ path: container, scope: "global" }]);
+
+    expect(result.plugins).toHaveLength(1);
+    expect(result.plugins[0].hooksPath).toBe(path.join(pluginDir, "hooks.js"));
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("hooks.js of the wrong filesystem kind invalidates only the hooks component", async () => {
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    const pluginDir = await writePlugin(container, "dir-hooks", { mcpJson: "{}" });
+    await fs.mkdir(path.join(pluginDir, "hooks.js"));
+
+    const result = await discoverAgentPlugins([{ path: container, scope: "global" }]);
+
+    expect(result.plugins).toHaveLength(1);
+    expect(result.plugins[0].hooksPath).toBeUndefined();
+    expect(result.plugins[0].mcpConfigPath).toBeDefined();
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0].message).toContain("hooks.js");
+  });
+
   test("a symlinked plugin directory anchors containment at its realpath", async () => {
     using tmp = new DisposableTempDir("agent-plugins");
     const container = path.join(tmp.path, "plugins");
@@ -259,5 +287,41 @@ describe("discoverAgentPlugins", () => {
     ]);
 
     expect(result.plugins.map((p) => p.name)).toEqual(["alpha", "zeta"]);
+  });
+});
+
+describe("computeAgentPluginContainers", () => {
+  test("includes project containers only for trusted projects with absolute roots", () => {
+    const trusted = computeAgentPluginContainers({
+      muxHome: "/home/u/.mux",
+      projectRoot: "/repo",
+      projectTrusted: true,
+    });
+    expect(trusted.filter((c) => c.scope === "project").map((c) => c.path)).toEqual([
+      path.join("/repo", ".mux", "plugins"),
+      path.join("/repo", ".agents", "plugins"),
+    ]);
+
+    const untrusted = computeAgentPluginContainers({
+      muxHome: "/home/u/.mux",
+      projectRoot: "/repo",
+      projectTrusted: false,
+    });
+    expect(untrusted.every((c) => c.scope === "global")).toBe(true);
+
+    const relative = computeAgentPluginContainers({
+      muxHome: "/home/u/.mux",
+      projectRoot: "repo",
+      projectTrusted: true,
+    });
+    expect(relative.every((c) => c.scope === "global")).toBe(true);
+  });
+
+  test("always includes the muxHome global container", () => {
+    const containers = computeAgentPluginContainers({
+      muxHome: "/home/u/.mux",
+      projectTrusted: false,
+    });
+    expect(containers.some((c) => c.path === path.join("/home/u/.mux", "plugins"))).toBe(true);
   });
 });

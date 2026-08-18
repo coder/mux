@@ -47,6 +47,10 @@ export interface AgentPluginManifest {
   repository?: string;
   license?: string;
   keywords?: string[];
+  /** Opaque §8 extension namespaces. Contents are never validated here; Mux
+   * consumers (e.g. plugin hook capability requests under `extensions.mux`)
+   * interpret their own namespace defensively. */
+  extensions?: Record<string, unknown>;
 }
 
 export type PluginManifestValidation =
@@ -198,6 +202,7 @@ export function validatePluginManifest(raw: unknown): PluginManifestValidation {
     ...(Array.isArray(keywords)
       ? { keywords: keywords.filter((k): k is string => typeof k === "string") }
       : {}),
+    ...(isPlainObject(raw.extensions) ? { extensions: raw.extensions } : {}),
   };
 
   return { ok: true, manifest, warnings };
