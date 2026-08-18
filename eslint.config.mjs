@@ -20,7 +20,13 @@ import tseslint from "typescript-eslint";
  * does not emit ParenthesizedExpression/TSParenthesizedType nodes, and the
  * module-level type-alias/interface environment resolution is omitted — it
  * only adds catches (alias-of-Record etc.), so skipping it cannot introduce
- * false positives.
+ * false positives. An AST census (2026-08) showed the omission has zero
+ * effect here: only 4 broad aliases existed repo-wide (UnknownRecord,
+ * LogFields, JsonRecord, MetaRecord), every assertion through them sat on
+ * un-evident values (JSON.parse/fetch results) where the rules stay silent
+ * by design, and upstream's resolution is file-local anyway so cross-file
+ * aliases would remain invisible even with the full port. Revisit only if
+ * broad local aliases become common.
  */
 
 /** Unwrap assertion-like wrappers to reach the underlying value expression. */
