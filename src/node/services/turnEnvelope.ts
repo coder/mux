@@ -18,6 +18,17 @@ function sha256Hex(text: string): string {
 }
 
 /**
+ * Fingerprint one JSON tool input schema. Shared with the replay auditor
+ * (src/node/services/replay/), which re-hashes the wire-recorded
+ * `inputSchema` of each tool from devtools.jsonl and compares against the
+ * manifest hashes persisted in turn-envelope rows — both sides must use the
+ * identical stableStringify+sha256 fingerprint.
+ */
+export function hashToolSchema(jsonSchema: unknown): string {
+  return sha256Hex(stableStringify(jsonSchema));
+}
+
+/**
  * Extract the JSON schema from a runtime tool entry without ever throwing.
  * Tool maps mix shapes that `asSchema` alone cannot normalize — passing a
  * plain object to `asSchema` makes it assume a lazy-schema function and call
@@ -78,7 +89,7 @@ export function buildToolsetManifest(
       // stableStringify sorts keys so the hash is insensitive to property
       // insertion order.
       const inputJsonSchema = extractJsonSchema(tools[name]);
-      return { name, schemaHash: sha256Hex(stableStringify(inputJsonSchema)) };
+      return { name, schemaHash: hashToolSchema(inputJsonSchema) };
     });
 }
 

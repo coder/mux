@@ -5,6 +5,8 @@ import { listWorkspacesCommand } from "./list-workspaces";
 import { costsCommand } from "./costs";
 import { sendMessageCommand } from "./send-message";
 import { consolidateMemoryCommand } from "./consolidate-memory";
+import { replayVerifyCommand } from "./replay-verify";
+import { cacheAuditCommand } from "./cache-audit";
 
 const { positionals, values } = parseArgs({
   args: process.argv.slice(2),
@@ -60,11 +62,33 @@ switch (command) {
     await consolidateMemoryCommand(workspaceId, { dryRun: values["dry-run"] ?? false });
     break;
   }
+  case "replay-verify": {
+    const workspaceId = positionals[1];
+    if (!workspaceId) {
+      console.error("Error: workspace ID required");
+      console.log("Usage: bun debug replay-verify <workspace-id>");
+      process.exit(1);
+    }
+    await replayVerifyCommand(workspaceId);
+    break;
+  }
+  case "cache-audit": {
+    const workspaceId = positionals[1];
+    if (!workspaceId) {
+      console.error("Error: workspace ID required");
+      console.log("Usage: bun debug cache-audit <workspace-id>");
+      process.exit(1);
+    }
+    await cacheAuditCommand(workspaceId);
+    break;
+  }
   default:
     console.log("Usage:");
     console.log("  bun debug list-workspaces");
     console.log("  bun debug costs <workspace-id>");
     console.log("  bun debug send-message <workspace-id> [--edit <message-id>] [--message <text>]");
     console.log("  bun debug consolidate-memory <workspace-id> [--dry-run]");
+    console.log("  bun debug replay-verify <workspace-id>");
+    console.log("  bun debug cache-audit <workspace-id>");
     process.exit(1);
 }
