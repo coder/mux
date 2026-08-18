@@ -1,6 +1,9 @@
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { auditCacheBusts } from "@/node/services/replay/cacheAudit";
+import {
+  auditCacheBusts,
+  collapseEnvelopesToFinalPerSequence,
+} from "@/node/services/replay/cacheAudit";
 import {
   collectAssistantTurns,
   collectFullHistory,
@@ -23,8 +26,9 @@ export async function cacheAuditCommand(workspaceId: string): Promise<void> {
   const { sessionDir, historyService } = resolveReplaySessionDir(workspaceId);
   const journal = new DurableEventJournal(sessionDir);
   const events = await journal.read();
-  const envelopes = events.filter(
-    (event): event is TurnEnvelopeEvent => event.kind === "turn-envelope"
+  // Final envelope per sequence only: fallback turns emit a superseding row.
+  const envelopes = collapseEnvelopesToFinalPerSequence(
+    events.filter((event): event is TurnEnvelopeEvent => event.kind === "turn-envelope")
   );
 
   console.log(`\n=== Cache-bust audit for workspace: ${workspaceId} ===\n`);

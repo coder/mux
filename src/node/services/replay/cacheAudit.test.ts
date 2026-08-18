@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { auditCacheBusts } from "./cacheAudit";
+import { auditCacheBusts, collapseEnvelopesToFinalPerSequence } from "./cacheAudit";
 import type { TurnEnvelopeEvent } from "./replayVerify";
 
 function makeEnvelope(
@@ -109,5 +109,42 @@ describe("auditCacheBusts", () => {
     // Busted turn without recorded usage: cause reported, tokens unknown.
     expect(audit[3].causes.map((cause) => cause.kind)).toEqual(["system-prompt"]);
     expect(audit[3].approxBustedTokens).toBeUndefined();
+  });
+});
+
+describe("collapseEnvelopesToFinalPerSequence", () => {
+  test("fallback turns audit once with the identity that actually streamed", () => {
+    const primary = makeEnvelope(0, {
+      requestHistorySequence: 5,
+      modelString: "anthropic:claude-primary",
+    });
+    const fallback = makeEnvelope(1, {
+      requestHistorySequence: 5,
+      modelString: "openai:gpt-fallback",
+    });
+    const nextTurn = makeEnvelope(2, {
+      requestHistorySequence: 7,
+      modelString: "openai:gpt-fallback",
+    });
+
+    const collapsed = collapseEnvelopesToFinalPerSequence([primary, fallback, nextTurn]);
+    expect(collapsed).toEqual([fallback, nextTurn]);
+
+    // The superseded primary is invisible to the audit: no artificial model
+    // bust between the failed primary and the fallback request.
+    const audit = auditCacheBusts(collapsed);
+    expect(audit).toHaveLength(2);
+    expect(audit[1].causes).toEqual([]);
+  });
+
+  test("legacy rows without a sequence are kept in order", () => {
+    const legacyA = makeEnvelope(0);
+    const keyed = makeEnvelope(1, { requestHistorySequence: 3 });
+    const legacyB = makeEnvelope(2);
+    expect(collapseEnvelopesToFinalPerSequence([legacyA, keyed, legacyB])).toEqual([
+      legacyA,
+      keyed,
+      legacyB,
+    ]);
   });
 });

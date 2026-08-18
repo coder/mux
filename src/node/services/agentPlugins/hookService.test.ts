@@ -7,7 +7,7 @@
 
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { tool, type Tool } from "ai";
 import { z } from "zod";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -335,6 +335,41 @@ describe("AgentPluginHookService", () => {
     const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
     await runTool(harness.spine, ctx);
     expect(blockedError(ctx)).toContain("blocked by working plugin");
+  });
+
+  test("a transiently failed hook load is retried on the next send", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "flaky",
+      `({
+        "tool.execute.before": async (input) => {
+          if (String((input.args && input.args.path) || "").endsWith(".env")) {
+            return { deny: "blocked by flaky" };
+          }
+        },
+      })`,
+      { tools: ["file_read"] }
+    );
+
+    // First reconcile: the sandbox load fails transiently; the plugin is
+    // skipped (failure isolation) and nothing is registered.
+    const mountSpy = spyOn(harness.sandboxHost, "withPersistentMount").mockImplementationOnce(() =>
+      Promise.reject(new Error("transient sandbox failure"))
+    );
+    await harness.ensure();
+    const blockedWhileBroken = makeToolCtx("file_read", { path: "/repo/.env" });
+    await runTool(harness.spine, blockedWhileBroken);
+    expect(blockedWhileBroken.executed).toBe(true);
+    mountSpy.mockRestore();
+
+    // Second reconcile with UNCHANGED files: the stored fingerprint excludes
+    // the failed candidate, so the hook is retried (real impl) and works.
+    await harness.ensure();
+    const blocked = makeToolCtx("file_read", { path: "/repo/.env" });
+    await runTool(harness.spine, blocked);
+    expect(blocked.executed).toBe(false);
+    expect(blockedError(blocked)).toContain("blocked by flaky");
   });
 
   test("editing hooks.js reloads the plugin; disabling tears everything down", async () => {

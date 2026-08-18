@@ -169,13 +169,12 @@ export class AgentPluginHookService {
     }
 
     const discovered = await this.discoverHookPlugins(args);
-    const fingerprint = discovered
-      .map(
-        (candidate) =>
-          `${candidate.plugin.scope}|${candidate.plugin.containerPath}|${candidate.plugin.dirName}|` +
-          `${sha256Hex(candidate.source)}|${JSON.stringify(candidate.grants)}`
-      )
-      .join("\n");
+    const fingerprintLines = discovered.map(
+      (candidate) =>
+        `${candidate.plugin.scope}|${candidate.plugin.containerPath}|${candidate.plugin.dirName}|` +
+        `${sha256Hex(candidate.source)}|${JSON.stringify(candidate.grants)}`
+    );
+    const fingerprint = fingerprintLines.join("\n");
 
     const existing = this.registrations.get(args.workspaceId);
     if (existing?.fingerprint === fingerprint) {
@@ -189,7 +188,13 @@ export class AgentPluginHookService {
     const runtimeFactory = await this.getRuntimeFactory();
     const unregisters: Array<() => void> = [];
     const states: LoadedPluginHookState[] = [];
-    for (const candidate of discovered) {
+    // Fingerprint lines of candidates that actually loaded. Failed candidates
+    // are excluded so the stored fingerprint stays dirty and an unchanged but
+    // transiently-failed hook is retried on the next send instead of staying
+    // disabled for the process lifetime. (While a plugin is persistently
+    // broken this re-runs reconcile per send; hooks.js sources are small.)
+    const acceptedLines: string[] = [];
+    for (const [candidateIndex, candidate] of discovered.entries()) {
       const plugin = candidate.plugin;
       // Scope key must be unique per plugin instance AND distinct from the
       // workspace's code_execution mount (different grants would thrash it).
@@ -227,12 +232,17 @@ export class AgentPluginHookService {
       }
 
       states.push(state);
+      acceptedLines.push(fingerprintLines[candidateIndex]);
       for (const hookName of state.hookNames) {
         unregisters.push(this.registerHookMiddleware(hookName, state, args));
       }
     }
 
-    this.registrations.set(args.workspaceId, { fingerprint, unregisters, states });
+    this.registrations.set(args.workspaceId, {
+      fingerprint: acceptedLines.join("\n"),
+      unregisters,
+      states,
+    });
   }
 
   /** Tear down a workspace's hooks (archive/removal). Never throws. */

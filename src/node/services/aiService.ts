@@ -3794,17 +3794,37 @@ export class AIService extends EventEmitter {
                       return { effectiveLevel: effective, providerOptions: merged };
                     };
 
+                  // Shared with the return payload below: the fallback stream
+                  // restarts at step 0, where StreamManager scopes to these
+                  // forced tools when present.
+                  const nextForcedFirstStepToolNames =
+                    next.routeProvider === "xai"
+                      ? getForcedXaiSearchToolNames(
+                          nextCapabilityModelString,
+                          effectiveMuxProviderOptions.xai?.searchParameters
+                        )?.filter((toolName) => toolName in nextTools)
+                      : undefined;
+
                   // The fallback request is a different request identity
                   // (model, system prompt, toolset, provider options), so it
                   // needs its own envelope: pairSessionTurns compares the LAST
                   // envelope per requestHistorySequence, so this row supersedes
                   // the primary one and replay-verify/cache-audit see the
                   // request that actually streamed. Never fails the prepare.
+                  // Same step-0 scoping as the primary envelope: fingerprint
+                  // only the tools the first fallback step actually sends.
+                  const nextFirstStepToolNames = new Set(
+                    nextForcedFirstStepToolNames?.length
+                      ? nextForcedFirstStepToolNames
+                      : nextToolNamesForSentinel
+                  );
                   await emitTurnEnvelope({
                     journal: this.durableEventJournalFor(workspaceId),
                     workspaceId,
                     systemMessage: nextSystem,
-                    tools: nextTools,
+                    tools: Object.fromEntries(
+                      Object.entries(nextTools).filter(([name]) => nextFirstStepToolNames.has(name))
+                    ),
                     modelString: nextModelString,
                     thinkingLevel: nextThinkingLevel,
                     providerOptions: nextMergedProviderOptions,
@@ -3832,13 +3852,7 @@ export class AIService extends EventEmitter {
                     callSettingsOverrides: nextOverrides.standard,
                     anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
                     thinkingLevel: nextThinkingLevel,
-                    forcedFirstStepToolNames:
-                      next.routeProvider === "xai"
-                        ? getForcedXaiSearchToolNames(
-                            nextCapabilityModelString,
-                            effectiveMuxProviderOptions.xai?.searchParameters
-                          )?.filter((toolName) => toolName in nextTools)
-                        : undefined,
+                    forcedFirstStepToolNames: nextForcedFirstStepToolNames,
                     rebuildProviderOptionsForThinkingLevel:
                       rebuildNextProviderOptionsForThinkingLevel,
                     // Pinned snapshot for the swap's request-config rebuild
@@ -3876,11 +3890,22 @@ export class AIService extends EventEmitter {
       // request.assemble middleware, post tool-policy rebuild) before streaming
       // starts, so session logs can reconstruct what the provider request
       // contained ("model-visible ⟹ logged"). Emission never fails the turn.
+      // Step-0 wire truth: StreamManager sends only the first step's active
+      // tools (forced xAI search set, else the tool-search active subset), so
+      // the envelope fingerprints that subset — deferred tools never reach
+      // this request and would otherwise show as false replay divergences.
+      const firstStepToolNames = new Set(
+        forcedFirstStepToolNames?.length
+          ? forcedFirstStepToolNames
+          : (computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(toolsForStream))
+      );
       await emitTurnEnvelope({
         journal: this.durableEventJournalFor(workspaceId),
         workspaceId,
         systemMessage,
-        tools: toolsForStream,
+        tools: Object.fromEntries(
+          Object.entries(toolsForStream).filter(([name]) => firstStepToolNames.has(name))
+        ),
         modelString,
         thinkingLevel: effectiveThinkingLevel,
         providerOptions: mergedProviderOptions,

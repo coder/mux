@@ -60,6 +60,36 @@ function diffToolsetManifest(
 }
 
 /**
+ * Collapse envelopes to the FINAL row per requestHistorySequence, matching
+ * pairSessionTurns: a model-fallback turn emits a superseding envelope for the
+ * same sequence, and auditing both would count the turn twice, attach the
+ * surviving assistant's usage twice, and report artificial busts between the
+ * failed primary and the fallback request. Rows without a sequence (legacy
+ * sessions) are kept in place.
+ */
+export function collapseEnvelopesToFinalPerSequence(
+  envelopes: TurnEnvelopeEvent[]
+): TurnEnvelopeEvent[] {
+  const result: TurnEnvelopeEvent[] = [];
+  const indexBySequence = new Map<number, number>();
+  for (const envelope of envelopes) {
+    const sequence = envelope.data.requestHistorySequence;
+    if (sequence == null) {
+      result.push(envelope);
+      continue;
+    }
+    const existing = indexBySequence.get(sequence);
+    if (existing == null) {
+      indexBySequence.set(sequence, result.length);
+      result.push(envelope);
+    } else {
+      result[existing] = envelope;
+    }
+  }
+  return result;
+}
+
+/**
  * Attribute prompt-prefix invalidations across consecutive turn envelopes.
  * `usageByTurn` pairs ordinally with `envelopes` (missing/undefined entries
  * simply skip token attribution).

@@ -1,5 +1,6 @@
 import { defaultConfig } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
+import { ProviderService } from "@/node/services/providerService";
 import {
   REPLAY_FIXTURE_DIR,
   REPLAY_FIXTURE_WORKSPACE_ID,
@@ -51,6 +52,11 @@ export async function replayVerifyCommand(workspaceId: string): Promise<void> {
     sessionDir,
     workspaceId,
     historyMessages: historyResult.data,
+    // Same provider config view the live request build saw: aliases, custom
+    // provider metadata, and cross-typed Coder instances change cache
+    // wrapping and message preparation, and omitting them yields false
+    // prompt divergences.
+    providersConfig: new ProviderService(defaultConfig).getConfig(),
   });
 
   console.log(`\n=== Replay verification for workspace: ${workspaceId} ===\n`);
