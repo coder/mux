@@ -15,6 +15,8 @@ async function writePlugin(
     rawManifest?: string;
     skills?: string[];
     mcpJson?: string;
+    agents?: string[];
+    workflows?: string[];
   }
 ): Promise<string> {
   const pluginDir = path.join(containerPath, dirName);
@@ -44,6 +46,22 @@ async function writePlugin(
     await fs.writeFile(path.join(pluginDir, "mcp.json"), options.mcpJson, "utf8");
   }
 
+  for (const agentId of options?.agents ?? []) {
+    const agentsDir = path.join(pluginDir, "agents");
+    await fs.mkdir(agentsDir, { recursive: true });
+    await fs.writeFile(
+      path.join(agentsDir, `${agentId}.md`),
+      `---\nname: ${agentId}\ndescription: Test agent\n---\nBody\n`,
+      "utf8"
+    );
+  }
+
+  for (const workflowFile of options?.workflows ?? []) {
+    const workflowsDir = path.join(pluginDir, "workflows");
+    await fs.mkdir(workflowsDir, { recursive: true });
+    await fs.writeFile(path.join(workflowsDir, workflowFile), "export {};\n", "utf8");
+  }
+
   return pluginDir;
 }
 
@@ -63,6 +81,47 @@ describe("discoverAgentPlugins", () => {
     expect(plugin.skillsDir).toBe(path.join(plugin.rootPath, "skills"));
     expect(plugin.mcpConfigPath).toBe(path.join(plugin.rootPath, "mcp.json"));
     expect(result.diagnostics).toEqual([]);
+  });
+
+  test("discovers agents/ and workflows/ component directories", async () => {
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    await writePlugin(container, "full-plugin", {
+      agents: ["reviewer"],
+      workflows: ["release.js"],
+    });
+
+    const result = await discoverAgentPlugins([{ path: container, scope: "global" }]);
+
+    expect(result.plugins).toHaveLength(1);
+    const plugin = result.plugins[0];
+    expect(plugin.agentsDir).toBe(path.join(plugin.rootPath, "agents"));
+    expect(plugin.workflowsDir).toBe(path.join(plugin.rootPath, "workflows"));
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  test("contributes path overrides relocate component resolution", async () => {
+    using tmp = new DisposableTempDir("agent-plugins");
+    const container = path.join(tmp.path, "plugins");
+    const pluginDir = await writePlugin(container, "custom-plugin", {
+      manifest: {
+        $schema: AGENT_PLUGIN_SCHEMA_ID_1_0_0,
+        name: "custom-plugin",
+        contributes: { skills: "lib/skills", workflows: "scripts" },
+      },
+    });
+    await fs.mkdir(path.join(pluginDir, "lib", "skills"), { recursive: true });
+    await fs.mkdir(path.join(pluginDir, "scripts"), { recursive: true });
+    // The conventional locations exist too, but the override must win.
+    await fs.mkdir(path.join(pluginDir, "skills"), { recursive: true });
+
+    const result = await discoverAgentPlugins([{ path: container, scope: "global" }]);
+
+    expect(result.plugins).toHaveLength(1);
+    const plugin = result.plugins[0];
+    expect(plugin.skillsDir).toBe(path.join(plugin.rootPath, "lib", "skills"));
+    expect(plugin.workflowsDir).toBe(path.join(plugin.rootPath, "scripts"));
+    expect(plugin.agentsDir).toBeUndefined();
   });
 
   test("discovers a manifest-only plugin without components", async () => {

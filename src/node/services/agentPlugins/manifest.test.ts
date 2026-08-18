@@ -179,6 +179,69 @@ describe("validatePluginManifest", () => {
     }
   });
 
+  test("round-trips a contributes block with every member", () => {
+    const contributes = {
+      skills: "my-skills",
+      mcp: "config/mcp.json",
+      agents: "my-agents",
+      workflows: "scripts",
+      hooks: "lib/hooks.js",
+      slashCommands: [
+        { name: "greet", description: "Say hello", expansion: "Please greet the user warmly." },
+        { name: "review", expansion: "Review the current diff." },
+      ],
+    };
+    const result = validatePluginManifest(minimalManifest({ contributes }));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.manifest.contributes).toEqual(contributes);
+    expect(result.warnings).toEqual([]);
+  });
+
+  test("non-object contributes loads with a warning and is ignored", () => {
+    for (const contributes of ["nope", 5, [1], null]) {
+      const result = validatePluginManifest(minimalManifest({ contributes }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected ok");
+      expect(result.warnings.some((w) => w.includes("contributes"))).toBe(true);
+      expect(result.manifest.contributes).toBeUndefined();
+    }
+  });
+
+  test("unsafe contributes paths warn and fall back to the default location", () => {
+    for (const skills of ["/abs/path", "C:\\win", "~/home", "../escape", "a/../../b", "", 42]) {
+      const result = validatePluginManifest(minimalManifest({ contributes: { skills } }));
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("expected ok");
+      expect(result.warnings.some((w) => w.includes("contributes.skills"))).toBe(true);
+      expect(result.manifest.contributes?.skills).toBeUndefined();
+    }
+  });
+
+  test("invalid slash command entries are skipped without breaking valid siblings", () => {
+    const result = validatePluginManifest(
+      minimalManifest({
+        contributes: {
+          slashCommands: [
+            "not-an-object",
+            { name: "Bad Name", expansion: "x" },
+            { name: "no-expansion" },
+            { name: "blank-expansion", expansion: "   " },
+            { name: "bad-description", expansion: "x", description: 5 },
+            { name: "ok", expansion: "works" },
+            { name: "ok", expansion: "duplicate loses" },
+          ],
+        },
+      })
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected ok");
+    expect(result.manifest.contributes?.slashCommands).toEqual([
+      { name: "ok", expansion: "works" },
+    ]);
+    expect(result.warnings.length).toBeGreaterThanOrEqual(6);
+  });
+
   test("rejects non-object documents as invalid-manifest", () => {
     for (const raw of [null, "string", 42, ["array"], true]) {
       const result = validatePluginManifest(raw);

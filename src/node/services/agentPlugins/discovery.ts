@@ -51,6 +51,12 @@ export interface AgentPluginInfo {
    * experiment); present only when it exists, is a regular file, and stays
    * inside the root. Resolved with the same §6.2 component rules as mcp.json. */
   hooksPath?: string;
+  /** Canonical `agents/` directory (Mux contributes extension: agents/*.md
+   * agent definitions). Same §6.2 component rules as skills/. */
+  agentsDir?: string;
+  /** Canonical `workflows/` directory (Mux contributes extension: workflows/*.js
+   * scripts resolvable as `plugin://<name>/...`). Same §6.2 component rules as skills/. */
+  workflowsDir?: string;
 }
 
 export interface AgentPluginDiagnostic {
@@ -221,32 +227,28 @@ async function discoverPluginAt(args: {
     );
   }
 
-  const skillsDir = await resolveComponentPath({
-    rootReal,
-    relativePath: "skills",
-    expectKind: "directory",
-    componentLabel: "skills/",
-    scope,
-    diagnostics,
-  });
+  // Manifest `contributes` path members override the conventional component
+  // locations; the manifest validator already restricted them to safe relative
+  // paths, and resolveComponentPath re-enforces realpath containment.
+  const contributes = validation.manifest.contributes;
+  const resolveComponent = (
+    relativePath: string,
+    expectKind: "file" | "directory"
+  ): Promise<string | undefined> =>
+    resolveComponentPath({
+      rootReal,
+      relativePath,
+      expectKind,
+      componentLabel: expectKind === "directory" ? `${relativePath}/` : relativePath,
+      scope,
+      diagnostics,
+    });
 
-  const mcpConfigPath = await resolveComponentPath({
-    rootReal,
-    relativePath: "mcp.json",
-    expectKind: "file",
-    componentLabel: "mcp.json",
-    scope,
-    diagnostics,
-  });
-
-  const hooksPath = await resolveComponentPath({
-    rootReal,
-    relativePath: "hooks.js",
-    expectKind: "file",
-    componentLabel: "hooks.js",
-    scope,
-    diagnostics,
-  });
+  const skillsDir = await resolveComponent(contributes?.skills ?? "skills", "directory");
+  const mcpConfigPath = await resolveComponent(contributes?.mcp ?? "mcp.json", "file");
+  const hooksPath = await resolveComponent(contributes?.hooks ?? "hooks.js", "file");
+  const agentsDir = await resolveComponent(contributes?.agents ?? "agents", "directory");
+  const workflowsDir = await resolveComponent(contributes?.workflows ?? "workflows", "directory");
 
   return {
     name: validation.manifest.name,
@@ -258,6 +260,8 @@ async function discoverPluginAt(args: {
     ...(skillsDir !== undefined ? { skillsDir } : {}),
     ...(mcpConfigPath !== undefined ? { mcpConfigPath } : {}),
     ...(hooksPath !== undefined ? { hooksPath } : {}),
+    ...(agentsDir !== undefined ? { agentsDir } : {}),
+    ...(workflowsDir !== undefined ? { workflowsDir } : {}),
   };
 }
 

@@ -15,6 +15,10 @@
  * - `extensions`: a non-object value is NON-fatal (report + ignore); namespace
  *   member contents are never validated (§8.1/§11.1) — Mux implements no
  *   extension namespace, so all payloads are treated as opaque.
+ * - `contributes` (Mux extension, not part of the 1.0.0 spec schema): declares
+ *   the plugin's component contributions. Every malformed member is NON-fatal
+ *   (report + ignore) so a spec-valid plugin never breaks on a Mux extension,
+ *   and older Mux versions simply report `contributes` as an unknown field.
  */
 
 /** Canonical `$schema` const for Agent Plugins 1.0.0 plugin manifests. */
@@ -36,6 +40,153 @@ export interface AgentPluginAuthor {
   url?: string;
 }
 
+/** Command-name grammar shared with skill names (kebab-case, 1-64 chars). */
+const SLASH_COMMAND_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const SLASH_COMMAND_NAME_MAX_LENGTH = 64;
+// Expansions become chat-input text; bound them so one manifest cannot inject
+// unbounded content into the composer.
+const SLASH_COMMAND_EXPANSION_MAX_LENGTH = 16_384;
+
+export interface AgentPluginSlashCommandContribution {
+  name: string;
+  description?: string;
+  /** Replacement text inserted when the command is invoked (data-driven expansion template). */
+  expansion: string;
+}
+
+/**
+ * Mux `contributes` block: path members override the conventional component
+ * locations (skills/, mcp.json, agents/, workflows/, hooks.js) with a safe
+ * relative path inside the plugin root; `slashCommands` declares data-driven
+ * chat commands that have no on-disk convention.
+ */
+export interface AgentPluginContributes {
+  skills?: string;
+  mcp?: string;
+  agents?: string;
+  workflows?: string;
+  hooks?: string;
+  slashCommands?: AgentPluginSlashCommandContribution[];
+}
+
+const CONTRIBUTES_PATH_KEYS = ["skills", "mcp", "agents", "workflows", "hooks"] as const;
+const CONTRIBUTES_KEYS = new Set<string>([...CONTRIBUTES_PATH_KEYS, "slashCommands"]);
+
+/**
+ * A contributes path must stay a plain relative path. Realpath containment is
+ * enforced again at discovery time; rejecting obvious escapes here yields
+ * clearer manifest-level warnings.
+ */
+function isSafeContributesPath(value: string): boolean {
+  if (value.length === 0 || value.includes("\0")) {
+    return false;
+  }
+  if (/^[/\\]/.test(value) || /^[a-zA-Z]:/.test(value) || value.startsWith("~")) {
+    return false;
+  }
+  const segments = value.replaceAll("\\", "/").split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "..");
+}
+
+function parseSlashCommandContributions(
+  raw: unknown,
+  warnings: string[]
+): AgentPluginSlashCommandContribution[] | undefined {
+  if (!Array.isArray(raw)) {
+    warnings.push("'contributes.slashCommands' must be an array; ignoring");
+    return undefined;
+  }
+
+  const commands: AgentPluginSlashCommandContribution[] = [];
+  const seenNames = new Set<string>();
+  for (const entry of raw) {
+    if (!isPlainObject(entry)) {
+      warnings.push("'contributes.slashCommands' entries must be objects; ignoring an entry");
+      continue;
+    }
+    const { name, description, expansion } = entry;
+    if (
+      typeof name !== "string" ||
+      name.length > SLASH_COMMAND_NAME_MAX_LENGTH ||
+      !SLASH_COMMAND_NAME_PATTERN.test(name)
+    ) {
+      warnings.push(
+        "'contributes.slashCommands[].name' must be 1-64 kebab-case characters; ignoring an entry"
+      );
+      continue;
+    }
+    if (
+      typeof expansion !== "string" ||
+      expansion.trim().length === 0 ||
+      expansion.length > SLASH_COMMAND_EXPANSION_MAX_LENGTH
+    ) {
+      warnings.push(
+        `'contributes.slashCommands[].expansion' for '${name}' must be a non-empty string (max ${SLASH_COMMAND_EXPANSION_MAX_LENGTH} chars); ignoring the entry`
+      );
+      continue;
+    }
+    if (description !== undefined && typeof description !== "string") {
+      warnings.push(
+        `'contributes.slashCommands[].description' for '${name}' must be a string; ignoring the entry`
+      );
+      continue;
+    }
+    if (seenNames.has(name)) {
+      warnings.push(`Duplicate contributed slash command '${name}'; first declaration wins`);
+      continue;
+    }
+    seenNames.add(name);
+    commands.push({
+      name,
+      expansion,
+      ...(description !== undefined ? { description } : {}),
+    });
+  }
+
+  return commands;
+}
+
+function parseContributes(raw: unknown, warnings: string[]): AgentPluginContributes | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!isPlainObject(raw)) {
+    warnings.push("'contributes' must be an object; ignoring");
+    return undefined;
+  }
+
+  const contributes: AgentPluginContributes = {};
+
+  for (const key of Object.keys(raw)) {
+    if (!CONTRIBUTES_KEYS.has(key)) {
+      warnings.push(`Unknown 'contributes.${key}' member ignored`);
+    }
+  }
+
+  for (const key of CONTRIBUTES_PATH_KEYS) {
+    const value = raw[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== "string" || !isSafeContributesPath(value)) {
+      warnings.push(
+        `'contributes.${key}' must be a relative path inside the plugin; ignoring (using the default location)`
+      );
+      continue;
+    }
+    contributes[key] = value;
+  }
+
+  if (raw.slashCommands !== undefined) {
+    const commands = parseSlashCommandContributions(raw.slashCommands, warnings);
+    if (commands !== undefined) {
+      contributes.slashCommands = commands;
+    }
+  }
+
+  return contributes;
+}
+
 export interface AgentPluginManifest {
   /** The accepted `$schema` value (identifies the spec version). */
   schemaId: string;
@@ -51,6 +202,8 @@ export interface AgentPluginManifest {
    * consumers (e.g. plugin hook capability requests under `extensions.mux`)
    * interpret their own namespace defensively. */
   extensions?: Record<string, unknown>;
+  /** Mux extension: declarative component contributions (see module docs). */
+  contributes?: AgentPluginContributes;
 }
 
 export type PluginManifestValidation =
@@ -68,6 +221,7 @@ const PERMITTED_TOP_LEVEL_KEYS = new Set([
   "license",
   "keywords",
   "extensions",
+  "contributes",
 ]);
 
 const OPTIONAL_STRING_FIELDS = [
@@ -181,6 +335,10 @@ export function validatePluginManifest(raw: unknown): PluginManifestValidation {
     warnings.push("'extensions' must be an object; ignoring");
   }
 
+  // Mux extension: malformed contributes members warn + fall back to defaults,
+  // never invalidating an otherwise spec-valid manifest.
+  const contributes = parseContributes(raw.contributes, warnings);
+
   if (errors.length > 0) {
     return { ok: false, reason: "invalid-manifest", errors };
   }
@@ -203,6 +361,7 @@ export function validatePluginManifest(raw: unknown): PluginManifestValidation {
       ? { keywords: keywords.filter((k): k is string => typeof k === "string") }
       : {}),
     ...(isPlainObject(raw.extensions) ? { extensions: raw.extensions } : {}),
+    ...(contributes !== undefined ? { contributes } : {}),
   };
 
   return { ok: true, manifest, warnings };
