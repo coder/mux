@@ -5586,11 +5586,19 @@ describe("TaskService", () => {
         .find((workspace) => workspace.id === "childworkspace");
       assert(child, "workspace-turn child must exist");
       child.parentWorkspaceId = parentId;
-      child.agentId = "explore";
-      child.agentType = "explore";
+      child.agentId = "exec";
+      child.agentType = "exec";
       child.taskStatus = "reported";
       return cfg;
     });
+    const patchGeneration = spyOn(
+      (
+        taskService as unknown as {
+          gitPatchArtifactService: { maybeStartGeneration: (...args: unknown[]) => Promise<void> };
+        }
+      ).gitPatchArtifactService,
+      "maybeStartGeneration"
+    ).mockResolvedValue(undefined);
     const muxMetadata = {
       type: "workspace-turn-task" as const,
       taskHandleId: "wst_handle",
@@ -5669,6 +5677,9 @@ describe("TaskService", () => {
       status: "completed",
       messageId: "msg_selfhealed",
       reportMarkdown: "Self-healed final text",
+    });
+    expect(patchGeneration).toHaveBeenCalledWith(parentId, "childworkspace", expect.any(Function), {
+      refreshForContinuation: true,
     });
     const deliveredSnapshot = await new TaskHandleStore(config).getWorkspaceTurn(
       parentId,

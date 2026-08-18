@@ -8198,6 +8198,16 @@ export class TaskService {
           delete recovered.directParentResultDeliveredAt;
         }
       }
+      if (
+        recovered.status === "completed" &&
+        this.workspaceTurnRequiresDirectParentDelivery(recovered)
+      ) {
+        // History repair can be the only terminal path after a crash/restart. Refresh the stable
+        // child's patch before persisting the recovered inactive handle, matching normal settlement.
+        await this.maybeStartPatchGenerationForReportedTask(recovered.workspaceId, {
+          refreshForContinuation: true,
+        });
+      }
       log.debug("Workspace turn repaired from self-healed child history", {
         handleId: record.handleId,
         workspaceId: record.workspaceId,
