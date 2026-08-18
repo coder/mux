@@ -870,6 +870,44 @@ const localPlugin = {
             }
             return { type: annotation };
           }
+          // Destructured parameters carry their annotation on the pattern,
+          // not the identifier: `({ value }: { value: Foo })`. Resolve the
+          // member type from an inline literal annotation; named type
+          // references stay unresolvable (conservative: miss, never
+          // false-positive).
+          for (const identifier of variable.identifiers) {
+            const property =
+              identifier.parent.type === "AssignmentPattern" &&
+              identifier.parent.left === identifier
+                ? identifier.parent.parent
+                : identifier.parent;
+            if (property.type !== "Property" || property.parent.type !== "ObjectPattern") {
+              continue;
+            }
+            const pattern = property.parent;
+            const annotation = pattern.typeAnnotation?.typeAnnotation;
+            if (
+              annotation == null ||
+              annotation.type !== "TSTypeLiteral" ||
+              property.key.type !== "Identifier" ||
+              functionBoundary(pattern) !== boundary
+            ) {
+              continue;
+            }
+            const keyName = property.key.name;
+            const member = annotation.members.find(
+              (candidate) =>
+                candidate.type === "TSPropertySignature" &&
+                candidate.key.type === "Identifier" &&
+                candidate.key.name === keyName &&
+                candidate.typeAnnotation != null
+            );
+            if (member === undefined) {
+              continue;
+            }
+            const memberType = member.typeAnnotation.typeAnnotation;
+            return broadTypeKind(memberType) === null ? { type: memberType } : null;
+          }
           const declarator = variableDeclarator(variable);
           if (
             declarator === null ||
@@ -1655,14 +1693,18 @@ export default defineConfig([
     },
   },
   {
-    // Test/story/mock files: casting partial doubles through `unknown` is the
-    // standard mocking idiom, so the chained-assertion ban is production-only.
+    // Test/story/mock files and shared test support (harnesses/utils named
+    // per repo convention: *.testHarness.ts, test[A-Z]*.ts): casting partial
+    // doubles through `unknown` is the standard mocking idiom, so the
+    // chained-assertion ban is production-only.
     files: [
       "**/*.test.ts",
       "**/*.test.tsx",
       "**/*.stories.ts",
       "**/*.stories.tsx",
       "src/browser/stories/**",
+      "**/*.testHarness.ts",
+      "src/**/test[A-Z]*.ts",
     ],
     rules: {
       "local/no-chained-type-assertions": "off",

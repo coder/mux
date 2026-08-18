@@ -16,7 +16,6 @@ import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import { createTestHistoryService } from "@/node/services/testHistoryService";
 
 function createAgentSessionTestConfig(sessionDir = "/tmp"): Config {
-  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return {
     srcDir: sessionDir,
     getSessionDir: mock((_workspaceId: string) => sessionDir),
@@ -27,7 +26,6 @@ function createAgentSessionTestConfig(sessionDir = "/tmp"): Config {
 function createMockBackgroundProcessManager(
   overrides?: Partial<BackgroundProcessManager>
 ): BackgroundProcessManager {
-  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return {
     cleanup: mock((_workspaceId: string) => Promise.resolve()),
     setMessageQueued: mock((_workspaceId: string, _queued: boolean) => void _queued),
@@ -36,7 +34,6 @@ function createMockBackgroundProcessManager(
 }
 
 function createMockInitStateManager(overrides?: Partial<InitStateManager>): InitStateManager {
-  // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
   return Object.assign(new EventEmitter(), overrides) as unknown as InitStateManager;
 }
 
@@ -47,12 +44,10 @@ function createMockAiService(args?: { emitter?: EventEmitter; overrides?: Partia
   const aiEmitter = args?.emitter ?? new EventEmitter();
   return {
     aiEmitter,
-    // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
     aiService: Object.assign(aiEmitter, {
       isStreaming: mock((_workspaceId: string) => false),
       stopStream: mock((_workspaceId: string) => Promise.resolve(Ok(undefined))),
       getStreamInfo: mock((_workspaceId: string) => null),
-      // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
       streamMessage: mock((_history: MuxMessage[]) =>
         Promise.resolve(Ok(undefined))
       ) as unknown as AIService["streamMessage"],
