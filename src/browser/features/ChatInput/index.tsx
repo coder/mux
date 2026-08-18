@@ -160,6 +160,7 @@ import {
 
 import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
+import type { PluginSlashCommandDescriptor } from "@/common/orpc/schemas/agentPlugins";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import {
   coerceThinkingLevel,
@@ -476,6 +477,10 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const lastSymbolQueryRef = useRef<string>("");
   const [agentSkillDescriptors, setAgentSkillDescriptors] = useState<AgentSkillDescriptor[]>([]);
   const [mcpPromptDescriptors, setMcpPromptDescriptors] = useState<MCPPromptDescriptor[]>([]);
+  // Agent Plugins: manifest-contributed slash commands (empty when the experiment is off).
+  const [pluginCommandDescriptors, setPluginCommandDescriptors] = useState<
+    PluginSlashCommandDescriptor[]
+  >([]);
   const [toast, setToast] = useState<Toast | null>(null);
   // State for destructive command confirmation modal (currently only /clear).
   const [pendingDestructiveCommand, setPendingDestructiveCommand] = useState(false);
@@ -1717,6 +1722,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     const suggestions = getSlashCommandSuggestions(input, {
       agentSkills: agentSkillDescriptors,
       mcpPrompts: mcpPromptDescriptors,
+      pluginCommands: pluginCommandDescriptors,
       variant,
       isExperimentEnabled: (experimentId) =>
         resolveSlashCommandExperimentValue(experimentId, {
@@ -1732,6 +1738,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     input,
     agentSkillDescriptors,
     mcpPromptDescriptors,
+    pluginCommandDescriptors,
     variant,
     workspaceHeartbeatsExperimentEnabled,
     dynamicWorkflowsExperimentEnabled,
@@ -1894,6 +1901,32 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     sendMessageOptions.disableWorkspaceAgents,
     transferredDraftProjectDiscovery,
   ]);
+
+  // Agent Plugins: load manifest-contributed slash commands for suggestions.
+  // The backend returns [] when the agent-plugins experiment is disabled.
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadPluginCommands = async () => {
+      if (!api || variant !== "workspace" || !workspaceId) {
+        if (isMounted) setPluginCommandDescriptors([]);
+        return;
+      }
+      try {
+        const commands = await api.workspace.plugins.slashCommands.list({ workspaceId });
+        if (isMounted) setPluginCommandDescriptors(commands);
+      } catch {
+        // Plugin command discovery must never break the composer.
+        if (isMounted) setPluginCommandDescriptors([]);
+      }
+    };
+
+    void loadPluginCommands();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [api, variant, workspaceId]);
 
   // Voice input: track transcription provider availability (subscribe to provider config changes)
   useEffect(() => {

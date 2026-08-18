@@ -294,6 +294,45 @@ export function computeAgentPluginContainers(args: {
 }
 
 /**
+ * Workspace-level plugin discovery for host-local consumers (contributed slash
+ * commands, composition inspector): canonical containers with Project Trust
+ * gating, plus the repo-symlink posture check on project plugin roots (a
+ * committed .mux/plugins/<name> symlink must not resolve outside the checkout).
+ */
+export async function discoverWorkspaceAgentPlugins(args: {
+  workspacePath: string;
+  muxHome: string;
+  projectTrusted: boolean;
+}): Promise<DiscoverAgentPluginsResult> {
+  const containers = computeAgentPluginContainers({
+    muxHome: args.muxHome,
+    projectRoot: args.workspacePath,
+    projectTrusted: args.projectTrusted,
+  });
+  const { plugins, diagnostics } = await discoverAgentPlugins(containers);
+
+  const contained: AgentPluginInfo[] = [];
+  for (const plugin of plugins) {
+    if (plugin.scope === "project") {
+      try {
+        await ensurePathContained(args.workspacePath, plugin.rootPath);
+      } catch (error) {
+        diagnostics.push({
+          path: plugin.rootPath,
+          scope: plugin.scope,
+          severity: "error",
+          message: `Plugin root escapes the project checkout; skipping: ${getErrorMessage(error)}`,
+        });
+        continue;
+      }
+    }
+    contained.push(plugin);
+  }
+
+  return { plugins: contained, diagnostics };
+}
+
+/**
  * Discover Agent Plugins in the given container directories.
  *
  * Containers are scanned in the given order; plugins within a container are

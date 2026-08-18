@@ -101,6 +101,7 @@ import {
   AgentDefinitionPackageSchema,
   AgentIdSchema,
 } from "./agentDefinition";
+import { PluginSlashCommandDescriptorSchema, WorkspaceCompositionSchema } from "./agentPlugins";
 import {
   MCPAddGlobalParamsSchema,
   MCPAddParamsSchema,
@@ -1857,6 +1858,21 @@ export const workspace = {
         overrides: WorkspaceMCPOverridesSchema,
       }),
       output: ResultSchema(z.void(), z.string()),
+    },
+  },
+  /** Agent Plugins: contributed slash commands + composition inspector */
+  plugins: {
+    slashCommands: {
+      list: {
+        input: z.object({ workspaceId: z.string() }),
+        output: z.array(PluginSlashCommandDescriptorSchema),
+      },
+    },
+    composition: {
+      get: {
+        input: z.object({ workspaceId: z.string() }),
+        output: WorkspaceCompositionSchema,
+      },
     },
   },
 };

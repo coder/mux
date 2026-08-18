@@ -235,4 +235,48 @@ describe("getSlashCommandSuggestions", () => {
     expect(haiku?.description).toBeTruthy();
     expect(haiku?.replacement).toBe("/haiku ");
   });
+
+  describe("plugin-contributed commands", () => {
+    const pluginCommands = [
+      {
+        name: "greet",
+        description: "Say hello",
+        expansion: "Please greet the user warmly.",
+        pluginName: "my-plugin",
+        scope: "global" as const,
+      },
+    ];
+
+    it("merges plugin commands as data-driven entries whose replacement is the expansion", () => {
+      const suggestions = getSlashCommandSuggestions("/gre", { pluginCommands });
+      const greet = suggestions.find((s) => s.id === "plugin-command:greet");
+
+      expect(greet).toBeTruthy();
+      expect(greet?.display).toBe("/greet");
+      expect(greet?.description).toBe("Say hello (plugin:my-plugin)");
+      expect(greet?.replacement).toBe("Please greet the user warmly.");
+    });
+
+    it("filters plugin commands by partial input", () => {
+      const suggestions = getSlashCommandSuggestions("/xyz", { pluginCommands });
+      expect(suggestions.find((s) => s.id === "plugin-command:greet")).toBeUndefined();
+    });
+
+    it("built-in commands and skills take precedence over plugin commands on collision", () => {
+      const colliding = [
+        { ...pluginCommands[0], name: "compact" },
+        { ...pluginCommands[0], name: "my-skill" },
+      ];
+      const suggestions = getSlashCommandSuggestions("/", {
+        pluginCommands: colliding,
+        agentSkills: [{ name: "my-skill", description: "A skill", scope: "project" }],
+      });
+
+      expect(suggestions.find((s) => s.id === "plugin-command:compact")).toBeUndefined();
+      expect(suggestions.find((s) => s.id === "plugin-command:my-skill")).toBeUndefined();
+      // The colliding names still resolve through their canonical providers.
+      expect(suggestions.find((s) => s.id === "command:compact")).toBeTruthy();
+      expect(suggestions.find((s) => s.id === "skill:my-skill")).toBeTruthy();
+    });
+  });
 });

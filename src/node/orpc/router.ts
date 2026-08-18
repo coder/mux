@@ -125,6 +125,8 @@ import { formatSendMessageError } from "@/common/utils/errors/formatSendError";
 import { CHAT_FILE_NAME, CHAT_ARCHIVE_FILE_NAME } from "@/common/constants/paths";
 import { WorkflowRunStore } from "@/node/services/workflows/WorkflowRunStore";
 import { workflowRunStreamHub } from "@/node/services/workflows/workflowRunStreamHub";
+import { discoverWorkspaceAgentPlugins } from "@/node/services/agentPlugins/discovery";
+import { collectPluginSlashCommands } from "@/node/services/agentPlugins/slashCommands";
 import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
 import {
   WorkflowService,
@@ -5690,6 +5692,45 @@ export const router = (authToken?: string) => {
               return { success: false, error: message };
             }
           }),
+      },
+      // Agent Plugins: manifest-contributed slash commands (host-local discovery).
+      plugins: {
+        slashCommands: {
+          list: t
+            .input(schemas.workspace.plugins.slashCommands.list.input)
+            .output(schemas.workspace.plugins.slashCommands.list.output)
+            .handler(async ({ context, input, signal }) => {
+              // LOADING third-party plugin contributions stays experiment-gated.
+              if (!context.experimentsService.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS)) {
+                return [];
+              }
+              await context.aiService.waitForInit(input.workspaceId, signal);
+              const metadataResult = await context.aiService.getWorkspaceMetadata(
+                input.workspaceId
+              );
+              if (!metadataResult.success) throw new Error(metadataResult.error);
+              const metadata = metadataResult.data;
+              const runtimeContextResult = context.aiService.createWorkspaceRuntimeContext(
+                input.workspaceId,
+                metadata
+              );
+              if (!runtimeContextResult.success) {
+                throw new Error(formatSendMessageError(runtimeContextResult.error).message);
+              }
+              // Agent Plugin containers anchor at the host checkout root; plugin
+              // discovery is host-filesystem-only, so off-host workspaces have none.
+              const { hostCheckoutRoot } = runtimeContextResult.data;
+              if (!hostCheckoutRoot) {
+                return [];
+              }
+              const { plugins } = await discoverWorkspaceAgentPlugins({
+                workspacePath: hostCheckoutRoot,
+                muxHome: context.config.rootDir,
+                projectTrusted: isWorkspaceProjectTrusted(context.config, metadata),
+              });
+              return collectPluginSlashCommands(plugins);
+            }),
+        },
       },
     },
     tasks: {

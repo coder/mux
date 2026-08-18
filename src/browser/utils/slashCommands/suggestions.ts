@@ -92,6 +92,23 @@ function buildTopLevelSuggestions(
     };
   });
 
+  // Agent Plugins: manifest-contributed commands are pure data-driven entries
+  // whose replacement IS the expansion text (no parser/send-path involvement).
+  // Built-in command keys and skill names take precedence on collision.
+  const claimedSkillNames = new Set(skillDefinitions.map((definition) => definition.key));
+  const pluginCommandSuggestions = (context.pluginCommands ?? [])
+    .filter(
+      (command) =>
+        !SLASH_COMMAND_DEFINITION_MAP.has(command.name) && !claimedSkillNames.has(command.name)
+    )
+    .filter((command) => matchesNameBySegmentPrefix(command.name, partial))
+    .map((command) => ({
+      id: `plugin-command:${command.name}`,
+      display: `/${command.name}`,
+      description: `${command.description ?? "Plugin command"} (plugin:${command.pluginName})`,
+      replacement: command.expansion,
+    }));
+
   const promptSuggestions = (context.mcpPrompts ?? [])
     .filter((prompt) => matchesNameBySegmentPrefix(prompt.commandKey, partial))
     .map((prompt) => {
@@ -130,6 +147,7 @@ function buildTopLevelSuggestions(
   return [
     ...commandSuggestions,
     ...skillSuggestions,
+    ...pluginCommandSuggestions,
     ...promptSuggestions,
     ...modelAliasSuggestions,
   ];

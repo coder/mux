@@ -107,6 +107,15 @@ export {
   resolveSkillWhenToUse,
 } from "./schemas/agentSkill";
 
+// Agent Plugins schemas (contributed slash commands + composition inspector)
+export {
+  PluginSlashCommandDescriptorSchema,
+  WorkspaceCompositionDiagnosticSchema,
+  WorkspaceCompositionEntrySchema,
+  WorkspaceCompositionPluginSchema,
+  WorkspaceCompositionSchema,
+} from "./schemas/agentPlugins";
+
 // Workflow schemas
 export {
   AvailableWorkflowSchema,
