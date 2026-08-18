@@ -38,6 +38,7 @@ import {
 import { getGoalToolAvailability } from "@/common/utils/tools/toolAvailability";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
+import { agentPluginHookService } from "@/node/services/agentPlugins/hookService";
 import { resolveAgentPluginsMcpContext } from "@/node/services/agentPlugins/mcpConfig";
 import {
   createRuntimeContextForWorkspace,
@@ -1960,6 +1961,25 @@ export class AIService extends EventEmitter {
       const agentPluginsMcpContext = hostCheckoutRoot
         ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
         : null;
+
+      // Tier-1 plugin hooks (agent-plugins experiment): reconcile discovered
+      // hooks.js modules with the event spine BEFORE request assembly so both
+      // request.assemble and tool.execute middleware are in place for this
+      // turn. Failure posture: a broken plugin never blocks a send.
+      try {
+        await agentPluginHookService.ensureWorkspaceHooks({
+          workspaceId,
+          sessionDir: this.config.getSessionDir(workspaceId),
+          journal: this.durableEventJournalFor(workspaceId),
+          enabled: this.isAgentPluginsEnabled(),
+          muxHome: this.config.rootDir,
+          // Project containers follow the same off-host gating as plugin MCP.
+          projectRoot: agentPluginsMcpContext?.projectRoot,
+          projectTrusted,
+        });
+      } catch (error) {
+        log.warn("Agent plugin hooks: ensure failed; continuing without plugin hooks", { error });
+      }
 
       // Fetch MCP server config for system prompt (before building message).
       const listMcpServersStartedAt = Date.now();

@@ -23,6 +23,7 @@ import { askUserQuestionManager } from "@/node/services/askUserQuestionManager";
 import { delegatedToolCallManager } from "@/node/services/delegatedToolCallManager";
 import { log } from "@/node/services/log";
 import { eventSpine } from "@/node/services/events/eventSpine";
+import { agentPluginHookService } from "@/node/services/agentPlugins/hookService";
 import { sandboxHostService } from "@/node/services/sandbox/sandboxHostService";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
 import { AgentSession, type StreamErrorRecoveryOutcome } from "@/node/services/agentSession";
@@ -5216,6 +5217,9 @@ export class WorkspaceService extends EventEmitter {
       // recreate the directory (and the QuickJS runtime is not leaked in the
       // process-wide singleton).
       await sandboxHostService.dropScope(workspaceId);
+      // Plugin hook mounts live under their own scope keys; unregister their
+      // spine middleware and drop their runtimes too. Never throws.
+      await agentPluginHookService.disposeWorkspace(workspaceId);
       try {
         await this.timelineRecorder.closeWorkspace(workspaceId);
         timelineClosed = true;
@@ -7001,6 +7005,10 @@ export class WorkspaceService extends EventEmitter {
       // Dispose the workspace's persistent sandbox mount (snapshot-then-dispose
       // inside disposeScope keeps vars recoverable on un-archive).
       await sandboxHostService.disposeScope(workspaceId);
+
+      // Plugin hooks re-register lazily on the next send after un-archive, so
+      // disposal here only frees runtimes and spine middleware. Never throws.
+      await agentPluginHookService.disposeWorkspace(workspaceId);
 
       eventSpine.emit("workspace.archived", { workspaceId });
       return Ok({ kind: "archived" as const });

@@ -197,6 +197,7 @@ jobs:
             src/node/services/workflows/WorkflowRunner.test.ts
             src/node/services/ptc/quickjsRuntime.test.ts
             src/node/services/sandbox/sandboxHostService.test.ts
+            src/node/services/agentPlugins/hookService.test.ts
             src/node/orpc/router.test.ts
             src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx
             src/browser/features/Messages/InlineSkillMarkdown.test.tsx
@@ -241,6 +242,7 @@ jobs:
               ! -path 'src/node/orpc/router.test.ts' \
               ! -path 'src/node/services/workflows/WorkflowRunner.test.ts' \
               ! -path 'src/node/services/ptc/quickjsRuntime.test.ts' \
+              ! -path 'src/node/services/agentPlugins/hookService.test.ts' \
               ! -path 'src/browser/components/WorkspaceHeartbeatModal/WorkspaceHeartbeatModal.test.tsx' \
               ! -path 'src/browser/features/Messages/InlineSkillMarkdown.test.tsx' \
               ! -path 'src/browser/hooks/useChatTranscriptFullWidth.test.tsx' \

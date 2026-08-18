@@ -1,0 +1,456 @@
+/**
+ * QuickJS-heavy integration tests for Tier-1 sandboxed plugin hooks: real
+ * hooks.js files, real sandbox mounts, real spine middleware. Runs in an
+ * isolated CI process (see .github/workflows/pr.yml) like the other
+ * QuickJS-backed suites.
+ */
+
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { afterEach, describe, expect, test } from "bun:test";
+import { tool, type Tool } from "ai";
+import { z } from "zod";
+import type { Runtime } from "@/node/runtime/Runtime";
+import {
+  EventSpine,
+  type RequestAssembleContext,
+  type ToolExecuteContext,
+} from "@/node/services/events/eventSpine";
+import { HistoryService } from "@/node/services/historyService";
+import { SandboxHostService } from "@/node/services/sandbox/sandboxHostService";
+import { DisposableTempDir } from "@/node/services/tempDir";
+import {
+  appendReplayFixtureTurn,
+  createReplayFixtureSessionContext,
+  flushReplayFixtureDevtools,
+  REPLAY_FIXTURE_MODEL,
+  REPLAY_FIXTURE_WORKSPACE_ID,
+} from "@/node/services/replay/replayFixture";
+import { collectFullHistory, replayVerifySession } from "@/node/services/replay/replayVerify";
+import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { AgentPluginHookService } from "./hookService";
+import { AGENT_PLUGIN_SCHEMA_ID_1_0_0 } from "./manifest";
+
+const WORKSPACE_ID = "plugin-hooks-test";
+
+// Plugin hook middleware never touches the host runtime; a null-backed stub
+// is sufficient (same pattern as eventSpine.test.ts).
+const stubRuntime = null as unknown as Runtime;
+
+interface Harness {
+  tmp: DisposableTempDir;
+  container: string;
+  sessionDir: string;
+  spine: EventSpine;
+  sandboxHost: SandboxHostService;
+  journal: DurableEventJournal;
+  service: AgentPluginHookService;
+  ensure(overrides?: { enabled?: boolean; journal?: DurableEventJournal }): Promise<void>;
+}
+
+const harnesses: Harness[] = [];
+
+async function createHarness(opts?: { hookTimeoutMs?: number }): Promise<Harness> {
+  const tmp = new DisposableTempDir("plugin-hooks");
+  const container = path.join(tmp.path, "plugins");
+  const sessionDir = path.join(tmp.path, "session");
+  await fs.mkdir(container, { recursive: true });
+  await fs.mkdir(sessionDir, { recursive: true });
+  const spine = new EventSpine();
+  const sandboxHost = new SandboxHostService();
+  const journal = new DurableEventJournal(sessionDir);
+  const service = new AgentPluginHookService({
+    spine,
+    sandboxHost,
+    ...(opts?.hookTimeoutMs !== undefined ? { hookTimeoutMs: opts.hookTimeoutMs } : {}),
+    // Pin discovery to the temp container so plugins installed on the host
+    // machine can never leak into the test.
+    computeContainers: () => [{ path: container, scope: "global" }],
+  });
+  const harness: Harness = {
+    tmp,
+    container,
+    sessionDir,
+    spine,
+    sandboxHost,
+    journal,
+    service,
+    ensure: (overrides) =>
+      service.ensureWorkspaceHooks({
+        workspaceId: WORKSPACE_ID,
+        sessionDir,
+        journal: overrides?.journal ?? journal,
+        enabled: overrides?.enabled ?? true,
+        muxHome: tmp.path,
+        projectTrusted: false,
+      }),
+  };
+  harnesses.push(harness);
+  return harness;
+}
+
+afterEach(async () => {
+  for (const harness of harnesses.splice(0, harnesses.length)) {
+    await harness.service.disposeWorkspace(WORKSPACE_ID);
+    harness.sandboxHost.disposeAll();
+    harness.tmp[Symbol.dispose]();
+  }
+});
+
+async function writeHookPlugin(
+  container: string,
+  name: string,
+  hooksJs: string,
+  opts?: { tools?: string[] }
+): Promise<void> {
+  const dir = path.join(container, name);
+  await fs.mkdir(dir, { recursive: true });
+  const manifest = {
+    $schema: AGENT_PLUGIN_SCHEMA_ID_1_0_0,
+    name,
+    ...(opts?.tools !== undefined ? { extensions: { mux: { hooks: { tools: opts.tools } } } } : {}),
+  };
+  await fs.writeFile(path.join(dir, "plugin.json"), JSON.stringify(manifest), "utf8");
+  await fs.writeFile(path.join(dir, "hooks.js"), hooksJs, "utf8");
+}
+
+function makeToolCtx(
+  toolName: string,
+  args: unknown,
+  workspaceId: string = WORKSPACE_ID
+): ToolExecuteContext {
+  return {
+    toolName,
+    args,
+    host: {
+      runtime: stubRuntime,
+      runtimeTempDir: "/tmp",
+      cwd: "/repo",
+      workspaceId,
+    },
+    executed: false,
+  };
+}
+
+/** Run the tool.execute waterfall with a terminal that records execution. */
+async function runTool(spine: EventSpine, ctx: ToolExecuteContext): Promise<void> {
+  await spine.run("tool.execute", ctx, (c) => {
+    c.result = { ok: true, argsSeen: c.args };
+    c.executed = true;
+  });
+}
+
+function blockedError(ctx: ToolExecuteContext): string {
+  expect(ctx.blocked).toBeDefined();
+  const result = ctx.blocked?.result as { error?: unknown };
+  expect(typeof result.error).toBe("string");
+  return result.error as string;
+}
+
+describe("AgentPluginHookService", () => {
+  test("tool.execute.before blocks .env reads with a clear model-visible error", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "env-guard",
+      `({
+        "tool.execute.before": async (input) => {
+          const target = String((input.args && input.args.path) || "");
+          if (target.endsWith(".env")) {
+            return { deny: "Reading .env files is not allowed (env-guard)" };
+          }
+        },
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const blocked = makeToolCtx("file_read", { path: "/repo/.env" });
+    await runTool(harness.spine, blocked);
+    expect(blocked.executed).toBe(false);
+    const error = blockedError(blocked);
+    expect(error).toContain("env-guard");
+    expect(error).toContain("Reading .env files is not allowed");
+
+    const allowed = makeToolCtx("file_read", { path: "/repo/ok.txt" });
+    await runTool(harness.spine, allowed);
+    expect(allowed.executed).toBe(true);
+    expect(allowed.blocked).toBeUndefined();
+
+    // Other workspaces' tool calls pass through untouched.
+    const otherWorkspace = makeToolCtx("file_read", { path: "/repo/.env" }, "other-workspace");
+    await runTool(harness.spine, otherWorkspace);
+    expect(otherWorkspace.executed).toBe(true);
+  });
+
+  test("before-hook visibility and mutation are bounded to granted tools", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "arg-rewriter",
+      `({
+        "tool.execute.before": (input) => ({ args: { ...input.args, rewritten: true } }),
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const granted = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, granted);
+    expect(granted.args).toEqual({ path: "/repo/a.txt", rewritten: true });
+
+    // bash was not granted: the hook must not even observe the call.
+    const ungranted = makeToolCtx("bash", { script: "ls" });
+    await runTool(harness.spine, ungranted);
+    expect(ungranted.args).toEqual({ script: "ls" });
+    expect(ungranted.executed).toBe(true);
+  });
+
+  test("tool.execute.after annotates results with model-visible hook output", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "auditor",
+      `({
+        "tool.execute.after": (input) => ({
+          annotation: "observed ok=" + String(input.result && input.result.ok),
+        }),
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, ctx);
+    expect(ctx.executed).toBe(true);
+    const result = ctx.result as { ok: boolean; hook_output?: string };
+    expect(result.ok).toBe(true);
+    expect(result.hook_output).toBe("[plugin:auditor] observed ok=true");
+  });
+
+  test("request.assemble context is journaled as a hook-context row, then applied", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "context-notes",
+      `({
+        "request.assemble": () => ({ context: "House rule: never commit secrets." }),
+      })`
+    );
+    await harness.ensure();
+
+    const ctx: RequestAssembleContext = {
+      workspaceId: WORKSPACE_ID,
+      modelString: "anthropic:claude-sonnet-4-5",
+      systemMessage: "Base prompt.",
+      tools: {},
+    };
+    await harness.spine.run("request.assemble", ctx);
+
+    expect(ctx.systemMessage).toBe("Base prompt.\n\nHouse rule: never commit secrets.");
+    const rows = await harness.journal.read();
+    const hookRows = rows.filter((row) => row.kind === "hook-context");
+    expect(hookRows).toHaveLength(1);
+    expect(hookRows[0].data).toEqual({
+      hookId: "plugin:context-notes:request.assemble",
+      placement: "system-prompt",
+      text: "House rule: never commit secrets.",
+    });
+  });
+
+  test("a denied capability is a catchable guest error", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "capability-probe",
+      `({
+        "tool.execute.before": (input) => {
+          try {
+            mux.bash({ script: "ls" });
+            return { deny: "mux.bash unexpectedly succeeded" };
+          } catch (error) {
+            return { deny: "caught: " + error.message };
+          }
+        },
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, ctx);
+    const error = blockedError(ctx);
+    expect(error).toContain("caught: Capability denied: mux.bash is not granted for this sandbox");
+  });
+
+  test("a crashing hook never breaks the turn", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "crasher",
+      `({
+        "tool.execute.before": () => { throw new Error("boom"); },
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, ctx);
+    expect(ctx.executed).toBe(true);
+    expect(ctx.blocked).toBeUndefined();
+  });
+
+  test("a hook stuck in an infinite loop times out and the turn continues", async () => {
+    const harness = await createHarness({ hookTimeoutMs: 250 });
+    await writeHookPlugin(
+      harness.container,
+      "spinner",
+      `({
+        "tool.execute.before": () => { while (true) {} },
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, ctx);
+    expect(ctx.executed).toBe(true);
+    expect(ctx.blocked).toBeUndefined();
+  });
+
+  test("a hooks.js that does not evaluate to an object is skipped; siblings still load", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(harness.container, "broken", `42`, { tools: ["file_read"] });
+    await writeHookPlugin(
+      harness.container,
+      "working",
+      `({
+        "tool.execute.before": () => ({ deny: "blocked by working plugin" }),
+      })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const ctx = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, ctx);
+    expect(blockedError(ctx)).toContain("blocked by working plugin");
+  });
+
+  test("editing hooks.js reloads the plugin; disabling tears everything down", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "mutable",
+      `({ "tool.execute.before": () => ({ deny: "first version" }) })`,
+      { tools: ["file_read"] }
+    );
+    await harness.ensure();
+
+    const first = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, first);
+    expect(blockedError(first)).toContain("first version");
+
+    // Edit on disk → fingerprint change → mount rebuild + re-registration.
+    await fs.writeFile(
+      path.join(harness.container, "mutable", "hooks.js"),
+      `({ "tool.execute.before": () => ({ deny: "second version" }) })`,
+      "utf8"
+    );
+    await harness.ensure();
+    const second = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, second);
+    expect(blockedError(second)).toContain("second version");
+
+    // Disable (experiment off) → middleware unregistered, tool runs untouched.
+    await harness.ensure({ enabled: false });
+    expect(harness.spine.hasMiddleware("tool.execute")).toBe(false);
+    const third = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, third);
+    expect(third.executed).toBe(true);
+    expect(third.blocked).toBeUndefined();
+  });
+});
+
+describe("replay determinism with hooks active", () => {
+  function fixtureTools(): Record<string, Tool> {
+    return {
+      file_read: tool({
+        description: "Read a file",
+        inputSchema: z.object({ path: z.string() }),
+      }),
+    };
+  }
+
+  test("replay verification stays green when request.assemble injects context", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "context-notes",
+      `({
+        "request.assemble": () => ({ context: "House rule: never commit secrets." }),
+      })`
+    );
+
+    // Share ONE journal instance between the hook service and the fixture so
+    // hook-context and turn-envelope rows get strictly monotonic sequences.
+    const fixtureCtx = createReplayFixtureSessionContext(
+      harness.sessionDir,
+      REPLAY_FIXTURE_WORKSPACE_ID
+    );
+    await harness.service.ensureWorkspaceHooks({
+      workspaceId: REPLAY_FIXTURE_WORKSPACE_ID,
+      sessionDir: harness.sessionDir,
+      journal: fixtureCtx.journal,
+      enabled: true,
+      muxHome: harness.tmp.path,
+      projectTrusted: false,
+    });
+
+    // Assemble the request the way aiService does: hooks mutate the system
+    // prompt BEFORE the turn envelope is emitted from the final prompt.
+    const assembleCtx: RequestAssembleContext = {
+      workspaceId: REPLAY_FIXTURE_WORKSPACE_ID,
+      modelString: REPLAY_FIXTURE_MODEL,
+      systemMessage: "You are a hook fixture agent.",
+      tools: fixtureTools(),
+    };
+    await harness.spine.run("request.assemble", assembleCtx);
+    expect(assembleCtx.systemMessage).toContain("House rule: never commit secrets.");
+
+    await appendReplayFixtureTurn(fixtureCtx, {
+      userText: "Hello?",
+      assistantText: "Hi!",
+      systemPrompt: assembleCtx.systemMessage,
+      tools: fixtureTools(),
+    });
+    await flushReplayFixtureDevtools(fixtureCtx);
+
+    // The recorded provider request (built through the production pipeline)
+    // contains the hook-injected context...
+    const devtools = await fs.readFile(path.join(harness.sessionDir, "devtools.jsonl"), "utf8");
+    expect(devtools).toContain("House rule: never commit secrets.");
+
+    // ...the injected context exists as a durable hook-context row...
+    const rows = await fixtureCtx.journal.read();
+    const hookRows = rows.filter((row) => row.kind === "hook-context");
+    expect(hookRows).toHaveLength(1);
+    expect(hookRows[0].data.text).toBe("House rule: never commit secrets.");
+
+    // ...and byte-level replay verification passes with the hook active.
+    const historyService = new HistoryService({ getSessionDir: () => harness.sessionDir });
+    const history = await collectFullHistory(historyService, REPLAY_FIXTURE_WORKSPACE_ID);
+    expect(history.success).toBe(true);
+    if (!history.success) throw new Error("history read failed");
+    const result = await replayVerifySession({
+      sessionDir: harness.sessionDir,
+      workspaceId: REPLAY_FIXTURE_WORKSPACE_ID,
+      historyMessages: history.data,
+    });
+    expect(result.notes).toEqual([]);
+    expect(result.turns).toHaveLength(1);
+    expect(result.turns[0].status).toBe("PASS");
+
+    await harness.service.disposeWorkspace(REPLAY_FIXTURE_WORKSPACE_ID);
+  });
+});
