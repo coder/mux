@@ -1796,7 +1796,12 @@ export const router = (authToken?: string) => {
 
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
 
-          const descriptors = await discoverAgentDefinitions(runtime, discoveryPath);
+          const includeAgentPlugins = context.experimentsService.isExperimentEnabled(
+            EXPERIMENT_IDS.AGENT_PLUGINS
+          );
+          const descriptors = await discoverAgentDefinitions(runtime, discoveryPath, {
+            includeAgentPlugins,
+          });
 
           const cfg = context.config.loadConfigOrDefault();
 
@@ -1808,6 +1813,7 @@ export const router = (authToken?: string) => {
                   discoveryPath,
                   descriptor.id,
                   {
+                    includeAgentPlugins,
                     skipScopesAbove: getSkipScopesAboveForKnownScope(descriptor.scope),
                   }
                 );
@@ -1874,7 +1880,11 @@ export const router = (authToken?: string) => {
             await context.aiService.waitForInit(input.workspaceId);
           }
           const { runtime, discoveryPath } = await resolveAgentDiscoveryContext(context, input);
-          return readAgentDefinition(runtime, discoveryPath, input.agentId);
+          return readAgentDefinition(runtime, discoveryPath, input.agentId, {
+            includeAgentPlugins: context.experimentsService.isExperimentEnabled(
+              EXPERIMENT_IDS.AGENT_PLUGINS
+            ),
+          });
         }),
     },
     agentSkills: {

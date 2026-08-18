@@ -29,7 +29,10 @@ import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFi
 import { AgentSkillParseError, parseSkillMarkdown } from "./parseSkillMarkdown";
 import { getBuiltInSkillByName, getBuiltInSkillDescriptors } from "./builtInSkillDefinitions";
 import type { ProjectSkillContainment } from "./skillStorageContext";
-import { discoverAgentPlugins } from "@/node/services/agentPlugins/discovery";
+import {
+  discoverAgentPlugins,
+  UNIVERSAL_AGENT_PLUGINS_CONTAINER,
+} from "@/node/services/agentPlugins/discovery";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
@@ -38,7 +41,7 @@ const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 const CLAUDE_SKILLS_ROOT = "~/.claude/skills";
 // Agent Plugins containers (agent-plugins experiment): discovery-only, host-local,
 // lowest precedence within each scope. Write tools never target plugin roots.
-const UNIVERSAL_PLUGINS_ROOT = "~/.agents/plugins";
+const UNIVERSAL_PLUGINS_ROOT = UNIVERSAL_AGENT_PLUGINS_CONTAINER;
 
 export interface AgentSkillsRoots {
   projectRoot: string;
@@ -120,6 +123,8 @@ interface AgentSkillScanCandidate {
    * containment (§4.1). Present exactly for plugin skills/ roots.
    */
   pluginRoot?: string;
+  /** Agent Plugins only: contributing plugin name for descriptor attribution. */
+  pluginName?: string;
 }
 
 /**
@@ -179,6 +184,7 @@ async function buildPluginScanCandidates(args: {
       root: plugin.skillsDir,
       runtime: localRuntime,
       pluginRoot: plugin.rootPath,
+      pluginName: plugin.name,
     });
   }
 
@@ -339,7 +345,7 @@ async function readSkillDescriptorFromDir(
   skillDir: string,
   directoryName: SkillName,
   scope: AgentSkillScope,
-  options?: { invalidSkills?: AgentSkillIssue[] }
+  options?: { invalidSkills?: AgentSkillIssue[]; pluginName?: string }
 ): Promise<AgentSkillDescriptor | null> {
   const skillFilePath = runtime.normalizePath("SKILL.md", skillDir);
 
@@ -410,6 +416,7 @@ async function readSkillDescriptorFromDir(
       userInvocable: resolveSkillUserInvocable(parsed.frontmatter),
       argumentHint: parsed.frontmatter["argument-hint"],
       whenToUse: resolveSkillWhenToUse(parsed.frontmatter),
+      ...(options?.pluginName !== undefined ? { pluginName: options.pluginName } : {}),
     };
 
     const validated = AgentSkillDescriptorSchema.safeParse(descriptor);
@@ -530,7 +537,8 @@ export async function discoverAgentSkills(
         scan.runtime,
         skillDir,
         directoryName,
-        scan.scope
+        scan.scope,
+        scan.pluginName !== undefined ? { pluginName: scan.pluginName } : undefined
       );
       if (!descriptor) continue;
 
@@ -681,6 +689,7 @@ export async function discoverAgentSkillsDiagnostics(
         scan.scope,
         {
           invalidSkills,
+          ...(scan.pluginName !== undefined ? { pluginName: scan.pluginName } : {}),
         }
       );
       if (!descriptor) continue;

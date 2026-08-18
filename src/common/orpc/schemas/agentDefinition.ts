@@ -103,6 +103,8 @@ export const AgentDefinitionDescriptorSchema = z
     aiDefaults: AgentDefinitionAiDefaultsSchema.optional(),
     // Tool configuration (for UI display / inheritance computation)
     tools: AgentDefinitionToolsSchema.optional(),
+    // Agent Plugins: contributing plugin name (absent for non-plugin agents)
+    pluginName: z.string().min(1).optional(),
   })
   .strict();
 

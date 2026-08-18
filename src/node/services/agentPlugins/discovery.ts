@@ -27,6 +27,13 @@ import {
 
 export type AgentPluginScope = "project" | "global";
 
+/**
+ * Tilde-form universal plugins container (`~/.agents/plugins`). Shared by
+ * loader default-roots computations (skills, agent definitions) that resolve
+ * tilde paths through a LocalRuntime.
+ */
+export const UNIVERSAL_AGENT_PLUGINS_CONTAINER = "~/.agents/plugins";
+
 export interface AgentPluginContainer {
   /** Absolute host path of the container directory (e.g. `<projectRoot>/.mux/plugins`). */
   path: string;
