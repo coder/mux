@@ -17,11 +17,12 @@
  *   with the same per-step message transforms StreamManager's prepareStep
  *   applies.
  *
- * Guarantee scope: same log + same config + same binary. Inputs that are not
- * derivable from the log (live plan-transition content, post-compaction
- * attachments, per-send provider options such as a non-default Anthropic
- * cache TTL) are intentionally absent here; turns that depended on them will
- * report a divergence — surfacing them is the point of the auditor.
+ * Guarantee scope: same log + same config + same binary. Request-time inputs
+ * that chat.jsonl alone cannot provide (plan-transition content,
+ * post-compaction attachments, the per-send Anthropic cache TTL, the resolved
+ * wire provider name) are logged in the turn-envelope row and passed back in
+ * here. Only turns whose envelope predates those fields (legacy rows) report
+ * a divergence — surfacing them is the point of the auditor.
  */
 
 import { streamText, type ModelMessage, type SystemModelMessage, type Tool } from "ai";
@@ -32,6 +33,7 @@ import type {
 } from "@ai-sdk/provider";
 import { addInterruptedSentinel } from "@/browser/utils/messages/modelMessageTransform";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import type { PostCompactionAttachment } from "@/common/types/attachment";
 import { filterOrphanedMcpPromptSnapshots, type MuxMessage } from "@/common/types/message";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import {
@@ -69,6 +71,17 @@ export interface ReplayRequestInputs {
   routeProvider?: string;
   providersConfig?: ProvidersConfigMap | null;
   anthropicCacheTtl?: AnthropicCacheTtl | null;
+  /**
+   * Resolved wire provider name from the turn-envelope row. Falls back to
+   * name-canonicalization of the model string when absent (legacy envelopes) —
+   * Coder instance-typed gateway strings then report a divergence.
+   */
+  wireProviderName?: string;
+  /** Plan→exec handoff content from the turn-envelope blob (model-visible). */
+  planContentForTransition?: string;
+  planFilePath?: string;
+  /** Post-compaction attachments from the turn-envelope blob (model-visible). */
+  postCompactionAttachments?: PostCompactionAttachment[] | null;
   workspaceId: string;
 }
 
@@ -181,7 +194,7 @@ export async function captureLanguageModelPrompt(params: {
  */
 export async function buildReplayRequest(inputs: ReplayRequestInputs): Promise<ReplayBuiltRequest> {
   assert(inputs.systemPrompt.length > 0, "replay requires the envelope's system prompt blob");
-  const wireProviderName = deriveWireProviderName(inputs.modelString);
+  const wireProviderName = inputs.wireProviderName ?? deriveWireProviderName(inputs.modelString);
 
   // AgentSession.streamWithHistory → AIService.streamMessage, in order.
   const requestMessages = filterOrphanedMcpPromptSnapshots(inputs.historyMessages);
@@ -196,6 +209,9 @@ export async function buildReplayRequest(inputs: ReplayRequestInputs): Promise<R
     messagesWithSentinel,
     effectiveAgentId: inputs.effectiveAgentId,
     toolNamesForSentinel: inputs.toolNamesForSentinel,
+    planContentForTransition: inputs.planContentForTransition,
+    planFilePath: inputs.planFilePath,
+    postCompactionAttachments: inputs.postCompactionAttachments,
     providerForMessages: wireProviderName,
     effectiveThinkingLevel: inputs.thinkingLevel,
     modelString: inputs.modelString,

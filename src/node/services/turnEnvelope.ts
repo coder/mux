@@ -9,6 +9,8 @@
 
 import crypto from "node:crypto";
 import { asSchema, type FlexibleSchema, type Tool } from "ai";
+import type { PostCompactionAttachment } from "@/common/types/attachment";
+import type { BlobRef } from "@/common/types/durableEvent";
 import { stableStringify } from "@/common/utils/stableStringify";
 import { log } from "@/node/services/log";
 import type { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
@@ -107,10 +109,37 @@ export async function emitTurnEnvelope(params: {
   modelString: string;
   thinkingLevel: string;
   providerOptions: unknown;
+  /** Join key for replay pairing; omit when unknown (empty request history). */
+  requestHistorySequence?: number;
+  /** Resolved wire provider name (instance-typed gateways are not derivable offline). */
+  wireProviderName?: string;
+  /** Per-send Anthropic cache TTL override; omit for the default TTL. */
+  anthropicCacheTtl?: string;
+  /** Plan content injected on a plan→exec handoff this turn (model-visible). */
+  planContentForTransition?: string;
+  planFilePath?: string;
+  /** Post-compaction attachments injected this turn (model-visible). */
+  postCompactionAttachments?: PostCompactionAttachment[] | null;
 }): Promise<void> {
   try {
     // Content-addressed: unchanged prompts across turns dedupe to one blob.
     const { ref } = await params.journal.blobs.put(params.systemMessage);
+
+    // Request-time inputs that reach the provider request must be logged too
+    // ("model-visible ⟹ logged"): blob-store the injected plan content and
+    // post-compaction attachments so replay can rebuild those turns.
+    let planTransitionContentHash: BlobRef | undefined;
+    if (params.planContentForTransition != null && params.planContentForTransition.length > 0) {
+      planTransitionContentHash = (await params.journal.blobs.put(params.planContentForTransition))
+        .ref;
+    }
+    let postCompactionAttachmentsHash: BlobRef | undefined;
+    if (params.postCompactionAttachments != null && params.postCompactionAttachments.length > 0) {
+      postCompactionAttachmentsHash = (
+        await params.journal.blobs.put(JSON.stringify(params.postCompactionAttachments))
+      ).ref;
+    }
+
     await params.journal.append({
       kind: "turn-envelope",
       workspaceId: params.workspaceId,
@@ -122,6 +151,22 @@ export async function emitTurnEnvelope(params: {
         // (headers, cache keys), so the raw object is never persisted.
         providerOptionsHash: sha256Hex(stableStringify(params.providerOptions)),
         thinkingLevel: params.thinkingLevel,
+        ...(params.requestHistorySequence != null && params.requestHistorySequence >= 0
+          ? { requestHistorySequence: params.requestHistorySequence }
+          : {}),
+        ...(params.wireProviderName != null ? { wireProviderName: params.wireProviderName } : {}),
+        ...(params.anthropicCacheTtl != null
+          ? { anthropicCacheTtl: params.anthropicCacheTtl }
+          : {}),
+        ...(planTransitionContentHash !== undefined
+          ? {
+              planTransitionContentHash,
+              ...(params.planFilePath != null
+                ? { planTransitionFilePath: params.planFilePath }
+                : {}),
+            }
+          : {}),
+        ...(postCompactionAttachmentsHash !== undefined ? { postCompactionAttachmentsHash } : {}),
       },
     });
   } catch (error) {

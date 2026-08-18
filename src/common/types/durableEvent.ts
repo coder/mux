@@ -35,6 +35,30 @@ export const TurnEnvelopeDataSchema = z.object({
   modelString: z.string(),
   providerOptionsHash: z.string(),
   thinkingLevel: z.string(),
+  // The fields below are optional so rows written by older binaries stay
+  // readable (z.object strips unknown keys, so newer rows also stay readable
+  // by older binaries — upgrade↔downgrade safe).
+  /**
+   * The request's requestHistorySequence (max historySequence of the chat.jsonl
+   * rows the request was built from). Join key that re-anchors this envelope to
+   * its assistant row and its recorded devtools run — array-index pairing
+   * breaks on retries, devtools toggling, and compaction.
+   */
+  requestHistorySequence: z.number().int().nonnegative().optional(),
+  /**
+   * Resolved wire provider name (providerModelFactory). Coder instance-typed
+   * gateway strings cannot be name-canonicalized to a wire provider offline,
+   * so replay needs the resolved value logged.
+   */
+  wireProviderName: z.string().optional(),
+  /** Per-send Anthropic cache TTL override ("5m" | "1h"); absent = default. */
+  anthropicCacheTtl: z.string().optional(),
+  /** Plan content injected on a plan→exec handoff (blob-stored, model-visible). */
+  planTransitionContentHash: BlobRefSchema.optional(),
+  /** Plan file path referenced by the plan→exec handoff injection. */
+  planTransitionFilePath: z.string().optional(),
+  /** JSON-serialized PostCompactionAttachment[] injected this turn (blob-stored). */
+  postCompactionAttachmentsHash: BlobRefSchema.optional(),
 });
 
 /**

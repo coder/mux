@@ -22,12 +22,17 @@ import {
   REPLAY_FIXTURE_WORKSPACE_ID,
 } from "./replayFixture";
 import { buildReplayRequest, type ReplayRequestInputs } from "./replayRequestBuilder";
-import { collectAssistantTurns, replayVerifySession, type TurnEnvelopeEvent } from "./replayVerify";
+import {
+  collectAssistantTurns,
+  collectFullHistory,
+  replayVerifySession,
+  type TurnEnvelopeEvent,
+} from "./replayVerify";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
 
 async function readFixtureHistory(): Promise<MuxMessage[]> {
   const historyService = new HistoryService({ getSessionDir: () => REPLAY_FIXTURE_DIR });
-  const result = await historyService.getHistoryFromLatestBoundary(REPLAY_FIXTURE_WORKSPACE_ID);
+  const result = await collectFullHistory(historyService, REPLAY_FIXTURE_WORKSPACE_ID);
   if (!result.success) {
     throw new Error(`fixture history read failed: ${result.error}`);
   }

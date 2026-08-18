@@ -3312,6 +3312,9 @@ export class AIService extends EventEmitter {
             effectiveToolPolicy != null && effectiveToolPolicy.length > 0
               ? effectiveToolPolicy
               : undefined,
+          // Join key for the replay verifier: re-anchors this recorded run to
+          // its turn-envelope row and assistant message (see DevToolsRun).
+          ...(requestHistorySequence >= 0 ? { requestHistorySequence } : {}),
         });
         this.trackPendingDevToolsRunMetadata(assistantMessageId, workspaceId, pendingRunMetadataId);
         requestHeaders = {
@@ -3837,6 +3840,16 @@ export class AIService extends EventEmitter {
         modelString,
         thinkingLevel: effectiveThinkingLevel,
         providerOptions: mergedProviderOptions,
+        // Replay pairing key + request-time inputs that are model-visible but
+        // not derivable from chat.jsonl: the resolved wire provider (instance-
+        // typed gateways need live metadata), the per-send Anthropic cache TTL,
+        // and the injected plan-transition / post-compaction content.
+        requestHistorySequence,
+        wireProviderName,
+        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+        planContentForTransition,
+        planFilePath,
+        postCompactionAttachments,
       });
 
       emitStartupBreadcrumb("starting_stream");

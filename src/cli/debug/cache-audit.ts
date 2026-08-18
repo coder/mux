@@ -1,10 +1,14 @@
-import { defaultConfig } from "@/node/config";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import type { ChatUsageDisplay } from "@/common/utils/tokens/usageAggregator";
-import { HistoryService } from "@/node/services/historyService";
 import { auditCacheBusts } from "@/node/services/replay/cacheAudit";
-import { collectAssistantTurns, type TurnEnvelopeEvent } from "@/node/services/replay/replayVerify";
+import {
+  collectAssistantTurns,
+  collectFullHistory,
+  type AssistantTurn,
+  type TurnEnvelopeEvent,
+} from "@/node/services/replay/replayVerify";
 import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
+import { resolveReplaySessionDir } from "./replay-verify";
 
 /**
  * Debug command: diff consecutive turn-envelope rows and attribute
@@ -13,9 +17,10 @@ import { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
  * attribution from the recorded per-turn usage where available.
  *
  * Usage: bun debug cache-audit <workspace-id>
+ * (use the workspace ID "replay-fixture" to run against the committed fixture)
  */
 export async function cacheAuditCommand(workspaceId: string): Promise<void> {
-  const sessionDir = defaultConfig.getSessionDir(workspaceId);
+  const { sessionDir, historyService } = resolveReplaySessionDir(workspaceId);
   const journal = new DurableEventJournal(sessionDir);
   const events = await journal.read();
   const envelopes = events.filter(
@@ -28,15 +33,21 @@ export async function cacheAuditCommand(workspaceId: string): Promise<void> {
     return;
   }
 
-  // Usage pairing: assistant turns come from the CURRENT compaction epoch
-  // while envelopes span the whole session, so align both sequences at the
-  // tail (they both end at the most recent turn).
-  const historyService = new HistoryService(defaultConfig);
-  const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+  // Usage pairing: assistant turns come from the FULL history (all compaction
+  // epochs, like the envelopes). Envelopes carrying requestHistorySequence
+  // join on that key; legacy envelopes fall back to tail alignment (both
+  // sequences end at the most recent turn).
+  const historyResult = await collectFullHistory(historyService, workspaceId);
   const turns = historyResult.success ? collectAssistantTurns(historyResult.data) : [];
+  const turnsBySeq = new Map<number, AssistantTurn>(
+    turns.map((turn) => [turn.requestHistorySequence, turn])
+  );
   const offset = envelopes.length - turns.length;
-  const usageByTurn: Array<ChatUsageDisplay | undefined> = envelopes.map((_, index) => {
-    const turn = turns[index - offset];
+  const usageByTurn: Array<ChatUsageDisplay | undefined> = envelopes.map((envelope, index) => {
+    const turn =
+      envelope.data.requestHistorySequence != null
+        ? turnsBySeq.get(envelope.data.requestHistorySequence)
+        : turns[index - offset];
     const metadata = turn?.message.metadata;
     if (metadata?.usage == null || metadata.model == null) {
       return undefined;

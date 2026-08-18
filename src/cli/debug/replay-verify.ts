@@ -1,6 +1,31 @@
 import { defaultConfig } from "@/node/config";
 import { HistoryService } from "@/node/services/historyService";
-import { replayVerifySession } from "@/node/services/replay/replayVerify";
+import {
+  REPLAY_FIXTURE_DIR,
+  REPLAY_FIXTURE_WORKSPACE_ID,
+} from "@/node/services/replay/replayFixture";
+import { collectFullHistory, replayVerifySession } from "@/node/services/replay/replayVerify";
+
+/**
+ * The committed fixture session lives in the repo, not under ~/.mux/sessions;
+ * map its well-known workspace ID so both replay debug commands can be
+ * exercised without a real recorded session.
+ */
+export function resolveReplaySessionDir(workspaceId: string): {
+  sessionDir: string;
+  historyService: HistoryService;
+} {
+  if (workspaceId === REPLAY_FIXTURE_WORKSPACE_ID) {
+    return {
+      sessionDir: REPLAY_FIXTURE_DIR,
+      historyService: new HistoryService({ getSessionDir: () => REPLAY_FIXTURE_DIR }),
+    };
+  }
+  return {
+    sessionDir: defaultConfig.getSessionDir(workspaceId),
+    historyService: new HistoryService(defaultConfig),
+  };
+}
 
 /**
  * Debug command: rebuild every turn's provider request from durable session
@@ -9,11 +34,13 @@ import { replayVerifySession } from "@/node/services/replay/replayVerify";
  *
  * Guarantee scope: same log + same config + same binary.
  * Usage: bun debug replay-verify <workspace-id>
+ * (use the workspace ID "replay-fixture" to run against the committed fixture)
  */
 export async function replayVerifyCommand(workspaceId: string): Promise<void> {
-  const sessionDir = defaultConfig.getSessionDir(workspaceId);
-  const historyService = new HistoryService(defaultConfig);
-  const historyResult = await historyService.getHistoryFromLatestBoundary(workspaceId);
+  const { sessionDir, historyService } = resolveReplaySessionDir(workspaceId);
+  // Full history (all compaction epochs): envelopes and recorded requests span
+  // the whole session, so a boundary-sliced read would misalign the pairing.
+  const historyResult = await collectFullHistory(historyService, workspaceId);
   if (!historyResult.success) {
     console.error(`Failed to read chat history: ${historyResult.error}`);
     process.exitCode = 1;
