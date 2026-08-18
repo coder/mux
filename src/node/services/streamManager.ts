@@ -4283,7 +4283,12 @@ export class StreamManager extends EventEmitter {
     // Pinned providers-config snapshot the request was assembled from (see
     // AIService's pinCoderWireProvidersConfig): request-config building and
     // metadata resolution must not re-read live config after model creation.
-    providersConfigSnapshot?: ProvidersConfigMap
+    providersConfigSnapshot?: ProvidersConfigMap,
+    // Invoked once the stream is constructed and registered (before
+    // processing). Durable side effects describing this request — the turn
+    // envelope — belong here: earlier emission persists phantom rows when
+    // setup aborts or fails before any provider request exists. Must not throw.
+    onStreamConstructed?: () => Promise<void>
   ): Promise<Result<StreamToken, SendMessageError>> {
     const typedWorkspaceId = workspaceId as WorkspaceId;
 
@@ -4386,6 +4391,10 @@ export class StreamManager extends EventEmitter {
 
         streamInfo.unlinkAbortSignal = unlinkAbortSignal;
         streamRegistered = true;
+
+        // Stream constructed + registered: durable request-describing side
+        // effects (turn envelope) may be recorded now.
+        await onStreamConstructed?.();
 
         // Step 5: Track the processing promise for guaranteed cleanup
         // This allows cancelStreamSafely to wait for full exit

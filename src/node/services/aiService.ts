@@ -3203,9 +3203,14 @@ export class AIService extends EventEmitter {
       // buildProviderOptions → providers.jsonc extras merge). Consumed by
       // StreamManager's prepareStep; `null` ⇒ skip (no-op or model-swap level).
       const currentEffectiveLevelRef = { current: effectiveThinkingLevel };
-      const rebuildProviderOptionsForThinkingLevel: RebuildProviderOptionsForThinkingLevel = (
-        level
-      ) => {
+      // Pure recompute shared by the mid-turn rebuild closure and the turn
+      // envelope's pending-override fold: no ref mutation, so envelope
+      // emission can preview the step-0 result without making prepareStep
+      // think the level was already applied.
+      const computeRebuiltProviderOptions = (
+        level: ThinkingLevel,
+        currentLevel: ThinkingLevel
+      ): { effectiveLevel: ThinkingLevel; providerOptions: Record<string, unknown> } | null => {
         const clamped = enforceThinkingPolicy(
           modelString,
           level,
@@ -3217,18 +3222,12 @@ export class AIService extends EventEmitter {
           clamped,
           requestProvidersConfig
         );
-        if (effective === currentEffectiveLevelRef.current) {
+        if (effective === currentLevel) {
           return null;
         }
         // off ↔ non-off on grok-4-1-fast selects a different model instance —
         // not expressible via provider options on the in-flight stream.
-        if (
-          isXaiGrokFastVariantSwap(
-            canonicalModelString,
-            currentEffectiveLevelRef.current,
-            effective
-          )
-        ) {
+        if (isXaiGrokFastVariantSwap(canonicalModelString, currentLevel, effective)) {
           return null;
         }
         const rebuilt = buildProviderOptions(
@@ -3245,8 +3244,16 @@ export class AIService extends EventEmitter {
           reasoningMode
         );
         const merged = mergeModelParameterExtras(rebuilt as Record<string, unknown>);
-        currentEffectiveLevelRef.current = effective;
         return { effectiveLevel: effective, providerOptions: merged };
+      };
+      const rebuildProviderOptionsForThinkingLevel: RebuildProviderOptionsForThinkingLevel = (
+        level
+      ) => {
+        const result = computeRebuiltProviderOptions(level, currentEffectiveLevelRef.current);
+        if (result != null) {
+          currentEffectiveLevelRef.current = result.effectiveLevel;
+        }
+        return result;
       };
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
@@ -3892,9 +3899,10 @@ export class AIService extends EventEmitter {
           : undefined;
 
       // Durable turn envelope: fingerprint the FINAL request identity (post
-      // request.assemble middleware, post tool-policy rebuild) before streaming
-      // starts, so session logs can reconstruct what the provider request
-      // contained ("model-visible ⟹ logged"). Emission never fails the turn.
+      // request.assemble middleware, post tool-policy rebuild). Deferred to
+      // StreamManager's construction boundary (like the fallback envelope):
+      // aborts or setup errors before a stream exists must not persist a
+      // phantom request row. Emission never fails the turn.
       // Step-0 wire truth: StreamManager sends only the first step's active
       // tools (forced xAI search set, else the tool-search active subset), so
       // the envelope fingerprints that subset — deferred tools never reach
@@ -3904,31 +3912,43 @@ export class AIService extends EventEmitter {
           ? forcedFirstStepToolNames
           : (computeActiveToolNames(toolSearchRuntime?.state) ?? Object.keys(toolsForStream))
       );
-      await emitTurnEnvelope({
-        journal: this.durableEventJournalFor(workspaceId),
-        workspaceId,
-        systemMessage,
-        tools: Object.fromEntries(
-          Object.entries(toolsForStream).filter(([name]) => firstStepToolNames.has(name))
-        ),
-        modelString,
-        thinkingLevel: effectiveThinkingLevel,
-        providerOptions: mergedProviderOptions,
-        // Replay pairing key + request-time inputs that are model-visible but
-        // not derivable from chat.jsonl: the resolved wire provider (instance-
-        // typed gateways need live metadata), the per-send Anthropic cache TTL,
-        // and the injected plan-transition / post-compaction content.
-        requestHistorySequence,
-        // Sentinel names are recorded separately: forced first-step scoping
-        // narrows the wire manifest while the sentinel lists the full active
-        // set, so replay cannot derive one from the other.
-        sentinelToolNames: toolNamesForSentinel,
-        wireProviderName,
-        anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
-        planContentForTransition,
-        planFilePath,
-        postCompactionAttachments,
-      });
+      const emitPrimaryEnvelope = async (): Promise<void> => {
+        // A thinking override set during PREPARING is consumed by prepareStep
+        // at step 0: the wire request streams with rebuilt options while the
+        // locals here still hold pre-override values. Preview the fold with
+        // the pure recompute (never the ref-mutating rebuild closure, which
+        // would make prepareStep skip the real application).
+        const pendingLevel = activeTurnThinkingOverride?.pending;
+        const previewed =
+          pendingLevel != null
+            ? computeRebuiltProviderOptions(pendingLevel, effectiveThinkingLevel)
+            : null;
+        await emitTurnEnvelope({
+          journal: this.durableEventJournalFor(workspaceId),
+          workspaceId,
+          systemMessage,
+          tools: Object.fromEntries(
+            Object.entries(toolsForStream).filter(([name]) => firstStepToolNames.has(name))
+          ),
+          modelString,
+          thinkingLevel: previewed?.effectiveLevel ?? effectiveThinkingLevel,
+          providerOptions: previewed?.providerOptions ?? mergedProviderOptions,
+          // Replay pairing key + request-time inputs that are model-visible but
+          // not derivable from chat.jsonl: the resolved wire provider (instance-
+          // typed gateways need live metadata), the per-send Anthropic cache TTL,
+          // and the injected plan-transition / post-compaction content.
+          requestHistorySequence,
+          // Sentinel names are recorded separately: forced first-step scoping
+          // narrows the wire manifest while the sentinel lists the full active
+          // set, so replay cannot derive one from the other.
+          sentinelToolNames: toolNamesForSentinel,
+          wireProviderName,
+          anthropicCacheTtl: effectiveMuxProviderOptions.anthropic?.cacheTtl ?? undefined,
+          planContentForTransition,
+          planFilePath,
+          postCompactionAttachments,
+        });
+      };
 
       emitStartupBreadcrumb("starting_stream");
       const startStreamStartedAt = Date.now();
@@ -3982,7 +4002,8 @@ export class AIService extends EventEmitter {
         activeTurnThinkingOverride,
         rebuildProviderOptionsForThinkingLevel,
         forcedFirstStepToolNames,
-        requestProvidersConfig
+        requestProvidersConfig,
+        emitPrimaryEnvelope
       );
       recordStartupPhaseTiming("startStreamMs", startStreamStartedAt);
 

@@ -4111,7 +4111,14 @@ export class AgentSession {
     }
 
     // Capture the current user message id so retries are stable across assistant message ids.
-    const lastUserMessage = [...requestMessages].reverse().find((m) => m.role === "user");
+    // Retry-eligible rows only: startup recovery matches this persisted ID
+    // against shouldUseUserMessageForRetry candidates, so selecting an
+    // invisible synthetic row (file-update notification, [CONTINUE] sentinel,
+    // snapshot) would persist non-retryable failures against a row recovery
+    // never selects and break the tail match after restart.
+    const lastUserMessage = [...requestMessages]
+      .reverse()
+      .find((m) => this.shouldUseUserMessageForRetry(m));
     this.activeStreamUserMessageId = lastUserMessage?.id;
 
     this.activeCompactionRequest = this.resolveCompactionRequest(
