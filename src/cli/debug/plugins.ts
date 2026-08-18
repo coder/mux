@@ -76,7 +76,8 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
   console.log(`Plugins (${composition.plugins.length}):`);
   for (const plugin of composition.plugins) {
     const version = plugin.version ? `  v${plugin.version}` : "";
-    const components = plugin.components.length > 0 ? plugin.components.join(", ") : "no components";
+    const components =
+      plugin.components.length > 0 ? plugin.components.join(", ") : "no components";
     console.log(`  - ${plugin.name} (${plugin.scope})${version}  [${components}]`);
     console.log(`      ${plugin.rootPath}`);
   }
