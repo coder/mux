@@ -9,6 +9,245 @@ import tailwindcss from "eslint-plugin-tailwindcss";
 import tseslint from "typescript-eslint";
 
 /**
+ * Shared helpers for the rules ported from anti-slop
+ * (https://github.com/dmmulroy/anti-slop). The common theme: values whose
+ * types are syntactically evident (literals, typed bindings) must not flow
+ * into explicitly broad types (`unknown`, `object`, `Record<string, ...>`)
+ * that discard that evidence — push type information into the compiler
+ * instead of re-deriving it at runtime or re-asserting it later.
+ *
+ * Differences from upstream (which targets oxlint's ESTree): typescript-eslint
+ * does not emit ParenthesizedExpression/TSParenthesizedType nodes, and the
+ * module-level type-alias/interface environment resolution is omitted — it
+ * only adds catches (alias-of-Record etc.), so skipping it cannot introduce
+ * false positives.
+ */
+
+/** Unwrap assertion-like wrappers to reach the underlying value expression. */
+function unwrapAssertions(expression) {
+  let current = expression;
+  while (
+    current.type === "TSAsExpression" ||
+    current.type === "TSTypeAssertion" ||
+    current.type === "TSNonNullExpression" ||
+    current.type === "TSSatisfiesExpression"
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/** Expressions whose type is syntactically established at the use site. */
+function isKnownEvidenceExpression(expression) {
+  const current = unwrapAssertions(expression);
+  return (
+    current.type === "ObjectExpression" ||
+    current.type === "ArrayExpression" ||
+    current.type === "ArrowFunctionExpression" ||
+    current.type === "ClassExpression" ||
+    current.type === "FunctionExpression" ||
+    current.type === "NewExpression" ||
+    current.type === "Literal" ||
+    current.type === "TemplateLiteral" ||
+    current.type === "UnaryExpression"
+  );
+}
+
+function isEmptyObjectExpression(expression) {
+  const current = unwrapAssertions(expression);
+  return current.type === "ObjectExpression" && current.properties.length === 0;
+}
+
+function resolveVariable(sourceCode, identifier) {
+  let scope = sourceCode.getScope(identifier);
+  while (scope !== null) {
+    const variable = scope.set.get(identifier.name);
+    if (variable !== undefined) {
+      return variable;
+    }
+    scope = scope.upper;
+  }
+  return null;
+}
+
+function variableDeclarator(variable) {
+  if (variable.defs.length !== 1) {
+    return null;
+  }
+  const definition = variable.defs[0];
+  return definition.type === "Variable" && definition.node.type === "VariableDeclarator"
+    ? definition.node
+    : null;
+}
+
+/** A `const` binding that is never reassigned after initialization. */
+function isStableConstVariable(variable, declarator) {
+  return (
+    declarator.parent.type === "VariableDeclaration" &&
+    declarator.parent.kind === "const" &&
+    variable.references.every((reference) => reference.init || !reference.isWrite())
+  );
+}
+
+/** True when the expression's type is syntactically known, tracing through stable consts. */
+function hasKnownEvidence(sourceCode, expression, visitedVariables = new Set()) {
+  if (isKnownEvidenceExpression(expression)) {
+    return true;
+  }
+  const unwrapped = unwrapAssertions(expression);
+  if (unwrapped.type !== "Identifier") {
+    return false;
+  }
+  const variable = resolveVariable(sourceCode, unwrapped);
+  if (variable === null || visitedVariables.has(variable)) {
+    return false;
+  }
+  const declarator = variableDeclarator(variable);
+  if (
+    declarator === null ||
+    declarator.init === null ||
+    !isStableConstVariable(variable, declarator)
+  ) {
+    return false;
+  }
+  visitedVariables.add(variable);
+  return hasKnownEvidence(sourceCode, declarator.init, visitedVariables);
+}
+
+const TRANSPARENT_TYPE_WRAPPERS = new Set(["Readonly", "Partial", "Required", "NonNullable"]);
+
+function typeReferenceName(type) {
+  return type.type === "TSTypeReference" && type.typeName.type === "Identifier"
+    ? type.typeName.name
+    : null;
+}
+
+function typeArgumentsOf(typeReference) {
+  // typescript-eslint v8 uses typeArguments; older versions used typeParameters.
+  return (typeReference.typeArguments ?? typeReference.typeParameters)?.params ?? [];
+}
+
+function unwrapReadonlyOperator(type) {
+  let current = type;
+  while (current.type === "TSTypeOperator" && current.operator === "readonly") {
+    current = current.typeAnnotation;
+  }
+  return current;
+}
+
+/**
+ * Classify explicitly broad target types that discard evidence when a known
+ * value flows into them. Returns a human-readable kind or null.
+ */
+function classifyWideningTarget(type) {
+  const unwrapped = unwrapReadonlyOperator(type);
+  if (unwrapped.type === "TSUnknownKeyword") {
+    return "unknown";
+  }
+  if (unwrapped.type === "TSObjectKeyword") {
+    return "object";
+  }
+  if (unwrapped.type === "TSTypeLiteral") {
+    // Upstream also classifies non-empty literals without an index signature
+    // ("anonymous object"), but inline object annotations are idiomatic here
+    // (296 prod sites) and the assertion case is already restricted by
+    // @typescript-eslint/consistent-type-assertions, so we treat them as safe.
+    return unwrapped.members.some((member) => member.type === "TSIndexSignature")
+      ? "open dictionary"
+      : null;
+  }
+  if (unwrapped.type === "TSMappedType") {
+    return "open dictionary";
+  }
+  const name = typeReferenceName(unwrapped);
+  if (name === null) {
+    return null;
+  }
+  if (TRANSPARENT_TYPE_WRAPPERS.has(name)) {
+    const [inner] = typeArgumentsOf(unwrapped);
+    return inner === undefined ? null : classifyWideningTarget(inner);
+  }
+  return name === "Record" ? "open dictionary" : null;
+}
+
+function isBroadRecordKeyType(type) {
+  if (
+    type.type === "TSStringKeyword" ||
+    type.type === "TSNumberKeyword" ||
+    type.type === "TSSymbolKeyword"
+  ) {
+    return true;
+  }
+  if (type.type === "TSUnionType") {
+    return type.types.every(isBroadRecordKeyType);
+  }
+  return typeReferenceName(type) === "PropertyKey";
+}
+
+function isUnknownOrAnyType(type) {
+  return type.type === "TSUnknownKeyword" || type.type === "TSAnyKeyword";
+}
+
+/** `Record<broad-key, unknown|any>` or an index-signature-only literal of the same shape. */
+function isBroadRecordType(type) {
+  const unwrapped = unwrapReadonlyOperator(type);
+  const name = typeReferenceName(unwrapped);
+  if (name === "Readonly") {
+    const [inner] = typeArgumentsOf(unwrapped);
+    return inner !== undefined && isBroadRecordType(inner);
+  }
+  if (name === "Record") {
+    const parameters = typeArgumentsOf(unwrapped);
+    return (
+      parameters.length === 2 &&
+      isBroadRecordKeyType(parameters[0]) &&
+      isUnknownOrAnyType(parameters[1])
+    );
+  }
+  if (unwrapped.type !== "TSTypeLiteral" || unwrapped.members.length !== 1) {
+    return false;
+  }
+  const [member] = unwrapped.members;
+  return (
+    member.type === "TSIndexSignature" &&
+    member.parameters.length === 1 &&
+    isBroadRecordKeyType(member.parameters[0].typeAnnotation.typeAnnotation) &&
+    isUnknownOrAnyType(member.typeAnnotation.typeAnnotation)
+  );
+}
+
+/** Broad-type kinds used by no-widen-then-assert. */
+function broadTypeKind(type) {
+  const unwrapped = unwrapReadonlyOperator(type);
+  if (unwrapped.type === "TSUnknownKeyword" || unwrapped.type === "TSAnyKeyword") {
+    return "top";
+  }
+  if (unwrapped.type === "TSObjectKeyword") {
+    return "object";
+  }
+  return isBroadRecordType(unwrapped) ? "record" : null;
+}
+
+const FUNCTION_BOUNDARY_TYPES = new Set([
+  "ArrowFunctionExpression",
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "TSDeclareFunction",
+  "TSEmptyBodyFunctionExpression",
+]);
+
+function functionBoundary(node) {
+  let current = node.parent;
+  while (current != null && current.type !== "Program") {
+    if (FUNCTION_BOUNDARY_TYPES.has(current.type)) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+/**
  * Custom ESLint plugin for safe Node.js patterns
  * Enforces safe child_process and filesystem patterns
  */
@@ -417,6 +656,427 @@ const localPlugin = {
         };
       },
     },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // When a value's type is syntactically known (a literal, or a stable const
+    // tracing back to one), annotating or asserting it as `unknown`, `object`,
+    // or `Record<...>` throws away evidence the compiler already had. Keep
+    // inference, validate with `satisfies`, or use a named owner type.
+    // Empty object literals flowing into dictionary types are exempt
+    // (accumulator pattern: `const acc: Record<string, X> = {}`).
+    "no-known-value-widening": {
+      meta: {
+        type: "problem",
+        docs: {
+          description:
+            "Disallow explicitly widening syntactically known values to broad types that discard type evidence",
+        },
+        messages: {
+          widening:
+            "The explicit {{target}} type on {{subject}} discards known type evidence. Keep inference, validate with `satisfies`, or use a named owner type.",
+        },
+        schema: [
+          {
+            type: "object",
+            properties: {
+              // When false, only assertion-position widening (`x as unknown`,
+              // `{...} as Record<string, unknown>`) is checked; annotation
+              // flows (bindings, returns, class properties) are left alone.
+              checkAnnotations: { type: "boolean" },
+            },
+            additionalProperties: false,
+          },
+        ],
+      },
+      create(context) {
+        const sourceCode = context.sourceCode;
+        const checkAnnotations = context.options[0]?.checkAnnotations ?? true;
+
+        const reportFlow = (expression, targetKind, subject) => {
+          if (targetKind === null) {
+            return;
+          }
+          if (targetKind === "open dictionary" && isEmptyObjectExpression(expression)) {
+            return;
+          }
+          if (!hasKnownEvidence(sourceCode, expression)) {
+            return;
+          }
+          context.report({
+            node: expression,
+            messageId: "widening",
+            data: { target: targetKind, subject },
+          });
+        };
+
+        const annotationTarget = (annotation) =>
+          annotation == null || !checkAnnotations
+            ? null
+            : classifyWideningTarget(annotation.typeAnnotation);
+
+        const checkAssertion = (node) => {
+          // Skip inner assertions of chains; no-chained-type-assertions owns those.
+          if (node.parent.type === "TSAsExpression" || node.parent.type === "TSTypeAssertion") {
+            return;
+          }
+          reportFlow(node.expression, classifyWideningTarget(node.typeAnnotation), "assertion");
+        };
+
+        return {
+          VariableDeclarator(node) {
+            if (node.init === null || node.id.type !== "Identifier") {
+              return;
+            }
+            reportFlow(
+              node.init,
+              annotationTarget(node.id.typeAnnotation),
+              `binding \`${node.id.name}\``
+            );
+          },
+          PropertyDefinition(node) {
+            if (node.value === null) {
+              return;
+            }
+            reportFlow(node.value, annotationTarget(node.typeAnnotation), "class property");
+          },
+          AssignmentExpression(node) {
+            if (node.operator !== "=" || node.left.type !== "Identifier") {
+              return;
+            }
+            const variable = resolveVariable(sourceCode, node.left);
+            if (variable === null) {
+              return;
+            }
+            const declarator = variableDeclarator(variable);
+            if (declarator === null || declarator.id.type !== "Identifier") {
+              return;
+            }
+            reportFlow(
+              node.right,
+              annotationTarget(declarator.id.typeAnnotation),
+              `binding \`${declarator.id.name}\``
+            );
+          },
+          ReturnStatement(node) {
+            if (node.argument === null) {
+              return;
+            }
+            const owner = functionBoundary(node);
+            reportFlow(node.argument, annotationTarget(owner?.returnType), "the return value");
+          },
+          ArrowFunctionExpression(node) {
+            if (node.body.type === "BlockStatement") {
+              return;
+            }
+            reportFlow(node.body, annotationTarget(node.returnType), "the return value");
+          },
+          TSAsExpression: checkAssertion,
+          TSTypeAssertion: checkAssertion,
+        };
+      },
+    },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // Closes the two-step evasion of no-chained-type-assertions: widening a
+    // known value into a broad const binding (`const tmp: unknown = value`)
+    // and later asserting the binding back to a narrower type (`tmp as Foo`)
+    // is the same evidence-fabrication as `value as unknown as Foo`.
+    "no-widen-then-assert": {
+      meta: {
+        type: "problem",
+        docs: {
+          description:
+            "Disallow widening a known value into a broad const binding and later asserting it back to a narrower type",
+        },
+        messages: {
+          widenThenAssert:
+            "Binding `{{name}}` discards type evidence and later recreates it with an assertion. Keep the precise type from initialization through use; parse boundary input once.",
+        },
+      },
+      create(context) {
+        const sourceCode = context.sourceCode;
+
+        // Like hasKnownEvidence, but returns the source-type annotation when
+        // one exists (typed params/bindings count) and stays within the same
+        // function boundary. Returns { type } on evidence, null otherwise.
+        const knownValueEvidence = (expression, boundary, visitedVariables) => {
+          if (expression.type === "TSAsExpression" || expression.type === "TSTypeAssertion") {
+            // An assertion to a broad type destroys evidence; a narrower one is evidence.
+            return broadTypeKind(expression.typeAnnotation) === null
+              ? { type: expression.typeAnnotation }
+              : null;
+          }
+          const unwrapped = unwrapAssertions(expression);
+          if (isKnownEvidenceExpression(unwrapped)) {
+            return { type: null };
+          }
+          if (unwrapped.type !== "Identifier") {
+            return null;
+          }
+          const variable = resolveVariable(sourceCode, unwrapped);
+          if (variable === null || visitedVariables.has(variable)) {
+            return null;
+          }
+          const annotatedIdentifier = variable.identifiers.find(
+            (identifier) => identifier.typeAnnotation != null
+          );
+          if (annotatedIdentifier !== undefined) {
+            const annotation = annotatedIdentifier.typeAnnotation.typeAnnotation;
+            if (
+              functionBoundary(annotatedIdentifier) !== boundary ||
+              broadTypeKind(annotation) !== null
+            ) {
+              return null;
+            }
+            return { type: annotation };
+          }
+          const declarator = variableDeclarator(variable);
+          if (
+            declarator === null ||
+            declarator.init === null ||
+            !isStableConstVariable(variable, declarator) ||
+            functionBoundary(declarator) !== boundary
+          ) {
+            return null;
+          }
+          return knownValueEvidence(
+            declarator.init,
+            boundary,
+            new Set([...visitedVariables, variable])
+          );
+        };
+
+        // A stable const whose declared annotation (or initializer assertion)
+        // erases known evidence into a broad type.
+        const widenedBinding = (variable) => {
+          const declarator = variableDeclarator(variable);
+          if (
+            declarator === null ||
+            declarator.id.type !== "Identifier" ||
+            declarator.init === null ||
+            !isStableConstVariable(variable, declarator)
+          ) {
+            return null;
+          }
+          const boundary = functionBoundary(declarator);
+          const declaredType = declarator.id.typeAnnotation?.typeAnnotation;
+          const init = declarator.init;
+          const initAssertion =
+            init.type === "TSAsExpression" || init.type === "TSTypeAssertion" ? init : null;
+          const initBroadKind =
+            initAssertion === null ? null : broadTypeKind(initAssertion.typeAnnotation);
+          const declaredBroadKind = declaredType === undefined ? null : broadTypeKind(declaredType);
+          const broadKind = declaredBroadKind ?? initBroadKind;
+          if (broadKind === null) {
+            return null;
+          }
+          const originalExpression =
+            initAssertion !== null && initBroadKind !== null ? initAssertion.expression : init;
+          const evidence = knownValueEvidence(originalExpression, boundary, new Set([variable]));
+          if (evidence === null) {
+            return null;
+          }
+          return { broadKind, evidence, declaredAt: declarator.range[1], boundary };
+        };
+
+        const normalizedTypeText = (type) =>
+          sourceCode.text.slice(type.range[0], type.range[1]).replace(/\s+/gu, "");
+
+        const isDefinitelyObjectType = (type) => {
+          const unwrapped = unwrapReadonlyOperator(type);
+          switch (unwrapped.type) {
+            case "TSArrayType":
+            case "TSConstructorType":
+            case "TSFunctionType":
+            case "TSMappedType":
+            case "TSObjectKeyword":
+            case "TSTupleType":
+              return true;
+            case "TSTypeLiteral":
+              return unwrapped.members.length > 0;
+            case "TSIntersectionType":
+              return unwrapped.types.every(isDefinitelyObjectType);
+            default:
+              return false;
+          }
+        };
+
+        const isDefinitelyNarrowerRecordType = (type) => {
+          const unwrapped = unwrapReadonlyOperator(type);
+          if (unwrapped.type === "TSTypeLiteral") {
+            return unwrapped.members.some((member) => member.type !== "TSIndexSignature");
+          }
+          const name = typeReferenceName(unwrapped);
+          if (name === "Readonly") {
+            const [inner] = typeArgumentsOf(unwrapped);
+            return inner !== undefined && isDefinitelyNarrowerRecordType(inner);
+          }
+          if (name !== "Record") {
+            return false;
+          }
+          const parameters = typeArgumentsOf(unwrapped);
+          return parameters.length === 2 && !isUnknownOrAnyType(parameters[1]);
+        };
+
+        const assertionIsNarrower = (broadKind, evidence, assertedType) => {
+          if (broadTypeKind(assertedType) !== null) {
+            return false;
+          }
+          if (broadKind === "top") {
+            return true;
+          }
+          if (
+            evidence.type !== null &&
+            normalizedTypeText(evidence.type) === normalizedTypeText(assertedType)
+          ) {
+            return true;
+          }
+          if (broadKind === "object") {
+            return isDefinitelyObjectType(assertedType);
+          }
+          return isDefinitelyNarrowerRecordType(assertedType);
+        };
+
+        const checkAssertion = (node) => {
+          const expression = unwrapAssertions(node.expression);
+          if (expression.type !== "Identifier") {
+            return;
+          }
+          const variable = resolveVariable(sourceCode, expression);
+          if (variable === null) {
+            return;
+          }
+          const widened = widenedBinding(variable);
+          if (
+            widened === null ||
+            node.range[0] <= widened.declaredAt ||
+            functionBoundary(node) !== widened.boundary ||
+            !assertionIsNarrower(widened.broadKind, widened.evidence, node.typeAnnotation)
+          ) {
+            return;
+          }
+          context.report({
+            node,
+            messageId: "widenThenAssert",
+            data: { name: expression.name },
+          });
+        };
+
+        return {
+          TSAsExpression: checkAssertion,
+          TSTypeAssertion: checkAssertion,
+        };
+      },
+    },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // `type Foo = unknown` conceals the top type behind a name, so call sites
+    // look typed while carrying no information. Keep `unknown` visible at the
+    // parsing boundary or use the parsed owner type.
+    "no-unknown-type-aliases": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Disallow type aliases that resolve to bare `unknown`",
+        },
+        messages: {
+          unknownAlias:
+            "Type alias `{{alias}}` hides `unknown`. Keep `unknown` explicit at the parsing boundary; otherwise use the parsed owner type.",
+        },
+      },
+      create(context) {
+        return {
+          Program(node) {
+            const aliases = new Map();
+            for (const statement of node.body) {
+              const declaration =
+                statement.type === "ExportNamedDeclaration" ? statement.declaration : statement;
+              if (declaration?.type === "TSTypeAliasDeclaration") {
+                aliases.set(declaration.id.name, declaration);
+              }
+            }
+            const resolvesToUnknown = (type, visited) => {
+              if (type.type === "TSUnknownKeyword") {
+                return true;
+              }
+              const name = typeReferenceName(type);
+              if (name === null || visited.has(name) || typeArgumentsOf(type).length > 0) {
+                return false;
+              }
+              const alias = aliases.get(name);
+              if (alias === undefined || alias.typeParameters != null) {
+                return false;
+              }
+              return resolvesToUnknown(alias.typeAnnotation, new Set([...visited, name]));
+            };
+            for (const alias of aliases.values()) {
+              if (resolvesToUnknown(alias.typeAnnotation, new Set([alias.id.name]))) {
+                context.report({
+                  node: alias.id,
+                  messageId: "unknownAlias",
+                  data: { alias: alias.id.name },
+                });
+              }
+            }
+          },
+        };
+      },
+    },
+    // Ported from anti-slop (https://github.com/dmmulroy/anti-slop).
+    // The bare `object` type carries almost no information (no property is
+    // accessible) while still excluding primitives, so it is neither a safe
+    // boundary type (`unknown` is) nor a useful contract (a named type is).
+    "no-object-parameters": {
+      meta: {
+        type: "problem",
+        docs: {
+          description: "Disallow the broad `object` type on function parameters",
+        },
+        messages: {
+          objectParameter:
+            "Parameter `{{parameter}}` uses the broad `object` type. Accept a named owner type, or `unknown` plus parsing at the boundary.",
+        },
+      },
+      create(context) {
+        const parameterAnnotation = (parameter) => {
+          if (parameter.type === "TSParameterProperty") {
+            return parameterAnnotation(parameter.parameter);
+          }
+          if (parameter.type === "AssignmentPattern") {
+            return parameter.left.typeAnnotation;
+          }
+          return parameter.typeAnnotation;
+        };
+        const isObjectType = (type) => {
+          if (type.type === "TSObjectKeyword") {
+            return true;
+          }
+          if (type.type === "TSUnionType") {
+            return type.types.some(isObjectType);
+          }
+          return false;
+        };
+        const checkParameters = (node) => {
+          for (const parameter of node.params) {
+            const annotation = parameterAnnotation(parameter);
+            if (annotation != null && isObjectType(annotation.typeAnnotation)) {
+              context.report({
+                node: parameter,
+                messageId: "objectParameter",
+                data: {
+                  parameter: parameter.type === "Identifier" ? parameter.name : "(destructured)",
+                },
+              });
+            }
+          }
+        };
+        return {
+          ArrowFunctionExpression: checkParameters,
+          FunctionDeclaration: checkParameters,
+          FunctionExpression: checkParameters,
+          TSDeclareFunction: checkParameters,
+          TSMethodSignature: checkParameters,
+          TSFunctionType: checkParameters,
+        };
+      },
+    },
   },
 };
 
@@ -590,6 +1250,18 @@ export default defineConfig([
       // (omitted-vs-undefined matters for JSON serialization and spread
       // merging). Flip to "error" only after a codebase-wide cleanup.
       "local/no-conditional-empty-object-spread": "off",
+      // Assertion-position widening of known values (`{...} as Record<string,
+      // unknown>`, `literal as unknown`) is never necessary — an annotation or
+      // `satisfies` always works and, unlike an assertion, cannot mask typos.
+      // Annotation flows stay unchecked (checkAnnotations: false): 247 prod
+      // sites include semantically required open dictionaries (arbitrary-key
+      // tables like `Record<string, LucideIcon>` need the index signature at
+      // call sites), the `Record<Enum, Value>` exhaustive-mapping pattern this
+      // repo mandates, and legit `unknown`-returning boundary parsers.
+      "local/no-known-value-widening": ["error", { checkAnnotations: false }],
+      "local/no-widen-then-assert": "error",
+      "local/no-unknown-type-aliases": "error",
+      "local/no-object-parameters": "error",
 
       // Allow console for this app (it's a dev tool)
       "no-console": "off",
@@ -922,6 +1594,23 @@ export default defineConfig([
     ],
     rules: {
       "local/no-chained-type-assertions": "off",
+      "local/no-known-value-widening": "off",
+      "local/no-widen-then-assert": "off",
+      "local/no-object-parameters": "off",
+    },
+  },
+  {
+    // Ratchet: pre-existing object-parameter sites grandfathered when
+    // local/no-object-parameters was introduced. Do NOT add new files;
+    // shrink this list by giving the parameters real types.
+    files: [
+      "src/browser/hooks/useDraftWorkspaceSettings.ts",
+      "src/browser/utils/messages/transcriptRenderProjection.ts",
+      "src/common/utils/providerOutputSanitization.ts",
+      "src/node/runtime/runtimeFactory.ts",
+    ],
+    rules: {
+      "local/no-object-parameters": "off",
     },
   },
   {
