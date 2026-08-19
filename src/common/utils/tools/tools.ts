@@ -4,6 +4,7 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { isGrokFrontierModel } from "@/common/types/thinking";
 import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
+import { getErrorMessage } from "@/common/utils/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createAttachFileTool } from "@/node/services/tools/attach_file";
@@ -757,9 +758,17 @@ export async function getToolsForModel(
   const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
     wrapWithInitWait(tool, workspaceId, initStateManager);
 
-  // Lazy-load web_fetch to avoid loading jsdom (ESM-only) at Jest setup time
-  // This allows integration tests to run without transforming jsdom's dependencies
-  const { createWebFetchTool } = await import("@/node/services/tools/web_fetch");
+  // Keep DOM and parsing dependencies out of startup and isolate load failures
+  // so an unavailable optional tool cannot prevent message streaming.
+  let createWebFetchTool: ToolFactory | undefined;
+  try {
+    const webFetchModule = await import("@/node/services/tools/web_fetch");
+    if (typeof webFetchModule.createWebFetchTool === "function") {
+      createWebFetchTool = webFetchModule.createWebFetchTool;
+    }
+  } catch (error) {
+    log.warn(`Failed to load web_fetch tool: ${getErrorMessage(error)}`);
+  }
 
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
@@ -793,7 +802,7 @@ export async function getToolsForModel(
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
 
-    web_fetch: wrap(createWebFetchTool(config)),
+    ...(createWebFetchTool ? { web_fetch: wrap(createWebFetchTool(config)) } : {}),
 
     // Agent memory (experiment-gated; off => no tool, no context cost)
     ...(config.memoryService && config.experiments?.memory

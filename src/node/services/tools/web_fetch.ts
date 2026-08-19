@@ -1,5 +1,5 @@
 import { tool } from "ai";
-import { JSDOM } from "jsdom";
+import { Window } from "happy-dom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import * as net from "node:net";
@@ -37,16 +37,22 @@ const WEB_FETCH_BLOCKED_HOSTNAMES = new Set([
 class WebFetchValidationError extends Error {}
 
 /**
- * Strip <style> and <script> blocks from HTML before JSDOM parsing.
- * JSDOM's CSS parser scans minified CSS character-by-character for line
- * terminators; pages like Google Cloud's pricing ship MB of newline-free
- * CSS that pins the CPU for minutes. Readability only needs DOM structure
- * and visible text, so these blocks are dead weight.
+ * Strip <style> and <script> blocks before happy-dom parsing. Large minified
+ * blocks add substantial parsing work, while Readability only needs DOM
+ * structure and visible text.
  */
 function stripHeavyTags(html: string): string {
   return html
     .replace(/<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, "")
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
+}
+
+function parseHtmlDocument(html: string, url: string): Document {
+  const window = new Window({ url });
+  window.document.write(html);
+  // happy-dom's Document is structurally DOM-compatible but uses its own type declarations.
+  const document: unknown = window.document;
+  return document as Document;
 }
 
 function normalizeHostname(hostname: string): string {
@@ -580,8 +586,8 @@ function tryExtractContent(
   maxBytes: number
 ): { title: string; content: string } | null {
   try {
-    const dom = new JSDOM(stripHeavyTags(body), { url });
-    const reader = new Readability(dom.window.document);
+    const document = parseHtmlDocument(stripHeavyTags(body), url);
+    const reader = new Readability(document);
     const article = reader.parse();
     if (!article?.content) return null;
 
@@ -694,13 +700,12 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        // Parse HTML with JSDOM (runs locally in Mux, not over SSH).
-        // Strip <style>/<script> first — JSDOM's CSS parser chokes on MB of
-        // minified CSS and Readability doesn't need either for extraction.
-        const dom = new JSDOM(stripHeavyTags(body), { url: finalUrl });
+        // Parse HTML with happy-dom locally in Mux, not over SSH. Strip heavy
+        // tags first because Readability does not need them for extraction.
+        const document = parseHtmlDocument(stripHeavyTags(body), finalUrl);
 
         // Extract article with Readability
-        const reader = new Readability(dom.window.document);
+        const reader = new Readability(document);
         const article = reader.parse();
 
         if (!article) {
