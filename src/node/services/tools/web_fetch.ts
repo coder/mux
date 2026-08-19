@@ -47,8 +47,26 @@ function stripHeavyTags(html: string): string {
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, "");
 }
 
-function parseHtmlDocument(html: string, url: string): Document {
-  const window = new Window({ url });
+// Exported for web_fetch.bundle.test.ts: the no-subresource-fetch guarantee
+// only reproduces under the node runtime, so it is verified in a node child
+// process rather than in the bun test runner.
+export function parseHtmlDocument(html: string, url: string): Document {
+  // SECURITY: the HTML is untrusted. Parsing must never trigger network
+  // fetches from the Mux backend (subresources like iframes or external
+  // stylesheets would bypass the SSRF checks in assertWebFetchTargetAllowed).
+  // JavaScript evaluation is already disabled by default in happy-dom.
+  const window = new Window({
+    url,
+    settings: {
+      disableJavaScriptFileLoading: true,
+      disableCSSFileLoading: true,
+      navigation: {
+        disableMainFrameNavigation: true,
+        disableChildFrameNavigation: true,
+        disableChildPageNavigation: true,
+      },
+    },
+  });
   window.document.write(html);
   // happy-dom's Document is structurally DOM-compatible but uses its own type declarations.
   const document: unknown = window.document;
