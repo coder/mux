@@ -6,7 +6,10 @@ import type {
 import type { MCPServerInfo } from "@/common/types/mcp";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { discoverAgentDefinitions } from "@/node/services/agentDefinitions/agentDefinitionsService";
-import { discoverAgentSkills } from "@/node/services/agentSkills/agentSkillsService";
+import {
+  discoverAgentSkills,
+  getDefaultAgentSkillsRoots,
+} from "@/node/services/agentSkills/agentSkillsService";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
@@ -158,9 +161,37 @@ export async function buildWorkspaceComposition(
   // root is the authoritative off-host signal here.
   const includeAgentPlugins = args.agentPluginsEnabled && args.hostCheckoutRoot != null;
 
+  // Production (skillStorageContext.buildProjectLocalRoots) anchors plugin
+  // SKILL containers at the CHECKOUT root: for subProjectPath workspaces the
+  // execution path is a subdirectory, but plugins live at the checkout level.
+  // Ordinary skill roots stay at the execution path. Agents and workflows
+  // below intentionally keep execution-path defaults — production derives
+  // their plugin containers from the discovery path, so checkout-anchoring
+  // them here would report artifacts production never loads.
+  const defaultSkillRoots = includeAgentPlugins
+    ? getDefaultAgentSkillsRoots(args.runtime, args.workspacePath, { includeAgentPlugins: true })
+    : undefined;
+  const checkoutSkillRoots =
+    defaultSkillRoots?.projectPluginRoots != null && args.hostCheckoutRoot != null
+      ? {
+          roots: {
+            ...defaultSkillRoots,
+            projectPluginRoots: [
+              args.runtime.normalizePath(".mux/plugins", args.hostCheckoutRoot),
+              args.runtime.normalizePath(".agents/plugins", args.hostCheckoutRoot),
+            ],
+          },
+          // Same repo boundary production uses: the checkout root contains the
+          // execution path, so ordinary project roots stay contained while
+          // checkout-level plugin roots pass the repo-symlink posture check.
+          containment: { kind: "local" as const, root: args.hostCheckoutRoot },
+        }
+      : undefined;
+
   const skillDescriptors = await discoverAgentSkills(args.runtime, args.workspacePath, {
     dedupeByName: false,
     includeAgentPlugins,
+    ...(checkoutSkillRoots ?? {}),
   });
   const skills = markShadowed(
     skillDescriptors.map((skill) => ({

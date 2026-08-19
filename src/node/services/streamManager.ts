@@ -4464,6 +4464,24 @@ export class StreamManager extends EventEmitter {
         // effects (turn envelope) may be recorded now.
         await onStreamConstructed?.();
 
+        // A hard interrupt during the awaited envelope write finds the
+        // registered STARTING stream, aborts it, awaits its placeholder
+        // processingPromise, and deletes the registration — a replacement
+        // stream may already occupy this workspace's slot. Launching
+        // processing now would emit stream-start after the abort and its
+        // cleanup would later delete that replacement. Bail out; the finally
+        // block releases this never-processed stream's resources.
+        if (
+          streamAbortController.signal.aborted ||
+          this.workspaceStreams.get(typedWorkspaceId) !== streamInfo
+        ) {
+          if (this.workspaceStreams.get(typedWorkspaceId) === streamInfo) {
+            this.workspaceStreams.delete(typedWorkspaceId);
+          }
+          streamRegistered = false;
+          return Ok(streamToken);
+        }
+
         // Step 5: Track the processing promise for guaranteed cleanup
         // This allows cancelStreamSafely to wait for full exit
         streamInfo.processingPromise = this.processStreamWithCleanup(

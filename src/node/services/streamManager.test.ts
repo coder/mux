@@ -1659,6 +1659,71 @@ describe("StreamManager - language model cleanup", () => {
     expect(getCleanupCalls()).toBe(1);
   });
 
+  test("interrupt during onStreamConstructed skips processing and preserves a replacement registration", async () => {
+    const streamManager = new StreamManager(historyService);
+    streamManager.on("error", () => undefined);
+    const { model, getCleanupCalls } = createCleanupModel("constructed-abort-model");
+    const startEvents: unknown[] = [];
+    streamManager.on("stream-start", (event) => startEvents.push(event));
+
+    const workspaceId = "constructed-abort-workspace";
+    const replacementSentinel = { replacement: true };
+    const onStreamConstructed = async (): Promise<void> => {
+      // Hard interrupt racing the awaited envelope write: stopStream aborts
+      // the registered STARTING stream, awaits its placeholder
+      // processingPromise, and deletes the registration…
+      await streamManager.stopStream(workspaceId);
+      // …after which a replacement stream can occupy the workspace slot.
+      const streams = Reflect.get(streamManager, "workspaceStreams") as Map<string, unknown>;
+      streams.set(workspaceId, replacementSentinel);
+    };
+
+    const result = await streamManager.startStream(
+      workspaceId,
+      [{ role: "user", content: "hello" }],
+      model,
+      "openai:gpt-4.1-mini",
+      1,
+      "system",
+      runtime,
+      "constructed-abort-message",
+      undefined, // abortSignal
+      undefined, // tools
+      undefined, // initialMetadata
+      undefined, // providerOptions
+      undefined, // maxOutputTokens
+      undefined, // toolPolicy
+      undefined, // providedStreamToken
+      undefined, // hasQueuedMessages
+      undefined, // workspaceName
+      undefined, // thinkingLevel
+      undefined, // headers
+      undefined, // anthropicCacheTtlOverride
+      undefined, // callSettingsOverrides
+      undefined, // onChunk
+      undefined, // onStepMessages
+      undefined, // providedRuntimeTempDir
+      undefined, // modelFallback
+      undefined, // toolSearchState
+      undefined, // thinkingOverrideState
+      undefined, // rebuildProviderOptionsForThinkingLevel
+      undefined, // forcedFirstStepToolNames
+      undefined, // providersConfigSnapshot
+      onStreamConstructed
+    );
+
+    expect(result.success).toBe(true);
+    // The canceled stream must never start processing: stream-start after the
+    // abort would leave the UI stuck streaming with no abort/end to follow.
+    expect(startEvents).toHaveLength(0);
+    // The replacement registration survives (the canceled stream's cleanup
+    // must not delete another stream's slot).
+    const streams = Reflect.get(streamManager, "workspaceStreams") as Map<string, unknown>;
+    expect(streams.get(workspaceId)).toBe(replacementSentinel);
+    // The never-processed stream's model still gets cleaned up.
+    expect(getCleanupCalls()).toBe(1);
+  });
+
   test("runs model cleanup when stream creation throws before processing", async () => {
     const streamManager = new StreamManager(historyService);
     const { model, getCleanupCalls } = createCleanupModel("cleanup-create-throw-model");

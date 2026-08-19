@@ -195,6 +195,31 @@ describe("buildWorkspaceComposition", () => {
     expect(allEntries.some((entry) => entry.source === PLUGIN_SOURCE)).toBe(false);
   }, 120_000);
 
+  test("subProjectPath workspaces report checkout-level plugin skills", async () => {
+    using workspace = new DisposableTempDir("composition-workspace-subproject");
+    // Plugin at the CHECKOUT root; the workspace executes in a subdirectory
+    // (subProjectPath). Production anchors plugin skill containers at the
+    // checkout root, so the inspector must report this plugin's skills even
+    // though execution-path defaults would scan <subdir>/.mux/plugins.
+    await writeFixturePlugin(workspace.path);
+    const executionPath = path.join(workspace.path, "packages", "app");
+    await fs.mkdir(executionPath, { recursive: true });
+
+    const composition = await buildWorkspaceComposition({
+      runtime: new LocalRuntime(workspace.path),
+      workspacePath: executionPath,
+      hostCheckoutRoot: workspace.path,
+      muxHome: path.join(workspace.path, ".fixture-mux-home"),
+      projectTrusted: true,
+      agentPluginsEnabled: true,
+      listMcpServerLayers: () => Promise.resolve({ plugin: {}, global: {}, project: {} }),
+    });
+
+    expect(composition.plugins.map((p) => p.name)).toContain(PLUGIN_NAME);
+    const pluginSkill = composition.skills.find((s) => s.name === "fixture-skill");
+    expect(pluginSkill?.source).toBe(PLUGIN_SOURCE);
+  }, 120_000);
+
   test("off-host workspaces (null host root) discover no plugin containers", async () => {
     using workspace = new DisposableTempDir("composition-workspace-offhost");
     // A plugin exists at the workspace path on the HOST filesystem — the
