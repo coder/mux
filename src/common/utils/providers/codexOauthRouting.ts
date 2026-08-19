@@ -10,6 +10,7 @@
  */
 
 import { isCodexOauthAllowedModel, isCodexOauthRequiredModel } from "@/common/constants/codexOAuth";
+import { isCustomOpenAICompatibleProviderConfig } from "@/common/utils/providers/customProviders";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -66,6 +67,35 @@ export function hasOpenAIApiKey(config: unknown): boolean {
  * required models always route OAuth; otherwise OAuth wins when no API key is
  * configured or when `codexOauthDefaultAuth` prefers OAuth over a present key.
  */
+/**
+ * Can a DIRECT OpenAI route serve this model with the credentials on hand?
+ *
+ * `isConfigured` alone over-reports: a Codex-OAuth-only config serves only the
+ * OAuth-allowed model set. Mirrors providerModelFactory's credential outcome —
+ * an API key always attempts (OAuth-required models fall back to the key and
+ * let the API decide), while stored tokens without a key serve only allowed
+ * models — so availability checks can't claim a direct route the factory
+ * would reject with api_key_not_found.
+ */
+export function canDirectOpenAIServeModel(
+  model: string,
+  providersConfig: ProvidersConfigMap | null | undefined
+): boolean {
+  const openAIConfig = providersConfig?.openai;
+  // A custom openai-compatible provider shadowing the built-in "openai" id is
+  // direct-only and authenticates against its own endpoint (key optional):
+  // built-in OpenAI credential rules don't apply to it.
+  if (isCustomOpenAICompatibleProviderConfig(openAIConfig)) {
+    return true;
+  }
+  if (hasOpenAIApiKey(openAIConfig)) {
+    return true;
+  }
+  return (
+    hasCodexOauthTokens(openAIConfig) && isCodexOauthAllowedModel(model, providersConfig ?? null)
+  );
+}
+
 export function wouldRouteOpenAIThroughCodexOauth(
   model: string,
   providersConfig: ProvidersConfigMap | null | undefined

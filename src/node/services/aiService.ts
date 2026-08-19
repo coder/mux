@@ -520,7 +520,9 @@ interface WorkflowResultContinuationSender {
       requireIdle?: boolean;
       startStreamInBackground?: boolean;
     }
-  ): Promise<Result<void, SendMessageError>>;
+    // The continuation sender ignores the accepted-send payload; unknown keeps
+    // this structural type compatible with WorkspaceService.sendMessage.
+  ): Promise<Result<unknown, SendMessageError>>;
 }
 
 export class AIService extends EventEmitter {

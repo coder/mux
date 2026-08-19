@@ -43,6 +43,29 @@ export interface UserMessageContent {
 export interface CompactionFollowUpInput extends UserMessageContent {
   /** Message metadata to apply to the queued follow-up user message (e.g., preserve /skill display) */
   muxMetadata?: MuxMessageMetadata;
+  /**
+   * Explicit model override reconstructed from the original send (a composed
+   * "/model /skill" one-shot). Without it, a compact-and-retry rebuild would
+   * re-dispatch the skill through class routing even though the user
+   * explicitly overrode the model for that invocation.
+   */
+  model?: string;
+  /** Rides with `model`: an explicit one-shot must keep bypassing class routing on re-dispatch. */
+  skipSkillModelRouting?: boolean;
+  /**
+   * Explicit one-shot thinking reconstructed from the original send
+   * ("/haiku+0 /skill", "/+high /skill"). Resolved against `model` when
+   * present, else against the workspace model at rebuild time.
+   */
+  thinkingLevel?: ThinkingLevel;
+  /**
+   * Raw numeric one-shot thinking index ("/+2 /skill"). Model-relative: the
+   * re-dispatched send re-resolves it against the routed class model when
+   * skill routing applies (see SendMessageOptions.oneShotThinkingIndex).
+   */
+  oneShotThinkingIndex?: number;
+  /** One-shot overrides carried through compaction must not persist as new workspace defaults. */
+  skipAiSettingsPersistence?: boolean;
 }
 
 /**
@@ -60,6 +83,8 @@ type PreservedSendOptions = Pick<
   | "disableWorkspaceAgents"
   | "allowAgentSetGoal"
   | "skipAiSettingsPersistence"
+  | "skipSkillModelRouting"
+  | "oneShotThinkingIndex"
 >;
 
 /**
@@ -76,6 +101,10 @@ export function pickPreservedSendOptions(options: SendMessageOptions): Preserved
     disableWorkspaceAgents: options.disableWorkspaceAgents,
     allowAgentSetGoal: options.allowAgentSetGoal,
     skipAiSettingsPersistence: options.skipAiSettingsPersistence,
+    // A one-shot's routing bypass and raw thinking index must survive into a
+    // compaction follow-up, or the re-dispatch re-routes/re-ladders the send.
+    skipSkillModelRouting: options.skipSkillModelRouting,
+    oneShotThinkingIndex: options.oneShotThinkingIndex,
   };
 }
 
@@ -99,6 +128,13 @@ export type StartupRetrySendOptions = Pick<
   agentInitiated?: boolean;
   /** Internal goal continuation classification for startup auto-retry accounting. */
   goalKind?: GoalSyntheticMessageKind;
+  /**
+   * Pre-skill-routing compaction context for routed turns (durable subset),
+   * restored on startup retry so the routed compaction policy survives a
+   * relaunch. One level deep by construction — the nested pick never
+   * receives a compactionBaseOptions of its own.
+   */
+  compactionBaseOptions?: Omit<StartupRetrySendOptions, "compactionBaseOptions">;
 };
 
 /**
@@ -108,7 +144,8 @@ export type StartupRetrySendOptions = Pick<
 export function pickStartupRetrySendOptions(
   options: SendMessageOptions,
   agentInitiated?: boolean,
-  goalKind?: GoalSyntheticMessageKind
+  goalKind?: GoalSyntheticMessageKind,
+  compactionBaseOptions?: SendMessageOptions
 ): StartupRetrySendOptions {
   const typedMuxMetadata = options.muxMetadata as MuxMessageMetadata | undefined;
   const workspaceTurnMuxMetadata =
@@ -128,6 +165,16 @@ export function pickStartupRetrySendOptions(
     ...(workspaceTurnMuxMetadata != null ? { muxMetadata: workspaceTurnMuxMetadata } : {}),
     ...(agentInitiated === true ? { agentInitiated: true } : {}),
     ...(goalKind != null ? { goalKind } : {}),
+    // Routed turns persist their pre-routing compaction context (durable
+    // fields only) so a post-relaunch retry keeps the routed compaction
+    // policy instead of force-compacting at the workspace threshold against
+    // the routed window. Absent on non-routed turns and rows written by
+    // older versions — both fall back to today's behavior.
+    ...(compactionBaseOptions != null
+      ? {
+          compactionBaseOptions: pickStartupRetrySendOptions(compactionBaseOptions),
+        }
+      : {}),
   };
 }
 

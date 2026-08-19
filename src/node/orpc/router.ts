@@ -1072,6 +1072,8 @@ export const router = (authToken?: string) => {
             routeOverrides: config.routeOverrides,
             minThinkingLevelByModel: config.minThinkingLevelByModel,
             modelFallbacks: config.modelFallbacks,
+            modelClasses: config.modelClasses,
+            skillModelClasses: config.skillModelClasses,
             defaultModel: config.defaultModel,
             advisorModelString: config.advisorModelString ?? null,
             advisorThinkingLevel: config.advisorThinkingLevel ?? null,
@@ -1244,6 +1246,21 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => ({
             ...config,
             modelFallbacks: Object.keys(sanitized).length > 0 ? sanitized : undefined,
+          }));
+        }),
+      updateModelClasses: t
+        .input(schemas.config.updateModelClasses.input)
+        .output(schemas.config.updateModelClasses.output)
+        .handler(async ({ context, input }) => {
+          // Full-map replacement, stored verbatim: entries this build cannot
+          // parse (hand-edited custom models, future syntax) must survive
+          // Settings edits. Broken values already fail loudly at send time
+          // and are flagged inline by the editor — silently dropping them
+          // here would delete user config as a side effect of unrelated edits.
+          await context.config.editConfig((config) => ({
+            ...config,
+            modelClasses:
+              Object.keys(input.modelClasses).length > 0 ? input.modelClasses : undefined,
           }));
         }),
       updateModelPreferences: t
@@ -4489,7 +4506,18 @@ export const router = (authToken?: string) => {
             return { success: false, error: result.error };
           }
 
-          return { success: true, data: {} };
+          return {
+            success: true,
+            data:
+              result.data?.routedModel != null
+                ? {
+                    routedModel: result.data.routedModel,
+                    ...(result.data.routedThinkingLevel != null
+                      ? { routedThinkingLevel: result.data.routedThinkingLevel }
+                      : {}),
+                  }
+                : {},
+          };
         }),
       answerAskUserQuestion: t
         .input(schemas.workspace.answerAskUserQuestion.input)

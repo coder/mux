@@ -9,6 +9,7 @@ import type {
   SendMessageErrorSchema,
   StreamErrorTypeSchema,
 } from "../orpc/schemas";
+import type { ThinkingLevel } from "./thinking";
 
 /**
  * Discriminated union for all possible sendMessage errors.
@@ -19,6 +20,21 @@ import type {
  * Other error types include details needed for display.
  */
 export type SendMessageError = z.infer<typeof SendMessageErrorSchema>;
+
+/**
+ * Success payload of an accepted (non-queued) send. `routedModel` is the class
+ * model applied by skill routing — exposed so the frontend can attribute
+ * send telemetry to the model that actually streams; undefined when no
+ * routing occurred or the send was queued for later dispatch.
+ * `routedThinkingLevel` is the effective thinking level the routed stream
+ * runs at — class suffix, re-resolved numeric one-shot, or a named/ambient
+ * level riding through — after per-model floor enforcement; absent only when
+ * the send carries no thinking level at all.
+ */
+export interface SendMessageAccepted {
+  routedModel?: string;
+  routedThinkingLevel?: ThinkingLevel;
+}
 
 /**
  * Stream error types - categorizes errors during AI streaming

@@ -1243,6 +1243,12 @@ export class Config {
 
         const modelFallbacks = normalizeModelFallbacks(parsed.modelFallbacks);
 
+        // Lenient on read: malformed entries never break config load. Values
+        // are judged at send time by resolveSkillModelClassBinding — a bound
+        // class with a bad value fails that send with an actionable error.
+        const modelClasses = parseOptionalStringRecord(parsed.modelClasses);
+        const skillModelClasses = parseOptionalStringRecord(parsed.skillModelClasses);
+
         const defaultModel = normalizeOptionalModelString(parsed.defaultModel);
         const advisorModelString = parseOptionalNonEmptyString(parsed.advisorModelString);
         const advisorThinkingLevel = parseOptionalThinkingLevel(parsed.advisorThinkingLevel);
@@ -1389,6 +1395,8 @@ export class Config {
           routeOverrides,
           minThinkingLevelByModel,
           modelFallbacks,
+          modelClasses,
+          skillModelClasses,
           defaultModel,
           advisorModelString,
           advisorThinkingLevel,
@@ -1582,6 +1590,16 @@ export class Config {
       const modelFallbacks = normalizeModelFallbacks(config.modelFallbacks);
       if (modelFallbacks !== undefined) {
         data.modelFallbacks = modelFallbacks;
+      }
+
+      const modelClasses = parseOptionalStringRecord(config.modelClasses);
+      if (modelClasses !== undefined) {
+        data.modelClasses = modelClasses;
+      }
+
+      const skillModelClasses = parseOptionalStringRecord(config.skillModelClasses);
+      if (skillModelClasses !== undefined) {
+        data.skillModelClasses = skillModelClasses;
       }
 
       const apiServerBindHost = parseOptionalNonEmptyString(config.apiServerBindHost);

@@ -8,7 +8,10 @@ import {
   type RouteContext,
 } from "@/common/routing";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
-import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils/providers/gatewayModelCatalog";
+import {
+  isRouteGatewayModelAccessible,
+  isRouteProviderConfigured,
+} from "@/common/utils/ai/modelAvailability";
 
 import { useProvidersConfig } from "./useProvidersConfig";
 
@@ -31,6 +34,13 @@ export interface RoutingState {
   routePriority: string[];
   /** Per-model route overrides */
   routeOverrides: Record<string, string>;
+  /**
+   * True once the routing config fetch has landed. Until then routePriority
+   * is the built-in default — availability verdicts computed against it can
+   * be wrong for gateway-routed setups, so consumers gating UI on route
+   * reachability must wait for this.
+   */
+  loaded: boolean;
 
   /** What route will be used for a given canonical model? */
   resolveRoute(canonicalModel: string): {
@@ -63,6 +73,7 @@ export function useRouting(): RoutingState {
   const { api } = useAPI();
   const { config: providersConfig } = useProvidersConfig();
   const [routePriority, setRoutePriorityState] = useState<string[]>(DEFAULT_ROUTE_PRIORITY);
+  const [loaded, setLoaded] = useState(false);
   const [routeOverrides, setRouteOverridesState] = useState<Record<string, string>>({});
   // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
   const fetchVersionRef = useRef(0);
@@ -83,6 +94,7 @@ export function useRouting(): RoutingState {
 
       setRoutePriorityState(config.routePriority ?? DEFAULT_ROUTE_PRIORITY);
       setRouteOverridesState(config.routeOverrides ?? {});
+      setLoaded(true);
     } catch {
       // Best-effort only.
     }
@@ -128,22 +140,18 @@ export function useRouting(): RoutingState {
     };
   }, [api, fetchRoutingConfig]);
 
+  // Shared predicates: the send-path availability check
+  // (isModelServableWithProvidersConfig) uses these same definitions, so the
+  // Settings picker and skill-routing verdicts cannot drift apart.
   const isConfigured = useCallback(
     (provider: string) =>
-      providersConfig?.[provider]?.isConfigured === true &&
-      providersConfig?.[provider]?.isEnabled !== false,
+      providersConfig != null && isRouteProviderConfigured(providersConfig, provider),
     [providersConfig]
   );
 
   const isGatewayModelAccessible = useCallback(
     (gateway: string, modelId: string) =>
-      isGatewayModelAccessibleFromAuthoritativeCatalog(
-        gateway,
-        modelId,
-        providersConfig?.[gateway]?.models,
-        providersConfig?.[gateway]?.discoveredModels,
-        providersConfig?.[gateway]?.removedModels
-      ),
+      providersConfig == null || isRouteGatewayModelAccessible(providersConfig, gateway, modelId),
     [providersConfig]
   );
 
@@ -263,5 +271,6 @@ export function useRouting(): RoutingState {
     setRoutePreferences,
     setRoutePriority,
     setRouteOverride,
+    loaded,
   };
 }

@@ -2701,6 +2701,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         api,
         discovery: skillDiscovery,
         signal: resolutionSignal,
+        // One-shot × skill composition ("/haiku+0 /done") ships for workspace
+        // sends; the creation composer has no one-shot support to compose with.
+        composeOneShot: variant === "workspace",
       });
       if (!isSendScopeCurrent()) return;
       parsed = resolution.parsed;
@@ -2851,6 +2854,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
     try {
       const modelOneShot = parsed?.type === "model-oneshot" ? parsed : null;
+      // Model/thinking override from either a bare one-shot ("/haiku+0 msg")
+      // or one composed with a skill invocation ("/haiku+0 /done args").
+      const oneShotOverride = modelOneShot ?? skillInvocation?.oneShot ?? null;
       // Mirror the creation-composer /goal bypass: with attachments present,
       // send the raw text as a normal message instead of processing the
       // command, which would drop the files. Transferred staging-failure
@@ -2873,7 +2879,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       // the composer, it must not restore stale command text over the newer turn.
       asyncCommandTokenRef.current++;
 
-      const modelOverride = modelOneShot?.modelString;
+      const modelOverride = oneShotOverride?.modelString;
 
       // Regular message (or /<model-alias> one-shot override) - send directly via API
       const messageTextForSend =
@@ -2912,11 +2918,20 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
         }
       }
 
+      // Composed one-shot sends highlight the full "/haiku+0 /done" prefix:
+      // the transcript badge check requires rawCommand.startsWith(commandPrefix),
+      // and the combined prefix also keeps the explicit override visible.
+      const composedPrefixMatch = skillInvocation?.oneShot
+        ? new RegExp(`^\\S+\\s+/${skillInvocation.descriptor.name}(?=\\s|$)`).exec(
+            messageText.trim()
+          )
+        : null;
       const skillMuxMetadata = skillInvocation
         ? buildSkillInvocationMetadata(
             appendStagedAttachmentNotice(messageText, sendAttachments),
             skillInvocation.descriptor,
-            skillInvocation.argumentText
+            skillInvocation.argumentText,
+            composedPrefixMatch?.[0]
           )
         : undefined;
       const promptMuxMetadata: MuxMessageMetadata | undefined = mcpPromptInvocation
@@ -2932,12 +2947,18 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       const policyModel = modelOverride ?? baseModel;
 
       // Preflight: if the message includes PDFs, ensure the selected model can accept them.
+      // Routable skill invocations (no explicit model override) may stream on a
+      // class model with different PDF capabilities than the workspace model, so
+      // this local check would judge the wrong model both ways — defer to the
+      // backend gate, which validates against the routed model and rejects with
+      // a persisted, visible error.
+      const pdfPreflightModelIsAuthoritative = !(skillInvocation && !modelOverride);
       const pdfAttachments = attachments.filter(
         (attachment): attachment is Extract<ChatAttachment, { kind: "provider" }> =>
           attachment.kind === "provider" &&
           getBaseMediaType(attachment.mediaType) === PDF_MEDIA_TYPE
       );
-      if (pdfAttachments.length > 0) {
+      if (pdfAttachments.length > 0 && pdfPreflightModelIsAuthoritative) {
         const caps = getModelCapabilitiesResolved(policyModel, providersConfig);
         if (caps && !caps.supportsPdfInput) {
           const pdfCapableKnownModels = Object.values(KNOWN_MODELS)
@@ -3107,7 +3128,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
 
         // One-shot models/thinking shouldn't update the persisted session defaults.
         // Resolve thinking level: numeric indices are model-relative (0 = model's lowest allowed level)
-        const rawThinkingOverride = modelOneShot?.thinkingLevel;
+        const rawThinkingOverride = oneShotOverride?.thinkingLevel;
         const thinkingOverride =
           rawThinkingOverride != null
             ? resolveThinkingInput(rawThinkingOverride, policyModel)
@@ -3124,7 +3145,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
             : {}),
           ...(modelOverride ? { model: modelOverride } : {}),
           ...(thinkingOverride ? { thinkingLevel: thinkingOverride } : {}),
-          ...(modelOneShot ? { skipAiSettingsPersistence: true } : {}),
+          ...(oneShotOverride ? { skipAiSettingsPersistence: true } : {}),
+          // Only a model-carrying one-shot bypasses class routing; a
+          // thinking-only override (/+2 /skill) layers on top of routing.
+          ...(modelOverride ? { skipSkillModelRouting: true } : {}),
+          // Numeric thinking is model-relative and thinkingOverride above was
+          // resolved against the workspace model. A routable skill send may
+          // stream on a different (class) model, so pass the raw index for the
+          // backend to re-resolve against whatever model actually streams.
+          ...(skillInvocation && !modelOverride && typeof rawThinkingOverride === "number"
+            ? { oneShotThinkingIndex: rawThinkingOverride }
+            : {}),
           ...(goalInterventionPolicy ? { goalInterventionPolicy } : {}),
           ...(overrides?.queueDispatchMode
             ? { queueDispatchMode: overrides.queueDispatchMode }
@@ -3163,17 +3194,23 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
           setDraft(preSendDraft);
           setDraftReviews(preSendReviews);
         } else {
-          // Track telemetry for successful message send
+          // Track telemetry for successful message send. Skill class routing
+          // can swap the model and thinking backend-side; the send result
+          // reports both so usage is attributed to what actually streams
+          // (queued sends report none and fall back to the requested values).
           telemetry.messageSent(
             props.workspaceId,
-            effectiveModel,
+            result.data?.routedModel ?? effectiveModel,
             sendMessageOptions.agentId ?? agentId ?? WORKSPACE_DEFAULTS.agentId,
             finalMessageText.length,
             runtimeType,
-            sendMessageOptions.thinkingLevel ?? "off"
+            // Fall back to what this send actually carried (sendOptions
+            // includes a composed one-shot's thinking), not the ambient
+            // workspace setting.
+            result.data?.routedThinkingLevel ?? sendOptions.thinkingLevel ?? "off"
           );
 
-          if (modelOneShot) {
+          if (oneShotOverride) {
             trackCommandUsed("model");
           }
 

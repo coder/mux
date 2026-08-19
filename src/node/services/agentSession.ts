@@ -34,7 +34,7 @@ import {
   SILENT_CONTINUATION_COMPLETION_SUMMARY_MAX_LENGTH,
   type GoalSyntheticMessageKind,
 } from "@/constants/goals";
-import type { SendMessageError } from "@/common/types/errors";
+import type { SendMessageAccepted, SendMessageError } from "@/common/types/errors";
 import { AgentIdSchema, SkillNameSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId, resolvePersistedAgentIdCandidates } from "@/common/utils/agentIds";
 import {
@@ -66,6 +66,7 @@ import {
   enforceThinkingPolicy,
   lookupMinThinkingLevelOverride,
   resolveMinimumThinkingLevel,
+  resolveThinkingInput,
 } from "@/common/utils/thinking/policy";
 import type { ActiveTurnThinkingOverride } from "@/node/services/thinkingOverride";
 import {
@@ -124,6 +125,8 @@ import {
 } from "@/common/utils/messages/extractEditedFiles";
 import { buildCompactionMessageText } from "@/common/utils/compaction/compactionPrompt";
 import type { AutoCompactionUsageState } from "@/common/utils/compaction/autoCompactionCheck";
+import { ROUTED_SEND_COMPACTION_HEADROOM_PERCENT } from "@/common/constants/ui";
+import { getEffectiveContextLimit } from "@/common/utils/compaction/contextLimit";
 import { getModelCapabilitiesResolved } from "@/common/utils/ai/modelCapabilities";
 import {
   getExplicitGatewayPrefix,
@@ -140,6 +143,11 @@ import {
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
+import {
+  describeSkillModelClassRoutingProblem,
+  resolveSkillModelClassBinding,
+} from "@/common/utils/ai/skillModelClasses";
+import { isModelServableWithProvidersConfig } from "@/common/utils/ai/modelAvailability";
 import {
   createLoadedSkillSnapshot,
   extractLoadedSkillSnapshotsFromMessages,
@@ -198,6 +206,14 @@ interface AutoRetryResumeRequest {
   options: SendMessageOptions;
   agentInitiated?: boolean;
   goalKind?: GoalSyntheticMessageKind;
+  /**
+   * Pre-skill-routing options for a routed turn (see
+   * activeStreamContext.compactionBaseOptions). A same-session retry must keep
+   * the routed compaction policy — without this, the retried stream would
+   * force-compact at the workspace threshold against the routed window and
+   * summarize on the wrong model.
+   */
+  compactionBaseOptions?: SendMessageOptions;
 }
 
 function stripGoalInterventionPolicy(options: SendMessageOptions): SendMessageOptions {
@@ -656,6 +672,14 @@ export class AgentSession {
     providersConfig: ProvidersConfigMap | null;
     goalKind?: GoalSyntheticMessageKind;
     workspaceTurnMetadata?: Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
+    /**
+     * Pre-skill-routing options for compaction requests spawned off this
+     * stream. A turn routed to a small class model must never compact on that
+     * model — the compaction model has to fit the full uncompacted history —
+     * so both the on-send and mid-stream compaction sites build their request
+     * from these options when present.
+     */
+    compactionBaseOptions?: SendMessageOptions;
   };
 
   private activeCompactionRequest?: {
@@ -1023,7 +1047,8 @@ export class AgentSession {
   private setAutoRetryResumeState(
     options: SendMessageOptions | undefined,
     agentInitiated?: boolean,
-    goalKind?: GoalSyntheticMessageKind
+    goalKind?: GoalSyntheticMessageKind,
+    compactionBaseOptions?: SendMessageOptions
   ): void {
     if (!options) {
       this.lastAutoRetryResumeRequest = undefined;
@@ -1034,6 +1059,7 @@ export class AgentSession {
       options,
       ...(agentInitiated === true ? { agentInitiated: true } : {}),
       ...(goalKind != null ? { goalKind } : {}),
+      ...(compactionBaseOptions != null ? { compactionBaseOptions } : {}),
     };
   }
 
@@ -1061,6 +1087,7 @@ export class AgentSession {
       const result = await this.resumeStream(request.options, {
         agentInitiated: request.agentInitiated === true ? true : undefined,
         goalKind: request.goalKind,
+        compactionBaseOptions: request.compactionBaseOptions,
       });
       if (result.success) {
         if (!result.data.started) {
@@ -1612,18 +1639,26 @@ export class AgentSession {
     const persistedModel = this.normalizeStartupModel(persistedRetrySendOptions?.model);
     const assistantModel = this.normalizeStartupModel(lastAssistantMessage?.metadata?.model);
     const agentSettingsModel = this.normalizeStartupModel(agentSettings?.model);
-    const baseModel = isChildTaskWorkspace
-      ? (agentSettingsModel ?? persistedModel ?? assistantModel ?? DEFAULT_MODEL)
-      : (persistedModel ?? assistantModel ?? agentSettingsModel ?? DEFAULT_MODEL);
+    // A retry row carrying routed compaction context recorded the CLASS model
+    // the turn actually streamed on. That persisted model must win even in
+    // child task workspaces (whose creation-time settings normally take
+    // precedence) — resuming on the workspace model while restoring a routed
+    // compaction policy would mismatch both. Agent identity stays the child's.
+    const isRoutedRetryRow = persistedRetrySendOptions?.compactionBaseOptions != null;
+    const baseModel =
+      isChildTaskWorkspace && !isRoutedRetryRow
+        ? (agentSettingsModel ?? persistedModel ?? assistantModel ?? DEFAULT_MODEL)
+        : (persistedModel ?? assistantModel ?? agentSettingsModel ?? DEFAULT_MODEL);
 
     const persistedThinkingLevel = coerceThinkingLevel(persistedRetrySendOptions?.thinkingLevel);
     const assistantThinkingLevel = coerceThinkingLevel(
       lastAssistantMessage?.metadata?.thinkingLevel
     );
     const agentSettingsThinkingLevel = coerceThinkingLevel(agentSettings?.thinkingLevel);
-    const baseThinkingLevel = isChildTaskWorkspace
-      ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
-      : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
+    const baseThinkingLevel =
+      isChildTaskWorkspace && !isRoutedRetryRow
+        ? (agentSettingsThinkingLevel ?? persistedThinkingLevel ?? assistantThinkingLevel)
+        : (persistedThinkingLevel ?? assistantThinkingLevel ?? agentSettingsThinkingLevel);
 
     // Pro reasoning mode threads alongside thinkingLevel from the same sources
     // (assistant message metadata does not carry it), so startup retries do not
@@ -1744,6 +1779,13 @@ export class AgentSession {
 
     if (persistedRetrySendOptions?.agentInitiated === true) {
       retryRequest.agentInitiated = true;
+    }
+
+    // Routed turns persist their pre-routing compaction context; restore it so
+    // the post-relaunch retry keeps the routed compaction policy instead of
+    // force-compacting at the workspace threshold against the routed window.
+    if (persistedRetrySendOptions?.compactionBaseOptions != null) {
+      retryRequest.compactionBaseOptions = persistedRetrySendOptions.compactionBaseOptions;
     }
 
     return retryRequest;
@@ -1890,8 +1932,11 @@ export class AgentSession {
         return "completed";
       }
 
-      const { agentInitiated, goalKind, ...resumeOptions } = retryRequest;
-      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind);
+      // compactionBaseOptions is retry-state metadata, not a send option: it
+      // must feed the resume state's routed-compaction context, never ride
+      // inside the replayed SendMessageOptions themselves.
+      const { agentInitiated, goalKind, compactionBaseOptions, ...resumeOptions } = retryRequest;
+      this.setAutoRetryResumeState(resumeOptions, agentInitiated, goalKind, compactionBaseOptions);
     }
 
     // Disk reads above may race with user actions; retry once the current work settles
@@ -2546,7 +2591,7 @@ export class AgentSession {
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }
-  ): Promise<Result<void, SendMessageError>> {
+  ): Promise<Result<SendMessageAccepted | undefined, SendMessageError>> {
     this.assertNotDisposed("sendMessage");
 
     assert(typeof message === "string", "sendMessage requires a string message");
@@ -2645,16 +2690,51 @@ export class AgentSession {
     // PRRT_kwDOPxxmWM5_s-jo). For synthetic sends (compaction, goal
     // continuation, etc.) the user did not type the message, so we just
     // return Err and let the synthetic caller log/handle it.
+    // Resolve per-skill model routing before any gate or mutation below: the
+    // pricing gate and PDF preflight must judge the model that will actually
+    // stream, and a broken class binding must reject the send BEFORE the edit
+    // path truncates history (see the invariant comment on the edit branch).
+    // Mirroring the pricing gate: a manual send rejected here is persisted and
+    // surfaced as a stream-error — a bare Err would let sendQueuedMessages()
+    // drop the user's queued input with no visible feedback.
+    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    const skillModelOverride = options
+      ? await this.resolveSkillModelClassOverride(typedMuxMetadata, options)
+      : null;
+    if (await cancelBeforeAcceptance()) {
+      return Ok(undefined);
+    }
+    if (skillModelOverride?.kind === "config-error") {
+      const routingError = createUnknownSendMessageError(skillModelOverride.message);
+      // Preservation exists for dequeued sends whose composer already cleared —
+      // a rejected EDIT must not append the edited text as a new tail turn
+      // (the original message is untouched and the browser restores the draft).
+      if (isManualUserMessage && options?.editMessageId == null) {
+        const persisted = await this.preserveRejectedManualSend(message, options, routingError);
+        if (persisted) {
+          await this.applyManualUserMessageGoalSafety({ policy: "pause" });
+        }
+      }
+      return Err(routingError);
+    }
+    // The model every downstream gate must validate: the routed class model
+    // when routing applies, else the caller's model.
+    const effectiveModelForGates = skillModelOverride?.model ?? options?.model;
+
     if (this.workspaceGoalService) {
       const pricingGate = await this.workspaceGoalService.assertPricedModelForBudgetedGoal(
         this.workspaceId,
-        options?.model
+        effectiveModelForGates
       );
       if (await cancelBeforeAcceptance()) {
         return Ok(undefined);
       }
       if (!pricingGate.success) {
-        if (isManualUserMessage) {
+        // Like the class-routing and PDF gates: preservation is for dequeued
+        // sends whose composer already cleared — a rejected EDIT (now
+        // reachable here via routed skill edits) must not append the edited
+        // text as a new tail turn.
+        if (isManualUserMessage && options?.editMessageId == null) {
           const persisted = await this.preserveRejectedManualSend(
             message,
             options,
@@ -2755,16 +2835,35 @@ export class AgentSession {
         (part) => normalizeMediaType(part.mediaType) === PDF_MEDIA_TYPE
       );
 
-      if (pdfParts.length > 0) {
+      if (pdfParts.length > 0 && effectiveModelForGates != null) {
+        // Judge the routed class model when skill routing applies — the
+        // workspace model's PDF support is irrelevant to what will stream.
         const caps = getModelCapabilitiesResolved(
-          options.model,
+          effectiveModelForGates,
           this.aiService.getProvidersConfig()
         );
 
+        // Rejections persist + surface like the pricing/routing gates: routable
+        // skill sends skip the browser PDF preflight and can arrive here from
+        // the queue drain, where a bare Err would silently discard the user's
+        // text and attachment (the composer already cleared on queue accept).
+        const rejectPdf = async (
+          errorMessage: string
+        ): Promise<Result<undefined, SendMessageError>> => {
+          const pdfError = createUnknownSendMessageError(errorMessage);
+          // See the class-routing gate above: preservation is for dequeued
+          // sends, never for rejected edits (which would duplicate the turn).
+          if (isManualUserMessage && options?.editMessageId == null) {
+            const persisted = await this.preserveRejectedManualSend(message, options, pdfError);
+            if (persisted) {
+              await this.applyManualUserMessageGoalSafety({ policy: "pause" });
+            }
+          }
+          return Err(pdfError);
+        };
+
         if (caps && !caps.supportsPdfInput) {
-          return Err(
-            createUnknownSendMessageError(`Model ${options.model} does not support PDF input.`)
-          );
+          return rejectPdf(`Model ${effectiveModelForGates} does not support PDF input.`);
         }
 
         if (caps?.maxPdfSizeMb !== undefined) {
@@ -2774,10 +2873,8 @@ export class AgentSession {
             if (bytes !== null && bytes > maxBytes) {
               const actualMb = (bytes / (1024 * 1024)).toFixed(1);
               const label = part.filename ?? "PDF";
-              return Err(
-                createUnknownSendMessageError(
-                  `${label} is ${actualMb}MB, but ${options.model} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
-                )
+              return rejectPdf(
+                `${label} is ${actualMb}MB, but ${effectiveModelForGates} allows up to ${caps.maxPdfSizeMb}MB per PDF.`
               );
             }
           }
@@ -2907,8 +3004,7 @@ export class AgentSession {
 
     // toolPolicy is properly typed via Zod schema inference
     const typedToolPolicy = options?.toolPolicy;
-    // muxMetadata is z.any() in schema - cast to proper type
-    const typedMuxMetadata = options?.muxMetadata as MuxMessageMetadata | undefined;
+    // typedMuxMetadata was hoisted above the routing/pricing gates.
     const acpPromptId =
       normalizeAcpPromptId(options?.acpPromptId) ?? extractAcpPromptId(typedMuxMetadata);
     const delegatedToolNames =
@@ -2927,6 +3023,111 @@ export class AgentSession {
       ...(delegatedToolNames != null ? { delegatedToolNames } : {}),
     });
 
+    // Apply the per-skill routing override resolved at the top of sendMessage
+    // (before the gates and the edit branch). Applied before the user message
+    // is created so startup retries (retrySendOptions) replay the routed
+    // model, and before the compaction threshold check so context-limit math
+    // uses the model that will actually stream. preRoutingOptions feeds the
+    // compaction REQUEST below: a turn routed to a small model must never
+    // compact on that small model — the compaction model has to fit the full
+    // uncompacted history.
+    const preRoutingOptions = optionsForStream;
+    let muxMetadataForMessage = typedMuxMetadata;
+    let routedThinkingLevel: ThinkingLevel | undefined;
+    if (skillModelOverride != null) {
+      modelForStream = skillModelOverride.model;
+      // Numeric one-shot thinking is model-relative: the frontend resolved
+      // options.thinkingLevel against the workspace model before routing was
+      // known, so "/+0 /skill" must be re-resolved here to mean the ROUTED
+      // model's lowest level, not the workspace model's.
+      const reroutedOneShotThinking =
+        options.oneShotThinkingIndex != null
+          ? resolveThinkingInput(
+              options.oneShotThinkingIndex,
+              skillModelOverride.model,
+              this.getProvidersConfigSafe()
+            )
+          : undefined;
+      // Precedence: explicit numeric one-shot (re-resolved above) > class
+      // thinking > ambient options. skipAiSettingsPersistence marks one-shot
+      // sends, so a named "/+high /skill" keeps the user's level rather than
+      // the class default.
+      routedThinkingLevel =
+        reroutedOneShotThinking ??
+        (skillModelOverride.thinkingLevel != null && options.skipAiSettingsPersistence !== true
+          ? skillModelOverride.thinkingLevel
+          : undefined);
+      optionsForStream = {
+        ...optionsForStream,
+        model: skillModelOverride.model,
+        ...(routedThinkingLevel != null ? { thinkingLevel: routedThinkingLevel } : {}),
+      };
+      // The persisted request metadata must advertise the model that will
+      // actually stream: the pending-turn label and downstream consumers read
+      // requestedModel from the user message.
+      if (muxMetadataForMessage != null) {
+        muxMetadataForMessage = {
+          ...muxMetadataForMessage,
+          requestedModel: skillModelOverride.model,
+        };
+      }
+    }
+
+    // Routed sends report the class model and the effective thinking level
+    // back to the caller so successful-send telemetry attributes the
+    // invocation to what actually streams. The level is whatever the stream
+    // will receive (class suffix, re-resolved numeric one-shot, or a named
+    // one-shot / ambient level riding through), clamped by the same per-model
+    // floor enforcement the stream applies — "/+off /skill" routed onto a
+    // floor-medium model reports medium, not off.
+    const sendAccepted: SendMessageAccepted | undefined =
+      skillModelOverride != null
+        ? {
+            routedModel: skillModelOverride.model,
+            ...(optionsForStream.thinkingLevel != null
+              ? {
+                  routedThinkingLevel: this.enforceThinkingFloorsForModel(
+                    skillModelOverride.model,
+                    optionsForStream.thinkingLevel,
+                    this.getProvidersConfigSafe()
+                  ),
+                }
+              : {}),
+          }
+        : undefined;
+
+    // Which options a routed turn's compaction (on-send or mid-stream forced)
+    // must run with: the compaction request has to read the FULL uncompacted
+    // history, so it needs whichever model has the larger usable window.
+    // Routing usually shrinks the window (the user's model wins), but a class
+    // can also route UP — repeated routed turns can then grow the history past
+    // the user's model, and summarizing on it would just context-error again.
+    const compactionBaseOptionsForRoutedTurn = ((): SendMessageOptions | undefined => {
+      if (skillModelOverride == null) {
+        return undefined;
+      }
+      const providersConfigForWindows = this.getProvidersConfigSafe();
+      const userModel = preRoutingOptions.model;
+      if (userModel == null) {
+        return optionsForStream;
+      }
+      const userLimit = getEffectiveContextLimit(
+        userModel,
+        this.is1MContextEnabledForModel(userModel, preRoutingOptions, providersConfigForWindows),
+        providersConfigForWindows
+      );
+      const routedLimit = getEffectiveContextLimit(
+        skillModelOverride.model,
+        this.is1MContextEnabledForModel(
+          skillModelOverride.model,
+          optionsForStream,
+          providersConfigForWindows
+        ),
+        providersConfigForWindows
+      );
+      return (routedLimit ?? 0) > (userLimit ?? 0) ? optionsForStream : preRoutingOptions;
+    })();
+
     const userMessage = createMuxMessage(
       messageId,
       "user",
@@ -2935,8 +3136,13 @@ export class AgentSession {
         timestamp: Date.now(),
         toolPolicy: typedToolPolicy,
         disableWorkspaceAgents: options?.disableWorkspaceAgents,
-        retrySendOptions: pickStartupRetrySendOptions(optionsForStream, agentInitiated, goalKind),
-        muxMetadata: typedMuxMetadata, // Pass through frontend metadata as black-box
+        retrySendOptions: pickStartupRetrySendOptions(
+          optionsForStream,
+          agentInitiated,
+          goalKind,
+          compactionBaseOptionsForRoutedTurn
+        ),
+        muxMetadata: muxMetadataForMessage, // Frontend metadata; requestedModel re-stamped when routing applied
         ...(acpPromptId != null ? { acpPromptId } : {}),
         ...(goalKind != null ? { kind: goalKind } : {}),
         // Auto-resume and other system-generated messages are synthetic + UI-visible
@@ -2993,8 +3199,18 @@ export class AgentSession {
       // before dispatching a risky user turn near the context limit.
       // `shouldForceCompact` remains a stricter (threshold + buffer) signal for
       // mid-stream forcing where we want to avoid abrupt interruptions too early.
+      //
+      // Skill-routed sends compact only when the content genuinely risks
+      // overrunning the routed model's window: applying the threshold to the
+      // (smaller) routed window would let a one-off cheap-skill invocation
+      // force an unrequested, irreversible, workspace-wide compaction of a
+      // session far under its own model's limit. The headroom accounts for
+      // the pending turn (new message, attachments, skill snapshot), which
+      // the recorded usage doesn't include yet.
       const shouldCompactBeforeSend =
-        compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
+        skillModelOverride != null
+          ? compactionResult.usagePercentage >= 100 - ROUTED_SEND_COMPACTION_HEADROOM_PERCENT
+          : compactionResult.usagePercentage >= compactionResult.thresholdPercentage;
       if (shouldCompactBeforeSend) {
         const followUpFileParts = effectiveFileParts?.map((part) => ({
           url: part.url,
@@ -3020,10 +3236,15 @@ export class AgentSession {
           }
         }
 
+        // Pre-routing options/model: the deferred follow-up re-enters
+        // sendMessage with the same skill metadata and re-resolves routing at
+        // dispatch time. Persisting the routed model here would pin a stale
+        // decision — if the binding is gone by dispatch, the user's prompt
+        // would stream on the routed model with no routing decision behind it.
         const followUpContent = this.buildAutoCompactionFollowUp({
           messageText: message,
-          options: optionsForStream,
-          modelForStream,
+          options: preRoutingOptions,
+          modelForStream: preRoutingOptions.model,
           fileParts: followUpFileParts,
           agentInitiated,
           goalKind,
@@ -3040,7 +3261,12 @@ export class AgentSession {
 
         const autoCompactionRequest = this.buildAutoCompactionRequest({
           followUpContent,
-          baseOptions: optionsForStream,
+          // The compaction request must run on the model able to read the full
+          // history — usually the user's pre-routing model, or the routed model
+          // when the class routes UP to a larger window. The deferred follow-up
+          // re-enters sendMessage with the same skill metadata and re-routes
+          // itself either way.
+          baseOptions: compactionBaseOptionsForRoutedTurn ?? preRoutingOptions,
           reason: "on-send",
         });
 
@@ -3259,7 +3485,12 @@ export class AgentSession {
 
     // Same-session retry should resume the exact accepted request we just finalized
     // in history, even if runtime warmup fails before streamWithHistory() starts.
-    this.setAutoRetryResumeState(optionsForStream, agentInitiated, goalKind);
+    this.setAutoRetryResumeState(
+      optionsForStream,
+      agentInitiated,
+      goalKind,
+      compactionBaseOptionsForRoutedTurn
+    );
     try {
       await internal?.onAccepted?.();
     } catch (error) {
@@ -3287,7 +3518,9 @@ export class AgentSession {
     this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
 
-    const startPreparedStream = async (): Promise<Result<void, SendMessageError>> => {
+    const startPreparedStream = async (): Promise<
+      Result<SendMessageAccepted | undefined, SendMessageError>
+    > => {
       try {
         if (preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -3326,7 +3559,8 @@ export class AgentSession {
           agentInitiated,
           preparedTurnAbortController.signal,
           goalKind,
-          turnThinkingOverride
+          turnThinkingOverride,
+          compactionBaseOptionsForRoutedTurn
         );
         if (streamResult.success && preparedTurnAbortController.signal.aborted) {
           await notifyAcceptedPreStreamFailure(
@@ -3335,7 +3569,7 @@ export class AgentSession {
             )
           );
         }
-        return streamResult;
+        return streamResult.success ? Ok(sendAccepted) : streamResult;
       } finally {
         // Success should advance via stream events; if startup never emitted any, don't leave the
         // session stuck in PREPARING. Guard by controller identity so an aborted startup cannot
@@ -3385,7 +3619,7 @@ export class AgentSession {
           }
           drainQueuedMessagesAfterFailedStartup();
         });
-      return Ok(undefined);
+      return Ok(sendAccepted);
     }
 
     // Non-edit sends preserve the old behavior so pre-stream startup failures still propagate to
@@ -3395,7 +3629,12 @@ export class AgentSession {
 
   async resumeStream(
     options: SendMessageOptions,
-    internal?: { agentInitiated?: boolean; goalKind?: GoalSyntheticMessageKind }
+    internal?: {
+      agentInitiated?: boolean;
+      goalKind?: GoalSyntheticMessageKind;
+      /** Routed-turn compaction context carried across same-session retries. */
+      compactionBaseOptions?: SendMessageOptions;
+    }
   ): Promise<Result<{ started: boolean }, SendMessageError>> {
     this.assertNotDisposed("resumeStream");
 
@@ -3425,7 +3664,12 @@ export class AgentSession {
 
     // A resumed attempt becomes the latest live resume request as soon as we
     // accept its options, even if startup fails before the stream fully begins.
-    this.setAutoRetryResumeState(optionsForStream, internal?.agentInitiated, internal?.goalKind);
+    this.setAutoRetryResumeState(
+      optionsForStream,
+      internal?.agentInitiated,
+      internal?.goalKind,
+      internal?.compactionBaseOptions
+    );
     this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(optionsForStream.muxMetadata);
     this.setTurnPhase(TurnPhase.PREPARING);
     // Open the mid-turn thinking override window for the resumed turn (after
@@ -3443,7 +3687,8 @@ export class AgentSession {
         internal?.agentInitiated,
         undefined,
         internal?.goalKind,
-        turnThinkingOverride
+        turnThinkingOverride,
+        internal?.compactionBaseOptions
       );
       if (!result.success) {
         return result;
@@ -3485,6 +3730,52 @@ export class AgentSession {
 
   private getUsageState(): AutoCompactionUsageState | undefined {
     return this.lastUsageState;
+  }
+
+  /**
+   * Per-model thinking floor: the configured minThinkingLevelByModel override
+   * resolved against the model's policy. Tests may provide partial config
+   * mocks, so read overrides only when available. providersConfig lets mapped
+   * aliases (mappedToModel) resolve against the target model's policy.
+   */
+  private resolveThinkingFloorForModel(
+    modelString: string,
+    providersConfig: ProvidersConfigMap | null
+  ): ThinkingLevel {
+    const maybeConfig = this.config as Config & {
+      loadConfigOrDefault?: () => {
+        minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+      } | null;
+    };
+    // Gateway-preserving key first (an explicit coder:<instance>/<model>
+    // floor stays distinct from a direct model with the same ID), with a
+    // legacy name-canonical fallback for floors persisted by older versions.
+    const minThinkingOverride =
+      typeof maybeConfig.loadConfigOrDefault === "function"
+        ? lookupMinThinkingLevelOverride(
+            maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel,
+            modelString
+          )
+        : undefined;
+    return resolveMinimumThinkingLevel(modelString, minThinkingOverride, providersConfig);
+  }
+
+  /**
+   * Apply per-model thinking floors + policy clamping — the single definition
+   * used by streamWithHistory's request build AND the accepted-send payload,
+   * so telemetry can never report a level the stream doesn't run at.
+   */
+  private enforceThinkingFloorsForModel(
+    modelString: string,
+    thinkingLevel: ThinkingLevel,
+    providersConfig: ProvidersConfigMap | null
+  ): ThinkingLevel {
+    return enforceThinkingPolicy(
+      modelString,
+      thinkingLevel,
+      this.resolveThinkingFloorForModel(modelString, providersConfig),
+      providersConfig
+    );
   }
 
   private getProvidersConfigSafe(): ProvidersConfigMap | null {
@@ -3899,7 +4190,10 @@ export class AgentSession {
 
       const autoCompactionRequest = this.buildAutoCompactionRequest({
         followUpContent,
-        baseOptions: streamContext.options,
+        // Pre-routing options when the stream was skill-routed: the compaction
+        // request must never inherit a routed small model (it has to read the
+        // full uncompacted history) — mirrors the on-send compaction site.
+        baseOptions: streamContext.compactionBaseOptions ?? streamContext.options,
         reason: "mid-stream",
       });
 
@@ -4008,7 +4302,11 @@ export class AgentSession {
     // Session-owned per-turn holder for mid-turn thinking changes. Passed
     // explicitly (not read from the field) so a preempted turn can never pick
     // up its replacement's holder. Absent for internal retry paths.
-    activeTurnThinkingOverride?: ActiveTurnThinkingOverride
+    activeTurnThinkingOverride?: ActiveTurnThinkingOverride,
+    // Pre-skill-routing options for compaction requests spawned off this
+    // stream (see activeStreamContext.compactionBaseOptions). Passed
+    // explicitly like the thinking holder so retry paths stay unaffected.
+    compactionBaseOptions?: SendMessageOptions
   ): Promise<Result<void, SendMessageError>> {
     const isStartupAbortRequested = (): boolean => abortSignal?.aborted === true;
 
@@ -4032,6 +4330,7 @@ export class AgentSession {
       openaiTruncationModeOverride,
       ...(goalKind != null ? { goalKind } : {}),
       providersConfig,
+      ...(compactionBaseOptions != null ? { compactionBaseOptions } : {}),
     };
     this.activeStreamUserMessageId = undefined;
 
@@ -4143,32 +4442,9 @@ export class AgentSession {
     this.activeStreamHadPostCompactionInjection =
       postCompactionAttachments !== null && postCompactionAttachments.length > 0;
 
-    // Apply per-model thinking floors once so desktop, mobile, and ACP requests match.
-    // Tests may provide partial config mocks, so read overrides only when available.
-    const maybeConfig = this.config as Config & {
-      loadConfigOrDefault?: () => {
-        minThinkingLevelByModel?: Record<string, ThinkingLevel>;
-      } | null;
-    };
-    // Gateway-preserving key first (an explicit coder:<instance>/<model>
-    // floor stays distinct from a direct model with the same ID), with a
-    // legacy name-canonical fallback for floors persisted by older versions.
-    const minThinkingOverride =
-      typeof maybeConfig.loadConfigOrDefault === "function"
-        ? lookupMinThinkingLevelOverride(
-            maybeConfig.loadConfigOrDefault()?.minThinkingLevelByModel,
-            modelString
-          )
-        : undefined;
-    // Pass providersConfig so mapped aliases (mappedToModel -> e.g. GPT-5.6)
-    // clamp against the target model's policy — otherwise a capability level
-    // like native max would be stripped here before buildProviderOptions can
-    // resolve the alias.
-    const minThinkingLevel = resolveMinimumThinkingLevel(
-      modelString,
-      minThinkingOverride,
-      providersConfig
-    );
+    // Mid-turn thinking overrides clamp against the same floor as the
+    // send-time level (single source of truth for the floor).
+    const minThinkingLevel = this.resolveThinkingFloorForModel(modelString, providersConfig);
     const effectiveThinkingLevel = options?.thinkingLevel
       ? enforceThinkingPolicy(modelString, options.thinkingLevel, minThinkingLevel, providersConfig)
       : undefined;
@@ -4584,7 +4860,10 @@ export class AgentSession {
         true,
         context.agentInitiated,
         undefined,
-        context.goalKind
+        context.goalKind,
+        undefined,
+        // A routed turn's retry keeps its routed compaction policy.
+        context.compactionBaseOptions
       );
     } finally {
       if (this.turnPhase === TurnPhase.PREPARING) {
@@ -4907,6 +5186,13 @@ export class AgentSession {
           streamContext?.providersConfig ?? null
         ),
         providersConfig: streamContext?.providersConfig ?? null,
+        // A routed turn (compactionBaseOptions set) uses the routed-send
+        // policy mid-stream too: the ordinary threshold+buffer against the
+        // (usually smaller) routed window would immediately force the exact
+        // workspace-wide compaction the pre-send band declined to run.
+        ...(streamContext?.compactionBaseOptions != null
+          ? { forceThresholdPercentOverride: 100 - ROUTED_SEND_COMPACTION_HEADROOM_PERCENT }
+          : {}),
       });
 
       if (shouldInterruptForCompaction) {
@@ -6053,6 +6339,11 @@ export class AgentSession {
       allowAgentSetGoal: followUp.allowAgentSetGoal,
       disableWorkspaceAgents: followUp.disableWorkspaceAgents,
       skipAiSettingsPersistence: followUp.skipAiSettingsPersistence,
+      // An explicit one-shot carried through compaction keeps bypassing class routing.
+      skipSkillModelRouting: followUp.skipSkillModelRouting,
+      // A raw numeric thinking index re-resolves against the routed model if
+      // this re-dispatched send gets class-routed.
+      oneShotThinkingIndex: followUp.oneShotThinkingIndex,
     };
 
     if (effectiveFileParts && effectiveFileParts.length > 0) {
@@ -6447,6 +6738,238 @@ export class AgentSession {
     return snapshots.filter((snapshot): snapshot is MuxMessage => snapshot !== null);
   }
 
+  /**
+   * Build a reader that resolves a skill package with the same roots and
+   * precedence as skill discovery for this workspace. Shared by snapshot
+   * materialization and per-skill model routing so both resolve identically.
+   */
+  private buildSkillReader(args: {
+    metadata: WorkspaceMetadata;
+    runtime: Runtime;
+    workspacePath: string;
+    disableWorkspaceAgents: boolean | undefined;
+  }): (skillName: string) => Promise<Awaited<ReturnType<typeof readAgentSkill>>> {
+    // When workspace agents are disabled, resolve skills from the project path instead of
+    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
+    const skillDiscoveryPath = args.disableWorkspaceAgents
+      ? args.metadata.projectPath
+      : args.workspacePath;
+
+    // claude-skills-compat experiment: resolve slash-invoked skills with the same
+    // roots as discovery. Guard for test mocks that may not implement the gate.
+    const includeClaudeSkills =
+      typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
+      this.aiService.isClaudeSkillsCompatEnabled();
+    // agent-plugins experiment: same treatment for plugin-provided skills.
+    const includeAgentPlugins =
+      typeof this.aiService.isAgentPluginsEnabled === "function" &&
+      this.aiService.isAgentPluginsEnabled();
+    // agent-plugins experiment: resolve host-local project workspaces through
+    // the same storage context as the skill read tool so checkout-level
+    // plugin containers stay reachable — for subProjectPath workspaces the
+    // execution path is a subdirectory of the checkout and default
+    // discovery misses them. disableWorkspaceAgents keeps default
+    // discovery: it anchors at projectPath, which is already the
+    // checkout-level root the UI lists in that mode.
+    const muxScope =
+      !args.disableWorkspaceAgents &&
+      typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
+        ? this.aiService.resolveMuxToolScopeForWorkspace(
+            args.metadata,
+            args.runtime,
+            args.workspacePath
+          )
+        : null;
+    const skillCtx =
+      muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
+        ? resolveSkillStorageContext({
+            runtime: args.runtime,
+            workspacePath: skillDiscoveryPath,
+            muxScope,
+            includeClaudeSkills,
+            includeAgentPlugins,
+          })
+        : null;
+    return (skillName: string) =>
+      readAgentSkill(
+        skillCtx?.runtime ?? args.runtime,
+        skillCtx?.workspacePath ?? skillDiscoveryPath,
+        skillName,
+        {
+          ...(skillCtx != null ? { roots: skillCtx.roots, containment: skillCtx.containment } : {}),
+          includeClaudeSkills,
+          includeAgentPlugins,
+        }
+      );
+  }
+
+  /**
+   * Per-skill model routing: a slash-invoked skill bound to a model class
+   * (config `skillModelClasses` table, else skill frontmatter metadata
+   * "model-class") streams on the class's model for this send only.
+   *
+   * Explicit overrides win: sends carrying skipAiSettingsPersistence (one-shot
+   * /model commands, compaction requests) are never re-routed. Workspace AI
+   * settings are untouched: persistence happens in WorkspaceService (with the
+   * user's model) before this runs.
+   *
+   * Error posture: a *bound* skill whose routing cannot be delivered — unknown
+   * class, malformed class value, or a class model no configured route can
+   * serve — returns a config-error so the send fails with an actionable
+   * message instead of silently streaming on an unintended (often expensive)
+   * model. Unbound skills route nothing, and infrastructure failures (config
+   * or skill unreadable, providers state unavailable) still fail open: those
+   * are not user mapping mistakes, and a skill send must survive them.
+   */
+  private async resolveSkillModelClassOverride(
+    muxMetadata: MuxMessageMetadata | undefined,
+    options: SendMessageOptions
+  ): Promise<
+    | { kind: "override"; className: string; model: string; thinkingLevel?: ThinkingLevel }
+    | { kind: "config-error"; message: string }
+    | null
+  > {
+    // Only an explicit model override suppresses routing. This must NOT key
+    // off skipAiSettingsPersistence: thinking-only one-shots (/+2 /skill) and
+    // several internal senders set that flag purely to protect persisted
+    // preferences and still want class routing to apply.
+    if (options.skipSkillModelRouting === true) {
+      return null;
+    }
+    if (muxMetadata?.type !== "agent-skill") {
+      return null;
+    }
+
+    try {
+      // Defensive config access mirroring getPreferredCompactionSettings: test
+      // harnesses may provide a partial Config.
+      const maybeConfig = this.config as Config & {
+        loadConfigOrDefault?: () => {
+          modelClasses?: Record<string, string>;
+          skillModelClasses?: Record<string, string>;
+          routePriority?: string[];
+          routeOverrides?: Record<string, string>;
+        } | null;
+      };
+      if (typeof maybeConfig.loadConfigOrDefault !== "function") {
+        return null;
+      }
+      const cfg = maybeConfig.loadConfigOrDefault();
+      const modelClasses = cfg?.modelClasses;
+      const skillModelClasses = cfg?.skillModelClasses;
+
+      const skillName = muxMetadata.skillName;
+      if (!SkillNameSchema.safeParse(skillName).success) {
+        return null;
+      }
+
+      // Fast path: with no classes configured and no table binding for this
+      // skill, routing can never apply — skip the (possibly remote) SKILL.md
+      // frontmatter read entirely. The non-empty-after-trim requirement must
+      // match resolveSkillModelClassBinding's boundViaTable exactly: a blank
+      // hand-edited table entry ({done: ""}) must not suppress the frontmatter
+      // read and then fail the table lookup, silently unrouting the skill.
+      const hasModelClasses = modelClasses != null && Object.keys(modelClasses).length > 0;
+      const tableClassRaw = skillModelClasses?.[skillName];
+      const hasTableBinding = typeof tableClassRaw === "string" && tableClassRaw.trim().length > 0;
+      if (!hasModelClasses && !hasTableBinding) {
+        return null;
+      }
+
+      // Read frontmatter only when the config table doesn't already bind the
+      // skill — skips a (possibly remote) SKILL.md read when unnecessary.
+      let frontmatterMetadata: Record<string, string> | undefined;
+      if (!hasTableBinding) {
+        if (typeof this.aiService.getWorkspaceMetadata !== "function") {
+          return null;
+        }
+        const metadataResult = await this.aiService.getWorkspaceMetadata(this.workspaceId);
+        if (!metadataResult.success) {
+          return null;
+        }
+        const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadataResult.data);
+        const resolved = await this.buildSkillReader({
+          metadata: metadataResult.data,
+          runtime,
+          workspacePath,
+          disableWorkspaceAgents: options.disableWorkspaceAgents,
+        })(skillName);
+        frontmatterMetadata = resolved.package.frontmatter.metadata;
+      }
+
+      const providersConfig = this.getProvidersConfigSafe();
+      const binding = resolveSkillModelClassBinding({
+        skillName,
+        frontmatterMetadata,
+        modelClasses,
+        skillModelClasses,
+        providersConfig,
+      });
+
+      switch (binding.status) {
+        case "unbound":
+          return null;
+        case "unknown-class":
+          return {
+            kind: "config-error",
+            message: describeSkillModelClassRoutingProblem({
+              kind: "unknown-class",
+              skillName,
+              className: binding.className,
+            }),
+          };
+        case "invalid-value":
+          return {
+            kind: "config-error",
+            message: describeSkillModelClassRoutingProblem({
+              kind: "invalid-value",
+              skillName,
+              className: binding.className,
+              value: binding.value,
+            }),
+          };
+        case "resolved": {
+          // Availability is a routing-state question (gateways count: a model
+          // can be servable via OpenRouter without a direct provider key).
+          // Null providersConfig means "cannot determine", never "unavailable".
+          if (
+            providersConfig != null &&
+            !isModelServableWithProvidersConfig({
+              canonicalModel: binding.model,
+              routePriority: cfg?.routePriority,
+              routeOverrides: cfg?.routeOverrides,
+              providersConfig,
+            })
+          ) {
+            return {
+              kind: "config-error",
+              message: describeSkillModelClassRoutingProblem({
+                kind: "model-unavailable",
+                skillName,
+                className: binding.className,
+                model: binding.model,
+              }),
+            };
+          }
+
+          log.debug(
+            `skill model routing: /${skillName} → class "${binding.className}" → ${binding.model}` +
+              (binding.thinkingLevel != null ? `+${binding.thinkingLevel}` : "")
+          );
+          return {
+            kind: "override",
+            className: binding.className,
+            model: binding.model,
+            ...(binding.thinkingLevel != null ? { thinkingLevel: binding.thinkingLevel } : {}),
+          };
+        }
+      }
+    } catch (error) {
+      log.debug(`skill model routing: fail-open for skill send: ${getErrorMessage(error)}`);
+      return null;
+    }
+  }
+
   private async materializeAgentSkillSnapshots(
     muxMetadata: MuxMessageMetadata | undefined,
     disableWorkspaceAgents: boolean | undefined
@@ -6472,10 +6995,6 @@ export class AgentSession {
 
     const metadata = metadataResult.data;
     const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadata);
-
-    // When workspace agents are disabled, resolve skills from the project path instead of
-    // the worktree so skill invocation uses the same precedence/discovery root as the UI.
-    const skillDiscoveryPath = disableWorkspaceAgents ? metadata.projectPath : workspacePath;
 
     // Dedupe per skill against recent persisted snapshots. A wider window keeps multi-skill
     // turns from reloading snapshots that were persisted together on the previous turn.
@@ -6505,49 +7024,12 @@ export class AgentSession {
 
       let resolved: Awaited<ReturnType<typeof readAgentSkill>>;
       try {
-        // claude-skills-compat experiment: resolve slash-invoked skills with the same
-        // roots as discovery. Guard for test mocks that may not implement the gate.
-        const includeClaudeSkills =
-          typeof this.aiService.isClaudeSkillsCompatEnabled === "function" &&
-          this.aiService.isClaudeSkillsCompatEnabled();
-        // agent-plugins experiment: same treatment for plugin-provided skills.
-        const includeAgentPlugins =
-          typeof this.aiService.isAgentPluginsEnabled === "function" &&
-          this.aiService.isAgentPluginsEnabled();
-        // agent-plugins experiment: resolve host-local project workspaces through
-        // the same storage context as the skill read tool so checkout-level
-        // plugin containers stay reachable — for subProjectPath workspaces the
-        // execution path is a subdirectory of the checkout and default
-        // discovery misses them. disableWorkspaceAgents keeps default
-        // discovery: it anchors at projectPath, which is already the
-        // checkout-level root the UI lists in that mode.
-        const muxScope =
-          !disableWorkspaceAgents &&
-          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
-            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
-            : null;
-        const skillCtx =
-          muxScope?.type === "project" && muxScope.projectStorageAuthority === "host-local"
-            ? resolveSkillStorageContext({
-                runtime,
-                workspacePath: skillDiscoveryPath,
-                muxScope,
-                includeClaudeSkills,
-                includeAgentPlugins,
-              })
-            : null;
-        resolved = await readAgentSkill(
-          skillCtx?.runtime ?? runtime,
-          skillCtx?.workspacePath ?? skillDiscoveryPath,
-          parsedName.data,
-          {
-            ...(skillCtx != null
-              ? { roots: skillCtx.roots, containment: skillCtx.containment }
-              : {}),
-            includeClaudeSkills,
-            includeAgentPlugins,
-          }
-        );
+        resolved = await this.buildSkillReader({
+          metadata,
+          runtime,
+          workspacePath,
+          disableWorkspaceAgents,
+        })(parsedName.data);
       } catch (error) {
         if (ref.source === "slash") {
           throw error;

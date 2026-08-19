@@ -1405,7 +1405,18 @@ export const workspace = {
         fileParts: z.array(FilePartSchema).optional(),
       }),
     }),
-    output: ResultSchema(z.object({}), SendMessageErrorSchema),
+    output: ResultSchema(
+      z.object({
+        // Class model applied by skill routing — lets the frontend attribute
+        // send telemetry to the model that actually streams. Absent when no
+        // routing occurred or the send was queued for later dispatch.
+        routedModel: z.string().optional(),
+        // Thinking level routing replaced (class suffix or re-resolved numeric
+        // one-shot); absent when the ambient thinking level applies.
+        routedThinkingLevel: ThinkingLevelSchema.optional(),
+      }),
+      SendMessageErrorSchema
+    ),
   },
   answerAskUserQuestion: {
     input: z
@@ -2302,6 +2313,8 @@ export const config = {
       routeOverrides: z.record(z.string(), z.string()).optional(),
       minThinkingLevelByModel: z.record(z.string(), ThinkingLevelSchema).optional(),
       modelFallbacks: ModelFallbacksSchema.optional(),
+      modelClasses: z.record(z.string(), z.string()).optional(),
+      skillModelClasses: z.record(z.string(), z.string()).optional(),
       defaultModel: z.string().optional(),
       advisorModelString: AdvisorModelStringSchema,
       advisorThinkingLevel: AdvisorThinkingLevelSchema,
@@ -2384,6 +2397,17 @@ export const config = {
       // sanitizes (canonical keys, drop self/dupes, cap chain length, drop
       // empty chains) before persisting.
       modelFallbacks: ModelFallbacksSchema,
+    }),
+    output: z.void(),
+  },
+  updateModelClasses: {
+    input: z.object({
+      // Full-map replacement keyed by class name (canonical slots are
+      // large/medium/small; hand-edited custom names are preserved). Values
+      // use the one-shot syntax ("haiku+0") and are stored verbatim —
+      // unparseable entries are kept (they fail loudly at send time), never
+      // silently dropped as a side effect of unrelated edits.
+      modelClasses: z.record(z.string(), z.string()),
     }),
     output: z.void(),
   },
