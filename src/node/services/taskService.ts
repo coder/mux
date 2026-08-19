@@ -8115,7 +8115,15 @@ export class TaskService {
           });
         }
         const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
-          queueCutSupersedeEvidence: sawNewerUserMessage,
+          // The persisted supersede classification stays authoritative when this
+          // repair rebuilds from the SAME correlated final that settled it: the
+          // superseding queued input may not have appended its user message to
+          // child history yet (queue-dispatch timing), and that absence must not
+          // downgrade the supersede to a truncation error. Only a different
+          // correlated final (contradictory same-turn evidence) may resettle.
+          queueCutSupersedeEvidence:
+            sawNewerUserMessage ||
+            (isSupersededWorkspaceTurnInterrupt(record) && event.messageId === record.messageId),
         });
         if (
           !options.repairFromHistory ||

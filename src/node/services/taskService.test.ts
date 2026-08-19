@@ -5536,6 +5536,57 @@ describe("TaskService", () => {
     });
   });
 
+  test("snapshot history repair does not downgrade a supersede settlement before the successor lands", async () => {
+    // Queue-cut supersede race: the handle settles interrupted from the
+    // tool-calls stream-end, but the superseding queued input has not appended
+    // its user message to child history yet. A task_await snapshot read in that
+    // window repairs from the SAME correlated final and must preserve the
+    // supersede classification instead of downgrading it to a truncation error.
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    const supersedeReason =
+      "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report";
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_queue_cut", "assistant", "Cut mid-work", {
+            model: "anthropic:claude-opus-4-6",
+            agentId: "exec",
+            finishReason: "tool-calls",
+            muxMetadata,
+          })
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "interrupted",
+      error: supersedeReason,
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      messageId: "msg_queue_cut",
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({
+      status: "interrupted",
+      error: supersedeReason,
+      messageId: "msg_queue_cut",
+    });
+  });
+
   test("getWorkspaceTurnSnapshot repairs a stale error handle from self-healed history", async () => {
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
     await config.editConfig((cfg) => {
