@@ -687,11 +687,22 @@ const WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS: ReadonlySet<StreamErrorType> = n
 const WORKSPACE_TURN_STALE_RESTART_ERROR = "Workspace turn interrupted after restart";
 
 /**
+ * Reason persisted when other queued input (a manual user message, /compact)
+ * cut a delegated turn at a tool boundary and superseded it. The target
+ * workspace continues under the new input, so the owner sees an interruption
+ * with this explanation rather than a task failure.
+ */
+const WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR =
+  "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report";
+
+/**
  * Settled workspace-turn records eligible for self-heal correction (resettle from a
  * correlated stream-end, or read-time repair/revive): transient stream-error settlements
- * (status "error") and stale restart-recovery interrupts. Explicit interrupts — user Esc,
- * task_terminate, cancel reasons — must stay terminal even if a late correlated stream-end
- * or same-turn retry evidence arrives, so canceled work never resurfaces as completed.
+ * (status "error"), stale restart-recovery interrupts, and queue-cut supersedes (late
+ * correlated evidence of the same turn proves it actually continued). Explicit interrupts —
+ * user Esc, task_terminate, cancel reasons — must stay terminal even if a late correlated
+ * stream-end or same-turn retry evidence arrives, so canceled work never resurfaces as
+ * completed.
  */
 function isSelfHealEligibleSettledWorkspaceTurn(
   record: Pick<WorkspaceTurnTaskHandleRecord, "status" | "error">
@@ -699,7 +710,11 @@ function isSelfHealEligibleSettledWorkspaceTurn(
   if (record.status === "error") {
     return true;
   }
-  return record.status === "interrupted" && record.error === WORKSPACE_TURN_STALE_RESTART_ERROR;
+  return (
+    record.status === "interrupted" &&
+    (record.error === WORKSPACE_TURN_STALE_RESTART_ERROR ||
+      record.error === WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR)
+  );
 }
 
 /**
@@ -10124,6 +10139,27 @@ export class TaskService {
     const baseRecord = { ...record };
     delete baseRecord.error;
     delete baseRecord.deferredMessageIds;
+    // A "tool-calls" finish on a delegated turn is always a queue cut: some other
+    // queued input (a manual user message, /compact) dispatched at the tool
+    // boundary and superseded the turn (same-turn continuations were already
+    // deferred by the caller). The child keeps working under that new input, so
+    // this is a supersede — not a failure of the delegated work. Settle as
+    // interrupted with a human-readable reason instead of alarming the owner
+    // with an "error" and internal finishReason jargon.
+    if (event.metadata.finishReason === "tool-calls") {
+      return {
+        ...baseRecord,
+        status: "interrupted",
+        updatedAt: getIsoNow(),
+        messageId: event.messageId,
+        error: WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR,
+        finalMessageRef: this.buildWorkspaceTurnFinalMessageRef(event),
+        finalMessage: {
+          messageId: event.messageId,
+          metadata: event.metadata,
+        },
+      };
+    }
     // Truncated/non-stop provider finishes are partial output, not a completed delegated turn.
     if (event.metadata.finishReason != null && event.metadata.finishReason !== "stop") {
       return {

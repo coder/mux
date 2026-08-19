@@ -4351,10 +4351,12 @@ describe("TaskService", () => {
     expect(preservedReport?.metadata?.muxMetadata).toEqual(previousCorrelation);
   });
 
-  test("workspace-turn tool-calls stream-end with superseding queued input settles error", async () => {
+  test("workspace-turn tool-calls stream-end with superseding queued input settles interrupted", async () => {
     // Ordinary queued input (manual message, bare /compact) also cuts the
     // stream at a tool boundary, but it supersedes the delegated turn instead
-    // of continuing it — the handle must settle now, not defer forever.
+    // of continuing it — the handle must settle now, not defer forever. The
+    // child keeps working under the new input, so the owner sees an
+    // interruption with a supersede reason, not a task failure.
     const hasPendingQueuedOrPreparingTurn = mock(
       (workspaceId: string) => workspaceId === "childworkspace"
     );
@@ -4385,9 +4387,10 @@ describe("TaskService", () => {
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
-      status: "error",
+      status: "interrupted",
       messageId: "msg_superseded_cut",
-      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+      error:
+        "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report",
     });
   });
 
@@ -4646,7 +4649,7 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  test("workspace-turn tool-calls stream-end without continuation settles error", async () => {
+  test("workspace-turn tool-calls stream-end without continuation settles interrupted", async () => {
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -4672,10 +4675,11 @@ describe("TaskService", () => {
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
-      status: "error",
+      status: "interrupted",
       workspaceId: "childworkspace",
       messageId: "msg_tool_calls_terminal",
-      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+      error:
+        "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report",
     });
   });
 
