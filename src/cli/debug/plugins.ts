@@ -93,7 +93,9 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
     : null;
   const composition = await buildWorkspaceComposition({
     runtime,
-    workspacePath: hostCheckoutRoot ?? workspacePath,
+    // Execution path: production loaders discover from here (subProjectPath
+    // workspaces run in the subdirectory).
+    workspacePath,
     // Null for SSH/Docker: plugin containers are host-only and production
     // never loads them off-host, so discovery must not scan the remote
     // workspacePath as if it were a host project root.
@@ -108,9 +110,11 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
   });
 
   console.log(`\n=== Plugin composition for workspace: ${workspaceId} ===\n`);
-  console.log(`workspace path: ${hostCheckoutRoot ?? workspacePath}`);
-  if (!hostCheckoutRoot) {
+  console.log(`workspace path: ${workspacePath}`);
+  if (hostCheckoutRoot === null) {
     console.log("host checkout: none (off-host runtime) — plugin containers are not loaded");
+  } else if (hostCheckoutRoot !== workspacePath) {
+    console.log(`host checkout (plugin containers): ${hostCheckoutRoot}`);
   }
   console.log(`project trusted: ${projectTrusted ? "yes" : "no"}`);
   console.log(

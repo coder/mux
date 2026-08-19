@@ -5766,10 +5766,11 @@ export const router = (authToken?: string) => {
                 : null;
               return buildWorkspaceComposition({
                 runtime,
-                // Runtime loaders discover through the checkout root when there
-                // is one; plugin containers are gated separately on the nullable
-                // host root (off-host runtimes never load plugin containers).
-                workspacePath: hostCheckoutRoot ?? workspacePath,
+                // Execution path: production skill/agent/workflow/hook loaders
+                // discover from here (subProjectPath workspaces run in the
+                // subdirectory). Plugin containers anchor separately at the
+                // nullable host checkout root.
+                workspacePath,
                 hostCheckoutRoot,
                 muxHome: context.config.rootDir,
                 projectTrusted,

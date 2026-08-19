@@ -1,7 +1,3 @@
-import * as fsPromises from "node:fs/promises";
-import * as os from "node:os";
-import * as path from "node:path";
-
 import type {
   WorkspaceComposition,
   WorkspaceCompositionEntry,
@@ -15,6 +11,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { discoverWorkflowScripts } from "@/node/services/workflows/workflowScriptDiscovery";
 
+import { joinPathLike } from "@/node/services/hooks";
 import { discoverWorkspaceAgentPlugins, type AgentPluginInfo } from "./discovery";
 
 /**
@@ -96,19 +93,29 @@ function summarizePlugin(plugin: AgentPluginInfo): WorkspaceCompositionPlugin {
 const SHELL_HOOK_FILENAMES = ["tool_hook", "tool_pre", "tool_post"] as const;
 
 async function collectShellHookEntries(
+  runtime: Runtime,
   workspacePath: string
 ): Promise<WorkspaceCompositionEntry[]> {
   const entries: WorkspaceCompositionEntry[] = [];
-  // hooks.ts resolves user-level hooks against ~/.mux (homedir), not MUX_HOME.
+  // Same resolution as production hooks.ts: both layers live in the WORKSPACE
+  // runtime's filesystem (project .mux + the runtime user's ~/.mux) — host
+  // fs.stat/os.homedir would miss real remote hooks and could report
+  // unrelated host files for SSH/Docker workspaces.
   const layers: Array<{ dir: string; source: string }> = [
-    { dir: path.join(workspacePath, ".mux"), source: "project" },
-    { dir: path.join(os.homedir(), ".mux"), source: "global" },
+    { dir: joinPathLike(workspacePath, ".mux"), source: "project" },
   ];
+  try {
+    const homeDir = await runtime.resolvePath("~");
+    layers.push({ dir: joinPathLike(homeDir, ".mux"), source: "global" });
+  } catch {
+    // Home resolution failed (e.g. dead SSH connection) — skip the user layer,
+    // matching hooks.ts's best-effort fallback.
+  }
   for (const hookName of SHELL_HOOK_FILENAMES) {
     for (const layer of layers) {
       try {
-        const stat = await fsPromises.stat(path.join(layer.dir, hookName));
-        if (!stat.isFile()) continue;
+        const stat = await runtime.stat(joinPathLike(layer.dir, hookName));
+        if (stat.isDirectory) continue;
       } catch {
         continue;
       }
@@ -229,7 +236,7 @@ export async function buildWorkspaceComposition(
     : [];
 
   const hooks = [
-    ...markShadowed(await collectShellHookEntries(args.workspacePath)),
+    ...markShadowed(await collectShellHookEntries(args.runtime, args.workspacePath)),
     // Plugin hooks all run (no shadowing between plugins).
     ...(includeAgentPlugins
       ? plugins

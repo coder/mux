@@ -57,7 +57,9 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
     typeof (value as Record<symbol, unknown>)[Symbol.asyncIterator] === "function"
   );
 }
-function joinPathLike(basePath: string, ...parts: string[]): string {
+// Exported for the composition inspector, which mirrors this module's hook
+// resolution through the workspace runtime.
+export function joinPathLike(basePath: string, ...parts: string[]): string {
   // For SSH runtimes (and most Unix paths), we want POSIX joins.
   // For Windows-style paths, use native joins.
   if (basePath.includes("\\") || /^[a-zA-Z]:/.test(basePath)) {

@@ -111,6 +111,14 @@ interface WorkspaceHookRegistration {
   fingerprint: string;
   unregisters: Array<() => void>;
   states: LoadedPluginHookState[];
+  /**
+   * Fingerprint lines of discovered candidates that failed to load. Retried
+   * on later sends WITHOUT tearing down healthy siblings: a full-teardown
+   * retry would destroy their persistent mounts, losing cross-turn guest
+   * state and re-paying initialization on every send while one plugin stays
+   * broken.
+   */
+  failedLines: Set<string>;
 }
 
 interface AgentPluginHookServiceDeps {
@@ -178,6 +186,23 @@ export class AgentPluginHookService {
 
     const existing = this.registrations.get(args.workspaceId);
     if (existing?.fingerprint === fingerprint) {
+      // Unchanged configuration. Retry ONLY previously-failed candidates so
+      // healthy siblings keep their persistent mounts (cross-turn guest state)
+      // instead of being torn down and re-initialized on every send while one
+      // plugin stays broken. Still-failing candidates remain in failedLines.
+      for (const [candidateIndex, candidate] of discovered.entries()) {
+        const line = fingerprintLines[candidateIndex];
+        if (line === undefined || !existing.failedLines.has(line)) {
+          continue;
+        }
+        const loaded = await this.loadCandidateLocked(candidate, args);
+        if (loaded === null) {
+          continue;
+        }
+        existing.states.push(loaded.state);
+        existing.unregisters.push(...loaded.unregisters);
+        existing.failedLines.delete(line);
+      }
       return;
     }
     await this.teardownLocked(args.workspaceId);
@@ -185,64 +210,78 @@ export class AgentPluginHookService {
       return;
     }
 
-    const runtimeFactory = await this.getRuntimeFactory();
     const unregisters: Array<() => void> = [];
     const states: LoadedPluginHookState[] = [];
-    // Fingerprint lines of candidates that actually loaded. Failed candidates
-    // are excluded so the stored fingerprint stays dirty and an unchanged but
-    // transiently-failed hook is retried on the next send instead of staying
-    // disabled for the process lifetime. (While a plugin is persistently
-    // broken this re-runs reconcile per send; hooks.js sources are small.)
-    const acceptedLines: string[] = [];
+    const failedLines = new Set<string>();
     for (const [candidateIndex, candidate] of discovered.entries()) {
-      const plugin = candidate.plugin;
-      // Scope key must be unique per plugin instance AND distinct from the
-      // workspace's code_execution mount (different grants would thrash it).
-      const scopeKey = `plugin-hooks|${args.workspaceId}|${plugin.scope}|${plugin.containerPath}|${plugin.dirName}`;
-      const state: LoadedPluginHookState = {
-        pluginName: plugin.name,
-        grants: candidate.grants,
-        source: candidate.source,
-        mountOptions: {
-          lifetime: "persistent",
-          runtimeFactory,
-          scopeKey,
-          sessionDir: args.sessionDir,
-          grants: candidate.grants,
-          // Source hash as bridge identity: editing hooks.js rebuilds the
-          // mount, which is the only reliable way to drop stale guest state.
-          bridgeKey: `plugin-hooks:${sha256Hex(candidate.source)}`,
-        },
-        hookNames: [],
-        disposed: false,
-      };
-
-      try {
-        state.hookNames = await this.sandboxHost.withPersistentMount(state.mountOptions, (mount) =>
-          this.ensureMountLoaded(mount, state)
-        );
-      } catch (error) {
-        // Failure isolation: one broken plugin never affects siblings.
-        log.warn(
-          `Agent plugin hooks: failed to load hooks.js for '${plugin.name}'; skipping this plugin`,
-          { error }
-        );
-        await this.dropScopeQuietly(scopeKey);
+      const loaded = await this.loadCandidateLocked(candidate, args);
+      if (loaded === null) {
+        // Failure isolation: one broken plugin never affects siblings. The
+        // recorded line makes the unchanged-fingerprint path above retry it
+        // on the next send instead of leaving it disabled for the process
+        // lifetime.
+        const line = fingerprintLines[candidateIndex];
+        if (line !== undefined) {
+          failedLines.add(line);
+        }
         continue;
       }
-
-      states.push(state);
-      acceptedLines.push(fingerprintLines[candidateIndex]);
-      for (const hookName of state.hookNames) {
-        unregisters.push(this.registerHookMiddleware(hookName, state, args));
-      }
+      states.push(loaded.state);
+      unregisters.push(...loaded.unregisters);
     }
 
-    this.registrations.set(args.workspaceId, {
-      fingerprint: acceptedLines.join("\n"),
-      unregisters,
-      states,
-    });
+    this.registrations.set(args.workspaceId, { fingerprint, unregisters, states, failedLines });
+  }
+
+  /**
+   * Load one discovered plugin's hooks.js into its persistent mount and
+   * register its spine middleware. Returns null on load failure (the mount
+   * scope is dropped quietly; callers decide retry bookkeeping).
+   */
+  private async loadCandidateLocked(
+    candidate: DiscoveredHookPlugin,
+    args: EnsureWorkspaceHooksArgs
+  ): Promise<{ state: LoadedPluginHookState; unregisters: Array<() => void> } | null> {
+    const plugin = candidate.plugin;
+    const runtimeFactory = await this.getRuntimeFactory();
+    // Scope key must be unique per plugin instance AND distinct from the
+    // workspace's code_execution mount (different grants would thrash it).
+    const scopeKey = `plugin-hooks|${args.workspaceId}|${plugin.scope}|${plugin.containerPath}|${plugin.dirName}`;
+    const state: LoadedPluginHookState = {
+      pluginName: plugin.name,
+      grants: candidate.grants,
+      source: candidate.source,
+      mountOptions: {
+        lifetime: "persistent",
+        runtimeFactory,
+        scopeKey,
+        sessionDir: args.sessionDir,
+        grants: candidate.grants,
+        // Source hash as bridge identity: editing hooks.js rebuilds the
+        // mount, which is the only reliable way to drop stale guest state.
+        bridgeKey: `plugin-hooks:${sha256Hex(candidate.source)}`,
+      },
+      hookNames: [],
+      disposed: false,
+    };
+
+    try {
+      state.hookNames = await this.sandboxHost.withPersistentMount(state.mountOptions, (mount) =>
+        this.ensureMountLoaded(mount, state)
+      );
+    } catch (error) {
+      log.warn(
+        `Agent plugin hooks: failed to load hooks.js for '${plugin.name}'; skipping this plugin`,
+        { error }
+      );
+      await this.dropScopeQuietly(scopeKey);
+      return null;
+    }
+
+    const unregisters = state.hookNames.map((hookName) =>
+      this.registerHookMiddleware(hookName, state, args)
+    );
+    return { state, unregisters };
   }
 
   /** Tear down a workspace's hooks (archive/removal). Never throws. */

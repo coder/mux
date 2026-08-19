@@ -17,7 +17,7 @@ import {
   type ToolExecuteContext,
 } from "@/node/services/events/eventSpine";
 import { HistoryService } from "@/node/services/historyService";
-import { SandboxHostService } from "@/node/services/sandbox/sandboxHostService";
+import { SandboxHostService, type SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
   appendReplayFixtureTurn,
@@ -384,13 +384,73 @@ describe("AgentPluginHookService", () => {
     expect(blockedWhileBroken.executed).toBe(true);
     mountSpy.mockRestore();
 
-    // Second reconcile with UNCHANGED files: the stored fingerprint excludes
-    // the failed candidate, so the hook is retried (real impl) and works.
+    // Second reconcile with UNCHANGED files: the candidate is tracked as
+    // failed, so it is retried (real impl) and works.
     await harness.ensure();
     const blocked = makeToolCtx("file_read", { path: "/repo/.env" });
     await runTool(harness.spine, blocked);
     expect(blocked.executed).toBe(false);
     expect(blockedError(blocked)).toContain("blocked by flaky");
+  });
+
+  test("retrying a failed plugin does not rebuild healthy sibling mounts", async () => {
+    const harness = await createHarness();
+    await writeHookPlugin(
+      harness.container,
+      "healthy",
+      `({ "tool.execute.before": () => ({ deny: "blocked by healthy" }) })`,
+      { tools: ["file_read"] }
+    );
+    await writeHookPlugin(
+      harness.container,
+      "unlucky",
+      `({ "tool.execute.before": async () => undefined })`,
+      { tools: ["file_read"] }
+    );
+
+    // First reconcile: only the "unlucky" plugin's mount load fails.
+    const realWithPersistentMount = SandboxHostService.prototype.withPersistentMount.bind(
+      harness.sandboxHost
+    );
+    const mountSpy = spyOn(harness.sandboxHost, "withPersistentMount").mockImplementation(function <
+      T,
+    >(
+      options: Parameters<typeof realWithPersistentMount>[0],
+      fn: (mount: SandboxMount) => Promise<T>
+    ): Promise<T> {
+      return String(options.scopeKey).includes("unlucky")
+        ? Promise.reject(new Error("transient sandbox failure"))
+        : realWithPersistentMount(options, fn);
+    });
+    await harness.ensure();
+    expect(
+      mountSpy.mock.calls.filter((call) => String(call[0]?.scopeKey).includes("healthy"))
+    ).toHaveLength(1);
+    mountSpy.mockRestore();
+
+    // Second reconcile (unchanged files): the failed sibling is retried, but
+    // the healthy plugin's persistent mount must NOT be torn down/reloaded —
+    // teardown would lose its cross-turn guest state.
+    const retrySpy = spyOn(harness.sandboxHost, "withPersistentMount");
+    const dropSpy = spyOn(harness.sandboxHost, "dropScope");
+    await harness.ensure();
+    expect(
+      retrySpy.mock.calls.filter((call) => String(call[0]?.scopeKey).includes("healthy"))
+    ).toHaveLength(0);
+    expect(dropSpy.mock.calls.filter((call) => String(call[0]).includes("healthy"))).toHaveLength(
+      0
+    );
+    // The retried sibling loaded this time.
+    expect(
+      retrySpy.mock.calls.filter((call) => String(call[0]?.scopeKey).includes("unlucky"))
+    ).toHaveLength(1);
+    retrySpy.mockRestore();
+    dropSpy.mockRestore();
+
+    // Both plugins are now active.
+    const blocked = makeToolCtx("file_read", { path: "/repo/a.txt" });
+    await runTool(harness.spine, blocked);
+    expect(blockedError(blocked)).toContain("blocked by healthy");
   });
 
   test("editing hooks.js reloads the plugin; disabling tears everything down", async () => {
