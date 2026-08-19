@@ -130,7 +130,7 @@ RUN mkdir -p /root/.mux
 
 # Default environment variables
 ENV NODE_ENV=production
-ENV MUX_HOME=/root/.mux
+ENV MUX_ROOT=/root/.mux
 
 # Expose server port
 EXPOSE 3000
