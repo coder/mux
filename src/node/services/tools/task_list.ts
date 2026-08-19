@@ -67,7 +67,7 @@ function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListS
 // Listing an inactive child should reinforce persistence and reuse, not turn discovery into a
 // cleanup obligation that discards context at the end of an otherwise unrelated task.
 const INACTIVE_CHILD_RETENTION_NOTE =
-  "Inactive persistent children are low-cost to retain and remain available under stable task IDs. Prefer reawakening a child when its context or expertise fits new work, and use task_retitle when its reusable responsibility changes. Inactivity or the end of a turn, task, or PR is not itself a cleanup signal; use task_remove only when the user asks or the child is clearly obsolete with no plausible future value. Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.";
+  "Inactive persistent children are low-cost to retain and remain available under stable task IDs. Prefer reawakening a child when its context or expertise fits new work, and use task_retitle when its reusable responsibility changes. A reawakened child keeps its checkout, so for repository-dependent work, verify that the retained snapshot is appropriate or tell it to synchronize before acting. Inactivity or the end of a turn, task, or PR is not itself a cleanup signal; use task_remove only when the user asks or the child is clearly obsolete with no plausible future value. Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.";
 
 const MAX_ARCHIVE_ANCESTOR_DEPTH = 32;
 
