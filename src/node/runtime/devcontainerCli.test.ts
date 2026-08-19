@@ -140,18 +140,14 @@ describe("spawnDevcontainer", () => {
     options: SpawnOptions;
   }
 
-  function makeSpawnRecorder() {
-    const calls: SpawnCall[] = [];
-    const spawnFn = (command: string, args: string[], options: SpawnOptions): ChildProcess => {
-      calls.push({ command, args, options });
-      return new EventEmitter() as unknown as ChildProcess;
-    };
-    return { calls, spawnFn };
-  }
+  const NPM_SHIM_LINES = [
+    "C:\\npm dir\\devcontainer",
+    "C:\\npm dir\\devcontainer.cmd",
+    "C:\\npm dir\\devcontainer.ps1",
+  ];
 
   function makeDeps(overrides: Partial<DevcontainerSpawnDeps>) {
-    const posix = makeSpawnRecorder();
-    const win32 = makeSpawnRecorder();
+    const calls: SpawnCall[] = [];
     const lookups: string[] = [];
     const deps: DevcontainerSpawnDeps = {
       platform: "linux",
@@ -159,67 +155,108 @@ describe("spawnDevcontainer", () => {
         lookups.push(command);
         return null;
       },
-      posixSpawn: posix.spawnFn,
-      win32Spawn: win32.spawnFn,
+      spawn: (command, args, options) => {
+        calls.push({ command, args, options });
+        return new EventEmitter() as unknown as ChildProcess;
+      },
+      commandCache: {},
       ...overrides,
     };
-    return { deps, posix, win32, lookups };
+    return { deps, calls, lookups };
   }
 
-  it("resolves the .cmd shim via PATH lookup on win32 and passes args/options through", () => {
-    const { deps, posix, win32 } = makeDeps({
+  it("dispatches .cmd shims through cmd.exe with double-escaped arguments on win32", () => {
+    const { deps, calls } = makeDeps({
       platform: "win32",
-      lookupCommand: () => [
-        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer",
-        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.cmd",
-        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.ps1",
-      ],
+      lookupCommand: () => NPM_SHIM_LINES,
     });
-    const args = ["exec", "--", "bash", "-c", "echo hi && echo 'quoted arg'"];
+    const args = ["exec", "--", "bash", "-c", "cd '/repo path' && echo \"hi\" | cat 100%"];
     const options: SpawnOptions = { detached: true, windowsHide: true };
 
     spawnDevcontainer(args, options, deps);
 
-    expect(posix.calls).toHaveLength(0);
-    expect(win32.calls).toHaveLength(1);
-    expect(win32.calls[0].command).toBe("C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.cmd");
-    expect(win32.calls[0].args).toBe(args);
-    expect(win32.calls[0].options).toBe(options);
-    expect(win32.calls[0].options.shell).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe(process.env.comspec ?? "cmd.exe");
+    expect(calls[0].args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
+    // Reference output generated with cross-spawn@7.0.6 escape.command /
+    // escape.argument(arg, doubleEscapeMetaChars=true): the escaping npm
+    // cmd-shims need because they re-expand %* through a second cmd parse.
+    expect(calls[0].args[3]).toBe(
+      '"C:\\npm^ dir\\devcontainer.cmd ' +
+        '^^^"exec^^^" ^^^"--^^^" ^^^"bash^^^" ^^^"-c^^^" ' +
+        '^^^"cd^^^ \'/repo^^^ path\'^^^ ^^^&^^^&^^^ echo^^^ \\^^^"hi\\^^^"^^^ ^^^|^^^ cat^^^ 100^^^%^^^""'
+    );
+    expect(calls[0].options.detached).toBe(true);
+    expect(calls[0].options.windowsHide).toBe(true);
+    expect(calls[0].options.windowsVerbatimArguments).toBe(true);
+    expect(calls[0].options.shell).toBeUndefined();
   });
 
-  it("falls back to the bare command when the win32 lookup fails", () => {
-    const { deps, win32 } = makeDeps({ platform: "win32", lookupCommand: () => null });
-
-    spawnDevcontainer(["--version"], {}, deps);
-
-    expect(win32.calls).toHaveLength(1);
-    expect(win32.calls[0].command).toBe("devcontainer");
-  });
-
-  it("falls back to the first lookup line when no executable extension matches", () => {
-    const { deps, win32 } = makeDeps({
+  it("spawns .exe candidates directly on win32 without a cmd.exe wrapper", () => {
+    const { deps, calls } = makeDeps({
       platform: "win32",
-      lookupCommand: () => ["  C:\\tools\\devcontainer  ", ""],
+      lookupCommand: () => ["C:\\tools\\devcontainer.exe", ...NPM_SHIM_LINES],
+    });
+    const args = ["--version"];
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], timeout: 1000 };
+
+    spawnDevcontainer(args, options, deps);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("C:\\tools\\devcontainer.exe");
+    expect(calls[0].args).toBe(args);
+    expect(calls[0].options).toBe(options);
+  });
+
+  it("keeps the status-quo spawn failure when the win32 lookup finds nothing spawnable", () => {
+    const { deps, calls } = makeDeps({
+      platform: "win32",
+      // Extensionless POSIX shim and .ps1 only: CreateProcess can run neither.
+      lookupCommand: () => ["C:\\npm dir\\devcontainer", "C:\\npm dir\\devcontainer.ps1"],
     });
 
     spawnDevcontainer(["--version"], {}, deps);
 
-    expect(win32.calls[0].command).toBe("C:\\tools\\devcontainer");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("devcontainer");
+  });
+
+  it("caches a successful win32 resolution so the lookup runs once", () => {
+    const { deps, calls, lookups } = makeDeps({
+      platform: "win32",
+      lookupCommand: (command) => {
+        lookups.push(command);
+        return NPM_SHIM_LINES;
+      },
+    });
+
+    spawnDevcontainer(["--version"], {}, deps);
+    spawnDevcontainer(["--version"], {}, deps);
+
+    expect(calls).toHaveLength(2);
+    expect(lookups).toHaveLength(1);
+  });
+
+  it("does not cache failed win32 lookups", () => {
+    const { deps, lookups } = makeDeps({ platform: "win32" });
+
+    spawnDevcontainer(["--version"], {}, deps);
+    spawnDevcontainer(["--version"], {}, deps);
+
+    expect(lookups).toHaveLength(2);
   });
 
   it("uses native spawn on posix without running any PATH lookup", () => {
-    const { deps, posix, win32, lookups } = makeDeps({ platform: "linux" });
+    const { deps, calls, lookups } = makeDeps({ platform: "linux" });
     const args = ["up", "--workspace-folder", "/repo"];
     const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], timeout: 1000 };
 
     spawnDevcontainer(args, options, deps);
 
-    expect(win32.calls).toHaveLength(0);
     expect(lookups).toHaveLength(0);
-    expect(posix.calls).toHaveLength(1);
-    expect(posix.calls[0].command).toBe("devcontainer");
-    expect(posix.calls[0].args).toBe(args);
-    expect(posix.calls[0].options).toBe(options);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command).toBe("devcontainer");
+    expect(calls[0].args).toBe(args);
+    expect(calls[0].options).toBe(options);
   });
 });

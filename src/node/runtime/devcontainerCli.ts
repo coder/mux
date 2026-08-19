@@ -9,7 +9,7 @@
  */
 import { spawn, spawnSync } from "child_process";
 import type { ChildProcess, SpawnOptions } from "child_process";
-import crossSpawn from "cross-spawn";
+import * as path from "path";
 import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
@@ -175,15 +175,20 @@ async function removeDevcontainerContainer(containerId: string): Promise<void> {
 }
 const VERSION_CHECK_TIMEOUT_MS = 10_000; // 10 seconds
 
-const WINDOWS_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ".com"];
+const WINDOWS_LOOKUP_TIMEOUT_MS = 5_000;
+// CreateProcess can run these directly; Node >= 20.12 refuses .cmd/.bat
+// without a shell (CVE-2024-27980), so those need the cmd.exe wrapper below.
+const WINDOWS_DIRECT_EXECUTABLE_REGEXP = /\.(?:com|exe)$/i;
+const WINDOWS_CMD_SHIM_REGEXP = /\.(?:cmd|bat)$/i;
 
 /** Injectable seam so tests can exercise the win32/posix branches on any host. */
 export interface DevcontainerSpawnDeps {
   platform: NodeJS.Platform;
-  /** PATH lookup returning candidate lines (where.exe output), or null on failure. */
+  /** Bounded PATH lookup returning candidate lines (where.exe output), or null on failure. */
   lookupCommand: (command: string) => string[] | null;
-  posixSpawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
-  win32Spawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+  spawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+  /** Successful win32 resolutions are cached so repeat spawns skip the lookup subprocess. */
+  commandCache: { resolved?: string };
 }
 
 const defaultSpawnDeps: DevcontainerSpawnDeps = {
@@ -194,6 +199,7 @@ const defaultSpawnDeps: DevcontainerSpawnDeps = {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
+        timeout: WINDOWS_LOOKUP_TIMEOUT_MS,
       });
       if (result.status !== 0 || typeof result.stdout !== "string") {
         return null;
@@ -203,40 +209,87 @@ const defaultSpawnDeps: DevcontainerSpawnDeps = {
       return null;
     }
   },
-  posixSpawn: spawn,
-  win32Spawn: crossSpawn,
+  spawn,
+  commandCache: {},
 };
 
-function resolveWindowsDevcontainerCommand(deps: DevcontainerSpawnDeps): string {
-  const lines = (deps.lookupCommand("devcontainer") ?? [])
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-  const executable = lines.find((line) =>
-    WINDOWS_EXECUTABLE_EXTENSIONS.some((ext) => line.toLowerCase().endsWith(ext))
-  );
-  // Fall back to the bare name: cross-spawn runs its own PATHEXT lookup, and a
-  // missing CLI degrades to the same spawn-error path as before.
-  return executable ?? lines[0] ?? "devcontainer";
+// Vendored from cross-spawn@7.0.6 (MIT), based on https://qntm.org/cmd.
+// cross-spawn itself only double-escapes for `node_modules\.bin\*.cmd` paths,
+// which misses global npm shims (e.g. %APPDATA%\npm\devcontainer.cmd), so we
+// apply its escape algorithm ourselves with double escaping always on.
+const CMD_META_CHARS_REGEXP = /([()\][%!^"`<>&|;, *?])/g;
+
+function escapeCmdCommand(command: string): string {
+  return command.replace(CMD_META_CHARS_REGEXP, "^$1");
+}
+
+function escapeCmdShimArgument(arg: string): string {
+  // Double up backslashes preceding a double quote (or the closing quote
+  // added below), escape the quote itself, then quote the whole argument.
+  arg = arg.replace(/(?=(\\+?)?)\1"/g, '$1$1\\"');
+  arg = arg.replace(/(?=(\\+?)?)\1$/, "$1$1");
+  arg = `"${arg}"`;
+  // Escape cmd.exe metacharacters twice: once for the cmd.exe we spawn, and
+  // once more because npm cmd-shims re-expand %* through a second cmd parse.
+  arg = arg.replace(CMD_META_CHARS_REGEXP, "^$1");
+  arg = arg.replace(CMD_META_CHARS_REGEXP, "^$1");
+  return arg;
+}
+
+function resolveWindowsDevcontainerCommand(deps: DevcontainerSpawnDeps): string | null {
+  if (deps.commandCache.resolved !== undefined) {
+    return deps.commandCache.resolved;
+  }
+  // where.exe lists PATH-order candidates; npm also installs an extensionless
+  // POSIX shim and a .ps1, neither of which CreateProcess can run, so pick the
+  // first spawnable entry.
+  const resolved =
+    (deps.lookupCommand("devcontainer") ?? [])
+      .map((line) => line.trim())
+      .find(
+        (line) => WINDOWS_DIRECT_EXECUTABLE_REGEXP.test(line) || WINDOWS_CMD_SHIM_REGEXP.test(line)
+      ) ?? null;
+  if (resolved !== null) {
+    deps.commandCache.resolved = resolved;
+  }
+  return resolved;
 }
 
 /**
  * Spawn the devcontainer CLI portably.
  *
  * On Windows, npm installs the CLI as `devcontainer.cmd`/`devcontainer.ps1`
- * shims. Node's spawn does not consult PATHEXT, and Node >= 20.12 refuses to
- * spawn `.cmd`/`.bat` files without a shell (CVE-2024-27980), so we resolve
- * the shim path via where.exe and hand it to cross-spawn, which wraps it in
- * cmd.exe with escaped arguments instead of a blanket `shell: true`.
+ * shims. Node's spawn does not consult PATHEXT, so the bare name fails even
+ * when the CLI is on PATH. We resolve the real entry via where.exe, spawn
+ * .exe/.com directly, and wrap .cmd/.bat shims in `cmd.exe /d /s /c` with
+ * fully escaped arguments instead of a blanket `shell: true` (the exec site
+ * passes arbitrary `bash -c` payloads that cmd.exe would reinterpret).
  */
 export function spawnDevcontainer(
   args: string[],
   options: SpawnOptions,
   deps: DevcontainerSpawnDeps = defaultSpawnDeps
 ): ChildProcess {
-  if (deps.platform === "win32") {
-    return deps.win32Spawn(resolveWindowsDevcontainerCommand(deps), args, options);
+  if (deps.platform !== "win32") {
+    return deps.spawn("devcontainer", args, options);
   }
-  return deps.posixSpawn("devcontainer", args, options);
+  const resolved = resolveWindowsDevcontainerCommand(deps);
+  if (resolved === null) {
+    // Keep the status-quo failure surface: callers report the CLI as missing.
+    return deps.spawn("devcontainer", args, options);
+  }
+  if (WINDOWS_CMD_SHIM_REGEXP.test(resolved)) {
+    const shellCommand = [
+      escapeCmdCommand(path.normalize(resolved)),
+      ...args.map(escapeCmdShimArgument),
+    ].join(" ");
+    return deps.spawn(process.env.comspec ?? "cmd.exe", ["/d", "/s", "/c", `"${shellCommand}"`], {
+      ...options,
+      // The command line is pre-escaped; tell Node not to re-quote it.
+      windowsVerbatimArguments: true,
+    });
+  }
+  return deps.spawn(resolved, args, options);
 }
 
 /**
