@@ -223,6 +223,17 @@ function sanitizeServerLabel(label: string): string {
 }
 
 /**
+ * Pre-scrub input clamp. The fixpoint scrub is quadratic in the worst case
+ * (recursively nested markers force one full rescan per nesting level), so it
+ * must only ever run on a bounded prefix — a multi-hundred-KB adversarial key
+ * would otherwise stall tool preparation synchronously. 512 chars leaves ample
+ * room for the scrub to delete embedded markers and still fill the 64-char
+ * display label; clamping can leave a partial marker at the cut, which is
+ * harmless because stripping matches only complete markers.
+ */
+const OVERVIEW_LABEL_SCRUB_INPUT_CHARS = 512;
+
+/**
  * Bounded, sanitized display form of a server name for model-facing output
  * (overview lines and search-result serverName fields). The full name is kept
  * internally for grouping and scoring only — anything sent to the model must
@@ -230,10 +241,14 @@ function sanitizeServerLabel(label: string): string {
  * inflate the tool result past provider limits.
  */
 function displayServerLabel(server: string): string {
-  const sanitized = sanitizeServerLabel(server);
-  return sanitized.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
-    ? `${sanitized.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
-    : sanitized;
+  const wasClamped = server.length > OVERVIEW_LABEL_SCRUB_INPUT_CHARS;
+  const sanitized = sanitizeServerLabel(
+    wasClamped ? server.slice(0, OVERVIEW_LABEL_SCRUB_INPUT_CHARS) : server
+  );
+  if (wasClamped || sanitized.length > OVERVIEW_MAX_SERVER_LABEL_CHARS) {
+    return `${sanitized.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`;
+  }
+  return sanitized;
 }
 
 /**
