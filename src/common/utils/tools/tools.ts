@@ -4,7 +4,6 @@ import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { isGrokFrontierModel } from "@/common/types/thinking";
 import type { BackgroundWorkAttentionPolicy } from "@/common/types/backgroundWorkAttention";
-import { getErrorMessage } from "@/common/utils/errors";
 import { cloneToolPreservingDescriptors } from "@/common/utils/tools/cloneToolPreservingDescriptors";
 import { createFileReadTool } from "@/node/services/tools/file_read";
 import { createAttachFileTool } from "@/node/services/tools/attach_file";
@@ -49,6 +48,7 @@ import { createAgentSkillWriteTool } from "@/node/services/tools/agent_skill_wri
 import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_delete";
 import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
 import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
+import { createWebFetchTool } from "@/node/services/tools/web_fetch";
 import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
 import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
 import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
@@ -758,18 +758,6 @@ export async function getToolsForModel(
   const wrap = <TParameters, TResult>(tool: Tool<TParameters, TResult>) =>
     wrapWithInitWait(tool, workspaceId, initStateManager);
 
-  // Keep DOM and parsing dependencies out of startup and isolate load failures
-  // so an unavailable optional tool cannot prevent message streaming.
-  let createWebFetchTool: ToolFactory | undefined;
-  try {
-    const webFetchModule = await import("@/node/services/tools/web_fetch");
-    if (typeof webFetchModule.createWebFetchTool === "function") {
-      createWebFetchTool = webFetchModule.createWebFetchTool;
-    }
-  } catch (error) {
-    log.warn(`Failed to load web_fetch tool: ${getErrorMessage(error)}`);
-  }
-
   // Runtime-dependent tools need to wait for workspace initialization
   // Wrap them to handle init waiting centrally instead of in each tool
   const runtimeTools: Record<string, Tool> = {
@@ -802,7 +790,7 @@ export async function getToolsForModel(
     bash_background_list: wrap(createBashBackgroundListTool(config)),
     bash_background_terminate: wrap(createBashBackgroundTerminateTool(config)),
 
-    ...(createWebFetchTool ? { web_fetch: wrap(createWebFetchTool(config)) } : {}),
+    web_fetch: wrap(createWebFetchTool(config)),
 
     // Agent memory (experiment-gated; off => no tool, no context cost)
     ...(config.memoryService && config.experiments?.memory

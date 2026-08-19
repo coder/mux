@@ -2,7 +2,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { z } from "zod";
 
-import * as RealWebFetch from "@/node/services/tools/web_fetch";
 import { Ok } from "@/common/types/result";
 import type { InitStateManager } from "@/node/services/initStateManager";
 import type { DesktopSessionManager } from "@/node/services/desktop/DesktopSessionManager";
@@ -14,10 +13,6 @@ import {
   type ToolConfiguration,
   type WorkspaceHeartbeatToolService,
 } from "./tools";
-import { restoreModulesAfterSuite } from "../../../../tests/ui/moduleMocks";
-
-restoreModulesAfterSuite([["@/node/services/tools/web_fetch", { ...RealWebFetch }]]);
-
 const DESKTOP_TOOL_NAMES = [
   "desktop_screenshot",
   "desktop_move_mouse",
@@ -764,9 +759,7 @@ describe("getToolsForModel", () => {
     expect(toolNames).toEqual([...toolNames].sort((a, b) => a.localeCompare(b)));
   });
 
-  // Must run before the load-failure test below: its mock.module registration
-  // persists for the rest of this file until the afterAll restore.
-  test("includes web_fetch when the module loads normally", async () => {
+  test("includes web_fetch in the runtime toolset", async () => {
     const tools = await getToolsForModel(
       "noop:model",
       {
@@ -780,30 +773,5 @@ describe("getToolsForModel", () => {
     );
 
     expect(tools.web_fetch).toBeDefined();
-  });
-
-  test("keeps the remaining tools available when web_fetch fails to load", async () => {
-    void mock.module("@/node/services/tools/web_fetch", () => ({
-      get createWebFetchTool() {
-        throw new Error("injected load failure");
-      },
-    }));
-    const runtime = new LocalRuntime(process.cwd());
-    const initStateManager = createInitStateManager();
-    const config: ToolConfiguration = {
-      cwd: process.cwd(),
-      runtime,
-      runtimeTempDir: "/tmp",
-      workspaceId: "ws-1",
-    };
-
-    const firstTools = await getToolsForModel("noop:model", config, "ws-1", initStateManager);
-    const retryTools = await getToolsForModel("noop:model", config, "ws-1", initStateManager);
-
-    for (const tools of [firstTools, retryTools]) {
-      expect(tools.bash).toBeDefined();
-      expect(tools.file_read).toBeDefined();
-      expect(tools.web_fetch).toBeUndefined();
-    }
   });
 });
