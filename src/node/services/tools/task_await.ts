@@ -601,6 +601,18 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             finalMessageRef: record.finalMessageRef,
             note: COMPLETED_REPORT_REFETCH_NOTE,
           });
+          // Interrupted handles persist a human-readable reason (e.g. "superseded by
+          // new input in the target workspace") that lets the owner distinguish
+          // supersession from an explicit cancellation — surface it in the note.
+          const interruptedWorkspaceTurnResult = (record: WorkspaceTurnTaskHandleRecord) => ({
+            status: "interrupted" as const,
+            taskId,
+            ...workspaceTurnIdentityFields(record.workspaceId),
+            note:
+              record.error != null && record.error.length > 0
+                ? `Workspace turn was interrupted: ${record.error}. The full workspace is preserved.`
+                : "Workspace turn was interrupted. The full workspace is preserved.",
+          });
           if (timeoutMs === 0 || !isActiveWorkspaceTurnTaskStatus(snapshot.status)) {
             if (snapshot.status === "completed") {
               await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
@@ -608,12 +620,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             }
             if (snapshot.status === "interrupted") {
               await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
-              return {
-                status: "interrupted" as const,
-                taskId,
-                ...workspaceTurnIdentityFields(snapshot.workspaceId),
-                note: "Workspace turn was interrupted. The full workspace is preserved.",
-              };
+              return interruptedWorkspaceTurnResult(snapshot);
             }
             if (snapshot.status === "error") {
               await markWorkspaceTurnTerminalAttentionConsumed(snapshot);
@@ -691,12 +698,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               }
               if (latest.status === "interrupted") {
                 await markWorkspaceTurnTerminalAttentionConsumed(latest);
-                return {
-                  status: "interrupted" as const,
-                  taskId,
-                  ...workspaceTurnIdentityFields(latest.workspaceId),
-                  note: "Workspace turn was interrupted. The full workspace is preserved.",
-                };
+                return interruptedWorkspaceTurnResult(latest);
               }
               return {
                 status: latest.status,
@@ -722,12 +724,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
               }
               if (latest.status === "interrupted") {
                 await markWorkspaceTurnTerminalAttentionConsumed(latest);
-                return {
-                  status: "interrupted" as const,
-                  taskId,
-                  ...workspaceTurnIdentityFields(latest.workspaceId),
-                  note: "Workspace turn was interrupted. The full workspace is preserved.",
-                };
+                return interruptedWorkspaceTurnResult(latest);
               }
               return {
                 status: latest.status,
@@ -753,12 +750,7 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
             }
             if (latest?.status === "interrupted") {
               await markWorkspaceTurnTerminalAttentionConsumed(latest);
-              return {
-                status: "interrupted" as const,
-                taskId,
-                ...workspaceTurnIdentityFields(latest.workspaceId),
-                note: "Workspace turn was interrupted. The full workspace is preserved.",
-              };
+              return interruptedWorkspaceTurnResult(latest);
             }
             return { status: "error" as const, taskId, error: message };
           }

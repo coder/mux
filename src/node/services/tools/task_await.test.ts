@@ -105,6 +105,51 @@ describe("task_await tool", () => {
     });
   });
 
+  it("surfaces the persisted interrupt reason for interrupted workspace turns", async () => {
+    // Queue-cut supersedes settle interrupted with a persisted reason; the owner
+    // must be able to distinguish that from an explicit cancellation.
+    using tempDir = new TestTempDir("test-task-await-workspace-turn-interrupted");
+    const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
+
+    const taskService = {
+      listActiveDescendantAgentTaskIds: mock(() => []),
+      listWorkspaceTurnTasks: mock(() => []),
+      isDescendantAgentTask: mock(() => Promise.resolve(false)),
+      getAgentTaskStatuses: mock(() => new Map()),
+      markWorkspaceTurnTerminalAttentionConsumed: mock(() => Promise.resolve()),
+      getWorkspaceTurnSnapshot: mock(() =>
+        Promise.resolve({
+          kind: "workspace_turn",
+          handleId: "wst_superseded",
+          ownerWorkspaceId: "parent-workspace",
+          workspaceId: "child-workspace",
+          turnId: "turn-1",
+          status: "interrupted",
+          error: "Workspace turn superseded by new input in the target workspace",
+          createdAt: "2026-06-19T00:00:00.000Z",
+          updatedAt: "2026-06-19T00:00:10.000Z",
+          createdWorkspace: true,
+          disposableWorkspace: false,
+        })
+      ),
+    } as unknown as TaskService;
+
+    const tool = createTaskAwaitTool({ ...baseConfig, taskService });
+    const result = (await Promise.resolve(
+      tool.execute!({ task_ids: ["wst_superseded"], timeout_secs: 0 }, mockToolCallOptions)
+    )) as { results: Array<Record<string, unknown>> };
+
+    expect(result.results).toEqual([
+      {
+        status: "interrupted",
+        taskId: "wst_superseded",
+        handleKind: "workspace_turn",
+        workspaceId: "child-workspace",
+        note: "Workspace turn was interrupted: Workspace turn superseded by new input in the target workspace. The full workspace is preserved.",
+      },
+    ]);
+  });
+
   it("awaits a nested child continuation through its recorded owner", async () => {
     using tempDir = new TestTempDir("test-task-await-nested-continuation-owner");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
