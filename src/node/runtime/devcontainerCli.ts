@@ -14,7 +14,7 @@ import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
 import { redactDevcontainerArgsForLog } from "./devcontainerLogRedaction";
-import { killProcessTree } from "@/node/utils/disposableExec";
+import { forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -334,10 +334,27 @@ export function spawnDevcontainer(
  */
 export async function checkDevcontainerCliVersion(): Promise<DevcontainerCliInfo | null> {
   return new Promise((resolve) => {
+    // Explicit timer instead of the spawn-level timeout: Node's built-in kill
+    // signals only the direct child (the cmd.exe wrapper on Windows), and a
+    // surviving CLI descendant would hold the stdio pipes open so "close"
+    // never fires. Settle immediately and force-close the pipes instead.
     const proc = spawnDevcontainer(["--version"], {
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: VERSION_CHECK_TIMEOUT_MS,
     });
+
+    let settled = false;
+    const settle = (result: DevcontainerCliInfo | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    };
+
+    const timeoutId = setTimeout(() => {
+      terminateDevcontainerProc(proc);
+      forceCloseStdio(proc);
+      settle(null);
+    }, VERSION_CHECK_TIMEOUT_MS);
 
     let stdout = "";
     proc.stdout?.on("data", (data: Buffer) => {
@@ -345,14 +362,14 @@ export async function checkDevcontainerCliVersion(): Promise<DevcontainerCliInfo
     });
 
     proc.on("error", () => {
-      resolve(null);
+      settle(null);
     });
 
     proc.on("close", (code) => {
       if (code === 0 && stdout.trim()) {
-        resolve({ available: true, version: stdout.trim() });
+        settle({ available: true, version: stdout.trim() });
       } else {
-        resolve(null);
+        settle(null);
       }
     });
   });
