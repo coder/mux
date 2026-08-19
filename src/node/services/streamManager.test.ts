@@ -5406,6 +5406,7 @@ describe("StreamManager - mid-turn thinking override", () => {
     thinkingOverrideState?: ActiveTurnThinkingOverride;
     rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
     rebuildFirstStepForThinkingLevel?: RebuildFirstStepForThinkingLevel;
+    onStepMessages?: (stepMessages: ModelMessage[]) => void;
   }
 
   type BuildStreamRequestConfig = (...args: unknown[]) => OverrideRequestForTests;
@@ -5550,6 +5551,7 @@ describe("StreamManager - mid-turn thinking override", () => {
     }));
     const rebuiltHistory: ModelMessage[] = [{ role: "user", content: "rebuilt hello" }];
     const rebuildMessages = mock(() => Promise.resolve(rebuiltHistory));
+    const stepMessageBatches: ModelMessage[][] = [];
 
     const request: OverrideRequestForTests = {
       model,
@@ -5561,6 +5563,7 @@ describe("StreamManager - mid-turn thinking override", () => {
         rebuildOptions as unknown as RebuildProviderOptionsForThinkingLevel,
       rebuildFirstStepForThinkingLevel:
         rebuildMessages as unknown as RebuildFirstStepForThinkingLevel,
+      onStepMessages: (stepMessages) => stepMessageBatches.push(stepMessages),
     };
     createStreamResult(request, new AbortController());
     const prepareStep = capturePrepareStep(streamTextSpy);
@@ -5568,6 +5571,9 @@ describe("StreamManager - mid-turn thinking override", () => {
     const step = await prepareStep({ messages: request.messages, stepNumber: 0 });
     expect(rebuildMessages).toHaveBeenCalledTimes(1);
     expect(step?.messages).toEqual([cachedSystemRow, ...rebuiltHistory]);
+    // Consumers (advisor transcript ref) must end on the rebuilt transcript,
+    // not the pre-rebuild messages announced at the top of prepareStep.
+    expect(stepMessageBatches.at(-1)).toEqual([cachedSystemRow, ...rebuiltHistory]);
   });
 
   test("clears pending without touching options when the rebuild reports not-applicable", async () => {

@@ -1964,6 +1964,10 @@ export class StreamManager extends EventEmitter {
             if (stepTracker) {
               stepTracker.latestMessages = rebuiltFirstStepMessages;
             }
+            // onStepMessages fired above with the pre-rebuild transcript;
+            // re-notify so consumers (advisor transcript ref) track the
+            // messages this step actually sends.
+            request.onStepMessages?.(rebuiltFirstStepMessages);
           } catch (error) {
             // Fail open to the options-only rebuild rather than killing the
             // turn; the envelope then still matches the options change.
