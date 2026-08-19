@@ -395,14 +395,19 @@ function stubCommonStreamMessageDependencies(args: {
     path.join(args.metadata.projectPath, ".tmp-stream")
   );
   spyOn(streamManager, "isResponseIdLost").mockReturnValue(false);
-  if (args.startStreamCalls) {
-    spyOn(streamManager, "startStream").mockImplementation((...startArgs: unknown[]) => {
-      args.startStreamCalls?.push(startArgs);
-      return Promise.resolve({ success: true, data: streamToken });
-    });
-  } else {
-    spyOn(streamManager, "startStream").mockResolvedValue({ success: true, data: streamToken });
-  }
+  // Mirror the real contract: startStream invokes onStreamConstructed once
+  // the stream is registered (durable turn-envelope emission hangs on it), so
+  // a success stub must call it too or envelope tests assert an empty journal.
+  const stubStartStream = async (
+    ...startArgs: Parameters<StreamManager["startStream"]>
+  ): Promise<{ success: true; data: typeof streamToken }> => {
+    args.startStreamCalls?.push(startArgs);
+    // Positional parameter 31 of startStream (typed via Parameters above).
+    const onStreamConstructed = startArgs[30];
+    await onStreamConstructed?.();
+    return { success: true, data: streamToken };
+  };
+  spyOn(streamManager, "startStream").mockImplementation(stubStartStream);
 
   return getToolsForModelSpy;
 }
