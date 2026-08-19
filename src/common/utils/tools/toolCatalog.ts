@@ -34,6 +34,8 @@ export interface ToolCatalogEntry {
   description: string;
   /** Flattened input-parameter names + descriptions used for scoring only. */
   paramText: string;
+  /** MCP server that provides this tool, when known (used for the catalog overview + scoring). */
+  serverName?: string;
 }
 
 /**
@@ -106,6 +108,11 @@ interface ToolCatalogInputs {
   mcpToolNames: readonly string[];
   toolPolicy?: ToolPolicy;
   /**
+   * Provider-safe MCP tool name → originating server name. Used to group the
+   * deferred-catalog overview by server and to score server-name matches.
+   */
+  mcpToolServers?: Readonly<Record<string, string>>;
+  /**
    * Whether PTC (programmatic tool calling) is enabled, i.e. the record's
    * `code_execution` entry is the PTC tool rather than a same-named MCP tool.
    * Presence-sniffing the record is not enough: an MCP server/tool pair can
@@ -148,10 +155,46 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
       name,
       description: typeof tool.description === "string" ? tool.description : "",
       paramText: extractParamText(tool),
+      serverName: inputs.mcpToolServers?.[name],
     });
   }
 
   return { catalog, deferredToolNames, allToolNames };
+}
+
+/** Max tool names listed per server in the catalog overview before eliding. */
+const OVERVIEW_MAX_TOOLS_PER_SERVER = 8;
+
+/**
+ * Build a compact, deterministic index of the deferred catalog grouped by MCP
+ * server, e.g. `- github (12 tools): github_create_issue, … (+4 more)`.
+ * Only names are listed — descriptions and parameter schemas stay deferred
+ * until activation, so the overview solves the "unknown unknowns" discovery
+ * problem without reintroducing schema token bloat. Returns "" for an empty
+ * catalog.
+ */
+export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): string {
+  if (catalog.length === 0) {
+    return "";
+  }
+  const byServer = new Map<string, string[]>();
+  for (const entry of catalog) {
+    const server = entry.serverName ?? "other tools";
+    const names = byServer.get(server) ?? [];
+    names.push(entry.name);
+    byServer.set(server, names);
+  }
+  const lines: string[] = [];
+  for (const [server, names] of [...byServer.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    names.sort((a, b) => a.localeCompare(b));
+    const shown = names.slice(0, OVERVIEW_MAX_TOOLS_PER_SERVER);
+    const extra = names.length - shown.length;
+    const suffix = extra > 0 ? ` (+${extra} more)` : "";
+    lines.push(
+      `- ${server} (${names.length} tool${names.length === 1 ? "" : "s"}): ${shown.join(", ")}${suffix}`
+    );
+  }
+  return `Deferred tool catalog overview (search to activate):\n${lines.join("\n")}`;
 }
 
 /**
@@ -206,8 +249,20 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
     const { [TOOL_SEARCH_TOOL_NAME]: _removed, ...rest } = inputs.tools;
     return { tools: rest };
   }
+  // Advertise the deferred surface area up front: append a compact per-server
+  // index of deferred tool names to tool_catalog_search's description so the
+  // model knows what capabilities exist to search for ("unknown unknowns"),
+  // while full descriptions/schemas stay deferred until activation.
+  const overview = buildToolCatalogOverview(classification.catalog);
+  const searchTool = inputs.tools[TOOL_SEARCH_TOOL_NAME];
+  const baseDescription = typeof searchTool.description === "string" ? searchTool.description : "";
+  // Object.assign (not spread) keeps the `Tool` union type intact while
+  // overriding only the description on a shallow copy.
+  const augmentedSearchTool: Tool = Object.assign({}, searchTool, {
+    description: baseDescription.length > 0 ? `${baseDescription}\n\n${overview}` : overview,
+  });
   return {
-    tools: inputs.tools,
+    tools: { ...inputs.tools, [TOOL_SEARCH_TOOL_NAME]: augmentedSearchTool },
     state: { ...classification, activatedToolNames: new Set<string>() },
   };
 }
@@ -252,6 +307,8 @@ function tokenize(text: string): string[] {
 export interface ToolSearchMatch {
   name: string;
   description: string;
+  /** Originating MCP server, when known. */
+  serverName?: string;
 }
 
 /**
@@ -280,6 +337,10 @@ export function searchToolCatalog(
     const nameTokens = new Set(tokenize(entry.name));
     const descriptionTokens = new Set(tokenize(entry.description));
     const paramTokens = new Set(tokenize(entry.paramText));
+    // Server-name matches rank between name and description hits so a query
+    // like "github" surfaces that server's tools even when normalization
+    // changed the tool-name prefix.
+    const serverTokens = new Set(tokenize(entry.serverName ?? ""));
 
     let score = 0;
     for (const token of queryTokens) {
@@ -287,6 +348,9 @@ export function searchToolCatalog(
         score += 8;
       } else if (nameLower.includes(token)) {
         score += 5;
+      }
+      if (serverTokens.has(token)) {
+        score += 3;
       }
       if (descriptionTokens.has(token)) {
         score += 2;
@@ -304,6 +368,7 @@ export function searchToolCatalog(
   return scored.slice(0, effectiveLimit).map(({ entry }) => ({
     name: entry.name,
     description: entry.description,
+    ...(entry.serverName !== undefined ? { serverName: entry.serverName } : {}),
   }));
 }
 

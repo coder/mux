@@ -977,6 +977,8 @@ export type MCPWorkspaceSecretsResolver = (
 
 interface MCPToolsForWorkspaceResult {
   tools: Record<string, Tool>;
+  /** Provider-safe namespaced tool name → originating server name (for catalog advertising). */
+  toolServerNames: Record<string, string>;
   stats: MCPWorkspaceStats;
   /** Prompt descriptors for model-facing discovery, from the same enabled/stale gates as getPromptsForWorkspace. */
   promptDescriptors: MCPPromptDescriptor[];
@@ -1668,7 +1670,7 @@ export class MCPServerManager {
       }
 
       return {
-        tools: this.collectTools(existing.instances, fullServerInfo, overrides),
+        ...this.collectTools(existing.instances, fullServerInfo, overrides),
         stats: existing.stats,
         promptDescriptors: this.promptDescriptorsFor(existing),
       };
@@ -1810,7 +1812,7 @@ export class MCPServerManager {
       }
 
       return {
-        tools: this.collectTools(instancesForTools, fullServerInfo, overrides),
+        ...this.collectTools(instancesForTools, fullServerInfo, overrides),
         stats: leasedStats,
         promptDescriptors: this.promptDescriptorsFor(existing),
       };
@@ -1844,7 +1846,7 @@ export class MCPServerManager {
             this.refreshInstancePromptsInBackground(current);
           }
           return {
-            tools: this.collectTools(current.instances, fullServerInfo, overrides),
+            ...this.collectTools(current.instances, fullServerInfo, overrides),
             stats: current.stats,
             promptDescriptors: this.promptDescriptorsFor(current),
           };
@@ -1897,7 +1899,7 @@ export class MCPServerManager {
             });
           }
         }
-        return { tools: {}, stats, promptDescriptors: [] };
+        return { tools: {}, toolServerNames: {}, stats, promptDescriptors: [] };
       }
 
       const entry: WorkspaceServers = {
@@ -1931,7 +1933,7 @@ export class MCPServerManager {
       }
 
       return {
-        tools: this.collectTools(instances, fullServerInfo, overrides),
+        ...this.collectTools(instances, fullServerInfo, overrides),
         stats,
         promptDescriptors: this.promptDescriptorsFor(entry),
       };
@@ -2509,14 +2511,16 @@ export class MCPServerManager {
    * @param instances - Map of server instances
    * @param serverInfo - Project-level server info (for project-level tool allowlists)
    * @param workspaceOverrides - Optional workspace MCP overrides for tool allowlists
-   * @returns Aggregated tools record with provider-safe namespaced names
+   * @returns Aggregated tools record with provider-safe namespaced names, plus
+   *   a tool name → server name map so callers can advertise the catalog by server
    */
   private collectTools(
     instances: Map<string, MCPServerInstance>,
     serverInfo: Record<string, MCPServerInfo>,
     workspaceOverrides?: WorkspaceMCPOverrides
-  ): Record<string, Tool> {
+  ): { tools: Record<string, Tool>; toolServerNames: Record<string, string> } {
     const aggregated: Record<string, Tool> = {};
+    const toolServerNames: Record<string, string> = {};
     // Reserve built-in names because MCP tools merge over base tools
     // downstream and a normalized collision would otherwise shadow them.
     const usedNames = new Set<string>(Object.keys(TOOL_DEFINITIONS));
@@ -2577,10 +2581,11 @@ export class MCPServerManager {
         }
 
         aggregated[result.toolName] = tool;
+        toolServerNames[result.toolName] = instance.name;
       }
     }
 
-    return aggregated;
+    return { tools: aggregated, toolServerNames };
   }
 
   private async startServers(

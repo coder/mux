@@ -466,7 +466,7 @@ export type ToolSearchToolArgs = z.infer<typeof TOOL_DEFINITIONS.tool_catalog_se
 
 export interface ToolSearchToolResult {
   query: string;
-  matches: Array<{ name: string; description: string }>;
+  matches: Array<{ name: string; description: string; serverName?: string }>;
   /** Total deferred-catalog size, so the model/UI can see there are more undiscovered tools. */
   totalDeferred: number;
 }

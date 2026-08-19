@@ -4,6 +4,7 @@ import type { ModelMessage, MuxMessage } from "@/common/types/message";
 import type { ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import {
   buildToolCatalog,
+  buildToolCatalogOverview,
   computeActiveToolNames,
   extractPreActivatedToolNames,
   LEGACY_TOOL_SEARCH_TOOL_NAME,
@@ -106,11 +107,107 @@ describe("buildToolCatalog", () => {
   });
 });
 
+const MCP_TOOL_SERVERS: Record<string, string> = {
+  slack_send_message: "slack",
+  slack_list_channels: "slack",
+  github_create_issue: "github",
+};
+
+describe("catalog advertising (overview + server names)", () => {
+  test("buildToolCatalog records the originating server for each deferred tool", () => {
+    const result = buildToolCatalog({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const byName = new Map(result.catalog.map((entry) => [entry.name, entry.serverName]));
+    expect(byName.get("slack_send_message")).toBe("slack");
+    expect(byName.get("github_create_issue")).toBe("github");
+  });
+
+  test("buildToolCatalogOverview groups deferred tool names by server, deterministically", () => {
+    const { catalog } = buildToolCatalog({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const overview = buildToolCatalogOverview(catalog);
+    expect(overview).toBe(
+      "Deferred tool catalog overview (search to activate):\n" +
+        "- github (1 tool): github_create_issue\n" +
+        "- slack (2 tools): slack_list_channels, slack_send_message"
+    );
+  });
+
+  test("overview elides beyond the per-server cap and omits descriptions/schemas", () => {
+    const catalog: ToolCatalogEntry[] = Array.from({ length: 10 }, (_, i) => ({
+      name: `srv_tool_${i}`,
+      description: `SECRET_DESCRIPTION_${i}`,
+      paramText: `SECRET_PARAM_${i}`,
+      serverName: "srv",
+    }));
+    const overview = buildToolCatalogOverview(catalog);
+    expect(overview).toContain("- srv (10 tools):");
+    expect(overview).toContain("(+2 more)");
+    expect(overview).not.toContain("SECRET_DESCRIPTION");
+    expect(overview).not.toContain("SECRET_PARAM");
+  });
+
+  test("overview is empty for an empty catalog and groups unknown servers as 'other tools'", () => {
+    expect(buildToolCatalogOverview([])).toBe("");
+    const overview = buildToolCatalogOverview([
+      { name: "mystery_tool", description: "", paramText: "" },
+    ]);
+    expect(overview).toContain("- other tools (1 tool): mystery_tool");
+  });
+
+  test("prepareToolSearch advertises the overview in tool_catalog_search's description", () => {
+    const prep = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    expect(prep.state).toBeDefined();
+    const description = prep.tools[TOOL_SEARCH_TOOL_NAME].description;
+    expect(description).toContain("Search deferred tools");
+    expect(description).toContain("- slack (2 tools):");
+    expect(description).toContain("- github (1 tool): github_create_issue");
+    // Deferred MCP tool records themselves are untouched (schemas stay deferred).
+    expect(prep.tools.slack_send_message.description).toBe("Send a message to a Slack channel");
+  });
+
+  test("search matches by server name and reports serverName", () => {
+    const { catalog } = buildToolCatalog({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const matches = searchToolCatalog(catalog, "github");
+    expect(matches.map((m) => m.name)).toContain("github_create_issue");
+    expect(matches[0].serverName).toBe("github");
+
+    // Server-name-only hit: query token appears in serverName but not the tool name.
+    const renamed: ToolCatalogEntry[] = [
+      {
+        name: "gh1_create_issue",
+        description: "Create an issue",
+        paramText: "",
+        serverName: "github",
+      },
+    ];
+    expect(searchToolCatalog(renamed, "github").map((m) => m.name)).toEqual(["gh1_create_issue"]);
+  });
+});
+
 describe("prepareToolSearch (post-policy gate)", () => {
   test("happy path: tools unchanged, state seeded with empty activation set", () => {
     const tools = baseTools();
     const result = prepareToolSearch({ tools, mcpToolNames: MCP_NAMES });
-    expect(result.tools).toBe(tools);
+    // Same tool set; only tool_catalog_search's description gains the catalog overview.
+    expect(Object.keys(result.tools)).toEqual(Object.keys(tools));
+    expect(result.tools.bash).toBe(tools.bash);
+    expect(result.tools.slack_send_message).toBe(tools.slack_send_message);
+    expect(result.tools[TOOL_SEARCH_TOOL_NAME].description).toContain("Search deferred tools");
     expect(result.state).toBeDefined();
     expect(result.state!.activatedToolNames.size).toBe(0);
     expect(result.state!.deferredToolNames.size).toBe(3);
@@ -206,7 +303,7 @@ describe("rebuildToolSearchState (model-fallback path)", () => {
     const nextTools = baseTools();
     delete nextTools.github_create_issue; // dropped in the fallback toolset
     const result = rebuildToolSearchState(state, { tools: nextTools, mcpToolNames: MCP_NAMES });
-    expect(result.tools).toBe(nextTools);
+    expect(Object.keys(result.tools)).toEqual(Object.keys(nextTools));
     expect([...state.activatedToolNames]).toEqual(["slack_send_message"]);
     expect(state.deferredToolNames.has("github_create_issue")).toBe(false);
   });

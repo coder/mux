@@ -2085,6 +2085,7 @@ export class AIService extends EventEmitter {
       const streamToken = this.streamManager.generateStreamToken();
 
       let mcpTools: Record<string, Tool> | undefined;
+      let mcpToolServerNames: Record<string, string> | undefined;
       let mcpStats: MCPWorkspaceStats | undefined;
       let mcpPromptRuntime: MCPPromptRuntime | undefined;
       let mcpSetupDurationMs = 0;
@@ -2105,6 +2106,7 @@ export class AIService extends EventEmitter {
           });
 
           mcpTools = result.tools;
+          mcpToolServerNames = result.toolServerNames;
           mcpStats = result.stats;
           // Omit the tool when no prompts exist to avoid adding unused schema context.
           if (result.promptDescriptors.length > 0) {
@@ -2765,6 +2767,7 @@ export class AIService extends EventEmitter {
         const toolSearchPrep = prepareToolSearch({
           tools,
           mcpToolNames: Object.keys(mcpTools ?? {}),
+          mcpToolServers: mcpToolServerNames,
           toolPolicy: effectiveToolPolicy,
           ptcEnabled,
         });
@@ -2870,6 +2873,7 @@ export class AIService extends EventEmitter {
           tools = rebuildToolSearchState(toolSearchRuntime.state, {
             tools,
             mcpToolNames: Object.keys(mcpTools ?? {}),
+            mcpToolServers: mcpToolServerNames,
             toolPolicy: effectiveToolPolicy,
             ptcEnabled,
           }).tools;
@@ -3487,6 +3491,7 @@ export class AIService extends EventEmitter {
                       nextTools = rebuildToolSearchState(toolSearchRuntime.state, {
                         tools: nextTools,
                         mcpToolNames: Object.keys(mcpTools ?? {}),
+                        mcpToolServers: mcpToolServerNames,
                         toolPolicy: effectiveToolPolicy,
                         ptcEnabled,
                       }).tools;
@@ -3575,6 +3580,7 @@ export class AIService extends EventEmitter {
                       nextTools = rebuildToolSearchState(toolSearchRuntime.state, {
                         tools: nextTools,
                         mcpToolNames: Object.keys(mcpTools ?? {}),
+                        mcpToolServers: mcpToolServerNames,
                         toolPolicy: effectiveToolPolicy,
                         ptcEnabled,
                       }).tools;
