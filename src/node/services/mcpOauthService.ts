@@ -345,7 +345,10 @@ async function fetchProtectedResourceScopes(url: URL): Promise<string[]> {
  * we keep round-tripping them so downgrading Mux does not break token
  * refresh after an app restart.
  */
-function parseAuthorizationServerBinding(value: Record<string, unknown>): {
+function parseAuthorizationServerBinding(value: {
+  authorization_server?: unknown;
+  token_endpoint?: unknown;
+}): {
   authorization_server?: string;
   token_endpoint?: string;
 } {
@@ -1570,9 +1573,7 @@ export class McpOauthService {
       // Do not carry a legacy binding across defensive server URL replacement.
       const legacyBinding =
         input.legacyBinding ??
-        (serverMatches && creds.tokens
-          ? parseAuthorizationServerBinding({ ...creds.tokens })
-          : undefined);
+        (serverMatches && creds.tokens ? parseAuthorizationServerBinding(creds.tokens) : undefined);
 
       // Defensive: Never keep tokens bound to a different URL.
       if (!serverMatches) {
@@ -1603,7 +1604,7 @@ export class McpOauthService {
       const legacyBinding =
         input.legacyBinding ??
         (serverMatches && creds.clientInformation
-          ? parseAuthorizationServerBinding({ ...creds.clientInformation })
+          ? parseAuthorizationServerBinding(creds.clientInformation)
           : undefined);
 
       // Defensive: Never keep client info bound to a different URL.

@@ -12,18 +12,15 @@ import {
   resolveOAuthScope,
 } from "./mcpOauthService";
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/client";
-import type { MCPOAuthClientInformation, MCPOAuthTokens } from "@/common/types/mcpOauth";
-
-interface StoredCredentialsSnapshot {
-  serverUrl: string;
-  updatedAtMs: number;
-  clientInformation?: MCPOAuthClientInformation;
-  tokens?: MCPOAuthTokens;
-}
+import type {
+  MCPOAuthClientInformation,
+  MCPOAuthStoredCredentials,
+  MCPOAuthTokens,
+} from "@/common/types/mcpOauth";
 
 interface StoreSnapshot {
   version: 2;
-  entries: Record<string, StoredCredentialsSnapshot>;
+  entries: Record<string, MCPOAuthStoredCredentials>;
 }
 
 function getStoreFilePath(muxHome: string): string {
