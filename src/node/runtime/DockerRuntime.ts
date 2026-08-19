@@ -35,8 +35,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
 import { GIT_NO_HOOKS_ENV, gitNoHooksPrefix } from "@/node/utils/gitNoHooksEnv";
 import {
-  getHostGitconfigPath,
-  hasHostGitconfig,
+  readHostGitconfig,
   resolveGhToken,
   resolveSshAgentForwarding,
 } from "./credentialForwarding";
@@ -155,7 +154,7 @@ function runSpawnCommand(
 /**
  * Build Docker args for credential sharing.
  * Forwards SSH agent into the container.
- * Note: ~/.gitconfig is copied (not mounted) after container creation so gh can modify it.
+ * Note: ~/.gitconfig is streamed into the container after creation so gh can modify it.
  * Uses agent forwarding only (no ~/.ssh mount) to avoid passphrase/permission issues.
  */
 function buildCredentialArgs(): string[] {
@@ -261,7 +260,7 @@ export interface DockerRuntimeConfig {
    * to allow exec operations without calling createWorkspace again.
    */
   containerName?: string;
-  /** Forward SSH agent and mount ~/.gitconfig read-only into container */
+  /** Forward SSH agent and copy ~/.gitconfig into container */
   shareCredentials?: boolean;
 }
 
@@ -491,7 +490,8 @@ export class DockerRuntime extends RemoteRuntime {
             ? "Container already running (from fork), skipping init hook..."
             : "Container already running (from fork), running init hook..."
         );
-        await this.setupCredentials(containerName, env);
+        await this.ensureContainerUserInfo(containerName, abortSignal);
+        await this.setupCredentials(env, abortSignal);
         return;
       case "cleanup":
         initLogger.logStep(containerCheck.reason);
@@ -553,7 +553,7 @@ export class DockerRuntime extends RemoteRuntime {
    * Check if a container already exists and whether it's valid for reuse.
    * Returns action to take: skip setup, cleanup invalid container, or create new.
    */
-  private async checkExistingContainer(
+  protected async checkExistingContainer(
     containerName: string,
     workspacePath: string,
     branchName: string
@@ -594,7 +594,7 @@ export class DockerRuntime extends RemoteRuntime {
     return { action: "skip" };
   }
 
-  private async detectContainerUser(
+  protected async detectContainerUser(
     containerName: string,
     abortSignal?: AbortSignal
   ): Promise<ContainerUserInfo> {
@@ -609,6 +609,15 @@ export class DockerRuntime extends RemoteRuntime {
       gid: sanitizeContainerUserId(gidResult.stdout),
       home: homeResult.stdout.trim() || "/root",
     };
+  }
+
+  private async ensureContainerUserInfo(
+    containerName: string,
+    abortSignal?: AbortSignal
+  ): Promise<void> {
+    if (!this.containerHome) {
+      this.storeContainerUserInfo(await this.detectContainerUser(containerName, abortSignal));
+    }
   }
 
   private storeContainerUserInfo(userInfo: ContainerUserInfo): void {
@@ -632,38 +641,50 @@ export class DockerRuntime extends RemoteRuntime {
    * Called for both new containers and reused forked containers.
    */
   private async setupCredentials(
-    containerName: string,
-    env?: Record<string, string>
+    env?: Record<string, string>,
+    abortSignal?: AbortSignal
   ): Promise<void> {
     if (!this.config.shareCredentials) return;
 
-    // Copy host gitconfig into container (not mounted, so gh can modify it).
-    // Use argv-based Docker calls so credential paths/tokens never go through a host shell.
-    if (hasHostGitconfig()) {
-      await runSpawnCommand(
-        "docker",
-        ["cp", getHostGitconfigPath(), `${containerName}:/root/.gitconfig`],
-        10000
-      );
+    if (abortSignal?.aborted) {
+      throw new RuntimeError("Operation aborted before credential setup", "exec");
+    }
+
+    // Copy rather than mount so gh can modify the file. exec runs as the container's
+    // default user, so $HOME and file ownership are correct for non-root images.
+    const gitconfigContents = await readHostGitconfig();
+    if (gitconfigContents) {
+      const stream = await this.exec('cat > "$HOME/.gitconfig"', {
+        cwd: "/",
+        timeout: 30,
+        abortSignal,
+      });
+      const writer = stream.stdin.getWriter();
+      try {
+        await writer.write(gitconfigContents);
+      } finally {
+        writer.releaseLock();
+      }
+      await stream.stdin.close();
+      const exitCode = await stream.exitCode;
+      if (exitCode !== 0) {
+        const stderr = await streamToString(stream.stderr);
+        throw new RuntimeError(`Failed to copy gitconfig: ${stderr}`, "file_io");
+      }
     }
 
     // Configure gh CLI as git credential helper if GH_TOKEN is available
     // GH_TOKEN can come from project secrets (env) or host environment (buildCredentialArgs)
     const ghToken = resolveGhToken(env);
     if (ghToken) {
-      await runSpawnCommand(
-        "docker",
-        [
-          "exec",
-          "-e",
-          `GH_TOKEN=${ghToken}`,
-          containerName,
-          "sh",
-          "-c",
-          "command -v gh >/dev/null && gh auth setup-git || true",
-        ],
-        10000
-      );
+      const stream = await this.exec("command -v gh >/dev/null && gh auth setup-git || true", {
+        cwd: "/",
+        timeout: 30,
+        env: { GH_TOKEN: ghToken },
+        abortSignal,
+      });
+      await stream.stdin.close();
+      await stream.exitCode;
     }
   }
 
@@ -732,7 +753,7 @@ export class DockerRuntime extends RemoteRuntime {
     initLogger.logStep("Container ready");
 
     // Setup credentials (gitconfig + gh auth)
-    await this.setupCredentials(containerName, env);
+    await this.setupCredentials(env, abortSignal);
 
     // 2. Sync project to container using git bundle + docker cp
     initLogger.logStep("Syncing project files to container...");
@@ -1304,9 +1325,7 @@ export class DockerRuntime extends RemoteRuntime {
     }
 
     // Detect container user info if not already set (e.g., runtime recreated for existing workspace)
-    if (!this.containerHome) {
-      this.storeContainerUserInfo(await this.detectContainerUser(this.containerName));
-    }
+    await this.ensureContainerUserInfo(this.containerName);
 
     return { ready: true };
   }
