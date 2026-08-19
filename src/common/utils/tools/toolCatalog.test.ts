@@ -247,6 +247,50 @@ describe("catalog advertising (overview + server names)", () => {
     );
   });
 
+  test("replacing the overview preserves whitespace-sensitive hook suffixes verbatim", () => {
+    const first = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    // Whitespace-sensitive Markdown (indented code block) appended by a hook.
+    const indentedSuffix = "\n\n    approval-required: true\n    audit: enabled";
+    const augmented = first.tools[TOOL_SEARCH_TOOL_NAME];
+    const hooked: Tool = Object.assign({}, augmented, {
+      description: `${String(augmented.description)}${indentedSuffix}`,
+    });
+    const second = prepareToolSearch({
+      tools: { ...first.tools, [TOOL_SEARCH_TOOL_NAME]: hooked },
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const description = String(second.tools[TOOL_SEARCH_TOOL_NAME].description);
+    // Indentation must survive verbatim (no trimming outside the generated region).
+    expect(description).toContain(indentedSuffix);
+    expect(description.split("Deferred tool catalog overview").length - 1).toBe(1);
+  });
+
+  test("overview clamps pathological server labels and enforces a total budget", () => {
+    const longServer = "s".repeat(200);
+    const clampedCatalog: ToolCatalogEntry[] = [
+      { name: "long_tool", description: "", paramText: "", serverName: longServer },
+    ];
+    const clamped = buildToolCatalogOverview(clampedCatalog);
+    expect(clamped).not.toContain(longServer);
+    expect(clamped).toContain(`${"s".repeat(63)}…`);
+
+    // Many servers: total size stays bounded and omitted servers are counted.
+    const bigCatalog: ToolCatalogEntry[] = Array.from({ length: 200 }, (_, i) => ({
+      name: `server${i}_tool_with_a_reasonably_long_name`,
+      description: "",
+      paramText: "",
+      serverName: `server-${String(i).padStart(3, "0")}`,
+    }));
+    const bounded = buildToolCatalogOverview(bigCatalog);
+    expect(bounded.length).toBeLessThan(2200);
+    expect(bounded).toMatch(/…and \d+ more servers \(use this tool to discover their tools\)/);
+  });
+
   test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {
     const first = prepareToolSearch({
       tools: baseTools(),

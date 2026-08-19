@@ -166,6 +166,22 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
 const OVERVIEW_MAX_TOOLS_PER_SERVER = 8;
 
 /**
+ * Server labels are unbounded user-config map keys; clamp them so a single
+ * pathological name cannot bloat the overview. Display-only — grouping still
+ * uses the full server name.
+ */
+const OVERVIEW_MAX_SERVER_LABEL_CHARS = 64;
+
+/**
+ * Overall character budget for the generated overview. Tool names are capped
+ * at 64 chars by provider rules and per-server lines are capped above, but the
+ * number of servers is unbounded — without a total budget a large MCP config
+ * could blow up the tool schema / provider request size. Servers beyond the
+ * budget collapse into an omitted-count line pointing at search.
+ */
+const OVERVIEW_MAX_CHARS = 2000;
+
+/**
  * Header marking the generated overview inside tool_catalog_search's
  * description. Also used to strip a previously appended overview so repeated
  * prepareToolSearch calls (post-hook / model-fallback rebuilds receive the
@@ -182,10 +198,15 @@ const OVERVIEW_HEADER = "Deferred tool catalog overview (search to activate):";
  */
 const OVERVIEW_END_MARKER = "(end of deferred tool catalog overview)";
 
+/** Separator emitted between the base description and the generated block. */
+const OVERVIEW_SEPARATOR = "\n\n";
+
 /**
  * Remove a previously appended catalog overview from a description, if any.
- * Only the marker-delimited generated block is removed; text before and after
- * it is preserved and rejoined.
+ * Removes exactly the marker-delimited generated region plus the separator we
+ * emitted before it — nothing else. Hook-authored content outside the region
+ * (including whitespace-sensitive Markdown such as indented blocks) is
+ * preserved verbatim: no trimming.
  */
 function stripToolCatalogOverview(description: string): string {
   const start = description.indexOf(OVERVIEW_HEADER);
@@ -198,12 +219,13 @@ function stripToolCatalogOverview(description: string): string {
   if (endMarker === -1) {
     return description;
   }
-  const before = description.slice(0, start).trimEnd();
-  const after = description.slice(endMarker + OVERVIEW_END_MARKER.length).trim();
-  if (before.length > 0 && after.length > 0) {
-    return `${before}\n\n${after}`;
-  }
-  return before.length > 0 ? before : after;
+  const separatorStart = start - OVERVIEW_SEPARATOR.length;
+  const regionStart =
+    separatorStart >= 0 && description.slice(separatorStart, start) === OVERVIEW_SEPARATOR
+      ? separatorStart
+      : start;
+  const regionEnd = endMarker + OVERVIEW_END_MARKER.length;
+  return description.slice(0, regionStart) + description.slice(regionEnd);
 }
 
 /**
@@ -225,14 +247,35 @@ export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): 
     names.push(entry.name);
     byServer.set(server, names);
   }
+  const servers = [...byServer.entries()].sort(([a], [b]) => a.localeCompare(b));
   const lines: string[] = [];
-  for (const [server, names] of [...byServer.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  let usedChars = OVERVIEW_HEADER.length + OVERVIEW_END_MARKER.length;
+  let omittedServers = 0;
+  for (const [server, names] of servers) {
+    // Once over budget, stop emitting lines and just count omitted servers.
+    if (omittedServers > 0) {
+      omittedServers += 1;
+      continue;
+    }
+    const label =
+      server.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
+        ? `${server.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
+        : server;
     names.sort((a, b) => a.localeCompare(b));
     const shown = names.slice(0, OVERVIEW_MAX_TOOLS_PER_SERVER);
     const extra = names.length - shown.length;
     const suffix = extra > 0 ? ` (+${extra} more)` : "";
+    const line = `- ${label} (${names.length} tool${names.length === 1 ? "" : "s"}): ${shown.join(", ")}${suffix}`;
+    if (usedChars + line.length + 1 > OVERVIEW_MAX_CHARS) {
+      omittedServers = 1;
+      continue;
+    }
+    usedChars += line.length + 1;
+    lines.push(line);
+  }
+  if (omittedServers > 0) {
     lines.push(
-      `- ${server} (${names.length} tool${names.length === 1 ? "" : "s"}): ${shown.join(", ")}${suffix}`
+      `- …and ${omittedServers} more server${omittedServers === 1 ? "" : "s"} (use this tool to discover their tools)`
     );
   }
   return `${OVERVIEW_HEADER}\n${lines.join("\n")}\n${OVERVIEW_END_MARKER}`;
