@@ -168,8 +168,8 @@ describe("task_list tool", () => {
     });
   });
 
-  it("guides cleanup when listed user-owned children are inactive", async () => {
-    using tempDir = new TestTempDir("test-task-list-inactive-cleanup-note");
+  it("guides retention and explicit cleanup when listed user-owned children are inactive", async () => {
+    using tempDir = new TestTempDir("test-task-list-inactive-retention-note");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
     const listDescendantAgentTasks = mock(() => [
       buildAgentTask("reviewer", "reported"),

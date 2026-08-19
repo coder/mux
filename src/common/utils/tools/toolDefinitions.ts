@@ -316,7 +316,7 @@ export function buildTaskToolDescription(runtimeMode: RuntimeMode | undefined): 
     `${getTaskRuntimeVisibilityGuidance(runtimeMode)} ` +
     "\n\nProvide agentId (preferred) or subagent_type, prompt, title, run_in_background, and optional n. For sub-agents, use title as a short, friendly reusable role name (for example, Reviewer or Simplicity Auditor), not a task summary. For kind=workspace, use a normal work-specific chat title. " +
     "Use n only when you want several agents to try the same prompt independently. Omit it for a single task, and prefer non-interfering sub-agents for grouped runs (for example read-only agents like explore). " +
-    "\n\nA terminal report makes the child inactive but leaves its workspace persistent. Reawaken it later with task_send_message; stop active work with task_stop and irreversibly delete inactive children with task_remove. " +
+    "\n\nA terminal report makes the child inactive but leaves its workspace persistent. Inactive children are low-cost to retain: keep them by default, and before spawning a new standalone child, prefer reawakening a known inactive child when its context or expertise fits. Retitle it if its reusable responsibility changes. Stop active work with task_stop; use irreversible task_remove only when the user asks or the child is clearly obsolete with no plausible future value. " +
     "\n\nWhen the user explicitly asks for best-of-n work, the parent should begin with light preliminary analysis to extract shared context, constraints, or evaluation criteria that would otherwise be duplicated across children. " +
     "Keep that pre-work lightweight: frame the task and provide useful starting points, but do not pre-solve the problem or over-constrain how the children reason about it. Then delegate the substantive analysis to the spawned sub-agents. " +
     "Do not also do a full parallel analysis in the parent. Call task_await when you are ready to act on child output; do not await reflexively just because tasks are running. " +
@@ -2264,7 +2264,7 @@ export const TOOL_DEFINITIONS = {
   task_send_message: {
     description:
       "Send guidance to a descendant sub-agent. Queued/running work is interrupted or queued at the requested boundary so the child can incorporate the update. An inactive child is reawakened in the same persistent workspace under a fresh internal execution. " +
-      "The stable sub-agent task ID and durable role title remain unchanged. If the new assignment changes the child's reusable responsibility, call task_retitle as well; do not retitle it for ordinary one-off assignments. Best-of children retain candidate metadata, so reawaken them only to continue that same candidate; use a standalone specialist for unrelated work. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
+      "The stable sub-agent task ID and durable role title remain unchanged. Prefer reawakening an inactive child over spawning a replacement when its prior context or expertise is relevant. If the new assignment changes the child's reusable responsibility, call task_retitle as well; do not retitle it for ordinary one-off assignments. Best-of children retain candidate metadata, so reawaken them only to continue that same candidate; use a standalone specialist for unrelated work. This tool does not target bash tasks, workflow runs, or workspace-turn handles.",
     schema: TaskSendMessageToolArgsSchema,
   },
   task_retitle: {
@@ -2279,7 +2279,7 @@ export const TOOL_DEFINITIONS = {
   },
   task_remove: {
     description:
-      "Irreversibly remove inactive child task workspaces owned by the current workspace. Removed sub-agents cannot be restored or reawakened. Active targets are rejected; descendants must be removed first, so nested batches are processed deepest-first.",
+      "Irreversibly remove inactive child task workspaces owned by the current workspace. Inactive children are low-cost to retain, so do not use this for routine end-of-turn cleanup; remove one only when the user asks or its context is clearly obsolete with no plausible future value. Removed sub-agents cannot be restored or reawakened. Active targets are rejected; descendants must be removed first, so nested batches are processed deepest-first.",
     schema: TaskRemoveToolArgsSchema,
   },
   task_list: {
