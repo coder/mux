@@ -764,6 +764,24 @@ describe("getToolsForModel", () => {
     expect(toolNames).toEqual([...toolNames].sort((a, b) => a.localeCompare(b)));
   });
 
+  // Must run before the load-failure test below: its mock.module registration
+  // persists for the rest of this file until the afterAll restore.
+  test("includes web_fetch when the module loads normally", async () => {
+    const tools = await getToolsForModel(
+      "noop:model",
+      {
+        cwd: process.cwd(),
+        runtime: new LocalRuntime(process.cwd()),
+        runtimeTempDir: "/tmp",
+        workspaceId: "ws-1",
+      },
+      "ws-1",
+      createInitStateManager()
+    );
+
+    expect(tools.web_fetch).toBeDefined();
+  });
+
   test("keeps the remaining tools available when web_fetch fails to load", async () => {
     void mock.module("@/node/services/tools/web_fetch", () => ({
       get createWebFetchTool() {
