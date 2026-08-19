@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { ChildProcess, SpawnOptions } from "child_process";
+import { EventEmitter } from "events";
 import {
   devcontainerUp,
   formatDevcontainerUpError,
@@ -143,7 +144,7 @@ describe("spawnDevcontainer", () => {
     const calls: SpawnCall[] = [];
     const spawnFn = (command: string, args: string[], options: SpawnOptions): ChildProcess => {
       calls.push({ command, args, options });
-      return {} as ChildProcess;
+      return new EventEmitter() as unknown as ChildProcess;
     };
     return { calls, spawnFn };
   }
