@@ -1,9 +1,12 @@
 import { describe, expect, it } from "bun:test";
+import type { ChildProcess, SpawnOptions } from "child_process";
 import {
   devcontainerUp,
   formatDevcontainerUpError,
   parseDevcontainerStdoutLine,
   shouldCleanupDevcontainer,
+  spawnDevcontainer,
+  type DevcontainerSpawnDeps,
 } from "./devcontainerCli";
 import type { InitLogger } from "./Runtime";
 
@@ -126,5 +129,96 @@ describe("shouldCleanupDevcontainer", () => {
 
   it("returns false for success results", () => {
     expect(shouldCleanupDevcontainer({ outcome: "success", containerId: "abc" })).toBe(false);
+  });
+});
+
+describe("spawnDevcontainer", () => {
+  interface SpawnCall {
+    command: string;
+    args: string[];
+    options: SpawnOptions;
+  }
+
+  function makeSpawnRecorder() {
+    const calls: SpawnCall[] = [];
+    const spawnFn = (command: string, args: string[], options: SpawnOptions): ChildProcess => {
+      calls.push({ command, args, options });
+      return {} as ChildProcess;
+    };
+    return { calls, spawnFn };
+  }
+
+  function makeDeps(overrides: Partial<DevcontainerSpawnDeps>) {
+    const posix = makeSpawnRecorder();
+    const win32 = makeSpawnRecorder();
+    const lookups: string[] = [];
+    const deps: DevcontainerSpawnDeps = {
+      platform: "linux",
+      lookupCommand: (command) => {
+        lookups.push(command);
+        return null;
+      },
+      posixSpawn: posix.spawnFn,
+      win32Spawn: win32.spawnFn,
+      ...overrides,
+    };
+    return { deps, posix, win32, lookups };
+  }
+
+  it("resolves the .cmd shim via PATH lookup on win32 and passes args/options through", () => {
+    const { deps, posix, win32 } = makeDeps({
+      platform: "win32",
+      lookupCommand: () => [
+        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer",
+        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.cmd",
+        "C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.ps1",
+      ],
+    });
+    const args = ["exec", "--", "bash", "-c", "echo hi && echo 'quoted arg'"];
+    const options: SpawnOptions = { detached: true, windowsHide: true };
+
+    spawnDevcontainer(args, options, deps);
+
+    expect(posix.calls).toHaveLength(0);
+    expect(win32.calls).toHaveLength(1);
+    expect(win32.calls[0].command).toBe("C:\\Users\\dev\\AppData\\Roaming\\npm\\devcontainer.cmd");
+    expect(win32.calls[0].args).toBe(args);
+    expect(win32.calls[0].options).toBe(options);
+    expect(win32.calls[0].options.shell).toBeUndefined();
+  });
+
+  it("falls back to the bare command when the win32 lookup fails", () => {
+    const { deps, win32 } = makeDeps({ platform: "win32", lookupCommand: () => null });
+
+    spawnDevcontainer(["--version"], {}, deps);
+
+    expect(win32.calls).toHaveLength(1);
+    expect(win32.calls[0].command).toBe("devcontainer");
+  });
+
+  it("falls back to the first lookup line when no executable extension matches", () => {
+    const { deps, win32 } = makeDeps({
+      platform: "win32",
+      lookupCommand: () => ["  C:\\tools\\devcontainer  ", ""],
+    });
+
+    spawnDevcontainer(["--version"], {}, deps);
+
+    expect(win32.calls[0].command).toBe("C:\\tools\\devcontainer");
+  });
+
+  it("uses native spawn on posix without running any PATH lookup", () => {
+    const { deps, posix, win32, lookups } = makeDeps({ platform: "linux" });
+    const args = ["up", "--workspace-folder", "/repo"];
+    const options: SpawnOptions = { stdio: ["ignore", "pipe", "pipe"], timeout: 1000 };
+
+    spawnDevcontainer(args, options, deps);
+
+    expect(win32.calls).toHaveLength(0);
+    expect(lookups).toHaveLength(0);
+    expect(posix.calls).toHaveLength(1);
+    expect(posix.calls[0].command).toBe("devcontainer");
+    expect(posix.calls[0].args).toBe(args);
+    expect(posix.calls[0].options).toBe(options);
   });
 });

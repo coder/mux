@@ -7,7 +7,9 @@
  * - exec: execute commands inside the container
  * - down: stop and remove the container
  */
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
+import type { ChildProcess, SpawnOptions } from "child_process";
+import crossSpawn from "cross-spawn";
 import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
@@ -173,12 +175,76 @@ async function removeDevcontainerContainer(containerId: string): Promise<void> {
 }
 const VERSION_CHECK_TIMEOUT_MS = 10_000; // 10 seconds
 
+const WINDOWS_EXECUTABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ".com"];
+
+/** Injectable seam so tests can exercise the win32/posix branches on any host. */
+export interface DevcontainerSpawnDeps {
+  platform: NodeJS.Platform;
+  /** PATH lookup returning candidate lines (where.exe output), or null on failure. */
+  lookupCommand: (command: string) => string[] | null;
+  posixSpawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+  win32Spawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+}
+
+const defaultSpawnDeps: DevcontainerSpawnDeps = {
+  platform: process.platform,
+  lookupCommand: (command) => {
+    try {
+      const result = spawnSync("where.exe", [command], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+      });
+      if (result.status !== 0 || typeof result.stdout !== "string") {
+        return null;
+      }
+      return result.stdout.split(/\r?\n/);
+    } catch {
+      return null;
+    }
+  },
+  posixSpawn: spawn,
+  win32Spawn: crossSpawn,
+};
+
+function resolveWindowsDevcontainerCommand(deps: DevcontainerSpawnDeps): string {
+  const lines = (deps.lookupCommand("devcontainer") ?? [])
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const executable = lines.find((line) =>
+    WINDOWS_EXECUTABLE_EXTENSIONS.some((ext) => line.toLowerCase().endsWith(ext))
+  );
+  // Fall back to the bare name: cross-spawn runs its own PATHEXT lookup, and a
+  // missing CLI degrades to the same spawn-error path as before.
+  return executable ?? lines[0] ?? "devcontainer";
+}
+
+/**
+ * Spawn the devcontainer CLI portably.
+ *
+ * On Windows, npm installs the CLI as `devcontainer.cmd`/`devcontainer.ps1`
+ * shims. Node's spawn does not consult PATHEXT, and Node >= 20.12 refuses to
+ * spawn `.cmd`/`.bat` files without a shell (CVE-2024-27980), so we resolve
+ * the shim path via where.exe and hand it to cross-spawn, which wraps it in
+ * cmd.exe with escaped arguments instead of a blanket `shell: true`.
+ */
+export function spawnDevcontainer(
+  args: string[],
+  options: SpawnOptions,
+  deps: DevcontainerSpawnDeps = defaultSpawnDeps
+): ChildProcess {
+  if (deps.platform === "win32") {
+    return deps.win32Spawn(resolveWindowsDevcontainerCommand(deps), args, options);
+  }
+  return deps.posixSpawn("devcontainer", args, options);
+}
+
 /**
  * Check if devcontainer CLI is installed and get version.
  */
 export async function checkDevcontainerCliVersion(): Promise<DevcontainerCliInfo | null> {
   return new Promise((resolve) => {
-    const proc = spawn("devcontainer", ["--version"], {
+    const proc = spawnDevcontainer(["--version"], {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: VERSION_CHECK_TIMEOUT_MS,
     });
@@ -250,7 +316,7 @@ export async function devcontainerUp(
         return;
       }
 
-      const proc = spawn("devcontainer", args, {
+      const proc = spawnDevcontainer(args, {
         stdio: ["ignore", "pipe", "pipe"],
         timeout: timeoutMs,
         cwd: workspaceFolder,

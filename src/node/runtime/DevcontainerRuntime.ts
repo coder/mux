@@ -1,4 +1,3 @@
-import { spawn } from "child_process";
 import * as path from "path";
 import { Readable, Writable } from "stream";
 import type {
@@ -29,7 +28,7 @@ import {
   resolveSshAgentForwarding,
   type BindMount,
 } from "./credentialForwarding";
-import { devcontainerUp, devcontainerDown } from "./devcontainerCli";
+import { devcontainerUp, devcontainerDown, spawnDevcontainer } from "./devcontainerCli";
 import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
@@ -619,7 +618,7 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     const fullCommand = `cd ${shescape.quote(cwd)} && ${command}`;
     args.push("--", "bash", "-c", fullCommand);
 
-    const childProcess = spawn("devcontainer", args, {
+    const childProcess = spawnDevcontainer(args, {
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
       windowsHide: true,
