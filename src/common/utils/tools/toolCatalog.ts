@@ -467,6 +467,21 @@ export function searchToolCatalog(
     TOOL_SEARCH_MAX_LIMIT
   );
 
+  // Server tokens come from the bounded display label — the exact string the
+  // overview advertises — so copying the visible label into a query scores as
+  // expected even when the raw name exceeds the label clamp. Tokenizing the
+  // label (never the raw, unbounded config key) also bounds per-search work,
+  // and the cache computes it once per distinct server instead of per tool.
+  const serverTokensCache = new Map<string, Set<string>>();
+  const serverTokensFor = (server: string): Set<string> => {
+    let tokens = serverTokensCache.get(server);
+    if (tokens === undefined) {
+      tokens = new Set(tokenize(displayServerLabel(server)));
+      serverTokensCache.set(server, tokens);
+    }
+    return tokens;
+  };
+
   const scored: Array<{ entry: ToolCatalogEntry; score: number }> = [];
   for (const entry of catalog) {
     const nameLower = entry.name.toLowerCase();
@@ -476,7 +491,8 @@ export function searchToolCatalog(
     // Server-name matches rank between name and description hits so a query
     // like "github" surfaces that server's tools even when normalization
     // changed the tool-name prefix.
-    const serverTokens = new Set(tokenize(entry.serverName ?? ""));
+    const serverTokens =
+      entry.serverName !== undefined ? serverTokensFor(entry.serverName) : new Set<string>();
 
     let score = 0;
     for (const token of queryTokens) {

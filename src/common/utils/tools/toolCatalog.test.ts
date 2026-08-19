@@ -370,9 +370,14 @@ describe("catalog advertising (overview + server names)", () => {
     }
     expect(evilServer.length).toBeGreaterThan(100_000);
     const startedAt = performance.now();
-    const catalog: ToolCatalogEntry[] = [
-      { name: "evil_tool", description: "Do something", paramText: "", serverName: evilServer },
-    ];
+    // Many tools on the same huge-key server: search must tokenize a bounded
+    // label once per distinct server, not the raw key once per tool.
+    const catalog: ToolCatalogEntry[] = Array.from({ length: 50 }, (_, i) => ({
+      name: `evil_tool_${i}`,
+      description: "Do something",
+      paramText: "",
+      serverName: evilServer,
+    }));
     const overview = buildToolCatalogOverview(catalog);
     const matches = searchToolCatalog(catalog, "evil");
     const elapsedMs = performance.now() - startedAt;
@@ -382,6 +387,20 @@ describe("catalog advertising (overview + server names)", () => {
     expect(matches[0].serverName!.length).toBeLessThanOrEqual(64);
     expect(overview.split("(end of deferred tool catalog overview)").length - 1).toBe(1);
     expect(matches[0].serverName).not.toContain("(end of deferred tool catalog overview)");
+  });
+
+  test("copying the advertised truncated label into a query still scores the server", () => {
+    // One long token (>64 chars): the overview shows a 63-char prefix + "…".
+    const longToken = "a".repeat(100);
+    const catalog: ToolCatalogEntry[] = [
+      { name: "t1_do_thing", description: "unrelated words", paramText: "", serverName: longToken },
+    ];
+    const overview = buildToolCatalogOverview(catalog);
+    const advertisedLabel = `${"a".repeat(63)}…`;
+    expect(overview).toContain(advertisedLabel);
+    // Querying with the visible label (as a model would copy it) must match.
+    const matches = searchToolCatalog(catalog, advertisedLabel);
+    expect(matches.map((m) => m.name)).toEqual(["t1_do_thing"]);
   });
 
   test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {
