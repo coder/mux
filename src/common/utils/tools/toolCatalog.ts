@@ -208,14 +208,18 @@ const OVERVIEW_SEPARATOR = "\n\n";
  * flatten newlines so one label cannot fabricate extra overview lines. Tool
  * names need no scrubbing: buildMcpToolName enforces provider-safe
  * `[a-zA-Z0-9_-]` names that cannot contain marker text.
+ *
+ * Scrubbing loops to a fixpoint: a single deletion pass can itself synthesize
+ * a marker by joining fragments (e.g. "(end of deferred " + HEADER + "tool
+ * catalog overview)" becomes the end marker once the embedded header is
+ * removed). Each pass strictly shortens the string, so the loop terminates.
  */
 function sanitizeServerLabel(label: string): string {
-  return label
-    .split(OVERVIEW_END_MARKER)
-    .join("")
-    .split(OVERVIEW_HEADER)
-    .join("")
-    .replace(/[\r\n]+/g, " ");
+  let sanitized = label.replace(/[\r\n]+/g, " ");
+  while (sanitized.includes(OVERVIEW_END_MARKER) || sanitized.includes(OVERVIEW_HEADER)) {
+    sanitized = sanitized.split(OVERVIEW_END_MARKER).join("").split(OVERVIEW_HEADER).join("");
+  }
+  return sanitized;
 }
 
 /**
