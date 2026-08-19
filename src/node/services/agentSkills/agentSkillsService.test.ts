@@ -254,6 +254,25 @@ describe("agentSkillsService", () => {
     ]);
   });
 
+  test("ancestor discovery preserves Windows drive-root separators", () => {
+    class WindowsPathRuntime extends LocalRuntime {
+      override normalizePath(targetPath: string, basePath: string): string {
+        return path.win32.resolve(basePath, targetPath);
+      }
+    }
+
+    const checkoutRoot = "c:\\";
+    const workspacePath = "C:\\Repo\\packages\\app";
+    const roots = getDefaultAgentSkillsRoots(new WindowsPathRuntime(workspacePath), workspacePath, {
+      projectSearchRoot: checkoutRoot,
+    });
+
+    expect(roots.projectRoots?.slice(-2)).toEqual([
+      path.win32.join("C:\\", ".mux", "skills"),
+      path.win32.join("C:\\", ".agents", "skills"),
+    ]);
+  });
+
   test("ancestor discovery compares Windows UNC boundaries case-insensitively", () => {
     class WindowsPathRuntime extends LocalRuntime {
       override normalizePath(targetPath: string, basePath: string): string {

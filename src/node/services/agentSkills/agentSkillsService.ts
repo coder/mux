@@ -80,7 +80,12 @@ function getProjectDirectories(
   let current = start;
 
   while (true) {
-    directories.push(current);
+    // POSIX dirname turns a normalized Windows drive root (`C:/`) into `C:`.
+    // Restore the separator before using it as a base path so Windows runtimes
+    // do not interpret the inherited root relative to the drive's current cwd.
+    const directory =
+      /^[A-Za-z]:$/u.test(current) && /^[A-Za-z]:\/$/u.test(boundary) ? `${current}/` : current;
+    directories.push(directory);
     // Registered Windows project paths may differ only by casing. Use the same
     // comparison semantics as project hierarchy derivation so inheritance still
     // stops at the configured checkout boundary.
