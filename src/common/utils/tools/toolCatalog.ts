@@ -202,6 +202,23 @@ const OVERVIEW_END_MARKER = "(end of deferred tool catalog overview)";
 const OVERVIEW_SEPARATOR = "\n\n";
 
 /**
+ * Server names are arbitrary user-config map keys. Scrub reserved marker text
+ * so a label can neither terminate nor forge the generated block (which would
+ * break marker-based stripping and re-stack overviews on rebuilds), and
+ * flatten newlines so one label cannot fabricate extra overview lines. Tool
+ * names need no scrubbing: buildMcpToolName enforces provider-safe
+ * `[a-zA-Z0-9_-]` names that cannot contain marker text.
+ */
+function sanitizeServerLabel(label: string): string {
+  return label
+    .split(OVERVIEW_END_MARKER)
+    .join("")
+    .split(OVERVIEW_HEADER)
+    .join("")
+    .replace(/[\r\n]+/g, " ");
+}
+
+/**
  * Remove a previously appended catalog overview from a description, if any.
  * Removes exactly the marker-delimited generated region plus the separator we
  * emitted before it — nothing else. Hook-authored content outside the region
@@ -257,10 +274,11 @@ export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): 
       omittedServers += 1;
       continue;
     }
+    const sanitized = sanitizeServerLabel(server);
     const label =
-      server.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
-        ? `${server.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
-        : server;
+      sanitized.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
+        ? `${sanitized.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
+        : sanitized;
     names.sort((a, b) => a.localeCompare(b));
     const shown = names.slice(0, OVERVIEW_MAX_TOOLS_PER_SERVER);
     const extra = names.length - shown.length;
