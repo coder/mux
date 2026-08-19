@@ -14,6 +14,7 @@ import type { BindMount } from "./credentialForwarding";
 import type { InitLogger } from "./Runtime";
 import { LineBuffer } from "./initHook";
 import { redactDevcontainerArgsForLog } from "./devcontainerLogRedaction";
+import { killProcessTree } from "@/node/utils/disposableExec";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -176,6 +177,7 @@ async function removeDevcontainerContainer(containerId: string): Promise<void> {
 const VERSION_CHECK_TIMEOUT_MS = 10_000; // 10 seconds
 
 const WINDOWS_LOOKUP_TIMEOUT_MS = 5_000;
+const WINDOWS_LOOKUP_NEGATIVE_CACHE_MS = 30_000;
 // CreateProcess can run these directly; Node >= 20.12 refuses .cmd/.bat
 // without a shell (CVE-2024-27980), so those need the cmd.exe wrapper below.
 const WINDOWS_DIRECT_EXECUTABLE_REGEXP = /\.(?:com|exe)$/i;
@@ -187,8 +189,13 @@ export interface DevcontainerSpawnDeps {
   /** Bounded PATH lookup returning candidate lines (where.exe output), or null on failure. */
   lookupCommand: (command: string) => string[] | null;
   spawn: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
-  /** Successful win32 resolutions are cached so repeat spawns skip the lookup subprocess. */
-  commandCache: { resolved?: string };
+  /**
+   * Successful win32 resolutions are cached for the process lifetime; misses
+   * are cached for a bounded TTL so a missing CLI cannot block the main
+   * process with a synchronous where.exe run on every availability check.
+   */
+  commandCache: { resolved?: string; missedAtMs?: number };
+  now: () => number;
 }
 
 const defaultSpawnDeps: DevcontainerSpawnDeps = {
@@ -211,6 +218,7 @@ const defaultSpawnDeps: DevcontainerSpawnDeps = {
   },
   spawn,
   commandCache: {},
+  now: Date.now,
 };
 
 // Vendored from cross-spawn@7.0.6 (MIT), based on https://qntm.org/cmd.
@@ -240,6 +248,12 @@ function resolveWindowsDevcontainerCommand(deps: DevcontainerSpawnDeps): string 
   if (deps.commandCache.resolved !== undefined) {
     return deps.commandCache.resolved;
   }
+  if (
+    deps.commandCache.missedAtMs !== undefined &&
+    deps.now() - deps.commandCache.missedAtMs < WINDOWS_LOOKUP_NEGATIVE_CACHE_MS
+  ) {
+    return null;
+  }
   // where.exe lists PATH-order candidates; npm also installs an extensionless
   // POSIX shim and a .ps1, neither of which CreateProcess can run, so pick the
   // first spawnable entry.
@@ -251,8 +265,31 @@ function resolveWindowsDevcontainerCommand(deps: DevcontainerSpawnDeps): string 
       ) ?? null;
   if (resolved !== null) {
     deps.commandCache.resolved = resolved;
+    deps.commandCache.missedAtMs = undefined;
+  } else {
+    deps.commandCache.missedAtMs = deps.now();
   }
   return resolved;
+}
+
+/**
+ * Terminate a spawned devcontainer process. On Windows the CLI runs beneath
+ * the cmd.exe shim wrapper and ChildProcess.kill only signals the direct
+ * child, so kill the full tree; on POSIX the CLI is the direct child and
+ * keeps its graceful SIGTERM.
+ */
+export function terminateDevcontainerProc(
+  proc: Pick<ChildProcess, "pid" | "kill">,
+  deps: { platform: NodeJS.Platform; killTree: (pid: number) => void } = {
+    platform: process.platform,
+    killTree: killProcessTree,
+  }
+): void {
+  if (deps.platform === "win32" && proc.pid !== undefined) {
+    deps.killTree(proc.pid);
+    return;
+  }
+  proc.kill("SIGTERM");
 }
 
 /**
@@ -369,9 +406,11 @@ export async function devcontainerUp(
         return;
       }
 
+      // Timeout is enforced by the explicit timer below, not the spawn-level
+      // option: Node's built-in timeout signals only the direct child, which
+      // on Windows is the cmd.exe wrapper rather than the CLI itself.
       const proc = spawnDevcontainer(args, {
         stdio: ["ignore", "pipe", "pipe"],
-        timeout: timeoutMs,
         cwd: workspaceFolder,
       });
 
@@ -434,13 +473,13 @@ export async function devcontainerUp(
       });
 
       const abortHandler = () => {
-        proc.kill("SIGTERM");
+        terminateDevcontainerProc(proc);
         settleError(new Error("devcontainer up aborted"));
       };
 
       if (timeoutMs && timeoutMs > 0) {
         timeoutId = setTimeout(() => {
-          proc.kill("SIGTERM");
+          terminateDevcontainerProc(proc);
           settleError(new Error(`devcontainer up timed out after ${timeoutMs}ms`));
         }, timeoutMs);
       }

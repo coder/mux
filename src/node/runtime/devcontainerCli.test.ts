@@ -7,6 +7,7 @@ import {
   parseDevcontainerStdoutLine,
   shouldCleanupDevcontainer,
   spawnDevcontainer,
+  terminateDevcontainerProc,
   type DevcontainerSpawnDeps,
 } from "./devcontainerCli";
 import type { InitLogger } from "./Runtime";
@@ -160,6 +161,7 @@ describe("spawnDevcontainer", () => {
         return new EventEmitter() as unknown as ChildProcess;
       },
       commandCache: {},
+      now: () => 0,
       ...overrides,
     };
     return { deps, calls, lookups };
@@ -237,13 +239,41 @@ describe("spawnDevcontainer", () => {
     expect(lookups).toHaveLength(1);
   });
 
-  it("does not cache failed win32 lookups", () => {
-    const { deps, lookups } = makeDeps({ platform: "win32" });
+  it("negatively caches failed win32 lookups for a bounded TTL", () => {
+    let nowMs = 0;
+    const { deps, lookups } = makeDeps({ platform: "win32", now: () => nowMs });
 
     spawnDevcontainer(["--version"], {}, deps);
+    nowMs = 1_000;
     spawnDevcontainer(["--version"], {}, deps);
+    expect(lookups).toHaveLength(1);
 
+    nowMs = 60_000;
+    spawnDevcontainer(["--version"], {}, deps);
     expect(lookups).toHaveLength(2);
+  });
+
+  it("clears the negative cache once a later lookup succeeds", () => {
+    let nowMs = 0;
+    let available = false;
+    const { deps, calls, lookups } = makeDeps({
+      platform: "win32",
+      now: () => nowMs,
+      lookupCommand: (command) => {
+        lookups.push(command);
+        return available ? NPM_SHIM_LINES : null;
+      },
+    });
+
+    spawnDevcontainer(["--version"], {}, deps);
+    expect(calls[0].command).toBe("devcontainer");
+
+    available = true;
+    nowMs = 60_000;
+    spawnDevcontainer(["--version"], {}, deps);
+    spawnDevcontainer(["--version"], {}, deps);
+    expect(lookups).toHaveLength(2);
+    expect(calls[2].command).toBe(process.env.comspec ?? "cmd.exe");
   });
 
   it("uses native spawn on posix without running any PATH lookup", () => {
@@ -258,5 +288,47 @@ describe("spawnDevcontainer", () => {
     expect(calls[0].command).toBe("devcontainer");
     expect(calls[0].args).toBe(args);
     expect(calls[0].options).toBe(options);
+  });
+});
+
+describe("terminateDevcontainerProc", () => {
+  function makeProc(pid: number | undefined) {
+    const kills: Array<string | number | undefined> = [];
+    const treeKills: number[] = [];
+    const proc = {
+      pid,
+      kill: (signal?: string | number) => {
+        kills.push(signal);
+        return true;
+      },
+    };
+    return { proc, kills, treeKills };
+  }
+
+  it("kills the full process tree on win32 so the CLI under the cmd.exe wrapper dies too", () => {
+    const { proc, kills, treeKills } = makeProc(1234);
+
+    terminateDevcontainerProc(proc, { platform: "win32", killTree: (pid) => treeKills.push(pid) });
+
+    expect(treeKills).toEqual([1234]);
+    expect(kills).toHaveLength(0);
+  });
+
+  it("falls back to kill on win32 when the process has no pid", () => {
+    const { proc, kills, treeKills } = makeProc(undefined);
+
+    terminateDevcontainerProc(proc, { platform: "win32", killTree: (pid) => treeKills.push(pid) });
+
+    expect(treeKills).toHaveLength(0);
+    expect(kills).toEqual(["SIGTERM"]);
+  });
+
+  it("keeps the graceful SIGTERM on posix", () => {
+    const { proc, kills, treeKills } = makeProc(1234);
+
+    terminateDevcontainerProc(proc, { platform: "linux", killTree: (pid) => treeKills.push(pid) });
+
+    expect(treeKills).toHaveLength(0);
+    expect(kills).toEqual(["SIGTERM"]);
   });
 });
