@@ -3,7 +3,11 @@ import * as http from "http";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import writeFileAtomic from "write-file-atomic";
-import { auth, type OAuthClientProvider } from "@modelcontextprotocol/client";
+import {
+  auth,
+  type OAuthClientProvider,
+  type OAuthDiscoveryState,
+} from "@modelcontextprotocol/client";
 import type { Config } from "@/node/config";
 import type { MCPConfigService } from "@/node/services/mcpConfigService";
 import type { WindowService } from "@/node/services/windowService";
@@ -102,6 +106,7 @@ interface OAuthFlowBase {
 
   /** PKCE verifier for this flow (set by the MCP SDK auth()). */
   codeVerifier: string | null;
+  discoveryState: OAuthDiscoveryState | undefined;
 
   timeout: ReturnType<typeof setTimeout>;
   cleanupTimeout: ReturnType<typeof setTimeout> | null;
@@ -367,6 +372,26 @@ function parseAuthorizationServerBinding(value: Record<string, unknown>): {
   }
 
   return { authorization_server: authorizationServer, token_endpoint: tokenEndpoint };
+}
+
+interface AuthorizationServerBinding {
+  authorization_server: string;
+  token_endpoint: string;
+}
+
+// Discovery is where both legacy binding fields are available for downgrade-compatible saves (#3823).
+function deriveAuthorizationServerBinding(
+  state: OAuthDiscoveryState | undefined
+): AuthorizationServerBinding | undefined {
+  const tokenEndpoint = state?.authorizationServerMetadata?.token_endpoint;
+  if (!state?.authorizationServerUrl || !tokenEndpoint) {
+    return undefined;
+  }
+
+  return {
+    authorization_server: state.authorizationServerUrl,
+    token_endpoint: tokenEndpoint,
+  };
 }
 
 /**
@@ -839,6 +864,7 @@ export class McpOauthService {
       scope: await resolveOAuthScope(challenge),
       resourceMetadataUrl: challenge?.resourceMetadataUrl,
       codeVerifier: null,
+      discoveryState: undefined,
       server: serverListener,
       timeout: setTimeout(() => {
         void this.finishDesktopFlow(flowId, Err("Timed out waiting for OAuth callback"));
@@ -983,6 +1009,7 @@ export class McpOauthService {
       scope: await resolveOAuthScope(challenge),
       resourceMetadataUrl: challenge?.resourceMetadataUrl,
       codeVerifier: null,
+      discoveryState: undefined,
       timeout: setTimeout(() => {
         void this.finishServerFlow(flowId, Err("Timed out waiting for OAuth callback"));
       }, DEFAULT_SERVER_TIMEOUT_MS),
@@ -1145,7 +1172,12 @@ export class McpOauthService {
           serverUrl: flow.serverUrlForStoreKey,
           // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           tokens: tokens as unknown as MCPOAuthTokens,
+          legacyBinding: deriveAuthorizationServerBinding(flow.discoveryState),
         });
+      },
+      saveDiscoveryState: (state) => {
+        // Cache only for downgrade-compatible writes; read-back would change SDK discovery behavior.
+        flow.discoveryState = state;
       },
       redirectToAuthorization: (authorizationUrl) => {
         flow.authorizeUrl = authorizationUrl.toString();
@@ -1199,6 +1231,7 @@ export class McpOauthService {
         await this.saveClientInformation({
           serverUrl: flow.serverUrlForStoreKey,
           clientInformation: next,
+          legacyBinding: deriveAuthorizationServerBinding(flow.discoveryState),
         });
       },
       state: () => Promise.resolve(flow.flowId),
@@ -1209,6 +1242,8 @@ export class McpOauthService {
     serverUrl: string;
     serverName?: string;
   }): OAuthClientProvider {
+    let discoveryState: OAuthDiscoveryState | undefined;
+
     return {
       tokens: async () => {
         const creds = await this.getValidStoredCredentials({ serverUrl: input.serverUrl });
@@ -1220,7 +1255,12 @@ export class McpOauthService {
           serverUrl: input.serverUrl,
           // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           tokens: tokens as unknown as MCPOAuthTokens,
+          legacyBinding: deriveAuthorizationServerBinding(discoveryState),
         });
+      },
+      saveDiscoveryState: (state) => {
+        // Cache only for downgrade-compatible writes; read-back would change SDK discovery behavior.
+        discoveryState = state;
       },
       redirectToAuthorization: async () => {
         // Avoid any user-visible side effects during background tool calls.
@@ -1267,6 +1307,7 @@ export class McpOauthService {
           serverUrl: input.serverUrl,
           // eslint-disable-next-line local/no-chained-type-assertions -- grandfathered when the rule was introduced; fix the underlying type instead of copying this pattern
           clientInformation: clientInformation as unknown as MCPOAuthClientInformation,
+          legacyBinding: deriveAuthorizationServerBinding(discoveryState),
         });
       },
     };
@@ -1514,21 +1555,32 @@ export class McpOauthService {
     });
   }
 
-  private async saveTokens(input: { serverUrl: string; tokens: MCPOAuthTokens }): Promise<void> {
+  private async saveTokens(input: {
+    serverUrl: string;
+    tokens: MCPOAuthTokens;
+    legacyBinding?: AuthorizationServerBinding;
+  }): Promise<void> {
     await this.storeLock.withLock(this.storeFilePath, async () => {
       const store = await this.ensureStoreLoadedLocked();
       const creds = (store.entries[input.serverUrl] ??= {
         serverUrl: input.serverUrl,
         updatedAtMs: Date.now(),
       });
+      const serverMatches = normalizeServerUrlForComparison(creds.serverUrl) === input.serverUrl;
+      // Do not carry a legacy binding across defensive server URL replacement.
+      const legacyBinding =
+        input.legacyBinding ??
+        (serverMatches && creds.tokens
+          ? parseAuthorizationServerBinding({ ...creds.tokens })
+          : undefined);
 
       // Defensive: Never keep tokens bound to a different URL.
-      if (normalizeServerUrlForComparison(creds.serverUrl) !== input.serverUrl) {
+      if (!serverMatches) {
         creds.clientInformation = undefined;
       }
 
       creds.serverUrl = input.serverUrl;
-      creds.tokens = input.tokens;
+      creds.tokens = { ...input.tokens, ...legacyBinding };
       creds.updatedAtMs = Date.now();
 
       await this.persistStoreLocked(store);
@@ -1538,6 +1590,7 @@ export class McpOauthService {
   private async saveClientInformation(input: {
     serverUrl: string;
     clientInformation: MCPOAuthClientInformation;
+    legacyBinding?: AuthorizationServerBinding;
   }): Promise<void> {
     await this.storeLock.withLock(this.storeFilePath, async () => {
       const store = await this.ensureStoreLoadedLocked();
@@ -1545,9 +1598,16 @@ export class McpOauthService {
         serverUrl: input.serverUrl,
         updatedAtMs: Date.now(),
       });
+      const serverMatches = normalizeServerUrlForComparison(creds.serverUrl) === input.serverUrl;
+      // Do not carry a legacy binding across defensive server URL replacement.
+      const legacyBinding =
+        input.legacyBinding ??
+        (serverMatches && creds.clientInformation
+          ? parseAuthorizationServerBinding({ ...creds.clientInformation })
+          : undefined);
 
       // Defensive: Never keep client info bound to a different URL.
-      if (normalizeServerUrlForComparison(creds.serverUrl) !== input.serverUrl) {
+      if (!serverMatches) {
         creds.tokens = undefined;
       }
 
@@ -1560,7 +1620,7 @@ export class McpOauthService {
       }
 
       creds.serverUrl = input.serverUrl;
-      creds.clientInformation = input.clientInformation;
+      creds.clientInformation = { ...input.clientInformation, ...legacyBinding };
       creds.updatedAtMs = Date.now();
 
       await this.persistStoreLocked(store);

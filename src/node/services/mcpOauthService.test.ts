@@ -11,7 +11,20 @@ import {
   probeServerForBearerChallenge,
   resolveOAuthScope,
 } from "./mcpOauthService";
+import type { OAuthDiscoveryState } from "@modelcontextprotocol/client";
 import type { MCPOAuthClientInformation, MCPOAuthTokens } from "@/common/types/mcpOauth";
+
+interface StoredCredentialsSnapshot {
+  serverUrl: string;
+  updatedAtMs: number;
+  clientInformation?: MCPOAuthClientInformation;
+  tokens?: MCPOAuthTokens;
+}
+
+interface StoreSnapshot {
+  version: 2;
+  entries: Record<string, StoredCredentialsSnapshot>;
+}
 
 function getStoreFilePath(muxHome: string): string {
   return path.join(muxHome, "mcp-oauth.json");
@@ -26,6 +39,17 @@ describe("McpOauthService store", () => {
 
   const serverName = "test-server";
   const serverUrl = "https://example.com";
+  const authorizationServerUrl = "https://auth.example.com/";
+  const tokenEndpoint = "https://auth.example.com/token";
+  const discoveryState: OAuthDiscoveryState = {
+    authorizationServerUrl,
+    authorizationServerMetadata: {
+      issuer: authorizationServerUrl,
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: tokenEndpoint,
+      response_types_supported: ["code"],
+    },
+  };
 
   beforeEach(async () => {
     muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-home-"));
@@ -48,9 +72,30 @@ describe("McpOauthService store", () => {
     await fs.rm(projectPath, { recursive: true, force: true });
   });
 
-  async function readStoreFile(): Promise<unknown> {
+  async function readStoreFile(): Promise<StoreSnapshot> {
     const raw = await fs.readFile(getStoreFilePath(muxHome), "utf-8");
-    return JSON.parse(raw) as unknown;
+    return JSON.parse(raw) as StoreSnapshot;
+  }
+
+  async function seedStoredCredentials(input: {
+    clientInformation: MCPOAuthClientInformation;
+    tokens: MCPOAuthTokens;
+  }): Promise<void> {
+    await fs.writeFile(
+      getStoreFilePath(muxHome),
+      JSON.stringify({
+        version: 2,
+        entries: {
+          "https://example.com/": {
+            serverUrl,
+            updatedAtMs: Date.now(),
+            clientInformation: input.clientInformation,
+            tokens: input.tokens,
+          },
+        },
+      }),
+      "utf-8"
+    );
   }
 
   test("reading corrupt JSON store self-heals to empty", async () => {
@@ -254,6 +299,138 @@ describe("McpOauthService store", () => {
     expect(clientInformation?.authorization_server).toBe("https://auth.example.com/");
     expect(clientInformation?.token_endpoint).toBe("https://auth.example.com/token");
   });
+
+  test("saveTokens stamps the legacy binding from discovery state", async () => {
+    await seedStoredCredentials({
+      clientInformation: { client_id: "client-id", issuer: authorizationServerUrl },
+      tokens: {
+        access_token: "access-token",
+        token_type: "Bearer",
+        refresh_token: "refresh-token",
+        issuer: authorizationServerUrl,
+      },
+    });
+
+    const provider = await service.getAuthProviderForServer({ serverUrl });
+    expect(provider).toBeDefined();
+
+    await provider!.saveDiscoveryState?.(discoveryState);
+    await provider!.saveTokens({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      refresh_token: "new-refresh-token",
+      issuer: authorizationServerUrl,
+    });
+
+    const stored = (await readStoreFile()).entries["https://example.com/"];
+    expect(stored.tokens).toEqual({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      refresh_token: "new-refresh-token",
+      issuer: authorizationServerUrl,
+      authorization_server: authorizationServerUrl,
+      token_endpoint: tokenEndpoint,
+    });
+  });
+
+  test("saveTokens preserves the legacy binding without discovery state", async () => {
+    await seedStoredCredentials({
+      clientInformation: { client_id: "client-id" },
+      tokens: {
+        access_token: "access-token",
+        token_type: "Bearer",
+        refresh_token: "refresh-token",
+        authorization_server: authorizationServerUrl,
+        token_endpoint: tokenEndpoint,
+      },
+    });
+
+    const provider = await service.getAuthProviderForServer({ serverUrl });
+    expect(provider).toBeDefined();
+
+    await provider!.saveTokens({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      refresh_token: "new-refresh-token",
+      issuer: authorizationServerUrl,
+    });
+
+    const stored = (await readStoreFile()).entries["https://example.com/"];
+    expect(stored.tokens).toEqual({
+      access_token: "new-access-token",
+      token_type: "Bearer",
+      refresh_token: "new-refresh-token",
+      issuer: authorizationServerUrl,
+      authorization_server: authorizationServerUrl,
+      token_endpoint: tokenEndpoint,
+    });
+  });
+
+  test("saveClientInformation stamps the legacy binding from discovery state", async () => {
+    await seedStoredCredentials({
+      clientInformation: { client_id: "client-id", issuer: authorizationServerUrl },
+      tokens: {
+        access_token: "access-token",
+        token_type: "Bearer",
+        refresh_token: "refresh-token",
+        issuer: authorizationServerUrl,
+      },
+    });
+
+    const provider = await service.getAuthProviderForServer({ serverUrl });
+    expect(provider).toBeDefined();
+
+    await provider!.saveDiscoveryState?.(discoveryState);
+    await provider!.saveClientInformation?.({ client_id: "new-client-id" });
+
+    const stored = (await readStoreFile()).entries["https://example.com/"];
+    expect(stored.clientInformation).toEqual({
+      client_id: "new-client-id",
+      authorization_server: authorizationServerUrl,
+      token_endpoint: tokenEndpoint,
+    });
+  });
+
+  test.each([true, false])(
+    "partial discovery preserves only an existing complete binding (existing: %s)",
+    async (hasExistingBinding) => {
+      const existingBinding = hasExistingBinding
+        ? {
+            authorization_server: authorizationServerUrl,
+            token_endpoint: tokenEndpoint,
+          }
+        : {};
+      await seedStoredCredentials({
+        clientInformation: { client_id: "client-id" },
+        tokens: {
+          access_token: "access-token",
+          token_type: "Bearer",
+          refresh_token: "refresh-token",
+          ...existingBinding,
+        },
+      });
+
+      const provider = await service.getAuthProviderForServer({ serverUrl });
+      expect(provider).toBeDefined();
+
+      await provider!.saveDiscoveryState?.({ authorizationServerUrl });
+      await provider!.saveTokens({
+        access_token: "new-access-token",
+        token_type: "Bearer",
+        refresh_token: "new-refresh-token",
+        issuer: authorizationServerUrl,
+      });
+
+      const stored = (await readStoreFile()).entries["https://example.com/"];
+      expect(stored.tokens).toEqual({
+        access_token: "new-access-token",
+        token_type: "Bearer",
+        refresh_token: "new-refresh-token",
+        issuer: authorizationServerUrl,
+        ...existingBinding,
+      });
+    }
+  );
 
   test.each([
     // Corrupted: not a parseable URL.
