@@ -223,6 +223,20 @@ function sanitizeServerLabel(label: string): string {
 }
 
 /**
+ * Bounded, sanitized display form of a server name for model-facing output
+ * (overview lines and search-result serverName fields). The full name is kept
+ * internally for grouping and scoring only — anything sent to the model must
+ * be bounded, since a long name repeated across up to 25 search matches could
+ * inflate the tool result past provider limits.
+ */
+function displayServerLabel(server: string): string {
+  const sanitized = sanitizeServerLabel(server);
+  return sanitized.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
+    ? `${sanitized.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
+    : sanitized;
+}
+
+/**
  * Remove a previously appended catalog overview from a description, if any.
  * Removes exactly the marker-delimited generated region plus the separator we
  * emitted before it — nothing else. Hook-authored content outside the region
@@ -278,11 +292,7 @@ export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): 
       omittedServers += 1;
       continue;
     }
-    const sanitized = sanitizeServerLabel(server);
-    const label =
-      sanitized.length > OVERVIEW_MAX_SERVER_LABEL_CHARS
-        ? `${sanitized.slice(0, OVERVIEW_MAX_SERVER_LABEL_CHARS - 1)}…`
-        : sanitized;
+    const label = displayServerLabel(server);
     names.sort((a, b) => a.localeCompare(b));
     const shown = names.slice(0, OVERVIEW_MAX_TOOLS_PER_SERVER);
     const extra = names.length - shown.length;
@@ -418,7 +428,7 @@ function tokenize(text: string): string[] {
 export interface ToolSearchMatch {
   name: string;
   description: string;
-  /** Originating MCP server, when known. */
+  /** Bounded display label of the originating MCP server, when known. */
   serverName?: string;
 }
 
@@ -479,7 +489,9 @@ export function searchToolCatalog(
   return scored.slice(0, effectiveLimit).map(({ entry }) => ({
     name: entry.name,
     description: entry.description,
-    ...(entry.serverName !== undefined ? { serverName: entry.serverName } : {}),
+    // Display label, not the raw name: an unbounded server-map key repeated
+    // across up to 25 matches could inflate the result past provider limits.
+    ...(entry.serverName !== undefined ? { serverName: displayServerLabel(entry.serverName) } : {}),
   }));
 }
 

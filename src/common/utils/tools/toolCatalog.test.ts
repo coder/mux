@@ -343,6 +343,24 @@ describe("catalog advertising (overview + server names)", () => {
     expect(secondDescription.split("Deferred tool catalog overview").length - 1).toBe(1);
   });
 
+  test("search matches return a bounded server label, not the raw config key", () => {
+    const longServer = `github-${"x".repeat(300)}`;
+    const catalog: ToolCatalogEntry[] = [
+      {
+        name: "gh_create_issue",
+        description: "Create an issue",
+        paramText: "",
+        serverName: longServer,
+      },
+    ];
+    const matches = searchToolCatalog(catalog, "github");
+    expect(matches).toHaveLength(1);
+    expect(matches[0].serverName).toBeDefined();
+    expect(matches[0].serverName!.length).toBeLessThanOrEqual(64);
+    expect(matches[0].serverName).not.toBe(longServer);
+    expect(matches[0].serverName!.endsWith("…")).toBe(true);
+  });
+
   test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {
     const first = prepareToolSearch({
       tools: baseTools(),
