@@ -53,7 +53,7 @@
     "@ai-sdk/deepseek": "^3.0.7",
     "@ai-sdk/google": "^4.0.11",
     "@ai-sdk/moonshotai": "^3.0.15",
-    "@ai-sdk/openai": "^4.0.11",
+    "@ai-sdk/openai": "^4.0.43",
     "@ai-sdk/openai-compatible": "^3.0.7",
     "@ai-sdk/xai": "^4.0.37",
     "@aws-sdk/credential-providers": "^3.940.0",

@@ -1,5 +1,5 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { generateText, type Tool } from "ai";
+import { generateText, jsonSchema, streamText, tool, type Tool } from "ai";
 import { xai } from "@ai-sdk/xai";
 import { writeFile } from "node:fs/promises";
 import * as fs from "fs";
@@ -709,6 +709,120 @@ describe("ProviderModelFactory GitHub Copilot", () => {
         expect(result.data.routeProvider).toBe("github-copilot");
         expect(result.data.effectiveModelString).toBe("github-copilot:gpt-5.5");
         expect(result.data.model.constructor.name).toMatch(/OpenAIChatLanguageModel$/);
+      } finally {
+        PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
+      }
+    });
+  });
+
+  it("streams Copilot tool calls whose indexes start above zero", async () => {
+    await withTempConfig(async (config, factory) => {
+      const originalOpenAIRegistry = PROVIDER_REGISTRY.openai;
+
+      saveCopilotConfig(config, ["claude-sonnet-4.5"]);
+
+      PROVIDER_REGISTRY.openai = async () => {
+        const module = await originalOpenAIRegistry();
+        return {
+          ...module,
+          createOpenAI: (options) => {
+            const choiceChunk = (
+              delta: Record<string, unknown>,
+              finishReason: string | null = null
+            ) => ({
+              id: "chatcmpl_test",
+              object: "chat.completion.chunk",
+              created: 1,
+              model: "claude-sonnet-4.5",
+              choices: [{ index: 0, delta, finish_reason: finishReason }],
+            });
+            const chunks = [
+              choiceChunk({
+                role: "assistant",
+                tool_calls: [
+                  {
+                    index: 1,
+                    id: "call_1",
+                    type: "function",
+                    function: { name: "get_weather", arguments: "" },
+                  },
+                ],
+              }),
+              choiceChunk({
+                tool_calls: [
+                  {
+                    index: 1,
+                    function: { arguments: '{"location":' },
+                  },
+                ],
+              }),
+              choiceChunk({
+                tool_calls: [
+                  {
+                    index: 1,
+                    function: { arguments: '"Paris"}' },
+                  },
+                ],
+              }),
+              choiceChunk({}, "tool_calls"),
+              {
+                id: "chatcmpl_test",
+                object: "chat.completion.chunk",
+                created: 1,
+                model: "claude-sonnet-4.5",
+                choices: [],
+                usage: {
+                  prompt_tokens: 1,
+                  completion_tokens: 1,
+                  total_tokens: 2,
+                },
+              },
+            ];
+            const body = `${chunks.map((chunk) => `data: ${JSON.stringify(chunk)}`).join("\n\n")}\n\ndata: [DONE]\n\n`;
+            const mockFetch = Object.assign(
+              () =>
+                Promise.resolve(
+                  new Response(body, { headers: { "content-type": "text/event-stream" } })
+                ),
+              fetch
+            ) as typeof fetch;
+            return module.createOpenAI({ ...options, fetch: mockFetch });
+          },
+        };
+      };
+
+      try {
+        const result = await factory.createModel("github-copilot:claude-sonnet-4.5");
+        expect(result.success).toBe(true);
+        if (!result.success) {
+          return;
+        }
+
+        const stream = streamText({
+          model: result.data,
+          prompt: "What is the weather in Paris?",
+          tools: {
+            get_weather: tool({
+              inputSchema: jsonSchema<{ location: string }>({
+                type: "object",
+                properties: { location: { type: "string" } },
+                required: ["location"],
+                additionalProperties: false,
+              }),
+            }),
+          },
+        });
+        const parts = [];
+        for await (const part of stream.fullStream) {
+          parts.push(part);
+        }
+
+        expect(parts.filter((part) => part.type === "error")).toEqual([]);
+        const toolCallParts = parts.filter((part) => part.type === "tool-call");
+        expect(toolCallParts).toHaveLength(1);
+        expect(toolCallParts[0]?.toolName).toBe("get_weather");
+        expect(toolCallParts[0]?.input).toEqual({ location: "Paris" });
+        expect(parts.find((part) => part.type === "finish")?.finishReason).toBe("tool-calls");
       } finally {
         PROVIDER_REGISTRY.openai = originalOpenAIRegistry;
       }
