@@ -195,6 +195,7 @@ export interface AgentTaskTimestamps {
 }
 
 type WorkspaceLifecycleResult = z.infer<typeof TaskWorkspaceLifecycleToolTargetResultSchema>;
+type RemoveInactiveAgentTaskResult = Exclude<WorkspaceLifecycleResult, { status: "not_found" }>;
 
 export interface TaskCreateArgs {
   parentWorkspaceId: string;
@@ -616,6 +617,10 @@ export interface DescendantAgentTaskInfo {
   executionStatus?: WorkspaceTurnTaskStatus;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  /** Effective owning workflow run for this task branch, inherited through workflow ancestry. */
+  workflowRunId?: string;
+  /** Workspace session that persists the effective owning workflow run. */
+  workflowOwnerWorkspaceId?: string;
   depth: number;
 }
 
@@ -690,7 +695,7 @@ const WORKSPACE_TURN_STALE_RESTART_ERROR = "Workspace turn interrupted after res
  * Settled workspace-turn records eligible for self-heal correction (resettle from a
  * correlated stream-end, or read-time repair/revive): transient stream-error settlements
  * (status "error") and stale restart-recovery interrupts. Explicit interrupts — user Esc,
- * task_terminate, cancel reasons — must stay terminal even if a late correlated stream-end
+ * task_stop, cancel reasons — must stay terminal even if a late correlated stream-end
  * or same-turn retry evidence arrives, so canceled work never resurfaces as completed.
  */
 function isSelfHealEligibleSettledWorkspaceTurn(
@@ -2096,6 +2101,38 @@ export class TaskService {
       return await this.workspaceTreeLifecycleLocks.withLock(rootId, () => acquire(index + 1));
     };
     return await acquire(0);
+  }
+
+  async withWorkspaceOwnedWorkStartLock<T>(
+    workspaceId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    assert(workspaceId.length > 0, "withWorkspaceOwnedWorkStartLock requires workspaceId");
+    return await this.withTaskTreeLifecycleLock(workspaceId, async () => {
+      {
+        await using _lock = await this.mutex.acquire();
+        const entry = findWorkspaceEntry(this.config.loadConfigOrDefault(), workspaceId);
+        if (entry == null) {
+          throw new Error("Cannot start workflow work from a missing workspace");
+        }
+        if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
+          throw new Error("Cannot start workflow work from an archived workspace");
+        }
+        if (
+          entry?.workspace.taskStatus === "interrupted" &&
+          !isActiveWorkspaceTurnTaskStatus(entry.workspace.taskExecutionStatus)
+        ) {
+          throw new Error("Cannot start workflow work after task_stop");
+        }
+        if (
+          entry?.workspace.taskStatus === "reported" &&
+          !isActiveWorkspaceTurnTaskStatus(entry.workspace.taskExecutionStatus)
+        ) {
+          throw new Error("Cannot start workflow work after agent_report");
+        }
+      }
+      return await operation();
+    });
   }
 
   private async editWorkspaceEntry(
@@ -4447,7 +4484,10 @@ export class TaskService {
           taskIndex.parentById,
           ancestorWorkspaceId,
           taskId
-        )
+        ) ||
+        // Workflow-owned workers are private implementation details; their lifecycle is consumed
+        // through the owning workflow run rather than direct parent task tools.
+        this.isWorkflowOwnedTaskUsingIndex(taskIndex, taskId)
       ) {
         return Err({ code: "invalid_scope" as const });
       }
@@ -4490,7 +4530,8 @@ export class TaskService {
             taskIndex.parentById,
             ancestorWorkspaceId,
             taskId
-          )
+          ) ||
+          this.isWorkflowOwnedTaskUsingIndex(taskIndex, taskId)
         ) {
           return Err({ code: "invalid_scope" as const });
         }
@@ -4659,14 +4700,46 @@ export class TaskService {
 
   async stopDescendantAgentTask(
     ancestorWorkspaceId: string,
-    taskId: string
+    taskId: string,
+    options?: { beforeStop?: () => Promise<string | null> }
   ): Promise<Result<{ stoppedTaskIds: string[] }, string>> {
     assert(ancestorWorkspaceId.length > 0, "stopDescendantAgentTask: ancestorWorkspaceId required");
     assert(taskId.length > 0, "stopDescendantAgentTask: taskId required");
 
-    return await this.withTaskTreeLifecycleLock(taskId, () =>
-      this.stopDescendantAgentTaskUnderLifecycleLock(ancestorWorkspaceId, taskId)
-    );
+    return await this.withTaskTreeLifecycleLock(taskId, async () => {
+      const scopeResult = await this.validateDirectDescendantAgentTaskScope(
+        ancestorWorkspaceId,
+        taskId
+      );
+      if (!scopeResult.success) {
+        return scopeResult;
+      }
+      const beforeStopError = await options?.beforeStop?.();
+      if (beforeStopError != null) {
+        return Err(beforeStopError);
+      }
+      return await this.stopDescendantAgentTaskUnderLifecycleLock(ancestorWorkspaceId, taskId);
+    });
+  }
+
+  private async validateDirectDescendantAgentTaskScope(
+    ancestorWorkspaceId: string,
+    taskId: string
+  ): Promise<Result<void, string>> {
+    await using _lock = await this.mutex.acquire();
+    const cfg = this.config.loadConfigOrDefault();
+    const entry = findWorkspaceEntry(cfg, taskId);
+    if (!entry?.workspace.parentWorkspaceId) {
+      return Err("Task not found");
+    }
+    const index = this.buildAgentTaskIndex(cfg);
+    if (
+      !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId) ||
+      this.isWorkflowOwnedTaskUsingIndex(index, taskId)
+    ) {
+      return Err("Task is not a descendant of this workspace");
+    }
+    return Ok(undefined);
   }
 
   private async stopDescendantAgentTaskUnderLifecycleLock(
@@ -4685,12 +4758,20 @@ export class TaskService {
       }
       const index = this.buildAgentTaskIndex(cfg);
       if (
-        !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId)
+        !this.isDescendantAgentTaskUsingParentById(index.parentById, ancestorWorkspaceId, taskId) ||
+        this.isWorkflowOwnedTaskUsingIndex(index, taskId)
       ) {
         return Err("Task is not a descendant of this workspace");
       }
 
-      const taskIds = [taskId, ...this.listDescendantAgentTaskIdsFromIndex(index, taskId)];
+      const taskIds = [
+        taskId,
+        ...this.listDescendantAgentTaskIdsFromIndex(index, taskId).filter(
+          // Workflow-owned branches are stopped through WorkflowService so the durable run and
+          // its workers transition together; direct tree stopping must not mutate them behind it.
+          (descendantTaskId) => !this.isWorkflowOwnedTaskUsingIndex(index, descendantTaskId)
+        ),
+      ];
       taskIds.sort(
         (left, right) =>
           this.getTaskDepthFromParentById(index.parentById, right) -
@@ -5142,7 +5223,11 @@ export class TaskService {
    */
   async terminateAllDescendantAgentTasks(
     workspaceId: string,
-    options?: { workflowRunId?: string }
+    options?: {
+      workflowRunId?: string;
+      cleanupWorkspaceBackgroundProcesses?: (workspaceId: string) => Promise<void>;
+      deferWorkflowSweep?: boolean;
+    }
   ): Promise<string[]> {
     assert(
       workspaceId.length > 0,
@@ -5201,6 +5286,18 @@ export class TaskService {
           log.debug("terminateAllDescendantAgentTasks: stopStream threw", { taskId: id, error });
         }
 
+        // Stop the worker stream before taking the final process snapshot: a background bash tool
+        // can register its process while the stream is still winding down. Cleanup remains
+        // best-effort so a disposal failure cannot block task status teardown.
+        try {
+          await options?.cleanupWorkspaceBackgroundProcesses?.(id);
+        } catch (error: unknown) {
+          log.warn("terminateAllDescendantAgentTasks: background cleanup failed", {
+            taskId: id,
+            error: getErrorMessage(error),
+          });
+        }
+
         let preservedCompletedDescendant = false;
         let transitionedToInterrupted = false;
         let parentWorkspaceId: string | undefined;
@@ -5248,7 +5345,7 @@ export class TaskService {
       await this.emitWorkspaceMetadata(taskId);
     }
 
-    if (options?.workflowRunId != null) {
+    if (options?.workflowRunId != null && options.deferWorkflowSweep !== true) {
       // Run-scoped interrupts arrive after the owning run's terminal status write
       // (WorkflowService.interruptRun aborts the runner, persists "interrupted", THEN
       // terminates descendants), so the children just interrupted above can be archived
@@ -8317,7 +8414,7 @@ export class TaskService {
   async interruptWorkspaceTurn(
     ownerWorkspaceId: string,
     handleId: string
-  ): Promise<Result<{ workspaceId: string }, string>> {
+  ): Promise<Result<{ workspaceId: string; alreadyInactive?: boolean }, string>> {
     let workspaceId: string | undefined;
     let shouldClearQueuedPrompt = false;
     let shouldStopStream = false;
@@ -8328,8 +8425,12 @@ export class TaskService {
       if (record == null) {
         return Err("Workspace turn not found or out of scope");
       }
-      if (record.status === "completed" || record.status === "error") {
-        return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
+      if (
+        record.status === "completed" ||
+        record.status === "error" ||
+        record.status === "interrupted"
+      ) {
+        return Ok({ workspaceId: record.workspaceId, alreadyInactive: true });
       }
 
       workspaceId = record.workspaceId;
@@ -8361,7 +8462,10 @@ export class TaskService {
       return Ok({ workspaceId: record.workspaceId });
     });
 
-    if (!result.success) {
+    if (
+      !result.success ||
+      ("alreadyInactive" in result.data && result.data.alreadyInactive === true)
+    ) {
       return result;
     }
 
@@ -8430,10 +8534,64 @@ export class TaskService {
     return Ok(didUnarchive);
   }
 
+  private async removeArchivedWorkflowOwnedDescendantsUnderLifecycleLock(
+    taskId: string
+  ): Promise<Result<void, string>> {
+    const config = this.config.loadConfigOrDefault();
+    const index = this.buildAgentTaskIndex(config);
+    const candidateTaskIds = this.listDescendantAgentTaskIdsFromIndex(index, taskId).filter(
+      (descendantTaskId) => {
+        const descendant = index.byId.get(descendantTaskId);
+        return (
+          descendant != null &&
+          this.isWorkflowOwnedTaskUsingIndex(index, descendantTaskId) &&
+          isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt)
+        );
+      }
+    );
+    candidateTaskIds.sort(
+      (left, right) =>
+        this.getTaskDepthFromParentById(index.parentById, right) -
+        this.getTaskDepthFromParentById(index.parentById, left)
+    );
+
+    for (const descendantTaskId of candidateTaskIds) {
+      const freshConfig = this.config.loadConfigOrDefault();
+      const freshIndex = this.buildAgentTaskIndex(freshConfig);
+      const descendant = freshIndex.byId.get(descendantTaskId);
+      if (
+        descendant == null ||
+        !this.isWorkflowOwnedTaskUsingIndex(freshIndex, descendantTaskId) ||
+        !isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt)
+      ) {
+        continue;
+      }
+      if (this.isActiveAgentTaskEntry(descendant) || this.aiService.isStreaming(descendantTaskId)) {
+        return Err(`Archived workflow-owned descendant ${descendantTaskId} is still active.`);
+      }
+      if ((freshIndex.childrenByParent.get(descendantTaskId) ?? []).length > 0) {
+        continue;
+      }
+
+      const tombstoneResult = await this.persistRemovedAgentTaskTombstones(descendantTaskId);
+      if (!tombstoneResult.success) {
+        return tombstoneResult;
+      }
+      const removeResult = await this.workspaceService.removeWhileTaskTreeLocked(
+        descendantTaskId,
+        true
+      );
+      if (!removeResult.success) {
+        return Err(removeResult.error);
+      }
+    }
+    return Ok(undefined);
+  }
+
   async removeInactiveDescendantAgentTask(
     ownerWorkspaceId: string,
     taskId: string
-  ): Promise<Result<WorkspaceLifecycleResult, string>> {
+  ): Promise<Result<RemoveInactiveAgentTaskResult, string>> {
     assert(ownerWorkspaceId.length > 0, "removeInactiveDescendantAgentTask requires owner");
     assert(taskId.length > 0, "removeInactiveDescendantAgentTask requires taskId");
 
@@ -8452,7 +8610,10 @@ export class TaskService {
       }
 
       const index = this.buildAgentTaskIndex(config);
-      if (!this.isDescendantAgentTaskUsingParentById(index.parentById, ownerWorkspaceId, taskId)) {
+      if (
+        !this.isDescendantAgentTaskUsingParentById(index.parentById, ownerWorkspaceId, taskId) ||
+        this.isWorkflowOwnedTaskUsingIndex(index, taskId)
+      ) {
         return Ok({ status: "invalid_scope", action: "remove", taskId });
       }
 
@@ -8462,17 +8623,6 @@ export class TaskService {
         workspaceId: taskId,
         ...(displayName != null ? { displayName } : {}),
       };
-      const descendantTaskIds = this.listDescendantAgentTasks(taskId).map((task) => task.taskId);
-      if (descendantTaskIds.length > 0) {
-        return Ok({
-          status: "error",
-          action: "remove",
-          ...target,
-          descendantTaskIds,
-          error: "Cannot remove a sub-agent while descendant sub-agents remain.",
-        });
-      }
-
       if (
         this.isActiveAgentTaskEntry({ ...entry.workspace, projectPath: entry.projectPath }) ||
         this.aiService.isStreaming(taskId)
@@ -8483,6 +8633,52 @@ export class TaskService {
           ...target,
           activeTaskIds: [taskId],
           note: "Stop the sub-agent before removing it.",
+        });
+      }
+
+      const descendantTaskIds = this.listDescendantAgentTasks(taskId).map((task) => task.taskId);
+      const blockingDescendantTaskIds = descendantTaskIds.filter((descendantTaskId) => {
+        const descendant = index.byId.get(descendantTaskId);
+        return (
+          descendant == null ||
+          !this.isWorkflowOwnedTaskUsingIndex(index, descendantTaskId) ||
+          !isWorkspaceArchived(descendant.archivedAt, descendant.unarchivedAt) ||
+          this.isActiveAgentTaskEntry(descendant) ||
+          this.aiService.isStreaming(descendantTaskId)
+        );
+      });
+      if (blockingDescendantTaskIds.length > 0) {
+        return Ok({
+          status: "error",
+          action: "remove",
+          ...target,
+          descendantTaskIds,
+          error: "Cannot remove a sub-agent while descendant sub-agents remain.",
+        });
+      }
+
+      // Workflow-owned workers are hidden from public lifecycle tools, but their archived
+      // workspaces must not permanently block an otherwise-eligible parent removal.
+      const workflowCleanupResult =
+        await this.removeArchivedWorkflowOwnedDescendantsUnderLifecycleLock(taskId);
+      if (!workflowCleanupResult.success) {
+        return Ok({
+          status: "error",
+          action: "remove",
+          ...target,
+          error: workflowCleanupResult.error,
+        });
+      }
+      const remainingDescendantTaskIds = this.listDescendantAgentTasks(taskId).map(
+        (task) => task.taskId
+      );
+      if (remainingDescendantTaskIds.length > 0) {
+        return Ok({
+          status: "error",
+          action: "remove",
+          ...target,
+          descendantTaskIds: remainingDescendantTaskIds,
+          error: "Cannot remove a sub-agent while descendant sub-agents remain.",
         });
       }
 
@@ -8602,6 +8798,9 @@ export class TaskService {
       );
 
       const workflowOwned = next.workflowOwned || entry.workflowTask != null;
+      const workflowOwner = workflowOwned
+        ? this.findWorkflowTaskOwnerInAncestry(index, next.taskId)
+        : null;
       const status: AgentTaskStatus = entry.taskStatus ?? "running";
       if (
         (!statusFilter || statusFilter.has(status)) &&
@@ -8617,6 +8816,14 @@ export class TaskService {
           createdAt: entry.createdAt,
           executionTaskId: entry.taskExecutionId,
           executionStatus: entry.taskExecutionStatus,
+          ...(workflowOwner != null
+            ? {
+                workflowRunId: workflowOwner.workflowTask.runId,
+                ...(workflowOwner.workspace.parentWorkspaceId != null
+                  ? { workflowOwnerWorkspaceId: workflowOwner.workspace.parentWorkspaceId }
+                  : {}),
+              }
+            : {}),
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
           depth: next.depth,

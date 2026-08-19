@@ -197,7 +197,7 @@ export interface WorkflowTaskAdapter {
     spec: WorkflowApplyPatchSpec,
     options?: { abortSignal?: AbortSignal }
   ): Promise<unknown>;
-  interruptRun?(): Promise<void>;
+  interruptRun?(options?: { deferTaskSweep?: boolean }): Promise<void>;
   /**
    * Called when the run reaches a terminal state. Not called when the run is
    * backgrounded (the background continuation re-enters run()) or when the
@@ -208,6 +208,9 @@ export interface WorkflowTaskAdapter {
 
 export interface WorkflowRunnerRunOptions {
   onLeaseAcquired?: () => void;
+  shouldDeferRunEnded?: () => boolean;
+  onRunEndedDeferred?: () => void;
+  onRunningStatusPersisted?: () => void;
   abortSignal?: AbortSignal;
   backgroundOnMessageQueued?: boolean;
   allowResumeFromInterrupted?: boolean;
@@ -401,7 +404,11 @@ export class WorkflowRunner {
     assert(runId.length > 0, "WorkflowRunner.run: runId is required");
     try {
       const result = await this.runWithLease(runId, options);
-      await this.taskAdapter.onRunEnded?.();
+      if (options?.shouldDeferRunEnded?.() === true) {
+        options.onRunEndedDeferred?.();
+      } else {
+        await this.taskAdapter.onRunEnded?.();
+      }
       return result;
     } catch (error) {
       // Backgrounding is not terminal (the background continuation re-enters
@@ -411,7 +418,11 @@ export class WorkflowRunner {
         error instanceof WorkflowRunBackgroundedError ||
         (error instanceof Error && error.message === `Workflow run is already active: ${runId}`);
       if (!keepsHold) {
-        await this.taskAdapter.onRunEnded?.();
+        if (options?.shouldDeferRunEnded?.() === true) {
+          options.onRunEndedDeferred?.();
+        } else {
+          await this.taskAdapter.onRunEnded?.();
+        }
       }
       throw error;
     }
@@ -524,6 +535,8 @@ export class WorkflowRunner {
           allowFailedCheckpointRetry: retryingFailedRun,
         }
       );
+
+      options?.onRunningStatusPersisted?.();
 
       let runtime: IJSRuntime | undefined;
       try {

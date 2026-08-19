@@ -128,6 +128,7 @@ describe("router workflow routes", () => {
       config,
       aiService: {
         waitForInit: mock(async () => undefined),
+        cleanupWorkspaceBackgroundProcesses: mock(async () => undefined),
         getWorkspaceMetadata: mock(async () => ({
           success: true,
           data: {
@@ -149,7 +150,13 @@ describe("router workflow routes", () => {
         getWorkflowContinuationSendOptions: mock(() => null),
         sendMessage: mock(async () => ({ success: true, data: undefined })),
       },
-      taskService: {},
+      taskService: {
+        withWorkspaceOwnedWorkStartLock: mock(
+          async <T>(_workspaceId: string, operation: () => Promise<T>) => await operation()
+        ),
+        terminateAllDescendantAgentTasks: mock(async () => []),
+        markWorkflowRunEnded: mock(async () => undefined),
+      },
       experimentsService: {
         isExperimentEnabled: mock(() => options.enabled),
       },
@@ -616,6 +623,9 @@ export default function workflow() { return { reportMarkdown: "should not run" }
 
     let waitCalls = 0;
     context.taskService = {
+      withWorkspaceOwnedWorkStartLock: mock(
+        async <T>(_workspaceId: string, operation: () => Promise<T>) => await operation()
+      ),
       create: mock(async () => ({ success: true, data: { taskId: "task_slow" } })),
       waitForAgentReport: mock(async () => {
         waitCalls += 1;
@@ -624,6 +634,8 @@ export default function workflow() { return { reportMarkdown: "should not run" }
         }
         return { reportMarkdown: "done", structuredOutput: {} };
       }),
+      terminateAllDescendantAgentTasks: mock(async () => []),
+      markWorkflowRunEnded: mock(async () => undefined),
     } as unknown as ORPCContext["taskService"];
 
     const client = createRouterClient(router(), { context });

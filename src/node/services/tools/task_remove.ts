@@ -43,7 +43,6 @@ export const createTaskRemoveTool: ToolFactory = (config: ToolConfiguration) => 
           case "removed":
           case "already_removed":
           case "active":
-          case "not_found":
           case "invalid_scope":
             results.push({
               status: data.status,

@@ -463,6 +463,8 @@ export async function resolveWorkflowContext(
         options.notifyInterruptedBackgroundRunTerminal === true,
       runStore: new WorkflowRunStore({ sessionDir: context.config.getSessionDir(workspaceId) }),
       runtimeFactory: context.workflowRuntimeFactory,
+      withRunStartLock: (ownerWorkspaceId, operation) =>
+        context.taskService.withWorkspaceOwnedWorkStartLock(ownerWorkspaceId, operation),
       taskAdapterFactory: (runId, workflowName) =>
         new WorkflowTaskServiceAdapter({
           taskService: context.taskService,
@@ -478,6 +480,8 @@ export async function resolveWorkflowContext(
             workspaceSessionDir: context.config.getSessionDir(workspaceId),
             trusted: projectTrusted,
           },
+          cleanupWorkspaceBackgroundProcesses: (taskWorkspaceId) =>
+            context.aiService.cleanupWorkspaceBackgroundProcesses(taskWorkspaceId),
           getProjectTrusted: resolveWorkflowProjectTrusted,
           experiments: {
             dynamicWorkflows: true,

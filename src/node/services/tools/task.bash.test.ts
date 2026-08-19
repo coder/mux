@@ -306,8 +306,37 @@ describe("bash + task_* (background bash tasks)", () => {
     });
   });
 
-  it("task_terminate can terminate bash tasks", async () => {
-    using tempDir = new TestTempDir("test-task-terminate-bash");
+  it("task_stop rejects bash tasks from workflow-owned descendants", async () => {
+    using tempDir = new TestTempDir("test-task-stop-bash-workflow-owned");
+
+    const getProcess = mock(() => ({ id: "workflow-proc", workspaceId: "workflow-task" }));
+    const terminate = mock(() => ({ success: true as const }));
+    const backgroundProcessManager = {
+      getProcess,
+      terminate,
+    } as unknown as BackgroundProcessManager;
+    const taskService = {
+      isDescendantAgentTask: mock(() => Promise.resolve(true)),
+      isWorkflowOwnedDescendantAgentTask: mock(() => Promise.resolve(true)),
+    } as unknown as TaskService;
+    const tool = createTaskStopTool({
+      ...createTestToolConfig(tempDir.path, { workspaceId: "ws-1" }),
+      backgroundProcessManager,
+      taskService,
+    });
+
+    expect(
+      await Promise.resolve(
+        tool.execute!({ task_ids: ["bash:workflow-proc"] }, mockToolCallOptions)
+      )
+    ).toEqual({
+      results: [{ status: "invalid_scope", taskId: "bash:workflow-proc" }],
+    });
+    expect(terminate).not.toHaveBeenCalled();
+  });
+
+  it("task_stop can stop bash tasks", async () => {
+    using tempDir = new TestTempDir("test-task-stop-bash");
 
     const getProcess = mock(() => ({ id: "proc-1", workspaceId: "ws-1" }));
     const terminate = mock(() => ({ success: true as const }));

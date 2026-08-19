@@ -55,6 +55,8 @@ export interface WorkflowServiceOptions {
   generateRunId?: () => string;
   // Delayed crash-recovery retries must use current trust, not the value captured when scheduled.
   getCurrentProjectTrusted?: () => boolean | Promise<boolean>;
+  /** Serialize durable run creation with workspace/task lifecycle transitions. */
+  withRunStartLock?: <T>(workspaceId: string, operation: () => Promise<T>) => Promise<T>;
   /** Stable prefix; WorkflowService appends run identity and a nonce for each lease owner. */
   runnerId: string;
   clock?: WorkflowRunnerClock;
@@ -129,6 +131,10 @@ export class WorkflowService {
   private readonly notifyInterruptedBackgroundRunTerminal: boolean;
   private readonly generateRunId: () => string;
   private readonly getCurrentProjectTrusted?: () => boolean | Promise<boolean>;
+  private readonly withRunStartLock?: <T>(
+    workspaceId: string,
+    operation: () => Promise<T>
+  ) => Promise<T>;
   private readonly runnerId: string;
   private readonly clock?: WorkflowRunnerClock;
 
@@ -151,6 +157,7 @@ export class WorkflowService {
       options.notifyInterruptedBackgroundRunTerminal === true;
     this.generateRunId = options.generateRunId ?? generateWorkflowRunId;
     this.getCurrentProjectTrusted = options.getCurrentProjectTrusted;
+    this.withRunStartLock = options.withRunStartLock;
     this.runnerId = options.runnerId;
     this.clock = options.clock;
   }
@@ -242,12 +249,73 @@ export class WorkflowService {
     }
   }
 
-  async interruptRun(input: { workspaceId: string; runId: string }): Promise<WorkflowRunRecord> {
-    return await this.interruptRunTree(input, new Set(), false);
+  async interruptRun(input: {
+    workspaceId: string;
+    runId: string;
+    deferTaskSweep?: boolean;
+    lockAlreadyHeld?: boolean;
+    retryTaskCleanup?: boolean;
+    onRunInterrupted?: (runId: string) => void;
+  }): Promise<WorkflowRunRecord> {
+    const interruptedRunIds: string[] = [];
+    const interrupt = async () =>
+      await this.interruptRunTree(
+        {
+          workspaceId: input.workspaceId,
+          runId: input.runId,
+          retryTaskCleanup: input.retryTaskCleanup,
+          onRunInterrupted: (runId) => {
+            interruptedRunIds.push(runId);
+            input.onRunInterrupted?.(runId);
+          },
+        },
+        new Set(),
+        false
+      );
+
+    let result: WorkflowRunRecord | undefined;
+    let operationError: unknown;
+    try {
+      result =
+        input.lockAlreadyHeld === true
+          ? await interrupt()
+          : await this.withWorkflowRunStartLock(input.workspaceId, interrupt);
+    } catch (error: unknown) {
+      operationError = error;
+    }
+
+    if (input.deferTaskSweep !== true) {
+      await this.sweepInterruptedRunTasks(interruptedRunIds);
+    }
+    if (operationError != null) {
+      throw operationError instanceof Error
+        ? operationError
+        : new Error(getErrorMessage(operationError));
+    }
+    assert(result != null, "WorkflowService.interruptRun: result is required");
+    return result;
+  }
+
+  private async sweepInterruptedRunTasks(runIds: readonly string[]): Promise<void> {
+    for (const runId of new Set(runIds)) {
+      try {
+        await (this.taskAdapterFactory?.(runId) ?? this.requireTaskAdapter()).onRunEnded?.();
+      } catch (error: unknown) {
+        log.warn("WorkflowService: interrupted workflow task sweep failed", {
+          runId,
+          error: getErrorMessage(error),
+        });
+      }
+    }
   }
 
   private async interruptRunTree(
-    input: { workspaceId: string; runId: string },
+    input: {
+      workspaceId: string;
+      runId: string;
+      retryTaskCleanup?: boolean;
+      onRunInterrupted?: (runId: string) => void;
+    },
     visitedRunIds: Set<string>,
     skipTerminalRun: boolean
   ): Promise<WorkflowRunRecord> {
@@ -256,6 +324,14 @@ export class WorkflowService {
       return run;
     }
     visitedRunIds.add(input.runId);
+    if (run.status === "interrupted" && input.retryTaskCleanup === true) {
+      input.onRunInterrupted?.(input.runId);
+      await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.({
+        deferTaskSweep: true,
+      });
+      await this.interruptChildWorkflowRuns(input, visitedRunIds);
+      return run;
+    }
     if (skipTerminalRun && isTerminalWorkflowRunStatus(run.status)) {
       return run;
     }
@@ -280,8 +356,11 @@ export class WorkflowService {
         this.clock?.nowIso() ?? new Date().toISOString()
       );
       settleStatusWrite();
+      input.onRunInterrupted?.(input.runId);
       await this.notifyRunStatusChanged(interrupted);
-      await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.();
+      await (this.taskAdapterFactory?.(input.runId) ?? this.requireTaskAdapter()).interruptRun?.({
+        deferTaskSweep: true,
+      });
       await this.interruptChildWorkflowRuns(input, visitedRunIds);
       return interrupted;
     } finally {
@@ -293,24 +372,44 @@ export class WorkflowService {
   }
 
   private async interruptChildWorkflowRuns(
-    input: { workspaceId: string; runId: string },
+    input: {
+      workspaceId: string;
+      runId: string;
+      retryTaskCleanup?: boolean;
+      onRunInterrupted?: (runId: string) => void;
+    },
     visitedRunIds: Set<string>
   ): Promise<void> {
     const childRuns = (await this.runStore.listRunStatusSnapshots()).filter(
       (snapshot) =>
         snapshot.workspaceId === input.workspaceId &&
         snapshot.parentWorkflow?.runId === input.runId &&
-        !isTerminalWorkflowRunStatus(snapshot.status)
+        (!isTerminalWorkflowRunStatus(snapshot.status) ||
+          (input.retryTaskCleanup === true && snapshot.status === "interrupted"))
     );
     for (const childRun of childRuns) {
       // Child workflow runs from older workflow scripts are still persisted separately;
       // interrupting the parent must also stop their run-scoped agents before returning.
       await this.interruptRunTree(
-        { workspaceId: input.workspaceId, runId: childRun.id },
+        {
+          workspaceId: input.workspaceId,
+          runId: childRun.id,
+          retryTaskCleanup: input.retryTaskCleanup,
+          onRunInterrupted: input.onRunInterrupted,
+        },
         visitedRunIds,
         true
       );
     }
+  }
+
+  private async withWorkflowRunStartLock<T>(
+    workspaceId: string,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    return this.withRunStartLock != null
+      ? await this.withRunStartLock(workspaceId, operation)
+      : await operation();
   }
 
   async retryRunFromCheckpointInBackground(input: {
@@ -318,18 +417,20 @@ export class WorkflowService {
     runId: string;
     projectTrusted: boolean;
   }): Promise<StartNamedWorkflowResult> {
-    const run = await this.requireRunForWorkspace(input);
-    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
-    assertWorkflowRunCanRetryFromCheckpoint(run);
-    // A checkpoint retry dispatched in the background is non-blocking just like background resume:
-    // persist notify_on_terminal before starting the background runner.
-    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
-    await this.runInBackground(input.runId, "Background workflow checkpoint retry failed:", {
-      allowRetryFromFailedCheckpoint: true,
-      projectTrusted: input.projectTrusted,
+    return await this.withWorkflowRunStartLock(input.workspaceId, async () => {
+      const run = await this.requireRunForWorkspace(input);
+      assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
+      assertWorkflowRunCanRetryFromCheckpoint(run);
+      // Hold the workspace lifecycle lock until the background runner acquires its lease. A
+      // concurrent task_stop then either wins before dispatch or sees this run as active.
+      await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
+      await this.runInBackground(input.runId, "Background workflow checkpoint retry failed:", {
+        allowRetryFromFailedCheckpoint: true,
+        projectTrusted: input.projectTrusted,
+      });
+      await this.notifyRunStatusChanged(run, "running");
+      return { runId: input.runId, status: "running", result: null };
     });
-    await this.notifyRunStatusChanged(run, "running");
-    return { runId: input.runId, status: "running", result: null };
   }
 
   async resumeRunInBackground(input: {
@@ -337,18 +438,76 @@ export class WorkflowService {
     runId: string;
     projectTrusted: boolean;
   }): Promise<StartNamedWorkflowResult> {
-    const run = await this.requireRunForWorkspace(input);
-    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
-    assertWorkflowRunCanTransition(run.status, "running");
-    // A run resumed in the background becomes non-blocking; persist so future stream-ends do not
-    // re-force a task_await even if the run was originally started in the foreground.
-    await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
-    await this.runInBackground(input.runId, "Background workflow resume failed:", {
-      allowResumeFromInterrupted: run.status === "interrupted",
-      projectTrusted: input.projectTrusted,
+    return await this.withWorkflowRunStartLock(input.workspaceId, async () => {
+      const run = await this.requireRunForWorkspace(input);
+      assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
+      assertWorkflowRunCanTransition(run.status, "running");
+      // A run resumed in the background becomes non-blocking; persist so future stream-ends do not
+      // re-force a task_await even if the run was originally started in the foreground.
+      await this.runStore.setAttentionPolicy(input.runId, "notify_on_terminal");
+      await this.runInBackground(input.runId, "Background workflow resume failed:", {
+        allowResumeFromInterrupted: run.status === "interrupted",
+        projectTrusted: input.projectTrusted,
+      });
+      await this.notifyRunStatusChanged(run, "running");
+      return { runId: input.runId, status: "running", result: null };
     });
-    await this.notifyRunStatusChanged(run, "running");
-    return { runId: input.runId, status: "running", result: null };
+  }
+
+  private async dispatchForegroundRunWithStartLock(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+    validateRun: (run: WorkflowRunRecord) => void;
+    runnerOptions: (
+      run: WorkflowRunRecord
+    ) => Pick<
+      WorkflowRunnerRunOptions,
+      "allowResumeFromInterrupted" | "allowRetryFromFailedCheckpoint"
+    >;
+    backgroundedFailureMessage: string;
+  }): Promise<StartNamedWorkflowResult> {
+    const startLockState = { held: true };
+    const deferredInterruptRunIds: string[] = [];
+    const dispatch = await this.withWorkflowRunStartLock(input.workspaceId, async () => {
+      try {
+        const run = await this.requireRunForWorkspace(input);
+        assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
+        input.validateRun(run);
+
+        const started = Promise.withResolvers<void>();
+        const resultPromise = this.runForegroundWithAbortInterrupt({
+          workspaceId: input.workspaceId,
+          run,
+          projectTrusted: input.projectTrusted,
+          abortSignal: input.abortSignal,
+          runnerOptions: input.runnerOptions(run),
+          backgroundedFailureMessage: input.backgroundedFailureMessage,
+          onRunningStatusPersisted: started.resolve,
+          startLockState: {
+            isHeld: () => startLockState.held,
+            onRunInterrupted: (runId) => deferredInterruptRunIds.push(runId),
+          },
+        });
+        // Do not hold the task-tree lock for the full foreground workflow. Release once the runner
+        // persists running status, or once an early failure settles the dispatch.
+        await Promise.race([
+          started.promise,
+          resultPromise.then(
+            () => undefined,
+            () => undefined
+          ),
+        ]);
+        return { resultPromise };
+      } finally {
+        // Set this before the mutex callback returns: an abort racing with release can safely wait
+        // for the lock, while an earlier abort avoids self-deadlock by using the held-lock path.
+        startLockState.held = false;
+      }
+    });
+    await this.sweepInterruptedRunTasks(deferredInterruptRunIds);
+    return await dispatch.resultPromise;
   }
 
   async resumeRun(input: {
@@ -357,15 +516,12 @@ export class WorkflowService {
     projectTrusted: boolean;
     abortSignal?: AbortSignal;
   }): Promise<StartNamedWorkflowResult> {
-    const run = await this.requireRunForWorkspace(input);
-    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
-    assertWorkflowRunCanTransition(run.status, "running");
-    return await this.runForegroundWithAbortInterrupt({
-      workspaceId: input.workspaceId,
-      run,
-      projectTrusted: input.projectTrusted,
-      abortSignal: input.abortSignal,
-      runnerOptions: { allowResumeFromInterrupted: run.status === "interrupted" },
+    return await this.dispatchForegroundRunWithStartLock({
+      ...input,
+      validateRun: (run) => assertWorkflowRunCanTransition(run.status, "running"),
+      runnerOptions: (run) => ({
+        allowResumeFromInterrupted: run.status === "interrupted",
+      }),
       backgroundedFailureMessage: "Backgrounded workflow resume failed:",
     });
   }
@@ -376,15 +532,10 @@ export class WorkflowService {
     projectTrusted: boolean;
     abortSignal?: AbortSignal;
   }): Promise<StartNamedWorkflowResult> {
-    const run = await this.requireRunForWorkspace(input);
-    assertRunCanResumeWithCurrentTrust(run, input.projectTrusted);
-    assertWorkflowRunCanRetryFromCheckpoint(run);
-    return await this.runForegroundWithAbortInterrupt({
-      workspaceId: input.workspaceId,
-      run,
-      projectTrusted: input.projectTrusted,
-      abortSignal: input.abortSignal,
-      runnerOptions: { allowRetryFromFailedCheckpoint: true },
+    return await this.dispatchForegroundRunWithStartLock({
+      ...input,
+      validateRun: assertWorkflowRunCanRetryFromCheckpoint,
+      runnerOptions: () => ({ allowRetryFromFailedCheckpoint: true }),
       backgroundedFailureMessage: "Backgrounded workflow checkpoint retry failed:",
     });
   }
@@ -403,6 +554,11 @@ export class WorkflowService {
       "allowResumeFromInterrupted" | "allowRetryFromFailedCheckpoint"
     >;
     backgroundedFailureMessage: string;
+    startLockState?: {
+      isHeld: () => boolean;
+      onRunInterrupted: (runId: string) => void;
+    };
+    onRunningStatusPersisted?: () => void;
   }): Promise<StartNamedWorkflowResult> {
     const runId = input.run.id;
     if (isAbortSignalAborted(input.abortSignal)) {
@@ -411,17 +567,22 @@ export class WorkflowService {
       throw new Error(`Workflow run interrupted: ${runId}`);
     }
 
-    await this.notifyRunStatusChanged(input.run, "running");
-
     const runnerAbortController = new AbortController();
     let unregisterRunnerAbort: () => void = () => undefined;
     const abortInterrupt = this.interruptRunOnAbort(
       input.workspaceId,
       runId,
       input.abortSignal,
-      runnerAbortController
+      runnerAbortController,
+      input.startLockState
     );
     try {
+      await this.notifyRunStatusChanged(input.run, "running");
+      if (input.abortSignal?.aborted === true) {
+        await abortInterrupt.wait();
+        throw new Error(`Workflow run interrupted: ${runId}`);
+      }
+
       const runner = await this.createRunner(runId);
       const result = await runner.run(runId, {
         abortSignal: runnerAbortController.signal,
@@ -431,6 +592,13 @@ export class WorkflowService {
             runnerAbortController
           );
         },
+        ...(input.startLockState != null
+          ? {
+              shouldDeferRunEnded: input.startLockState.isHeld,
+              onRunEndedDeferred: () => input.startLockState?.onRunInterrupted(runId),
+            }
+          : {}),
+        onRunningStatusPersisted: input.onRunningStatusPersisted,
         ...input.runnerOptions,
       });
       await this.notifyRunStatusChanged(input.run, "completed");
@@ -468,24 +636,26 @@ export class WorkflowService {
   }
 
   async startWorkflowInBackground(input: StartWorkflowInput): Promise<StartNamedWorkflowResult> {
-    const createdRun = await this.createWorkflowRun({
-      ...input,
-      attentionPolicy: "notify_on_terminal",
+    return await this.withWorkflowRunStartLock(input.workspaceId, async () => {
+      const createdRun = await this.createWorkflowRunUnlocked({
+        ...input,
+        attentionPolicy: "notify_on_terminal",
+      });
+      const runId = createdRun.id;
+      await this.notifyRunStatusChanged(createdRun);
+      await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
+      const run = await this.runStore.appendStatus(
+        runId,
+        "running",
+        this.clock?.nowIso() ?? new Date().toISOString()
+      );
+      await this.notifyRunStatusChanged(run);
+      await input.onBackgroundRunCreated?.({ runId, status: "running", result: null, run });
+      void this.runInBackground(runId, "Background workflow run failed:", {
+        projectTrusted: input.projectTrusted,
+      }).catch(() => undefined);
+      return { runId, status: "running", result: null };
     });
-    const runId = createdRun.id;
-    await this.notifyRunStatusChanged(createdRun);
-    await input.onRunCreated?.({ runId, status: "pending", result: null, run: createdRun });
-    const run = await this.runStore.appendStatus(
-      runId,
-      "running",
-      this.clock?.nowIso() ?? new Date().toISOString()
-    );
-    await this.notifyRunStatusChanged(run);
-    await input.onBackgroundRunCreated?.({ runId, status: "running", result: null, run });
-    void this.runInBackground(runId, "Background workflow run failed:", {
-      projectTrusted: input.projectTrusted,
-    }).catch(() => undefined);
-    return { runId, status: "running", result: null };
   }
 
   async startWorkflow(input: StartWorkflowInput): Promise<StartNamedWorkflowResult> {
@@ -654,24 +824,68 @@ export class WorkflowService {
     workspaceId: string,
     runId: string,
     abortSignal: AbortSignal | undefined,
-    runnerAbortController: AbortController | undefined
+    runnerAbortController: AbortController | undefined,
+    startLockState?: {
+      isHeld: () => boolean;
+      onRunInterrupted: (runId: string) => void;
+    }
   ): { remove: () => void; wait: () => Promise<void> } {
     if (abortSignal == null) {
       return { remove: () => undefined, wait: () => Promise.resolve() };
     }
     let interruptPromise: Promise<void> | null = null;
+    let interruptStarted = false;
+    const getLockOptions = () =>
+      startLockState?.isHeld() === true
+        ? {
+            lockAlreadyHeld: true as const,
+            deferTaskSweep: true as const,
+            onRunInterrupted: startLockState.onRunInterrupted,
+          }
+        : {};
     const interrupt = () => {
+      if (interruptStarted) {
+        return;
+      }
+      interruptStarted = true;
       // Cancel the coordinator before interrupt side effects can block on task cleanup or disk I/O.
       runnerAbortController?.abort();
       interruptPromise = (async () => {
         try {
-          await this.interruptRun({ workspaceId, runId });
-        } catch {
-          // The run may have completed or failed before the abort event was delivered.
+          await this.interruptRun({ workspaceId, runId, ...getLockOptions() });
+        } catch (error: unknown) {
+          const run = await this.getRun({ workspaceId, runId });
+          if (run?.status === "completed" || run?.status === "failed") {
+            return;
+          }
+          if (run?.status === "interrupted") {
+            try {
+              await this.interruptRun({
+                workspaceId,
+                runId,
+                retryTaskCleanup: true,
+                ...getLockOptions(),
+              });
+              return;
+            } catch (retryError: unknown) {
+              // A resume can win between the interrupted re-read and cleanup retry. Ignore only
+              // terminal completion/failure; if the run remains interrupted, preserve the cleanup
+              // failure so callers know workflow-owned workers may still need repair.
+              const latestRun = await this.getRun({ workspaceId, runId });
+              if (latestRun?.status === "completed" || latestRun?.status === "failed") {
+                return;
+              }
+              throw retryError;
+            }
+          }
+          throw error;
         }
       })();
     };
     abortSignal.addEventListener("abort", interrupt, { once: true });
+    if (abortSignal.aborted) {
+      interrupt();
+    }
     return {
       remove: () => abortSignal.removeEventListener("abort", interrupt),
       wait: async () => {
@@ -681,6 +895,12 @@ export class WorkflowService {
   }
 
   private async createWorkflowRun(input: StartWorkflowInput): Promise<WorkflowRunRecord> {
+    return await this.withWorkflowRunStartLock(input.workspaceId, async () =>
+      this.createWorkflowRunUnlocked(input)
+    );
+  }
+
+  private async createWorkflowRunUnlocked(input: StartWorkflowInput): Promise<WorkflowRunRecord> {
     assert(
       input.workspaceId.length > 0,
       "WorkflowService.createWorkflowRun: workspaceId is required"
@@ -744,16 +964,18 @@ export class WorkflowService {
         runId,
         runnerAbortController
       );
-      markStarted();
     };
     const runPromise = runner
       .run(runId, {
         abortSignal: runnerAbortController.signal,
         onLeaseAcquired: markLeaseAcquired,
+        onRunningStatusPersisted: markStarted,
         backgroundOnMessageQueued: false,
         ...runnerOptions,
       })
       .then(async (result) => {
+        // Completed runs can return before another running-status append; unblock startup waiters.
+        markStarted();
         await this.notifyRunStatusChanged(runStatus, "completed");
         await this.notifyBackgroundRunTerminal(runId, result);
       })

@@ -138,7 +138,7 @@ In a workflow, the verifier becomes `agent(prompt, { id, schema, onRefusal: "fai
 ## Sequential protocol (only for dependency chains)
 
 1. Spawn the prerequisite `exec` implementation task with `run_in_background: false`.
-2. If step 1 returns `queued`/`running` without a completed report, call `task_await` with the returned `taskId` before attempting any patch apply. If step 1 returns `status: completed` inline, that same `taskId` still requires patch application.
+2. If step 1 returns `queued`/`running` without a completed report, call `task_await({ task_ids: [result.taskId] })` before attempting any patch apply. If step 1 returns `status: completed` inline, that same `taskId` still requires patch application.
 3. Dry-run apply its patch (`dry_run: true`); then apply for real (`dry_run: false`). If either step fails, follow the conflict playbook above (including `git am --abort` only when a real apply leaves a git-am session in progress).
 4. Only then spawn the dependent task.
 

@@ -102,7 +102,11 @@ interface WorkflowTaskServiceLike {
   ): Promise<void>;
   terminateAllDescendantAgentTasks?(
     workspaceId: string,
-    options?: { workflowRunId?: string }
+    options?: {
+      workflowRunId?: string;
+      cleanupWorkspaceBackgroundProcesses?: (workspaceId: string) => Promise<void>;
+      deferWorkflowSweep?: boolean;
+    }
   ): Promise<string[]>;
   markWorkflowRunEnded?(workflowRunId: string): Promise<void>;
 }
@@ -129,6 +133,7 @@ export interface WorkflowTaskServiceAdapterOptions {
   patchToolConfig?: TaskApplyGitPatchConfiguration;
   applyPatchArtifact?: WorkflowPatchArtifactApplier;
   getProjectTrusted?: () => boolean | Promise<boolean>;
+  cleanupWorkspaceBackgroundProcesses?: (workspaceId: string) => Promise<void>;
 }
 
 export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
@@ -140,6 +145,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
   private readonly patchToolConfig?: TaskApplyGitPatchConfiguration;
   private readonly applyPatchArtifact?: WorkflowPatchArtifactApplier;
   private readonly getProjectTrusted?: () => boolean | Promise<boolean>;
+  private readonly cleanupWorkspaceBackgroundProcesses?: (workspaceId: string) => Promise<void>;
   private readonly patchApplyMutex = new AsyncMutex();
   private readonly experiments?: WorkflowTaskExperiments;
   private readonly modelString?: string;
@@ -166,6 +172,7 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     this.patchToolConfig = options.patchToolConfig;
     this.applyPatchArtifact = options.applyPatchArtifact;
     this.getProjectTrusted = options.getProjectTrusted;
+    this.cleanupWorkspaceBackgroundProcesses = options.cleanupWorkspaceBackgroundProcesses;
     this.experiments = options.experiments;
     this.modelString = options.modelString;
     this.thinkingLevel = options.thinkingLevel;
@@ -338,9 +345,13 @@ export class WorkflowTaskServiceAdapter implements WorkflowTaskAdapter {
     return undefined;
   }
 
-  async interruptRun(): Promise<void> {
+  async interruptRun(options?: { deferTaskSweep?: boolean }): Promise<void> {
     await this.taskService.terminateAllDescendantAgentTasks?.(this.parentWorkspaceId, {
       workflowRunId: this.workflowRunId,
+      ...(this.cleanupWorkspaceBackgroundProcesses != null
+        ? { cleanupWorkspaceBackgroundProcesses: this.cleanupWorkspaceBackgroundProcesses }
+        : {}),
+      ...(options?.deferTaskSweep === true ? { deferWorkflowSweep: true } : {}),
     });
   }
 

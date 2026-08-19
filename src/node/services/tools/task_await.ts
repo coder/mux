@@ -93,17 +93,6 @@ function withElapsedMs(elapsedMs: number | undefined): { elapsed_ms?: number } {
   return elapsedMs == null ? {} : { elapsed_ms: elapsedMs };
 }
 
-function buildTaskAwaitSequencingError(taskId: string, suggestedTaskIds: string[]) {
-  return {
-    status: "error" as const,
-    taskId,
-    error:
-      "Do not call task_await in the same parallel tool-call batch as task or bash. " +
-      "Wait for the spawning tool result first, then call task_await in a later step. " +
-      `Use one of these returned task IDs instead: ${suggestedTaskIds.join(", ")}.`,
-  };
-}
-
 function parseWorkflowRun(value: unknown): WorkflowRunRecord {
   return WorkflowRunRecordSchema.parse(value);
 }
@@ -770,19 +759,15 @@ export const createTaskAwaitTool: ToolFactory = (config: ToolConfiguration) => {
 
         if (!descendantAgentTaskIdSet.has(taskId)) {
           const lookup = rejectedAgentTaskStatuses.get(taskId);
-          const activeTaskIds =
-            activeDescendantAgentTaskIds.length > 0 ? activeDescendantAgentTaskIds : undefined;
-          if (requestedIds) {
-            const suggestedTaskIds = dedupeStrings([
-              ...activeDescendantAgentTaskIds,
-              ...(await listInScopeWorkspaceTurnTaskIds().catch(() => [])),
-              ...(await getSuggestionBashTaskIds()),
-              ...(await getSuggestionWorkflowRunIds()),
-            ]);
-            if (suggestedTaskIds.length > 0) {
-              return buildTaskAwaitSequencingError(taskId, suggestedTaskIds);
-            }
-          }
+          const suggestedTaskIds = requestedIds
+            ? dedupeStrings([
+                ...activeDescendantAgentTaskIds,
+                ...(await listInScopeWorkspaceTurnTaskIds().catch(() => [])),
+                ...(await getSuggestionBashTaskIds()),
+                ...(await getSuggestionWorkflowRunIds()),
+              ])
+            : activeDescendantAgentTaskIds;
+          const activeTaskIds = suggestedTaskIds.length > 0 ? suggestedTaskIds : undefined;
           if (!lookup?.exists) {
             return { status: "not_found" as const, taskId, activeTaskIds };
           }

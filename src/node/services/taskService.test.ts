@@ -2121,6 +2121,18 @@ describe("TaskService", () => {
     expect(aiMocks.stopStream).not.toHaveBeenCalled();
   });
 
+  test("interruptWorkspaceTurn is idempotent after interruption", async () => {
+    const { parentId, taskService, aiMocks } = await startWorkspaceTurnForTest();
+
+    expect(await taskService.interruptWorkspaceTurn(parentId, "wst_handle")).toEqual(
+      Ok({ workspaceId: "childworkspace" })
+    );
+    expect(await taskService.interruptWorkspaceTurn(parentId, "wst_handle")).toEqual(
+      Ok({ workspaceId: "childworkspace", alreadyInactive: true })
+    );
+    expect(aiMocks.stopStream).toHaveBeenCalledTimes(1);
+  });
+
   test("createWorkspaceTurn reserves a slot before queueing a manually busy existing workspace", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["queuedhandle", "queuedturn"]);
@@ -5300,7 +5312,7 @@ describe("TaskService", () => {
 
   test("late correlated stream-end does not resettle an explicitly interrupted workspace turn", async () => {
     const { config, parentId, taskService } = await startWorkspaceTurnForTest();
-    // Explicit interrupt (user Esc / task_terminate): status interrupted WITHOUT the
+    // Explicit interrupt (user Esc / task_stop): status interrupted WITHOUT the
     // stale-restart marker. An in-flight stream-end completing after the cancel must not
     // make the canceled turn appear completed.
     await new TaskHandleStore(config).upsertWorkspaceTurn({
@@ -11852,6 +11864,97 @@ describe("TaskService", () => {
     expect(updateTitle).not.toHaveBeenCalled();
   });
 
+  test("direct lifecycle operations reject workflow-owned descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-workflow-owned-lifecycle";
+    const workflowChildId = "workflow-owned-lifecycle-root";
+    const messageChildId = "workflow-owned-message-child";
+    const stopChildId = "workflow-owned-stop-child";
+    const removeChildId = "workflow-owned-remove-child";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "workflow-child", workflowChildId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          workflowTask: { runId: "wfr_lifecycle", stepId: "step" },
+        }),
+        projectWorkspace(projectPath, "message-child", messageChildId, {
+          parentWorkspaceId: workflowChildId,
+          taskStatus: "queued",
+          taskPrompt: "Original workflow-owned assignment",
+        }),
+        projectWorkspace(projectPath, "stop-child", stopChildId, {
+          parentWorkspaceId: workflowChildId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "remove-child", removeChildId, {
+          parentWorkspaceId: workflowChildId,
+          taskStatus: "reported",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const { taskService } = createTaskServiceHarness(config);
+
+    expect(
+      await taskService.sendMessageToDescendantAgentTask(
+        parentWorkspaceId,
+        messageChildId,
+        "Bypass the owning workflow",
+        "tool-end"
+      )
+    ).toEqual(Err({ code: "invalid_scope" }));
+    expect(await taskService.stopDescendantAgentTask(parentWorkspaceId, stopChildId)).toEqual(
+      Err("Task is not a descendant of this workspace")
+    );
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(parentWorkspaceId, removeChildId)
+    ).toMatchObject({ success: true, data: { status: "invalid_scope" } });
+  });
+
+  test("stopDescendantAgentTask leaves workflow-owned descendant branches to WorkflowService", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-stop-workflow-branch";
+    const childTaskId = "user-owned-stop-root";
+    const workflowChildId = "workflow-owned-stop-descendant";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "workflow-child", workflowChildId, {
+          parentWorkspaceId: childTaskId,
+          taskStatus: "running",
+          workflowTask: { runId: "wfr_stop_branch", stepId: "step" },
+        }),
+      ],
+      testTaskSettings()
+    );
+    const stopStream = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const { aiService } = createAIServiceMocks(config, {
+      isStreaming: mock(() => true),
+      stopStream,
+    });
+    const { taskService } = createTaskServiceHarness(config, { aiService });
+
+    expect(await taskService.stopDescendantAgentTask(parentWorkspaceId, childTaskId)).toEqual(
+      Ok({ stoppedTaskIds: [childTaskId] })
+    );
+    expect(stopStream).toHaveBeenCalledTimes(1);
+    expect(stopStream).toHaveBeenCalledWith(childTaskId, { abandonPartial: false });
+    expect(findWorkspaceInConfig(config, childTaskId)?.taskStatus).toBe("interrupted");
+    expect(findWorkspaceInConfig(config, workflowChildId)?.taskStatus).toBe("running");
+  });
+
   test("retitleDescendantAgentTask surfaces title update failures", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");
@@ -12901,13 +13004,30 @@ describe("TaskService", () => {
     await stopStarted;
 
     const creation = createAgentTask(taskService, childTaskId, "Spawn after stop");
+    const createWorkflowRun = mock(() => Promise.resolve("created"));
+    const workflowCreation = taskService.withWorkspaceOwnedWorkStartLock(
+      childTaskId,
+      createWorkflowRun
+    );
     await Promise.resolve();
     expect(create).not.toHaveBeenCalled();
+    expect(createWorkflowRun).not.toHaveBeenCalled();
 
     releaseStop?.();
     expect(await stopping).toEqual(Ok({ stoppedTaskIds: [childTaskId] }));
     expect(await creation).toEqual(Err("Task.create: cannot spawn new tasks after task_stop"));
+    let workflowCreationError: unknown;
+    try {
+      await workflowCreation;
+    } catch (error: unknown) {
+      workflowCreationError = error;
+    }
+    expect(workflowCreationError).toBeInstanceOf(Error);
+    expect((workflowCreationError as Error).message).toBe(
+      "Cannot start workflow work after task_stop"
+    );
     expect(create).not.toHaveBeenCalled();
+    expect(createWorkflowRun).not.toHaveBeenCalled();
   });
 
   test("bulk task creation waits for task stop and rejects the interrupted parent", async () => {
@@ -13048,6 +13168,25 @@ describe("TaskService", () => {
       );
     expect(nestedTasks).toHaveLength(3);
     expect(nestedTasks.every((workspace) => workspace.taskStatus === "queued")).toBe(true);
+  });
+
+  test("withWorkspaceOwnedWorkStartLock rejects missing workspaces", async () => {
+    const config = await createTestConfig(rootDir);
+    const { taskService } = createTaskServiceHarness(config);
+    const operation = mock(() => Promise.resolve("started"));
+
+    let startError: unknown;
+    try {
+      await taskService.withWorkspaceOwnedWorkStartLock("removed-workspace", operation);
+    } catch (error: unknown) {
+      startError = error;
+    }
+
+    expect(startError).toBeInstanceOf(Error);
+    expect((startError as Error).message).toBe(
+      "Cannot start workflow work from a missing workspace"
+    );
+    expect(operation).not.toHaveBeenCalled();
   });
 
   test("task tree lifecycle locks serialize descendants with their ancestor", async () => {
@@ -13258,6 +13397,112 @@ describe("TaskService", () => {
         "tool-end"
       )
     ).toEqual(Err({ code: "not_found" }));
+  });
+
+  test("removeInactiveDescendantAgentTask removes archived workflow-owned descendants with their user-owned parent", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const ownerWorkspaceId = "owner-remove-archived-workflow";
+    const parentTaskId = "parent-remove-archived-workflow";
+    const workflowTaskId = "workflow-remove-archived-child";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "owner", ownerWorkspaceId),
+        projectWorkspace(projectPath, "parent", parentTaskId, {
+          parentWorkspaceId: ownerWorkspaceId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "workflow-child", workflowTaskId, {
+          parentWorkspaceId: parentTaskId,
+          taskStatus: "interrupted",
+          workflowTask: { runId: "wfr_remove_archived", stepId: "worker" },
+          archivedAt: "2026-08-16T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const remove = mock(async (workspaceId: string): Promise<Result<void>> => {
+      await removeWorkspaceFromTestConfig(config, workspaceId);
+      return Ok(undefined);
+    });
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(ownerWorkspaceId, parentTaskId)
+    ).toMatchObject({ success: true, data: { status: "removed", taskId: parentTaskId } });
+    expect(remove.mock.calls.map((call) => call[0])).toEqual([workflowTaskId, parentTaskId]);
+    expect(findWorkspaceInConfig(config, workflowTaskId)).toBeUndefined();
+    expect(findWorkspaceInConfig(config, parentTaskId)).toBeUndefined();
+  });
+
+  test("rejected parent removals preserve archived workflow-owned descendants", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const ownerWorkspaceId = "owner-preserve-archived-workflow";
+    const activeParentId = "active-parent-preserve-workflow";
+    const activeWorkflowChildId = "active-parent-workflow-child";
+    const blockedParentId = "blocked-parent-preserve-workflow";
+    const userChildId = "blocked-parent-user-child";
+    const blockedWorkflowChildId = "blocked-parent-workflow-child";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "owner", ownerWorkspaceId),
+        projectWorkspace(projectPath, "active-parent", activeParentId, {
+          parentWorkspaceId: ownerWorkspaceId,
+          taskStatus: "running",
+        }),
+        projectWorkspace(projectPath, "active-workflow-child", activeWorkflowChildId, {
+          parentWorkspaceId: activeParentId,
+          taskStatus: "interrupted",
+          workflowTask: { runId: "wfr_active_parent", stepId: "worker" },
+          archivedAt: "2026-08-16T00:00:00.000Z",
+        }),
+        projectWorkspace(projectPath, "blocked-parent", blockedParentId, {
+          parentWorkspaceId: ownerWorkspaceId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "user-child", userChildId, {
+          parentWorkspaceId: blockedParentId,
+          taskStatus: "reported",
+        }),
+        projectWorkspace(projectPath, "blocked-workflow-child", blockedWorkflowChildId, {
+          parentWorkspaceId: blockedParentId,
+          taskStatus: "interrupted",
+          workflowTask: { runId: "wfr_blocked_parent", stepId: "worker" },
+          archivedAt: "2026-08-16T00:00:00.000Z",
+        }),
+      ],
+      testTaskSettings()
+    );
+    const remove = mock((): Promise<Result<void>> => Promise.resolve(Ok(undefined)));
+    const { workspaceService } = createWorkspaceServiceMocks({ remove });
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    expect(
+      await taskService.removeInactiveDescendantAgentTask(ownerWorkspaceId, activeParentId)
+    ).toMatchObject({ success: true, data: { status: "active", taskId: activeParentId } });
+    const blockedRemoval = await taskService.removeInactiveDescendantAgentTask(
+      ownerWorkspaceId,
+      blockedParentId
+    );
+    expect(blockedRemoval).toMatchObject({
+      success: true,
+      data: { status: "error", taskId: blockedParentId },
+    });
+    if (!blockedRemoval.success || blockedRemoval.data.status !== "error") {
+      throw new Error("Expected blocked parent removal to return an error lifecycle result");
+    }
+    expect(new Set(blockedRemoval.data.descendantTaskIds ?? [])).toEqual(
+      new Set([userChildId, blockedWorkflowChildId])
+    );
+    expect(remove).not.toHaveBeenCalled();
+    expect(findWorkspaceInConfig(config, activeWorkflowChildId)).toBeTruthy();
+    expect(findWorkspaceInConfig(config, blockedWorkflowChildId)).toBeTruthy();
   });
 
   test("requestAgentFinalReportForTimeout records finalization token only after prompt send succeeds", async () => {
@@ -13860,15 +14105,37 @@ describe("TaskService", () => {
       testTaskSettings()
     );
 
-    const { aiService } = createAIServiceMocks(config);
+    const lifecycleEvents: string[] = [];
+    const stopStream = mock((workspaceId: string): Promise<Result<void>> => {
+      lifecycleEvents.push(`stop:${workspaceId}`);
+      return Promise.resolve(Ok(undefined));
+    });
+    const { aiService } = createAIServiceMocks(config, { stopStream });
     const { workspaceService } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const cleanupWorkspaceBackgroundProcesses = mock((workspaceId: string): Promise<void> => {
+      lifecycleEvents.push(`cleanup:${workspaceId}`);
+      return workspaceId === workflowChildTaskId
+        ? Promise.reject(new Error("background cleanup failed"))
+        : Promise.resolve();
+    });
 
     const interruptedTaskIds = await taskService.terminateAllDescendantAgentTasks(rootWorkspaceId, {
       workflowRunId: "wfr_target",
+      cleanupWorkspaceBackgroundProcesses,
     });
 
     expect(interruptedTaskIds).toEqual([workflowChildTaskId, workflowTaskId]);
+    expect(lifecycleEvents).toEqual([
+      `stop:${workflowChildTaskId}`,
+      `cleanup:${workflowChildTaskId}`,
+      `stop:${workflowTaskId}`,
+      `cleanup:${workflowTaskId}`,
+    ]);
+    expect(cleanupWorkspaceBackgroundProcesses.mock.calls.map((call) => call[0])).toEqual([
+      workflowChildTaskId,
+      workflowTaskId,
+    ]);
     const saved = config.loadConfigOrDefault();
     const tasks = saved.projects.get(projectPath)?.workspaces ?? [];
     expect(tasks.find((workspace) => workspace.id === workflowTaskId)?.taskStatus).toBe(
@@ -13917,9 +14184,18 @@ describe("TaskService", () => {
     const { workspaceService } = createWorkspaceServiceMocks();
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    expect(
-      new Set(taskService.listDescendantAgentTasks(rootWorkspaceId).map((task) => task.taskId))
-    ).toEqual(new Set([regularTaskId, workflowChildTaskId, workflowTaskId]));
+    const descendants = taskService.listDescendantAgentTasks(rootWorkspaceId);
+    expect(new Set(descendants.map((task) => task.taskId))).toEqual(
+      new Set([regularTaskId, workflowChildTaskId, workflowTaskId])
+    );
+    expect(descendants.find((task) => task.taskId === workflowTaskId)).toMatchObject({
+      workflowRunId: "wfr_target",
+      workflowOwnerWorkspaceId: rootWorkspaceId,
+    });
+    expect(descendants.find((task) => task.taskId === workflowChildTaskId)).toMatchObject({
+      workflowRunId: "wfr_target",
+      workflowOwnerWorkspaceId: rootWorkspaceId,
+    });
     expect(
       taskService
         .listDescendantAgentTasks(rootWorkspaceId, {
@@ -14774,7 +15050,7 @@ describe("TaskService", () => {
     expect(userInterrupted?.taskStatus).toBe("interrupted");
   });
 
-  test("terminateAllDescendantAgentTasks archives run-scoped interrupted children immediately", async () => {
+  test("terminateAllDescendantAgentTasks can defer run-scoped archive sweeps", async () => {
     const config = await createTestConfig(rootDir);
 
     const projectPath = path.join(rootDir, "repo");
@@ -14814,14 +15090,18 @@ describe("TaskService", () => {
     const { workspaceService } = createWorkspaceServiceMocks({ archive });
     const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
 
-    // Run-scoped interrupt (WorkflowService.interruptRun path): the sweep archives the
-    // freshly interrupted workflow child even if the runner's onRunEnded hook already
-    // fired before the children were interrupted.
-    await taskService.terminateAllDescendantAgentTasks(rootId, { workflowRunId });
+    // task_stop can already hold the non-reentrant tree lock while interrupting the owning run.
+    // Defer archive work until that outer lock releases, then run the normal idempotent sweep.
+    await taskService.terminateAllDescendantAgentTasks(rootId, {
+      workflowRunId,
+      deferWorkflowSweep: true,
+    });
 
-    const workflowChild = findWorkspaceInConfig(config, workflowChildId);
-    expect(workflowChild?.taskStatus).toBe("interrupted");
-    expect(workflowChild?.archivedAt).toBeString();
+    expect(findWorkspaceInConfig(config, workflowChildId)?.taskStatus).toBe("interrupted");
+    expect(findWorkspaceInConfig(config, workflowChildId)?.archivedAt).toBeUndefined();
+
+    await taskService.markWorkflowRunEnded(workflowRunId);
+    expect(findWorkspaceInConfig(config, workflowChildId)?.archivedAt).toBeString();
 
     // The run-scoped filter leaves the user-spawned sibling running and unarchived.
     const userChild = findWorkspaceInConfig(config, userChildId);

@@ -631,6 +631,57 @@ describe("WorkflowTaskServiceAdapter", () => {
     });
   });
 
+  test("can defer the workflow task sweep when the caller already holds the tree lock", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const terminateAllDescendantAgentTasks = mock(async () => ["task_1"]);
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport, terminateAllDescendantAgentTasks },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+    });
+
+    await adapter.interruptRun({ deferTaskSweep: true });
+
+    expect(terminateAllDescendantAgentTasks).toHaveBeenCalledWith("parent_1", {
+      workflowRunId: "wfr_123",
+      deferWorkflowSweep: true,
+    });
+  });
+
+  test("cleans background processes for workflow-owned task workspaces during interruption", async () => {
+    const create = mock(async () =>
+      Ok({ taskId: "task_1", kind: "agent" as const, status: "running" as const })
+    );
+    const waitForAgentReport = mock(async () => ({ reportMarkdown: "unused" }));
+    const cleanupWorkspaceBackgroundProcesses = mock(async () => undefined);
+    const terminateAllDescendantAgentTasks = mock(
+      async (
+        _workspaceId: string,
+        options?: {
+          cleanupWorkspaceBackgroundProcesses?: (workspaceId: string) => Promise<void>;
+        }
+      ) => {
+        await options?.cleanupWorkspaceBackgroundProcesses?.("workflow-task");
+        return ["workflow-task"];
+      }
+    );
+    const adapter = new WorkflowTaskServiceAdapter({
+      taskService: { create, waitForAgentReport, terminateAllDescendantAgentTasks },
+      parentWorkspaceId: "parent_1",
+      workflowRunId: "wfr_123",
+      defaultAgentId: "explore",
+      cleanupWorkspaceBackgroundProcesses,
+    });
+
+    await adapter.interruptRun();
+
+    expect(cleanupWorkspaceBackgroundProcesses).toHaveBeenCalledWith("workflow-task");
+  });
+
   test("fails fast when task creation fails", async () => {
     const create = mock(async () => ({ success: false as const, error: "no runnable agent" }));
     const waitForAgentReport = mock(async () => ({ reportMarkdown: "should not wait" }));

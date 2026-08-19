@@ -2,7 +2,7 @@
 import * as crypto from "node:crypto";
 import * as path from "node:path";
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import assert from "@/common/utils/assert";
 import { WORKFLOW_CHECKPOINT_RETRY_ERROR_MESSAGE } from "@/common/utils/workflowRetryEligibility";
 import { ForegroundWaitBackgroundedError } from "@/node/services/taskService";
@@ -28,6 +28,75 @@ function createScript(
 }
 
 describe("WorkflowService", () => {
+  test("does not create a durable run when the workspace lifecycle lock rejects startup", async () => {
+    using tmp = new DisposableTempDir("workflow-service-run-creation-lock");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    const withRunStartLock = mock(async () => {
+      throw new Error("Cannot start workflow work after task_stop");
+    });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      withRunStartLock,
+      generateRunId: () => "wfr_rejected_start",
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.startWorkflow({
+        script: createScript("export default function workflow() { return 'unused'; }"),
+        workspaceId: "workspace-1",
+        projectTrusted: true,
+        args: {},
+      })
+    ).rejects.toThrow("Cannot start workflow work after task_stop");
+    expect(withRunStartLock).toHaveBeenCalledTimes(1);
+    expect(await runStore.listRunStatusSnapshots()).toEqual([]);
+  });
+
+  test("does not resume a durable run when the workspace lifecycle lock rejects startup", async () => {
+    using tmp = new DisposableTempDir("workflow-service-resume-lock");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_rejected_resume",
+      workspaceId: "workspace-1",
+      workflow: { name: "demo", description: "Demo", scope: "project", executable: true },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_rejected_resume", "interrupted", "2026-05-29T00:00:01.000Z");
+    const withRunStartLock = mock(async () => {
+      throw new Error("Cannot start workflow work after task_stop");
+    });
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      withRunStartLock,
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.resumeRunInBackground({
+        workspaceId: "workspace-1",
+        runId: "wfr_rejected_resume",
+        projectTrusted: true,
+      })
+    ).rejects.toThrow("Cannot start workflow work after task_stop");
+    expect(withRunStartLock).toHaveBeenCalledTimes(1);
+    expect((await runStore.getRun("wfr_rejected_resume")).status).toBe("interrupted");
+  });
+
   test("starts an explicit script workflow and persists the resolved source snapshot", async () => {
     using tmp = new DisposableTempDir("workflow-service-script-path");
     const source = `export default function workflow({ args }) {
@@ -294,6 +363,57 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     });
   });
 
+  test("holds the lifecycle lock until a background start is durably running", async () => {
+    using tmp = new DisposableTempDir("workflow-service-background-start-lock");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    let lockHeld = false;
+    const events: string[] = [];
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+      },
+      withRunStartLock: async (_workspaceId, operation) => {
+        lockHeld = true;
+        events.push("lock:start");
+        try {
+          return await operation();
+        } finally {
+          events.push("lock:end");
+          lockHeld = false;
+        }
+      },
+      generateRunId: () => "wfr_background_lock",
+      runnerId: "runner-a",
+    });
+
+    await service.startWorkflowInBackground({
+      script: createScript(
+        `export default function workflow() { return { reportMarkdown: "done" }; }\n`
+      ),
+      workspaceId: "workspace-1",
+      projectTrusted: true,
+      args: {},
+      onRunCreated: ({ status }) => {
+        expect(lockHeld).toBe(true);
+        expect(status).toBe("pending");
+        events.push("created:pending");
+      },
+      onBackgroundRunCreated: ({ status, run }) => {
+        expect(lockHeld).toBe(true);
+        expect(status).toBe("running");
+        expect(run.status).toBe("running");
+        events.push("created:running");
+      },
+    });
+
+    expect(lockHeld).toBe(false);
+    expect(events).toEqual(["lock:start", "created:pending", "created:running", "lock:end"]);
+  });
+
   test("foreground workflows that self-background persist notify_on_terminal policy", async () => {
     using tmp = new DisposableTempDir("workflow-service-self-background-notify");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
@@ -407,6 +527,109 @@ export default function workflow() { return { reportMarkdown: "done" }; }
     await expect(runStore.getRun("wfr_checkpoint_retry_notify")).resolves.toMatchObject({
       attentionPolicy: "notify_on_terminal",
     });
+  });
+
+  test("handles foreground resume aborts while the lifecycle lock is still held", async () => {
+    using tmp = new DisposableTempDir("workflow-service-resume-abort-lock");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_resume_abort_lock",
+      workspaceId: "workspace-1",
+      workflow: { name: "demo", description: "Demo", scope: "project", executable: true },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_resume_abort_lock", "interrupted", "2026-05-29T00:00:01.000Z");
+    const abortController = new AbortController();
+    const events: string[] = [];
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapterFactory: (runId) => ({
+        async runAgent() {
+          throw new Error("Runner must not start after the resume is aborted");
+        },
+        interruptRun() {
+          events.push(`cleanup:${runId}`);
+          return Promise.resolve();
+        },
+        onRunEnded() {
+          events.push(`sweep:${runId}`);
+          return Promise.resolve();
+        },
+      }),
+      withRunStartLock: async (_workspaceId, operation) => {
+        events.push("lock:start");
+        const result = await operation();
+        events.push("lock:end");
+        return result;
+      },
+      onRunStatusChanged: (event) => {
+        if (event.runId === "wfr_resume_abort_lock" && event.status === "running") {
+          abortController.abort();
+        }
+      },
+      runnerId: "runner-a",
+    });
+
+    await expect(
+      service.resumeRun({
+        workspaceId: "workspace-1",
+        runId: "wfr_resume_abort_lock",
+        projectTrusted: true,
+        abortSignal: abortController.signal,
+      })
+    ).rejects.toThrow("Workflow run interrupted");
+
+    expect(events).toEqual([
+      "lock:start",
+      "cleanup:wfr_resume_abort_lock",
+      "lock:end",
+      "sweep:wfr_resume_abort_lock",
+    ]);
+    expect((await runStore.getRun("wfr_resume_abort_lock")).status).toBe("interrupted");
+  });
+
+  test("ignores a terminal race during abort cleanup retry", async () => {
+    using tmp = new DisposableTempDir("workflow-service-abort-cleanup-terminal-race");
+    const service = new WorkflowService({
+      runStore: new WorkflowRunStore({ sessionDir: tmp.path }),
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapter: {
+        async runAgent() {
+          throw new Error("No runner expected");
+        },
+      },
+      runnerId: "runner-a",
+    });
+    const interruptRun = mock(() => Promise.reject(new Error("workflow cleanup transition raced")));
+    const getRun = mock()
+      .mockResolvedValueOnce({ status: "interrupted" })
+      .mockResolvedValueOnce({ status: "completed" });
+    service.interruptRun = interruptRun;
+    service.getRun = getRun;
+    const abortController = new AbortController();
+    const internal = service as unknown as {
+      interruptRunOnAbort: (
+        workspaceId: string,
+        runId: string,
+        abortSignal: AbortSignal,
+        runnerAbortController: AbortController | undefined
+      ) => { remove: () => void; wait: () => Promise<void> };
+    };
+    const abortInterrupt = internal.interruptRunOnAbort(
+      "workspace-1",
+      "wfr_abort_race",
+      abortController.signal,
+      undefined
+    );
+
+    abortController.abort();
+    await abortInterrupt.wait();
+
+    expect(interruptRun).toHaveBeenCalledTimes(2);
+    expect(getRun).toHaveBeenCalledTimes(2);
   });
 
   test("does not continue canceled foreground workflows in the background", async () => {
@@ -546,6 +769,54 @@ export default function workflow({ args }) {
     ).toBe(true);
   });
 
+  test("serializes workflow interruption and defers task sweeps until lock release", async () => {
+    using tmp = new DisposableTempDir("workflow-service-interrupt-lock");
+    const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
+    await runStore.createRun({
+      id: "wfr_interrupt_lock",
+      workspaceId: "workspace-1",
+      workflow: { name: "demo", description: "Demo", scope: "project", executable: true },
+      source: "export default function workflow() { return {}; }\n",
+      args: {},
+      now: "2026-05-29T00:00:00.000Z",
+    });
+    await runStore.appendStatus("wfr_interrupt_lock", "running", "2026-05-29T00:00:01.000Z");
+    const events: string[] = [];
+    const service = new WorkflowService({
+      runStore,
+      runtimeFactory: new QuickJSRuntimeFactory(),
+      taskAdapterFactory: (runId) => ({
+        async runAgent() {
+          throw new Error("No agent steps expected");
+        },
+        interruptRun() {
+          events.push(`cleanup:${runId}`);
+          return Promise.resolve();
+        },
+        onRunEnded() {
+          events.push(`sweep:${runId}`);
+          return Promise.resolve();
+        },
+      }),
+      withRunStartLock: async (_workspaceId, operation) => {
+        events.push("lock:start");
+        const result = await operation();
+        events.push("lock:end");
+        return result;
+      },
+      runnerId: "runner-a",
+    });
+
+    await service.interruptRun({ workspaceId: "workspace-1", runId: "wfr_interrupt_lock" });
+
+    expect(events).toEqual([
+      "lock:start",
+      "cleanup:wfr_interrupt_lock",
+      "lock:end",
+      "sweep:wfr_interrupt_lock",
+    ]);
+  });
+
   test("interrupts active child workflow runs with the parent", async () => {
     using tmp = new DisposableTempDir("workflow-service-interrupt-nested-run");
     const runStore = new WorkflowRunStore({ sessionDir: tmp.path });
@@ -599,7 +870,13 @@ export default function workflow({ args }) {
       },
     });
 
-    await service.interruptRun({ workspaceId: "workspace-1", runId: "wfr_parent_interrupt" });
+    const deferredSweepRunIds: string[] = [];
+    await service.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_parent_interrupt",
+      deferTaskSweep: true,
+      onRunInterrupted: (runId) => deferredSweepRunIds.push(runId),
+    });
 
     await expect(runStore.getRun("wfr_parent_interrupt")).resolves.toMatchObject({
       status: "interrupted",
@@ -607,7 +884,22 @@ export default function workflow({ args }) {
     await expect(runStore.getRun("wfr_child_interrupt")).resolves.toMatchObject({
       status: "interrupted",
     });
-    expect(interruptedRunIds).toEqual(["wfr_parent_interrupt", "wfr_child_interrupt"]);
+    expect(deferredSweepRunIds).toEqual(["wfr_parent_interrupt", "wfr_child_interrupt"]);
+    const retriedSweepRunIds: string[] = [];
+    await service.interruptRun({
+      workspaceId: "workspace-1",
+      runId: "wfr_parent_interrupt",
+      retryTaskCleanup: true,
+      deferTaskSweep: true,
+      onRunInterrupted: (runId) => retriedSweepRunIds.push(runId),
+    });
+    expect(retriedSweepRunIds).toEqual(["wfr_parent_interrupt", "wfr_child_interrupt"]);
+    expect(interruptedRunIds).toEqual([
+      "wfr_parent_interrupt",
+      "wfr_child_interrupt",
+      "wfr_parent_interrupt",
+      "wfr_child_interrupt",
+    ]);
   });
 
   test("listRuns only loads root runs for the requested workspace", async () => {

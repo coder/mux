@@ -933,7 +933,7 @@ describe("task_await tool", () => {
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
   });
 
-  it("returns an error with descendant task suggestions for hallucinated IDs", async () => {
+  it("preserves not_found while suggesting active descendant task IDs", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-hallucinated-descendant-suggestions");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
@@ -954,27 +954,22 @@ describe("task_await tool", () => {
 
     const tool = createTaskAwaitTool({ ...baseConfig, taskService });
 
-    const result = (await Promise.resolve(
-      tool.execute!({ task_ids: ["hallucinated"] }, mockToolCallOptions)
-    )) as { results: Array<{ status: string; taskId: string; error?: string }> };
-
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0]).toMatchObject({
-      status: "error",
-      taskId: "hallucinated",
+    expect(
+      await Promise.resolve(tool.execute!({ task_ids: ["hallucinated"] }, mockToolCallOptions))
+    ).toEqual({
+      results: [
+        {
+          status: "not_found",
+          taskId: "hallucinated",
+          activeTaskIds: ["real-child"],
+        },
+      ],
     });
-    const descendantSuggestionError = result.results[0]?.error;
-    expect(typeof descendantSuggestionError).toBe("string");
-    if (typeof descendantSuggestionError !== "string") {
-      throw new Error("Expected hallucinated descendant result to include an error message");
-    }
-    expect(descendantSuggestionError).toContain("same parallel tool-call batch");
-    expect(descendantSuggestionError).toContain("real-child");
     expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
 
-  it("returns an error with bash task suggestions for out-of-scope IDs", async () => {
+  it("preserves invalid_scope while suggesting active bash task IDs", async () => {
     using tempDir = new TestTempDir("test-task-await-tool-hallucinated-bash-suggestions");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "parent-workspace" });
 
@@ -1010,22 +1005,17 @@ describe("task_await tool", () => {
       taskService,
     });
 
-    const result = (await Promise.resolve(
-      tool.execute!({ task_ids: ["other-workspace"] }, mockToolCallOptions)
-    )) as { results: Array<{ status: string; taskId: string; error?: string }> };
-
-    expect(result.results).toHaveLength(1);
-    expect(result.results[0]).toMatchObject({
-      status: "error",
-      taskId: "other-workspace",
+    expect(
+      await Promise.resolve(tool.execute!({ task_ids: ["other-workspace"] }, mockToolCallOptions))
+    ).toEqual({
+      results: [
+        {
+          status: "invalid_scope",
+          taskId: "other-workspace",
+          activeTaskIds: ["bash:proc-1"],
+        },
+      ],
     });
-    const bashSuggestionError = result.results[0]?.error;
-    expect(typeof bashSuggestionError).toBe("string");
-    if (typeof bashSuggestionError !== "string") {
-      throw new Error("Expected out-of-scope bash suggestion result to include an error message");
-    }
-    expect(bashSuggestionError).toContain("same parallel tool-call batch");
-    expect(bashSuggestionError).toContain("bash:proc-1");
     expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledTimes(0);
   });
@@ -1062,6 +1052,7 @@ describe("task_await tool", () => {
         reportMarkdown?: string;
         title?: string;
         note?: string;
+        activeTaskIds?: string[];
       }>;
     };
 
@@ -1073,16 +1064,11 @@ describe("task_await tool", () => {
       title: undefined,
       note: COMPLETED_REPORT_REFETCH_NOTE,
     });
-    expect(result.results[1]).toMatchObject({
-      status: "error",
+    expect(result.results[1]).toEqual({
+      status: "not_found",
       taskId: "hallucinated",
+      activeTaskIds: ["real-child"],
     });
-    const mixedResultError = result.results[1]?.error;
-    expect(typeof mixedResultError).toBe("string");
-    if (typeof mixedResultError !== "string") {
-      throw new Error("Expected mixed-result hallucinated task to include an error message");
-    }
-    expect(mixedResultError).toContain("real-child");
     expect(waitForAgentReport).toHaveBeenCalledTimes(1);
     expect(waitForAgentReport).toHaveBeenCalledWith("real-child", expect.any(Object));
     expect(getAgentTaskStatuses).toHaveBeenCalledTimes(1);

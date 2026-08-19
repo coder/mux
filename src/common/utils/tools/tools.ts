@@ -142,6 +142,67 @@ export interface WorkflowServiceScriptInput {
   sourceKind: "skill" | "workspace-file" | "inline" | "plugin";
 }
 
+export interface ToolWorkflowService {
+  getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
+  listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
+  startWorkflowInBackground?(input: {
+    script: WorkflowServiceScriptInput;
+    workspaceId: string;
+    projectTrusted: boolean;
+    args: unknown;
+    attentionPolicy?: BackgroundWorkAttentionPolicy;
+    onRunCreated?: (event: {
+      runId: string;
+      status: "pending";
+      result: null;
+      run: unknown;
+    }) => Promise<void> | void;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  startWorkflow?(input: {
+    script: WorkflowServiceScriptInput;
+    workspaceId: string;
+    projectTrusted: boolean;
+    args: unknown;
+    abortSignal?: AbortSignal;
+    onRunCreated?: (event: {
+      runId: string;
+      status: "pending";
+      result: null;
+      run: unknown;
+    }) => Promise<void> | void;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  interruptRun?(input: {
+    workspaceId: string;
+    runId: string;
+    deferTaskSweep?: boolean;
+    lockAlreadyHeld?: boolean;
+    retryTaskCleanup?: boolean;
+    onRunInterrupted?: (runId: string) => void;
+  }): Promise<unknown>;
+  resumeRun?(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  resumeRunInBackground?(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  retryRunFromCheckpoint?(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+    abortSignal?: AbortSignal;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+  retryRunFromCheckpointInBackground?(input: {
+    workspaceId: string;
+    runId: string;
+    projectTrusted: boolean;
+  }): Promise<{ runId: string; status: string; result: unknown }>;
+}
+
 export interface ToolConfiguration {
   /** Working directory for command execution - actual path in runtime's context (local or remote) */
   cwd: string;
@@ -204,59 +265,9 @@ export interface ToolConfiguration {
   /** Task orchestration for sub-agent tasks */
   taskService?: TaskService;
   /** Durable workflow lifecycle service for dynamic workflow tools. */
-  workflowService?: {
-    getRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
-    listRuns?(input: { workspaceId: string }): Promise<unknown[]>;
-    startWorkflowInBackground?(input: {
-      script: WorkflowServiceScriptInput;
-      workspaceId: string;
-      projectTrusted: boolean;
-      args: unknown;
-      attentionPolicy?: BackgroundWorkAttentionPolicy;
-      onRunCreated?: (event: {
-        runId: string;
-        status: "pending";
-        result: null;
-        run: unknown;
-      }) => Promise<void> | void;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-    startWorkflow?(input: {
-      script: WorkflowServiceScriptInput;
-      workspaceId: string;
-      projectTrusted: boolean;
-      args: unknown;
-      abortSignal?: AbortSignal;
-      onRunCreated?: (event: {
-        runId: string;
-        status: "pending";
-        result: null;
-        run: unknown;
-      }) => Promise<void> | void;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-    interruptRun?(input: { workspaceId: string; runId: string }): Promise<unknown>;
-    resumeRun?(input: {
-      workspaceId: string;
-      runId: string;
-      projectTrusted: boolean;
-      abortSignal?: AbortSignal;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-    resumeRunInBackground?(input: {
-      workspaceId: string;
-      runId: string;
-      projectTrusted: boolean;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-    retryRunFromCheckpoint?(input: {
-      workspaceId: string;
-      runId: string;
-      projectTrusted: boolean;
-      abortSignal?: AbortSignal;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-    retryRunFromCheckpointInBackground?(input: {
-      workspaceId: string;
-      runId: string;
-      projectTrusted: boolean;
-    }): Promise<{ runId: string; status: string; result: unknown }>;
-  };
+  workflowService?: ToolWorkflowService;
+  /** Resolve the workflow lifecycle service for a descendant workspace's session. */
+  workflowServiceForWorkspace?: (workspaceId: string) => ToolWorkflowService | null;
   /** Workspace heartbeat settings service for model-facing heartbeat configuration. */
   workspaceHeartbeatService?: WorkspaceHeartbeatToolService;
   /** Workspace goal lifecycle service for model-facing goal tools. */
@@ -785,7 +796,7 @@ export async function getToolsForModel(
     task_remove: wrap(createTaskRemoveTool(config)),
     task_list: wrap(createTaskListTool(config)),
 
-    // Bash execution (foreground/background). Manage background output via task_await/task_list/task_terminate.
+    // Bash execution (foreground/background). Manage background output via task_await/task_list/task_stop.
     bash: wrap(createBashTool(config)),
 
     // Legacy bash process tools (deprecated)
