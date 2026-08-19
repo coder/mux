@@ -135,7 +135,8 @@ describe("catalog advertising (overview + server names)", () => {
     expect(overview).toBe(
       "Deferred tool catalog overview (search to activate):\n" +
         "- github (1 tool): github_create_issue\n" +
-        "- slack (2 tools): slack_list_channels, slack_send_message"
+        "- slack (2 tools): slack_list_channels, slack_send_message\n" +
+        "(end of deferred tool catalog overview)"
     );
   });
 
@@ -217,6 +218,33 @@ describe("catalog advertising (overview + server names)", () => {
     expect(description).toContain(hookSuffix);
     expect(description).toContain("Search deferred tools");
     expect(description.split("Deferred tool catalog overview").length - 1).toBe(1);
+  });
+
+  test("replacing the overview preserves bullet-form middleware annotations", () => {
+    const first = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    // A hook may append guidance as a Markdown bullet directly after the block.
+    const bulletSuffix = "- Require approval before use";
+    const augmented = first.tools[TOOL_SEARCH_TOOL_NAME];
+    const hooked: Tool = Object.assign({}, augmented, {
+      description: `${String(augmented.description)}\n${bulletSuffix}`,
+    });
+    const second = prepareToolSearch({
+      tools: { ...first.tools, [TOOL_SEARCH_TOOL_NAME]: hooked },
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const description = String(second.tools[TOOL_SEARCH_TOOL_NAME].description);
+    expect(description).toContain(bulletSuffix);
+    expect(description.split("Deferred tool catalog overview").length - 1).toBe(1);
+    // The surviving bullet must not sit inside the regenerated block (the
+    // fresh overview is re-appended at the end, after preserved hook text).
+    expect(description.indexOf(bulletSuffix)).toBeLessThan(
+      description.indexOf("Deferred tool catalog overview")
+    );
   });
 
   test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {

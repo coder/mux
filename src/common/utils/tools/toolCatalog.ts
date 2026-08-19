@@ -174,25 +174,32 @@ const OVERVIEW_MAX_TOOLS_PER_SERVER = 8;
 const OVERVIEW_HEADER = "Deferred tool catalog overview (search to activate):";
 
 /**
+ * Explicit terminator for the generated overview block. Stripping removes
+ * exactly the marker-delimited region, so arbitrary hook text — including
+ * bullet lines a request.assemble middleware appends after the overview —
+ * survives re-preparation. Content-shape heuristics (e.g. "consume contiguous
+ * bullets") cannot distinguish generated bullets from hook-appended ones.
+ */
+const OVERVIEW_END_MARKER = "(end of deferred tool catalog overview)";
+
+/**
  * Remove a previously appended catalog overview from a description, if any.
- * Only the generated block is removed — the header line plus its contiguous
- * `- server (...)` bullet lines — so text placed before or after it (e.g.
- * request.assemble middleware annotations) survives re-preparation.
+ * Only the marker-delimited generated block is removed; text before and after
+ * it is preserved and rejoined.
  */
 function stripToolCatalogOverview(description: string): string {
-  const index = description.indexOf(OVERVIEW_HEADER);
-  if (index === -1) {
+  const start = description.indexOf(OVERVIEW_HEADER);
+  if (start === -1) {
     return description;
   }
-  const before = description.slice(0, index).trimEnd();
-  const rest = description.slice(index + OVERVIEW_HEADER.length).split("\n");
-  // rest[0] is the (empty) remainder of the header line; the block then spans
-  // every immediately-following bullet line. The first non-bullet line ends it.
-  let blockEnd = 1;
-  while (blockEnd < rest.length && rest[blockEnd].startsWith("- ")) {
-    blockEnd += 1;
+  const endMarker = description.indexOf(OVERVIEW_END_MARKER, start);
+  // The end marker is always emitted with the header; if a hook removed it,
+  // leave the description untouched rather than guessing at block boundaries.
+  if (endMarker === -1) {
+    return description;
   }
-  const after = rest.slice(blockEnd).join("\n").trim();
+  const before = description.slice(0, start).trimEnd();
+  const after = description.slice(endMarker + OVERVIEW_END_MARKER.length).trim();
   if (before.length > 0 && after.length > 0) {
     return `${before}\n\n${after}`;
   }
@@ -228,7 +235,7 @@ export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): 
       `- ${server} (${names.length} tool${names.length === 1 ? "" : "s"}): ${shown.join(", ")}${suffix}`
     );
   }
-  return `${OVERVIEW_HEADER}\n${lines.join("\n")}`;
+  return `${OVERVIEW_HEADER}\n${lines.join("\n")}\n${OVERVIEW_END_MARKER}`;
 }
 
 /**
