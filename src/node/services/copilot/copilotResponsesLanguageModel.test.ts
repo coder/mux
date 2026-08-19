@@ -1169,6 +1169,67 @@ describe("CopilotResponsesLanguageModel", () => {
     });
   });
 
+  it("emits a full tool lifecycle for a done-only function_call stream", async () => {
+    restoreFetchers.push(
+      mockFetch(() =>
+        Promise.resolve(
+          createSseResponse([
+            {
+              event: "response.created",
+              data: {
+                type: "response.created",
+                response: { id: "resp_done", created_at: 1_710_000_085, model: "copilot-test" },
+              },
+            },
+            {
+              event: "response.output_item.done",
+              data: {
+                type: "response.output_item.done",
+                output_index: 0,
+                item: {
+                  type: "function_call",
+                  id: "fc_4",
+                  call_id: "call_4",
+                  name: "get_time",
+                  arguments: '{"tz":"UTC"}',
+                },
+              },
+            },
+            {
+              event: "response.completed",
+              data: {
+                type: "response.completed",
+                response: { usage: { input_tokens: 2, output_tokens: 2, total_tokens: 4 } },
+              },
+            },
+          ])
+        )
+      )
+    );
+
+    const model = createModel();
+    const result = await model.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "time?" }] }],
+    });
+    const parts = await collectStreamParts(result.stream);
+
+    expect(parts.map((part) => part.type)).toEqual([
+      "stream-start",
+      "response-metadata",
+      "tool-input-start",
+      "tool-input-end",
+      "tool-call",
+      "finish",
+    ]);
+    expect(parts[2]).toEqual({ type: "tool-input-start", id: "call_4", toolName: "get_time" });
+    expect(parts[4]).toEqual({
+      type: "tool-call",
+      toolCallId: "call_4",
+      toolName: "get_time",
+      input: '{"tz":"UTC"}',
+    });
+  });
+
   it("keeps the non-tool finish mapping when no function call was seen", async () => {
     restoreFetchers.push(
       mockFetch(() =>

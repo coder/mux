@@ -455,10 +455,21 @@ function mapStreamEvent(event: string, data: JsonRecord, state: StreamState) {
       if (getString(item?.type) !== "function_call") {
         return [];
       }
+      const known = resolveToolCall(data, state);
       // Register on the fly so a done-only stream (no prior added event) still
-      // yields a terminal tool-call part.
-      const call = resolveToolCall(data, state) ?? registerToolCall(data, item, state);
-      return call ? finalizeToolCall(call, getString(item?.arguments), state) : [];
+      // yields a terminal tool-call part, with a matching tool-input-start so
+      // consumers see a complete input lifecycle.
+      const call = known ?? registerToolCall(data, item, state);
+      if (!call) {
+        return [];
+      }
+      const parts = finalizeToolCall(call, getString(item?.arguments), state);
+      return known
+        ? parts
+        : ([
+            { type: "tool-input-start", id: call.toolCallId, toolName: call.toolName },
+            ...parts,
+          ] satisfies LanguageModelV2StreamPart[]);
     }
     case "response.completed":
     case "response.incomplete":
