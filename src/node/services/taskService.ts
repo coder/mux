@@ -8346,6 +8346,13 @@ export class TaskService {
       if (record.status === "completed" || record.status === "error") {
         return Err(`Workspace turn is already ${record.status} and cannot be interrupted.`);
       }
+      // Already-settled interrupts (explicit stop, restart recovery, queue-cut
+      // supersede) have nothing left to stop: proceeding would stopStream the
+      // target workspace's *current* stream — e.g. the manual message or
+      // /compact that superseded the delegated turn. Idempotent no-op instead.
+      if (record.status === "interrupted") {
+        return Ok({ workspaceId: record.workspaceId });
+      }
 
       workspaceId = record.workspaceId;
       shouldClearQueuedPrompt =

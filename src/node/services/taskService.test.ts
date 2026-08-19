@@ -4859,6 +4859,20 @@ describe("TaskService", () => {
     expect(snapshot?.deferredMessageIds).toBeUndefined();
   });
 
+  test("repeat interrupt of an already-interrupted workspace turn is a no-op", async () => {
+    // A queue-cut supersede settles the handle interrupted while the target
+    // workspace keeps streaming under the new input. A stale task_stop for the
+    // settled handle must not stop that unrelated stream.
+    const { parentId, taskService, aiMocks } = await startWorkspaceTurnForTest();
+    const first = await taskService.interruptWorkspaceTurn(parentId, "wst_handle");
+    expect(first.success).toBe(true);
+    aiMocks.stopStream.mockClear();
+
+    const repeat = await taskService.interruptWorkspaceTurn(parentId, "wst_handle");
+    expect(repeat).toEqual(Ok({ workspaceId: "childworkspace" }));
+    expect(aiMocks.stopStream).not.toHaveBeenCalled();
+  });
+
   test("workspace-turn stale recovery skips deferred pre-handoff stream-end history", async () => {
     const { config, parentId, projectPath, taskService, historyService } =
       await startWorkspaceTurnForTest();
