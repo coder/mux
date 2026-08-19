@@ -176,6 +176,42 @@ describe("catalog advertising (overview + server names)", () => {
     expect(prep.tools.slack_send_message.description).toBe("Send a message to a Slack channel");
   });
 
+  test("re-running prepareToolSearch on an augmented toolset does not stack overviews", () => {
+    const first = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    // Rebuild paths (assembly hooks, model fallback) feed the augmented record back in.
+    const second = prepareToolSearch({
+      tools: first.tools,
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const description = second.tools[TOOL_SEARCH_TOOL_NAME].description;
+    expect(description).toBe(first.tools[TOOL_SEARCH_TOOL_NAME].description);
+    const occurrences = String(description).split(
+      "Deferred tool catalog overview (search to activate):"
+    ).length;
+    expect(occurrences - 1).toBe(1);
+  });
+
+  test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {
+    const first = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const state = first.state!;
+    const rebuilt = rebuildToolSearchState(state, {
+      tools: first.tools,
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const description = String(rebuilt.tools[TOOL_SEARCH_TOOL_NAME].description);
+    expect(description.split("Deferred tool catalog overview").length - 1).toBe(1);
+  });
+
   test("search matches by server name and reports serverName", () => {
     const { catalog } = buildToolCatalog({
       tools: baseTools(),

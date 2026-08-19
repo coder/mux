@@ -166,6 +166,23 @@ export function buildToolCatalog(inputs: ToolCatalogInputs): ToolCatalogClassifi
 const OVERVIEW_MAX_TOOLS_PER_SERVER = 8;
 
 /**
+ * Header marking the generated overview inside tool_catalog_search's
+ * description. Also used to strip a previously appended overview so repeated
+ * prepareToolSearch calls (post-hook / model-fallback rebuilds receive the
+ * already-augmented tool as input) stay idempotent instead of stacking copies.
+ */
+const OVERVIEW_HEADER = "Deferred tool catalog overview (search to activate):";
+
+/** Remove a previously appended catalog overview from a description, if any. */
+function stripToolCatalogOverview(description: string): string {
+  const index = description.indexOf(OVERVIEW_HEADER);
+  if (index === -1) {
+    return description;
+  }
+  return description.slice(0, index).trimEnd();
+}
+
+/**
  * Build a compact, deterministic index of the deferred catalog grouped by MCP
  * server, e.g. `- github (12 tools): github_create_issue, … (+4 more)`.
  * Only names are listed — descriptions and parameter schemas stay deferred
@@ -194,7 +211,7 @@ export function buildToolCatalogOverview(catalog: readonly ToolCatalogEntry[]): 
       `- ${server} (${names.length} tool${names.length === 1 ? "" : "s"}): ${shown.join(", ")}${suffix}`
     );
   }
-  return `Deferred tool catalog overview (search to activate):\n${lines.join("\n")}`;
+  return `${OVERVIEW_HEADER}\n${lines.join("\n")}`;
 }
 
 /**
@@ -255,7 +272,12 @@ export function prepareToolSearch(inputs: ToolCatalogInputs): {
   // while full descriptions/schemas stay deferred until activation.
   const overview = buildToolCatalogOverview(classification.catalog);
   const searchTool = inputs.tools[TOOL_SEARCH_TOOL_NAME];
-  const baseDescription = typeof searchTool.description === "string" ? searchTool.description : "";
+  // Strip any overview appended by an earlier prepareToolSearch call: rebuild
+  // paths (assembly hooks, model fallback) pass the augmented tool back in, and
+  // blindly appending again would send the whole catalog overview twice.
+  const baseDescription = stripToolCatalogOverview(
+    typeof searchTool.description === "string" ? searchTool.description : ""
+  );
   // Object.assign (not spread) keeps the `Tool` union type intact while
   // overriding only the description on a shallow copy.
   const augmentedSearchTool: Tool = Object.assign({}, searchTool, {
