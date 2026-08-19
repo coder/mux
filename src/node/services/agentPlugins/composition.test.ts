@@ -112,6 +112,7 @@ describe("buildWorkspaceComposition", () => {
     const composition = await buildWorkspaceComposition({
       runtime: new LocalRuntime(workspace.path),
       workspacePath: workspace.path,
+      hostCheckoutRoot: workspace.path,
       muxHome: path.join(workspace.path, ".fixture-mux-home"),
       projectTrusted: true,
       agentPluginsEnabled: true,
@@ -173,6 +174,7 @@ describe("buildWorkspaceComposition", () => {
     const composition = await buildWorkspaceComposition({
       runtime: new LocalRuntime(workspace.path),
       workspacePath: workspace.path,
+      hostCheckoutRoot: workspace.path,
       muxHome: path.join(workspace.path, ".fixture-mux-home"),
       projectTrusted: true,
       agentPluginsEnabled: false,
@@ -183,6 +185,35 @@ describe("buildWorkspaceComposition", () => {
     // Inspection is unconditional: the plugin and its components are reported.
     expect(composition.plugins.map((p) => p.name)).toContain(PLUGIN_NAME);
     // Loading is gated: no plugin-sourced artifacts in the effective layers.
+    const allEntries = [
+      ...composition.skills,
+      ...composition.agents,
+      ...composition.workflows,
+      ...composition.slashCommands,
+      ...composition.hooks,
+    ];
+    expect(allEntries.some((entry) => entry.source === PLUGIN_SOURCE)).toBe(false);
+  }, 120_000);
+
+  test("off-host workspaces (null host root) discover no plugin containers", async () => {
+    using workspace = new DisposableTempDir("composition-workspace-offhost");
+    // A plugin exists at the workspace path on the HOST filesystem — the
+    // off-host bug was scanning the remote workspacePath as a host project
+    // root and reporting plugins production never loads.
+    await writeFixturePlugin(workspace.path);
+
+    const composition = await buildWorkspaceComposition({
+      runtime: new LocalRuntime(workspace.path),
+      workspacePath: workspace.path,
+      hostCheckoutRoot: null,
+      muxHome: path.join(workspace.path, ".fixture-mux-home"),
+      projectTrusted: true,
+      agentPluginsEnabled: true,
+      listMcpServerLayers: () => Promise.resolve({ plugin: {}, global: {}, project: {} }),
+    });
+
+    expect(composition.plugins).toHaveLength(0);
+    expect(composition.diagnostics).toHaveLength(0);
     const allEntries = [
       ...composition.skills,
       ...composition.agents,

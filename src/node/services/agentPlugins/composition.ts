@@ -33,6 +33,14 @@ export interface BuildWorkspaceCompositionArgs {
   runtime: Runtime;
   /** Execution/discovery path of the workspace (host checkout for local workspaces). */
   workspacePath: string;
+  /**
+   * Host checkout root anchoring plugin containers, or null for off-host
+   * runtimes (SSH/Docker). Plugin discovery is host-filesystem-only and
+   * production never loads plugin containers off-host, so a null suppresses
+   * it — passing the remote workspacePath instead would report host files
+   * production never loads.
+   */
+  hostCheckoutRoot: string | null;
   muxHome: string;
   projectTrusted: boolean;
   agentPluginsEnabled: boolean;
@@ -125,15 +133,23 @@ function workflowSourceLabel(scope: string, canonicalScriptPath?: string): strin
 export async function buildWorkspaceComposition(
   args: BuildWorkspaceCompositionArgs
 ): Promise<WorkspaceComposition> {
-  // Plugin discovery + manifest validation runs unconditionally (inspection is
-  // not gated); only the per-kind layers below honor the experiment gate.
-  const { plugins, diagnostics } = await discoverWorkspaceAgentPlugins({
-    workspacePath: args.workspacePath,
-    muxHome: args.muxHome,
-    projectTrusted: args.projectTrusted,
-  });
+  // Plugin discovery + manifest validation runs unconditionally for host
+  // workspaces (inspection is not experiment-gated); only the per-kind layers
+  // below honor the experiment gate. Off-host (null root) discovers nothing,
+  // matching production's hostCheckoutRoot gating.
+  const { plugins, diagnostics } =
+    args.hostCheckoutRoot != null
+      ? await discoverWorkspaceAgentPlugins({
+          workspacePath: args.hostCheckoutRoot,
+          muxHome: args.muxHome,
+          projectTrusted: args.projectTrusted,
+        })
+      : { plugins: [], diagnostics: [] };
 
-  const includeAgentPlugins = args.agentPluginsEnabled;
+  // Off-host also suppresses plugin roots in the runtime-based loaders below:
+  // they gate on runtime class internally (RemoteRuntime), but the null host
+  // root is the authoritative off-host signal here.
+  const includeAgentPlugins = args.agentPluginsEnabled && args.hostCheckoutRoot != null;
 
   const skillDescriptors = await discoverAgentSkills(args.runtime, args.workspacePath, {
     dedupeByName: false,

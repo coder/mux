@@ -94,6 +94,10 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
   const composition = await buildWorkspaceComposition({
     runtime,
     workspacePath: hostCheckoutRoot ?? workspacePath,
+    // Null for SSH/Docker: plugin containers are host-only and production
+    // never loads them off-host, so discovery must not scan the remote
+    // workspacePath as if it were a host project root.
+    hostCheckoutRoot,
     muxHome: defaultConfig.rootDir,
     projectTrusted,
     agentPluginsEnabled,

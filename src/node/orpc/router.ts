@@ -5766,9 +5766,11 @@ export const router = (authToken?: string) => {
                 : null;
               return buildWorkspaceComposition({
                 runtime,
-                // Plugin containers anchor at the host checkout root when there is
-                // one; loaders still discover through the workspace runtime path.
+                // Runtime loaders discover through the checkout root when there
+                // is one; plugin containers are gated separately on the nullable
+                // host root (off-host runtimes never load plugin containers).
                 workspacePath: hostCheckoutRoot ?? workspacePath,
+                hostCheckoutRoot,
                 muxHome: context.config.rootDir,
                 projectTrusted,
                 agentPluginsEnabled: context.experimentsService.isExperimentEnabled(
