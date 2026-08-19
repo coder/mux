@@ -1946,11 +1946,20 @@ export class StreamManager extends EventEmitter {
           try {
             const rebuilt = await request.rebuildFirstStepForThinkingLevel(
               appliedLevel,
-              thinkingOverride as Record<string, unknown>
+              thinkingOverride
             );
+            // buildStreamRequestConfig may have moved the system prompt into
+            // messages[0] as a cached system row (Anthropic prompt caching
+            // sets request.system to undefined). The rebuild closure returns
+            // history messages only — re-prepend that row or the replacement
+            // would drop the entire system prompt from the first request.
+            const cachedSystemRow =
+              request.system === undefined && request.messages[0]?.role === "system"
+                ? [request.messages[0]]
+                : [];
             // Same per-step transforms the construction-time messages receive.
             rebuiltFirstStepMessages = await extractToolMediaAsUserMessagesFromModelMessages(
-              stripWorkflowRunRecordsFromModelMessages(rebuilt)
+              stripWorkflowRunRecordsFromModelMessages([...cachedSystemRow, ...rebuilt])
             );
             if (stepTracker) {
               stepTracker.latestMessages = rebuiltFirstStepMessages;

@@ -18,6 +18,7 @@ import type { ToolSearchStreamState } from "@/common/utils/tools/toolCatalog";
 import { StreamManager, type ModelFallbackPrepareOptions } from "./streamManager";
 import type {
   ActiveTurnThinkingOverride,
+  RebuildFirstStepForThinkingLevel,
   RebuildProviderOptionsForThinkingLevel,
 } from "./thinkingOverride";
 import { stripEncryptedContent } from "@/node/utils/messages/stripEncryptedContent";
@@ -5404,6 +5405,7 @@ describe("StreamManager - mid-turn thinking override", () => {
     providerOptions?: Record<string, unknown>;
     thinkingOverrideState?: ActiveTurnThinkingOverride;
     rebuildProviderOptionsForThinkingLevel?: RebuildProviderOptionsForThinkingLevel;
+    rebuildFirstStepForThinkingLevel?: RebuildFirstStepForThinkingLevel;
   }
 
   type BuildStreamRequestConfig = (...args: unknown[]) => OverrideRequestForTests;
@@ -5411,7 +5413,10 @@ describe("StreamManager - mid-turn thinking override", () => {
     request: OverrideRequestForTests,
     abortController: AbortController
   ) => unknown;
-  type CapturedPrepareStep = (options: { messages: ModelMessage[] }) => Promise<
+  type CapturedPrepareStep = (options: {
+    messages: ModelMessage[];
+    stepNumber?: number;
+  }) => Promise<
     | {
         messages?: ModelMessage[];
         activeTools?: string[];
@@ -5521,6 +5526,48 @@ describe("StreamManager - mid-turn thinking override", () => {
     // Without a new pending value the next step is a no-op again.
     expect(await prepareStep({ messages })).toBeUndefined();
     expect(rebuild).toHaveBeenCalledTimes(1);
+  });
+
+  test("step-0 message rebuild preserves the cached system row when the system prompt lives in messages", async () => {
+    const streamManager = new StreamManager(historyService);
+    const { createStreamResult } = getRequestHelpers(streamManager);
+    const streamTextSpy = setupStreamTextSpy();
+
+    // Anthropic prompt-cache shape from buildStreamRequestConfig: the system
+    // prompt is messages[0] with cache control and request.system is
+    // undefined. The rebuild closure returns history messages only, so the
+    // step-0 replacement must re-prepend this row or the first provider
+    // request loses the entire system prompt.
+    const cachedSystemRow: ModelMessage = {
+      role: "system",
+      content: "cached system prompt",
+      providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
+    };
+    const state: ActiveTurnThinkingOverride = { pending: "high" };
+    const rebuildOptions = mock(() => ({
+      effectiveLevel: "high" as const,
+      providerOptions: { anthropic: { thinking: { type: "enabled" } } },
+    }));
+    const rebuiltHistory: ModelMessage[] = [{ role: "user", content: "rebuilt hello" }];
+    const rebuildMessages = mock(() => Promise.resolve(rebuiltHistory));
+
+    const request: OverrideRequestForTests = {
+      model,
+      messages: [cachedSystemRow, ...messages],
+      system: undefined,
+      providerOptions: {},
+      thinkingOverrideState: state,
+      rebuildProviderOptionsForThinkingLevel:
+        rebuildOptions as unknown as RebuildProviderOptionsForThinkingLevel,
+      rebuildFirstStepForThinkingLevel:
+        rebuildMessages as unknown as RebuildFirstStepForThinkingLevel,
+    };
+    createStreamResult(request, new AbortController());
+    const prepareStep = capturePrepareStep(streamTextSpy);
+
+    const step = await prepareStep({ messages: request.messages, stepNumber: 0 });
+    expect(rebuildMessages).toHaveBeenCalledTimes(1);
+    expect(step?.messages).toEqual([cachedSystemRow, ...rebuiltHistory]);
   });
 
   test("clears pending without touching options when the rebuild reports not-applicable", async () => {
