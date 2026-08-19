@@ -196,6 +196,29 @@ describe("catalog advertising (overview + server names)", () => {
     expect(occurrences - 1).toBe(1);
   });
 
+  test("replacing the overview preserves middleware text appended after it", () => {
+    const first = prepareToolSearch({
+      tools: baseTools(),
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    // Simulate a request.assemble hook annotating the augmented description.
+    const hookSuffix = "AUDIT: calls to deferred tools are logged.";
+    const augmented = first.tools[TOOL_SEARCH_TOOL_NAME];
+    const hooked: Tool = Object.assign({}, augmented, {
+      description: `${String(augmented.description)}\n\n${hookSuffix}`,
+    });
+    const second = prepareToolSearch({
+      tools: { ...first.tools, [TOOL_SEARCH_TOOL_NAME]: hooked },
+      mcpToolNames: MCP_NAMES,
+      mcpToolServers: MCP_TOOL_SERVERS,
+    });
+    const description = String(second.tools[TOOL_SEARCH_TOOL_NAME].description);
+    expect(description).toContain(hookSuffix);
+    expect(description).toContain("Search deferred tools");
+    expect(description.split("Deferred tool catalog overview").length - 1).toBe(1);
+  });
+
   test("rebuildToolSearchState replaces (not stacks) the overview on the augmented tool", () => {
     const first = prepareToolSearch({
       tools: baseTools(),

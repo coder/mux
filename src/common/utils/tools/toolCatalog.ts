@@ -173,13 +173,30 @@ const OVERVIEW_MAX_TOOLS_PER_SERVER = 8;
  */
 const OVERVIEW_HEADER = "Deferred tool catalog overview (search to activate):";
 
-/** Remove a previously appended catalog overview from a description, if any. */
+/**
+ * Remove a previously appended catalog overview from a description, if any.
+ * Only the generated block is removed — the header line plus its contiguous
+ * `- server (...)` bullet lines — so text placed before or after it (e.g.
+ * request.assemble middleware annotations) survives re-preparation.
+ */
 function stripToolCatalogOverview(description: string): string {
   const index = description.indexOf(OVERVIEW_HEADER);
   if (index === -1) {
     return description;
   }
-  return description.slice(0, index).trimEnd();
+  const before = description.slice(0, index).trimEnd();
+  const rest = description.slice(index + OVERVIEW_HEADER.length).split("\n");
+  // rest[0] is the (empty) remainder of the header line; the block then spans
+  // every immediately-following bullet line. The first non-bullet line ends it.
+  let blockEnd = 1;
+  while (blockEnd < rest.length && rest[blockEnd].startsWith("- ")) {
+    blockEnd += 1;
+  }
+  const after = rest.slice(blockEnd).join("\n").trim();
+  if (before.length > 0 && after.length > 0) {
+    return `${before}\n\n${after}`;
+  }
+  return before.length > 0 ? before : after;
 }
 
 /**
