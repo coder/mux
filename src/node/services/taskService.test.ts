@@ -1599,6 +1599,87 @@ describe("TaskService", () => {
     expect(JSON.stringify(parentHistory)).not.toContain("Already returned by task_await.");
   });
 
+  test("queue-cut supersede settlement is delivered to the persistent child's direct parent", async () => {
+    // The old error settlement appended a terminal failure to the direct
+    // parent; the interrupted supersede settlement must not silently vanish.
+    const config = await createTestConfig(rootDir);
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    const childTaskId = "child-superseded-delivery";
+    const handleId = "wst_superseded_delivery";
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(projectPath);
+      assert(project, "test project must exist");
+      project.workspaces.push(
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId: parentId,
+          agentId: "explore",
+          agentType: "explore",
+          taskStatus: "reported",
+          title: "Superseded Reviewer",
+        })
+      );
+      return cfg;
+    });
+    const { historyService, taskService } = createTaskServiceHarness(config);
+    const taskHandleStore = (taskService as unknown as { taskHandleStore: TaskHandleStore })
+      .taskHandleStore;
+    const supersededRecord: WorkspaceTurnTaskHandleRecord = {
+      kind: "workspace_turn",
+      handleId,
+      ownerWorkspaceId: parentId,
+      workspaceId: childTaskId,
+      turnId: "superseded-delivery",
+      status: "interrupted",
+      error:
+        "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+      createdWorkspace: false,
+      disposableWorkspace: false,
+      directParentResultDeliveryRequiredAt: "2026-08-11T00:00:01.000Z",
+    };
+    await taskHandleStore.upsertWorkspaceTurn(supersededRecord);
+
+    await (
+      taskService as unknown as {
+        deliverPersistentChildWorkspaceTurnResult: (
+          record: WorkspaceTurnTaskHandleRecord,
+          waiterWorkspaceIds: ReadonlySet<string>
+        ) => Promise<void>;
+      }
+    ).deliverPersistentChildWorkspaceTurnResult(supersededRecord, new Set());
+
+    const parentHistory = await historyService.getHistoryFromLatestBoundary(parentId);
+    expect(parentHistory.success).toBe(true);
+    const serialized = JSON.stringify(parentHistory);
+    expect(serialized).toContain("workspace_turn_superseded");
+    expect(serialized).toContain("superseded by new input in the target workspace");
+    expect(
+      (await taskHandleStore.getWorkspaceTurn(parentId, handleId))?.directParentResultDeliveredAt
+    ).toBeDefined();
+
+    // Explicit cancellations (no supersede reason) must stay silent.
+    const { error: _supersedeReason, ...canceledBase } = supersededRecord;
+    const canceledRecord: WorkspaceTurnTaskHandleRecord = {
+      ...canceledBase,
+      handleId: "wst_canceled_delivery",
+      turnId: "canceled-delivery",
+    };
+    await taskHandleStore.upsertWorkspaceTurn(canceledRecord);
+    await (
+      taskService as unknown as {
+        deliverPersistentChildWorkspaceTurnResult: (
+          record: WorkspaceTurnTaskHandleRecord,
+          waiterWorkspaceIds: ReadonlySet<string>
+        ) => Promise<void>;
+      }
+    ).deliverPersistentChildWorkspaceTurnResult(canceledRecord, new Set());
+    expect(
+      (await taskHandleStore.getWorkspaceTurn(parentId, "wst_canceled_delivery"))
+        ?.directParentResultDeliveredAt
+    ).toBeUndefined();
+  });
+
   test("terminal recovery skips legacy delivery records and contains per-record replay failures", async () => {
     const config = await createTestConfig(rootDir);
     const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
@@ -4649,7 +4730,10 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  test("workspace-turn tool-calls stream-end without continuation settles interrupted", async () => {
+  test("workspace-turn tool-calls stream-end without queue-cut evidence settles error", async () => {
+    // A "tool-calls" finish without any queued/preparing/streaming successor is
+    // not a queue cut (e.g. a successful required-tool stop condition); it must
+    // keep the truncation error handling rather than claim a supersede.
     const { parentId, taskService } = await startWorkspaceTurnForTest();
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
@@ -4675,11 +4759,10 @@ describe("TaskService", () => {
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
     expect(snapshot).toMatchObject({
-      status: "interrupted",
+      status: "error",
       workspaceId: "childworkspace",
       messageId: "msg_tool_calls_terminal",
-      error:
-        "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report",
+      error: "Workspace turn ended before completion (finishReason: tool-calls)",
     });
   });
 

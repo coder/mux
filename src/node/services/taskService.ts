@@ -696,6 +696,20 @@ const WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR =
   "Workspace turn superseded by new input in the target workspace; the workspace continues under that input and this delegated turn will not report";
 
 /**
+ * Distinguishes queue-cut supersede interrupts from explicit cancellations
+ * (user Esc, task_stop): supersedes still deliver a terminal continuation to a
+ * persistent child's direct parent, while explicit cancels stay silent because
+ * the canceller already knows the outcome.
+ */
+function isSupersededWorkspaceTurnInterrupt(
+  record: Pick<WorkspaceTurnTaskHandleRecord, "status" | "error">
+): boolean {
+  return (
+    record.status === "interrupted" && record.error === WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR
+  );
+}
+
+/**
  * Settled workspace-turn records eligible for self-heal correction (resettle from a
  * correlated stream-end, or read-time repair/revive): transient stream-error settlements
  * (status "error"), stale restart-recovery interrupts, and queue-cut supersedes (late
@@ -6463,7 +6477,14 @@ export class TaskService {
   private workspaceTurnRequiresDirectParentDelivery(
     record: WorkspaceTurnTaskHandleRecord
   ): boolean {
-    if (record.status !== "completed" && record.status !== "error") {
+    // Queue-cut supersedes count as terminal outcomes the direct parent must
+    // learn about (the old error settlement delivered them); explicit
+    // cancellations stay silent.
+    if (
+      record.status !== "completed" &&
+      record.status !== "error" &&
+      !isSupersededWorkspaceTurnInterrupt(record)
+    ) {
       return false;
     }
     const childEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), record.workspaceId);
@@ -6590,7 +6611,11 @@ export class TaskService {
     record: WorkspaceTurnTaskHandleRecord,
     foregroundWaiterWorkspaceIds: ReadonlySet<string>
   ): Promise<void> {
-    if (record.status !== "completed" && record.status !== "error") {
+    if (
+      record.status !== "completed" &&
+      record.status !== "error" &&
+      !isSupersededWorkspaceTurnInterrupt(record)
+    ) {
       return;
     }
 
@@ -6660,7 +6685,9 @@ export class TaskService {
             agentType,
             executionVersion: deliveryVersion,
             executionId: record.handleId,
-            errorType: "workspace_turn_error",
+            errorType: isSupersededWorkspaceTurnInterrupt(record)
+              ? "workspace_turn_superseded"
+              : "workspace_turn_error",
             errorMessage: record.error ?? "Workspace turn failed",
           });
     if (!alreadyDelivered) {
@@ -8066,6 +8093,9 @@ export class TaskService {
     // message older than that unrelated prompt still proves the turn completed, so the
     // durable-history repair scan must continue past it.
     let reviveAllowed = turnLive;
+    // A user message newer than the correlated final is durable evidence that
+    // queued input dispatched after the cut (see queueCutSupersedeEvidence).
+    let sawNewerUserMessage = false;
     for (const message of historyResult.data.toReversed()) {
       if (
         this.isDeferredWorkspaceTurnMessage(record, message.id) &&
@@ -8084,7 +8114,9 @@ export class TaskService {
             deferredMessageIds: [event.messageId],
           });
         }
-        const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+        const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
+          queueCutSupersedeEvidence: sawNewerUserMessage,
+        });
         if (
           !options.repairFromHistory ||
           (recovered.status === record.status && recovered.messageId === record.messageId)
@@ -8101,6 +8133,7 @@ export class TaskService {
       if (message.role !== "user") {
         continue;
       }
+      sawNewerUserMessage = true;
       const metadata = this.getWorkspaceTurnMetadataFromValue(message.metadata?.muxMetadata);
       const correlatedPrompt =
         metadata != null &&
@@ -10141,19 +10174,23 @@ export class TaskService {
 
   private buildTerminalWorkspaceTurnRecordFromEvent(
     record: WorkspaceTurnTaskHandleRecord,
-    event: StreamEndEvent
+    event: StreamEndEvent,
+    options: { queueCutSupersedeEvidence: boolean }
   ): WorkspaceTurnTaskHandleRecord {
     const baseRecord = { ...record };
     delete baseRecord.error;
     delete baseRecord.deferredMessageIds;
-    // A "tool-calls" finish on a delegated turn is always a queue cut: some other
-    // queued input (a manual user message, /compact) dispatched at the tool
-    // boundary and superseded the turn (same-turn continuations were already
-    // deferred by the caller). The child keeps working under that new input, so
-    // this is a supersede — not a failure of the delegated work. Settle as
-    // interrupted with a human-readable reason instead of alarming the owner
-    // with an "error" and internal finishReason jargon.
-    if (event.metadata.finishReason === "tool-calls") {
+    // A "tool-calls" finish on a delegated turn backed by queue-dispatch
+    // evidence is a queue cut: some other queued input (a manual user message,
+    // /compact) dispatched at the tool boundary and superseded the turn
+    // (same-turn continuations were already deferred by the caller). The child
+    // keeps working under that new input, so this is a supersede — not a
+    // failure of the delegated work. Settle as interrupted with a
+    // human-readable reason instead of alarming the owner with an "error" and
+    // internal finishReason jargon. Without such evidence a "tool-calls"
+    // finish can come from other stop conditions (e.g. a successful
+    // required-tool result), so it falls through to the truncation branch.
+    if (event.metadata.finishReason === "tool-calls" && options.queueCutSupersedeEvidence) {
       return {
         ...baseRecord,
         status: "interrupted",
@@ -10220,13 +10257,21 @@ export class TaskService {
     }
 
     const allowDeferredMessages = !(await this.hasActiveWorkspaceTurnDeferredBlockers(record));
+    // A user message newer than the correlated final is durable evidence that
+    // queued input dispatched after the cut (see queueCutSupersedeEvidence).
+    let sawNewerUserMessage = false;
     for (const message of historyResult.data.toReversed()) {
       if (this.isDeferredWorkspaceTurnMessage(record, message.id) && !allowDeferredMessages) {
         continue;
       }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
       if (event != null) {
-        return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+        return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
+          queueCutSupersedeEvidence: sawNewerUserMessage,
+        });
+      }
+      if (message.role === "user") {
+        sawNewerUserMessage = true;
       }
     }
     return null;
@@ -10393,6 +10438,20 @@ export class TaskService {
     );
   }
 
+  /**
+   * Whether the superseding queued input that cut this stream is still visible
+   * live: queued/preparing/auto-retrying in the child session, or already
+   * streaming as a different (uncorrelated) message. Same-turn continuations
+   * were ruled out by the caller via hasSameTurnContinuation.
+   */
+  private hasLiveQueueCutSupersedeEvidence(event: StreamEndEvent): boolean {
+    if (this.workspaceService.hasPendingQueuedOrPreparingTurn(event.workspaceId)) {
+      return true;
+    }
+    const activeStream = this.aiService.getStreamInfo(event.workspaceId);
+    return activeStream != null && activeStream.messageId !== event.messageId;
+  }
+
   private async finalizeWorkspaceTurnFromStreamEnd(event: StreamEndEvent): Promise<boolean> {
     const metadata = this.getWorkspaceTurnMetadata(event);
     if (metadata == null) {
@@ -10446,7 +10505,9 @@ export class TaskService {
       return true;
     }
 
-    const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event);
+    const next = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
+      queueCutSupersedeEvidence: this.hasLiveQueueCutSupersedeEvidence(event),
+    });
     await this.settleWorkspaceTurn({
       record,
       next,
