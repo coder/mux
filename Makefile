@@ -52,6 +52,10 @@ ifeq (,$(filter -j%,$(MAKEFLAGS)))
 MAKEFLAGS += -j
 endif
 
+# Issue #3831: macOS may SIGKILL the copied esbuild inode while the platform binary still execs.
+# ESBUILD_BINARY_PATH is not used because only esbuild's JS API honors it, not the Go CLI.
+ESBUILD_BIN = $(firstword $(wildcard node_modules/@esbuild/*/bin/esbuild) node_modules/esbuild/bin/esbuild)
+
 # Common esbuild flags for CLI API bundle (ESM format for trpc-cli)
 ESBUILD_CLI_FLAGS := --bundle --format=esm --platform=node --target=node20 --outfile=dist/cli/api.mjs --external:zod --external:commander --external:jsonc-parser --external:@trpc/server --external:ssh2 --external:cpu-features --banner:js="import{createRequire}from'module';globalThis.require=createRequire(import.meta.url);"
 
@@ -163,7 +167,7 @@ dev: node_modules/.installed build-main build-preload ## Start development serve
 	@bun x concurrently -k \
 		"bun x nodemon --watch src/node/workflowRuntime --ext js --exec 'bun scripts/gen_workflow_runtime_sources.ts'" \
 		"bun x concurrently \"$(TSGO) -w -p tsconfig.main.json\" \"bun x tsc-alias -w -p tsconfig.main.json\"" \
-		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
+		'$(ESBUILD_BIN) src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"vite"
 endif
 
@@ -190,7 +194,7 @@ dev-server: node_modules/.installed build-main ## Start server mode with hot rel
 	@# Keep tsgo -> tsc-alias sequential to avoid transient unresolved @/ imports in dist during restarts.
 	@bun x concurrently -k \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json,js --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \
-		'bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
+		'$(ESBUILD_BIN) src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
 		"bun x nodemon --watch dist/.main-build-complete --delay 300ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
 		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
 endif
@@ -236,7 +240,7 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 # Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
 dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
 	@echo "Building API CLI (ESM)..."
-	@bun x esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS)
+	@$(ESBUILD_BIN) src/cli/api.ts $(ESBUILD_CLI_FLAGS)
 
 build-preload: node_modules/.installed dist/preload.js ## Build preload script
 
@@ -290,7 +294,7 @@ dist/runtime/server-bundle.js: build-main $(TS_SOURCES)
 	@echo "Bundling server runtime for Docker..."
 	@test -f dist/cli/server.js
 	@mkdir -p dist/runtime
-	@bun x esbuild dist/cli/server.js $(ESBUILD_SERVER_FLAGS)
+	@$(ESBUILD_BIN) dist/cli/server.js $(ESBUILD_SERVER_FLAGS)
 
 # Bundle tokenizer worker next to server-bundle.js so workerPool resolves it at runtime.
 # Depend on build-main explicitly because tokenizer worker JS is emitted under dist/node/ as a side effect.
@@ -298,7 +302,7 @@ dist/runtime/tokenizer.worker.js: build-main
 	@echo "Bundling tokenizer worker for Docker..."
 	@test -f dist/node/utils/main/tokenizer.worker.js
 	@mkdir -p dist/runtime
-	@bun x esbuild dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
+	@$(ESBUILD_BIN) dist/node/utils/main/tokenizer.worker.js $(ESBUILD_TOKENIZER_WORKER_FLAGS)
 
 # Docker runtime keeps static assets under dist/static/ for compatibility with existing image layout.
 dist/static/.copied: static/splash.html
