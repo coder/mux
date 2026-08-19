@@ -8093,9 +8093,6 @@ export class TaskService {
     // message older than that unrelated prompt still proves the turn completed, so the
     // durable-history repair scan must continue past it.
     let reviveAllowed = turnLive;
-    // A user message newer than the correlated final is durable evidence that
-    // queued input dispatched after the cut (see queueCutSupersedeEvidence).
-    let sawNewerUserMessage = false;
     for (const message of historyResult.data.toReversed()) {
       if (
         this.isDeferredWorkspaceTurnMessage(record, message.id) &&
@@ -8115,15 +8112,16 @@ export class TaskService {
           });
         }
         const recovered = this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
-          // The persisted supersede classification stays authoritative when this
-          // repair rebuilds from the SAME correlated final that settled it: the
-          // superseding queued input may not have appended its user message to
-          // child history yet (queue-dispatch timing), and that absence must not
-          // downgrade the supersede to a truncation error. Only a different
+          // Repair preserves — never invents — a supersede classification.
+          // History order is not causal queue-dispatch evidence (an unrelated
+          // later user message must not upgrade an error settlement), while the
+          // persisted supersede stays authoritative when rebuilding from the
+          // SAME correlated final that settled it: the superseding queued input
+          // may not have appended its user message yet, and that absence must
+          // not downgrade the supersede to a truncation error. Only a different
           // correlated final (contradictory same-turn evidence) may resettle.
           queueCutSupersedeEvidence:
-            sawNewerUserMessage ||
-            (isSupersededWorkspaceTurnInterrupt(record) && event.messageId === record.messageId),
+            isSupersededWorkspaceTurnInterrupt(record) && event.messageId === record.messageId,
         });
         if (
           !options.repairFromHistory ||
@@ -8141,7 +8139,6 @@ export class TaskService {
       if (message.role !== "user") {
         continue;
       }
-      sawNewerUserMessage = true;
       const metadata = this.getWorkspaceTurnMetadataFromValue(message.metadata?.muxMetadata);
       const correlatedPrompt =
         metadata != null &&
@@ -10265,21 +10262,20 @@ export class TaskService {
     }
 
     const allowDeferredMessages = !(await this.hasActiveWorkspaceTurnDeferredBlockers(record));
-    // A user message newer than the correlated final is durable evidence that
-    // queued input dispatched after the cut (see queueCutSupersedeEvidence).
-    let sawNewerUserMessage = false;
     for (const message of historyResult.data.toReversed()) {
       if (this.isDeferredWorkspaceTurnMessage(record, message.id) && !allowDeferredMessages) {
         continue;
       }
       const event = this.buildWorkspaceTurnStreamEndEventFromHistory(record, message);
       if (event != null) {
+        // History order alone cannot prove a queue cut (a later unrelated user
+        // message is not causal evidence), so stale recovery conservatively
+        // settles tool-calls finals as errors. Genuine supersedes are
+        // classified live at stream-end; a crash-window misclassification here
+        // stays self-heal eligible for later correlated evidence.
         return this.buildTerminalWorkspaceTurnRecordFromEvent(record, event, {
-          queueCutSupersedeEvidence: sawNewerUserMessage,
+          queueCutSupersedeEvidence: false,
         });
-      }
-      if (message.role === "user") {
-        sawNewerUserMessage = true;
       }
     }
     return null;

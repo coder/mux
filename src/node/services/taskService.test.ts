@@ -5587,6 +5587,61 @@ describe("TaskService", () => {
     });
   });
 
+  test("snapshot history repair does not upgrade an error settlement to a supersede", async () => {
+    // A tool-calls turn correctly settled as error (no live queue-cut evidence,
+    // e.g. a required-tool stop) must stay an error even after unrelated user
+    // messages land in child history: order is not causal queue-cut evidence.
+    const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
+    const muxMetadata = {
+      type: "workspace-turn-task" as const,
+      taskHandleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      turnId: "turn",
+    };
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_required_tool_stop", "assistant", "Stopped on required tool", {
+            model: "anthropic:claude-opus-4-6",
+            agentId: "exec",
+            finishReason: "tool-calls",
+            muxMetadata,
+          })
+        )
+      ).success
+    ).toBe(true);
+    expect(
+      (
+        await historyService.appendToHistory(
+          "childworkspace",
+          createMuxMessage("msg_unrelated_later_input", "user", "Unrelated later question")
+        )
+      ).success
+    ).toBe(true);
+    await new TaskHandleStore(config).upsertWorkspaceTurn({
+      kind: "workspace_turn",
+      handleId: "wst_handle",
+      ownerWorkspaceId: parentId,
+      workspaceId: "childworkspace",
+      turnId: "turn",
+      status: "error",
+      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+      createdAt: "2026-06-19T00:00:00.000Z",
+      updatedAt: "2026-06-19T00:00:01.000Z",
+      createdWorkspace: true,
+      disposableWorkspace: false,
+      messageId: "msg_required_tool_stop",
+    });
+
+    const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
+    expect(snapshot).toMatchObject({
+      status: "error",
+      error: "Workspace turn ended before completion (finishReason: tool-calls)",
+      messageId: "msg_required_tool_stop",
+    });
+  });
+
   test("getWorkspaceTurnSnapshot repairs a stale error handle from self-healed history", async () => {
     const { config, parentId, taskService, historyService } = await startWorkspaceTurnForTest();
     await config.editConfig((cfg) => {
