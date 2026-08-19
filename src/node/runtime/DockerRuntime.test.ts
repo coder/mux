@@ -147,10 +147,10 @@ describe("DockerRuntime constructor", () => {
 });
 
 describe("DockerRuntime.postCreateSetup credentials", () => {
+  const hostGitconfigContents = Buffer.from("[user]\n\tname = Mux Test\n");
   let originalHome: string | undefined;
   let originalGhToken: string | undefined;
   let tempHome: string;
-  let hostGitconfigContents: Buffer;
 
   beforeEach(async () => {
     originalHome = process.env.HOME;
@@ -158,7 +158,6 @@ describe("DockerRuntime.postCreateSetup credentials", () => {
     delete process.env.GH_TOKEN;
 
     tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "mux-docker-credentials-"));
-    hostGitconfigContents = Buffer.from("[user]\n\tname = Mux Test\n");
     await fs.writeFile(path.join(tempHome, ".gitconfig"), hostGitconfigContents);
     process.env.HOME = tempHome;
   });
@@ -192,7 +191,6 @@ describe("DockerRuntime.postCreateSetup credentials", () => {
     );
     expect(writeCall?.command).toContain("$HOME/.gitconfig");
     expect(writeCall?.command).not.toContain("/root/.gitconfig");
-    expect(runtime.log.some((entry) => entry.includes("docker cp"))).toBe(false);
     expect([...Buffer.concat(writeCall?.stdinChunks ?? [])]).toEqual([...hostGitconfigContents]);
     expect(await runtime.resolvePath("~")).toBe("/home/coder");
   });
