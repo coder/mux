@@ -43,7 +43,10 @@ import {
 } from "@/common/utils/ai/cacheStrategy";
 import { normalizeToCanonical } from "@/common/utils/ai/models";
 import assert from "@/common/utils/assert";
-import { prepareProviderRequestMessages } from "@/node/services/aiService";
+import {
+  prepareProviderRequestMessages,
+  replaceOrAppendMessageById,
+} from "@/node/services/aiService";
 import { prepareMessagesForProvider } from "@/node/services/messagePipeline";
 import { parseModelString } from "@/node/services/providerModelFactory";
 import { extractToolMediaAsUserMessagesFromModelMessages } from "@/node/utils/messages/extractToolMediaAsUserMessagesFromModelMessages";
@@ -82,6 +85,13 @@ export interface ReplayRequestInputs {
   planFilePath?: string;
   /** Post-compaction attachments from the turn-envelope blob (model-visible). */
   postCompactionAttachments?: PostCompactionAttachment[] | null;
+  /**
+   * Refusal-fallback partial continuation from the turn-envelope blob. The
+   * eventual assistant row lands after requestHistorySequence, so this
+   * message exists only in the envelope; production appends it to the
+   * fallback request via replaceOrAppendMessageById.
+   */
+  partialContinuation?: MuxMessage | null;
   workspaceId: string;
 }
 
@@ -197,7 +207,13 @@ export async function buildReplayRequest(inputs: ReplayRequestInputs): Promise<R
   const wireProviderName = inputs.wireProviderName ?? deriveWireProviderName(inputs.modelString);
 
   // AgentSession.streamWithHistory → AIService.streamMessage, in order.
-  const requestMessages = filterOrphanedMcpPromptSnapshots(inputs.historyMessages);
+  const filteredMessages = filterOrphanedMcpPromptSnapshots(inputs.historyMessages);
+  // Refusal fallback: production builds the fallback request from history plus
+  // the refused attempt's partial continuation (same helper, same order).
+  const requestMessages =
+    inputs.partialContinuation != null
+      ? replaceOrAppendMessageById(filteredMessages, inputs.partialContinuation)
+      : filteredMessages;
   const { providerRequestMessages } = prepareProviderRequestMessages(
     requestMessages,
     wireProviderName,

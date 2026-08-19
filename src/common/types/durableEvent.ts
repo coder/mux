@@ -66,6 +66,13 @@ export const TurnEnvelopeDataSchema = z.object({
   planTransitionFilePath: z.string().optional(),
   /** JSON-serialized PostCompactionAttachment[] injected this turn (blob-stored). */
   postCompactionAttachmentsHash: BlobRefSchema.optional(),
+  /**
+   * JSON-serialized MuxMessage: the partial-output continuation a refusal
+   * fallback appended to its request (blob-stored). The turn's eventual
+   * assistant row lands after requestHistorySequence, so replay cannot
+   * recover this message from chat.jsonl alone.
+   */
+  partialContinuationHash: BlobRefSchema.optional(),
 });
 
 /**

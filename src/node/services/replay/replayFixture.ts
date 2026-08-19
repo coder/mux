@@ -76,6 +76,8 @@ export interface ReplayFixtureTurnSpec {
   planContentForTransition?: string;
   planFilePath?: string;
   postCompactionAttachments?: PostCompactionAttachment[];
+  /** Refusal-fallback partial continuation (envelope-only, never in chat.jsonl). */
+  partialContinuation?: MuxMessage;
   anthropicCacheTtl?: AnthropicCacheTtl;
   /** Set false to simulate devtools logging being off for this turn. */
   recordDevtools?: boolean;
@@ -166,6 +168,7 @@ export async function appendReplayFixtureTurn(
       planContentForTransition: spec.planContentForTransition,
       planFilePath: spec.planFilePath,
       postCompactionAttachments: spec.postCompactionAttachments,
+      partialContinuationMessage: spec.partialContinuation,
     });
   }
 
@@ -182,6 +185,7 @@ export async function appendReplayFixtureTurn(
       planContentForTransition: spec.planContentForTransition,
       planFilePath: spec.planFilePath,
       postCompactionAttachments: spec.postCompactionAttachments,
+      partialContinuation: spec.partialContinuation,
       workspaceId: ctx.workspaceId,
     });
     // Wire tool definitions for the recorded request: same cache-control

@@ -1901,6 +1901,9 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     atMentionProjectPath,
     sendMessageOptions.disableWorkspaceAgents,
     transferredDraftProjectDiscovery,
+    // The backend gates plugin-contributed skills on this experiment, so a
+    // toggle must refetch /skill suggestions like it reloads plugin commands.
+    agentPluginsExperimentEnabled,
   ]);
 
   // Agent Plugins: load manifest-contributed slash commands for suggestions.

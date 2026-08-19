@@ -297,4 +297,38 @@ describe("replayVerifySession pairing", () => {
     expect(devtoolsRaw).toContain("/plans/feature.md");
     expect(devtoolsRaw).toContain('"ttl":"1h"');
   });
+
+  test("refusal-fallback partial continuation is log-derivable", async () => {
+    using tmp = new DisposableTempDir("replay-verify-partial-continuation");
+    const ctx = createReplayFixtureSessionContext(tmp.path);
+
+    // A refusal fallback appends the refused attempt's partial output to the
+    // request as a synthetic assistant continuation. It never reaches
+    // chat.jsonl at this turn's requestHistorySequence (the surviving
+    // assistant row lands later), so the envelope blob must be enough to
+    // rebuild the request bytes.
+    const continuation = createMuxMessage(
+      "assistant-partial-refusal",
+      "assistant",
+      "Partial output before the refusal.",
+      { timestamp: 1_700_000_005_000 }
+    );
+    await appendReplayFixtureTurn(ctx, {
+      userText: "Trigger a refusal fallback.",
+      assistantText: "Fallback model finished the job.",
+      systemPrompt: SYSTEM_PROMPT,
+      tools: tools(),
+      partialContinuation: continuation,
+    });
+
+    const result = await verify(ctx);
+    expect(result.turns.map((turn) => ({ status: turn.status, reason: turn.reason }))).toEqual([
+      { status: "PASS", reason: undefined },
+    ]);
+
+    // Guard against a vacuous pass: the continuation text must actually be
+    // model-visible in the recorded request.
+    const devtoolsRaw = await fs.readFile(`${tmp.path}/devtools.jsonl`, "utf-8");
+    expect(devtoolsRaw).toContain("Partial output before the refusal.");
+  });
 });

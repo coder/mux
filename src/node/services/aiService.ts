@@ -238,7 +238,12 @@ export function prepareProviderRequestMessages(
   };
 }
 
-function replaceOrAppendMessageById(messages: MuxMessage[], replacement: MuxMessage): MuxMessage[] {
+// Exported for the replay builder: fallback requests append the refusal's
+// partial continuation the same way production does.
+export function replaceOrAppendMessageById(
+  messages: MuxMessage[],
+  replacement: MuxMessage
+): MuxMessage[] {
   const index = messages.findIndex((message) => message.id === replacement.id);
   if (index === -1) {
     return [...messages, replacement];
@@ -3848,6 +3853,11 @@ export class AIService extends EventEmitter {
                       planContentForTransition,
                       planFilePath,
                       postCompactionAttachments,
+                      // The continuation never reaches chat.jsonl at this
+                      // sequence (the assistant row lands later), so replay
+                      // needs the envelope's durable copy to rebuild the
+                      // fallback request.
+                      partialContinuationMessage: prepareOptions?.continuation?.assistantMessage,
                     });
                   };
                   const emitFallbackEnvelope = (): Promise<void> =>

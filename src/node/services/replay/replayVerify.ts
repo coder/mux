@@ -556,6 +556,18 @@ export async function replayVerifySession(params: {
         postCompactionAttachments = JSON.parse(attachmentsJson) as PostCompactionAttachment[];
       }
 
+      let partialContinuation: MuxMessage | undefined;
+      if (envelope.data.partialContinuationHash != null) {
+        const continuationJson = await journal.blobs.getText(envelope.data.partialContinuationHash);
+        if (continuationJson == null) {
+          fail(
+            `partial-continuation blob ${envelope.data.partialContinuationHash} missing from blob store`
+          );
+          continue;
+        }
+        partialContinuation = JSON.parse(continuationJson) as MuxMessage;
+      }
+
       // 1) System prompt: blob bytes vs the wire's system message.
       const systemPromptMatch = recordedSystemText(record.prompt) === systemPrompt;
 
@@ -588,6 +600,7 @@ export async function replayVerifySession(params: {
         planContentForTransition,
         planFilePath: envelope.data.planTransitionFilePath,
         postCompactionAttachments,
+        partialContinuation,
         workspaceId: params.workspaceId,
       });
 

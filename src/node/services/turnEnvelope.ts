@@ -11,6 +11,7 @@ import crypto from "node:crypto";
 import { asSchema, type FlexibleSchema, type Tool } from "ai";
 import type { PostCompactionAttachment } from "@/common/types/attachment";
 import type { BlobRef } from "@/common/types/durableEvent";
+import type { MuxMessage } from "@/common/types/message";
 import { stableStringify } from "@/common/utils/stableStringify";
 import { log } from "@/node/services/log";
 import type { DurableEventJournal } from "@/node/utils/journal/durableEventJournal";
@@ -160,6 +161,11 @@ export async function emitTurnEnvelope(params: {
   planFilePath?: string;
   /** Post-compaction attachments injected this turn (model-visible). */
   postCompactionAttachments?: PostCompactionAttachment[] | null;
+  /**
+   * Partial-output continuation a refusal fallback appended to its request
+   * (model-visible but never persisted to chat.jsonl at this sequence).
+   */
+  partialContinuationMessage?: MuxMessage | null;
 }): Promise<void> {
   try {
     // Content-addressed: unchanged prompts across turns dedupe to one blob.
@@ -177,6 +183,12 @@ export async function emitTurnEnvelope(params: {
     if (params.postCompactionAttachments != null && params.postCompactionAttachments.length > 0) {
       postCompactionAttachmentsHash = (
         await params.journal.blobs.put(JSON.stringify(params.postCompactionAttachments))
+      ).ref;
+    }
+    let partialContinuationHash: BlobRef | undefined;
+    if (params.partialContinuationMessage != null) {
+      partialContinuationHash = (
+        await params.journal.blobs.put(JSON.stringify(params.partialContinuationMessage))
       ).ref;
     }
 
@@ -210,6 +222,7 @@ export async function emitTurnEnvelope(params: {
             }
           : {}),
         ...(postCompactionAttachmentsHash !== undefined ? { postCompactionAttachmentsHash } : {}),
+        ...(partialContinuationHash !== undefined ? { partialContinuationHash } : {}),
       },
     });
   } catch (error) {

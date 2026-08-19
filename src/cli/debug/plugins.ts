@@ -1,12 +1,19 @@
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import type { WorkspaceCompositionEntry } from "@/common/orpc/schemas/agentPlugins";
+import { isMultiProject } from "@/common/utils/multiProject";
 import { defaultConfig } from "@/node/config";
-import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import {
+  createRuntimeContextForWorkspace,
+  resolveWorkspaceRootPath,
+} from "@/node/runtime/runtimeHelpers";
 import { buildWorkspaceComposition } from "@/node/services/agentPlugins/composition";
-import { createAgentPluginsMcpProvider } from "@/node/services/agentPlugins/mcpConfig";
+import {
+  createAgentPluginsMcpProvider,
+  resolveAgentPluginsMcpContext,
+} from "@/node/services/agentPlugins/mcpConfig";
 import { readPersistedExperimentEnabled } from "@/node/services/experimentsService";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
-import { isProjectTrusted } from "@/node/utils/projectTrust";
+import { isWorkspaceProjectTrusted } from "@/node/utils/projectTrust";
 
 function printEntries(label: string, entries: WorkspaceCompositionEntry[]): void {
   console.log(`${label} (${entries.length}):`);
@@ -37,9 +44,36 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const allMetadata = await defaultConfig.getAllWorkspaceMetadata();
+  const metadata = allMetadata.find((entry) => entry.id === workspaceId);
+  if (!metadata) {
+    console.error(`Workspace metadata not found: ${workspaceId}`);
+    process.exitCode = 1;
+    return;
+  }
+  if (isMultiProject(metadata)) {
+    // The oRPC endpoint composes multi-project workspaces through
+    // MultiProjectRuntime; reconstructing that fan-out here is out of scope
+    // for a host-local debug command.
+    console.error(
+      "Multi-project workspaces are not supported by this command; use the app's composition inspector."
+    );
+    process.exitCode = 1;
+    return;
+  }
 
-  const workspacePath = workspace.workspacePath;
-  const projectTrusted = isProjectTrusted(defaultConfig, workspace.projectPath);
+  // Same runtime + host-checkout resolution as the oRPC composition endpoint
+  // (AIService.createWorkspaceRuntimeContext): SSH/Docker checkouts are not
+  // host paths, so scanning workspace.workspacePath through LocalRuntime would
+  // report files production never loads.
+  const metadataWithPath = { ...metadata, namedWorkspacePath: workspace.workspacePath };
+  const { runtime, workspacePath } = createRuntimeContextForWorkspace(metadataWithPath);
+  const hostCheckoutRoot =
+    metadata.runtimeConfig.type !== "ssh" && metadata.runtimeConfig.type !== "docker"
+      ? resolveWorkspaceRootPath(metadataWithPath, runtime)
+      : null;
+
+  const projectTrusted = isWorkspaceProjectTrusted(defaultConfig, metadata);
   const agentPluginsEnabled = await readPersistedExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS, {
     muxHome: defaultConfig.rootDir,
   });
@@ -51,22 +85,29 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
     }),
   });
 
+  // Off-host gating mirrors the endpoint: plugin containers anchor at the
+  // host checkout root when there is one; plugin MCP servers additionally
+  // require a local/worktree runtime (resolveAgentPluginsMcpContext).
+  const agentPlugins = hostCheckoutRoot
+    ? resolveAgentPluginsMcpContext(metadata, hostCheckoutRoot)
+    : null;
   const composition = await buildWorkspaceComposition({
-    runtime: new LocalRuntime(workspacePath),
-    workspacePath,
+    runtime,
+    workspacePath: hostCheckoutRoot ?? workspacePath,
     muxHome: defaultConfig.rootDir,
     projectTrusted,
     agentPluginsEnabled,
     listMcpServerLayers: () =>
-      mcpConfigService.listServerLayers(workspace.projectPath, projectTrusted, {
-        // Same anchors the engine uses for host workspaces: containers scan the
-        // checkout root, instance identity keys off the project path.
-        agentPlugins: { projectRoot: workspacePath, projectKey: workspace.projectPath },
+      mcpConfigService.listServerLayers(metadata.projectPath, projectTrusted, {
+        agentPlugins,
       }),
   });
 
   console.log(`\n=== Plugin composition for workspace: ${workspaceId} ===\n`);
-  console.log(`workspace path: ${workspacePath}`);
+  console.log(`workspace path: ${hostCheckoutRoot ?? workspacePath}`);
+  if (!hostCheckoutRoot) {
+    console.log("host checkout: none (off-host runtime) — plugin containers are not loaded");
+  }
   console.log(`project trusted: ${projectTrusted ? "yes" : "no"}`);
   console.log(
     `agent-plugins experiment: ${composition.agentPluginsEnabled ? "enabled" : "disabled (plugin artifacts are discovered but not loaded)"}`

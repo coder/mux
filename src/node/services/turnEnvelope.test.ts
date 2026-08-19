@@ -10,6 +10,7 @@ import {
   type Tool,
 } from "ai";
 import { z } from "zod";
+import { createMuxMessage } from "@/common/types/message";
 import { sanitizeToolSchemaForOpenAI } from "@/common/utils/tools/schemaSanitizer";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import {
@@ -239,6 +240,39 @@ describe("emitTurnEnvelope", () => {
 
     // Identical prompts content-address to a single stored blob.
     expect(await listBlobFiles(tmp.path)).toHaveLength(1);
+  });
+
+  test("partial continuation round-trips through the envelope blob", async () => {
+    using tmp = new DisposableTempDir("turn-envelope-test");
+    const journal = new DurableEventJournal(tmp.path);
+    // Refusal-fallback continuation: never persisted to chat.jsonl at the
+    // request's sequence, so the envelope's blob is replay's only source.
+    const continuation = createMuxMessage(
+      "assistant-partial-1",
+      "assistant",
+      "partial output before refusal",
+      { historySequence: 99 }
+    );
+
+    await emitTurnEnvelope({
+      journal,
+      workspaceId: "ws-1",
+      systemMessage: "sys",
+      tools: {},
+      modelString: "anthropic:claude-test",
+      thinkingLevel: "off",
+      providerOptions: {},
+      partialContinuationMessage: continuation,
+    });
+
+    const events = await journal.read();
+    expect(events).toHaveLength(1);
+    const event = events[0];
+    if (event?.kind !== "turn-envelope") throw new Error("expected turn-envelope");
+    expect(event.data.partialContinuationHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const stored = await journal.blobs.getText(event.data.partialContinuationHash ?? "");
+    expect(stored).not.toBeNull();
+    expect(JSON.parse(stored ?? "")).toEqual(continuation);
   });
 
   test("sentinelToolNames persist independently of the narrowed wire manifest", async () => {
