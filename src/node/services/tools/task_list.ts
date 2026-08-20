@@ -3,6 +3,10 @@ import * as path from "node:path";
 
 import { tool } from "ai";
 
+import {
+  SUBAGENT_REUSABLE_BENCH_EXCLUSIVE_LIMIT,
+  SUBAGENT_REUSABLE_BENCH_TARGET,
+} from "@/common/constants/subagentLifecycle";
 import type { TaskListToolSuccessResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
@@ -64,10 +68,9 @@ function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListS
   }
 }
 
-// Listing an inactive child should reinforce persistence and reuse, not turn discovery into a
-// cleanup obligation that discards context at the end of an otherwise unrelated task.
-const INACTIVE_CHILD_RETENTION_NOTE =
-  "Inactive persistent children are low-cost to retain and remain available under stable task IDs. Prefer reawakening a child when its context or expertise fits new work, and use task_retitle when its reusable responsibility changes. A reawakened child keeps its checkout, so for repository-dependent work, verify that the retained snapshot is appropriate or tell it to synchronize before acting. Inactivity or the end of a turn, task, or PR is not itself a cleanup signal; use task_remove only when the user asks or the child is clearly obsolete with no plausible future value. Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.";
+// Discovery should keep a useful reusable bench without letting inactive children accumulate
+// indefinitely or turning every task boundary into a blanket cleanup.
+const INACTIVE_CHILD_RETENTION_NOTE = `Inactive persistent children remain available under stable task IDs. Keep each parent's direct standalone bench role-based: aim for at most ${SUBAGENT_REUSABLE_BENCH_TARGET} and keep it below ${SUBAGENT_REUSABLE_BENCH_EXCLUSIVE_LIMIT}. Prefer reawakening relevant context and use task_retitle when responsibility changes; prune substantially overlapping, obsolete, or least-useful inactive roles with task_remove when the bench exceeds those bounds. Do not sweep a small bench merely because a turn, task, or PR ended. A reawakened child keeps its checkout, so for repository-dependent work verify the retained snapshot or tell it to synchronize. Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.`;
 
 const MAX_ARCHIVE_ANCESTOR_DEPTH = 32;
 
