@@ -2,6 +2,14 @@
 // Must be set before any filesystem operations occur.
 process.umask(0o077);
 
+import { installEpipeGuard, isEpipeError } from "./utils/epipeGuard";
+
+// When the launching terminal exits (packaged Linux/AppImage), stdout/stderr
+// become dead pipes and every console write raises EPIPE. Swallow those before
+// anything logs so they can never crash the app or loop the error dialog (#3082).
+installEpipeGuard(process.stdout);
+installEpipeGuard(process.stderr);
+
 // Enable source map support for better error stack traces in production
 import "source-map-support/register";
 import * as fs from "node:fs";
@@ -169,8 +177,9 @@ process.on("uncaughtException", (error: unknown) => {
 
   console.error("Stack:", stack);
 
-  // Show error dialog in production
-  if (app.isPackaged) {
+  // Show error dialog in production. EPIPE never warrants a modal: it means a
+  // pipe reader went away (defense-in-depth for streams the guard above misses).
+  if (app.isPackaged && !isEpipeError(error)) {
     dialog.showErrorBox(
       "Application Error",
       `An unexpected error occurred:\n\n${message}\n\nStack trace:\n${stack ?? "No stack trace available"}`
@@ -182,7 +191,7 @@ process.on("unhandledRejection", (reason, promise) => {
   console.error("Unhandled Rejection at:", promise);
   console.error("Reason:", reason);
 
-  if (app.isPackaged) {
+  if (app.isPackaged && !isEpipeError(reason)) {
     const message = getErrorMessage(reason);
     const stack = reason instanceof Error ? reason.stack : undefined;
     dialog.showErrorBox(
