@@ -9372,6 +9372,49 @@ describe("TaskService", () => {
     });
   }, 20_000);
 
+  test("inherits the exec base's configured pro default when spawning an agent without its own", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          // Parent runs standard; the pro must come from the configured exec
+          // default via Explore's base chain, matching Settings/ACP display.
+          aiSettings: { model: "openai:gpt-5.6-sol", thinkingLevel: "high" },
+        },
+      ],
+      {
+        taskSettings: testTaskSettings(),
+        agentAiDefaults: { exec: { reasoningMode: "pro" } },
+      }
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run explore with base pro");
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run explore with base pro",
+      expect.objectContaining({ agentId: "explore", reasoningMode: "pro" }),
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
   test("falls back to the parent's active-agent pro mode when spawning another agent type", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");

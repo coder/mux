@@ -58,6 +58,13 @@ import { FALLBACK_AGENTS, deriveTasksSectionAgentGroups } from "./TasksSection.a
 
 const INHERIT = "__inherit__";
 
+// Agents whose requests run outside the send path (raw streamText: Dream in
+// memoryConsolidation, Name Workspace in workspaceTitleGenerator) and never
+// apply reasoningMode. Never offer a Pro toggle that cannot affect requests.
+// Compact stays eligible: compaction goes through the send path, which
+// threads reasoningMode.
+const HEADLESS_REASONING_AGENT_IDS = new Set(["dream", "name_workspace"]);
+
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
   switch (agent.scope) {
     case "project":
@@ -1137,10 +1144,7 @@ export function TasksSection() {
           modelValue={modelValue}
           thinkingValue={thinkingValue}
           reasoningModeValue={entry?.reasoningMode ?? inheritedDefaults.reasoningMode ?? "standard"}
-          // Dream runs outside the send path (raw streamText in
-          // memoryConsolidation) and never applies reasoningMode, so don't
-          // offer a Pro toggle that cannot affect its requests.
-          allowProMode={agent.id !== "dream"}
+          allowProMode={!HEADLESS_REASONING_AGENT_IDS.has(agent.id)}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}

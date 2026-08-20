@@ -1900,6 +1900,22 @@ export class TaskService {
     // (persisted selected agent, defaulting to exec), then legacy settings.
     // Safe to pass through unconditionally: the send path re-gates per model
     // (buildRequestHeaders is inert for unsupported models/routes).
+    //
+    // Agents without their own configured default inherit from their default
+    // base (plan -> plan, else exec, like ACP's getFallbackBaseAgentId), so
+    // e.g. Explore picks up a pro configured on Exec, matching the Settings
+    // card and ACP resolution. This sync resolver cannot read agent
+    // definitions, so explicit custom `base:` chains are approximated by that
+    // default; the agent's own defaults above still always win.
+    const fallbackBaseAgentId = params.agentId === "plan" ? "plan" : "exec";
+    const baseSubagentDefault =
+      params.agentId !== fallbackBaseAgentId
+        ? params.cfg.subagentAiDefaults?.[fallbackBaseAgentId]
+        : undefined;
+    const baseAgentDefault =
+      params.agentId !== fallbackBaseAgentId
+        ? params.cfg.agentAiDefaults?.[fallbackBaseAgentId]
+        : undefined;
     const activeParentAiSettings = this.resolveWorkspaceAISettings(
       params.parentMeta,
       normalizeAgentId(params.parentMeta.agentId)
@@ -1907,6 +1923,8 @@ export class TaskService {
     const effectiveReasoningMode = coerceOpenAIReasoningMode(
       subagentDefault?.reasoningMode ??
         agentDefault?.reasoningMode ??
+        baseSubagentDefault?.reasoningMode ??
+        baseAgentDefault?.reasoningMode ??
         parentAiSettings?.reasoningMode ??
         activeParentAiSettings?.reasoningMode
     );

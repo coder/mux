@@ -565,6 +565,23 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(proToggle.getAttribute("aria-pressed")).toBe("true");
   });
 
+  test("hides the Pro mode toggle on the Name Workspace card even for pro-capable models", async () => {
+    // Name generation runs raw streamText (workspaceTitleGenerator) and never
+    // applies reasoningMode, same headless class as Dream.
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        name_workspace: { modelString: "openai:gpt-5.6-sol" },
+      },
+    });
+
+    await view.findByText("Name Workspace");
+    const card = getAgentCardByName(view, "Name Workspace");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+
+    expect(within(card).getByRole("listbox", { name: "Reasoning effort" })).toBeTruthy();
+    expect(card.querySelector('[data-component="ProModeToggle"]')).toBeNull();
+  });
+
   test("hides the Pro mode toggle on the Dream card even for pro-capable models", async () => {
     // Dream's headless requests (raw streamText) never apply reasoningMode,
     // so the card must not offer a toggle that cannot affect them.
