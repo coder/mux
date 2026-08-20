@@ -13757,6 +13757,62 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       }
     });
 
+    test("heartbeat reasoning resolves through the selected agent's declared base chain", async () => {
+      // Same parity requirement as goal kickoffs: a base: plan custom agent
+      // must inherit Plan's configured Pro default, not the Exec fallback.
+      const projectPath = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-hb-chain-"));
+      try {
+        const agentsDir = path.join(projectPath, ".mux", "agents");
+        await fsPromises.mkdir(agentsDir, { recursive: true });
+        await fsPromises.writeFile(
+          path.join(agentsDir, "researcher.md"),
+          `---\nname: Researcher\ndescription: Plan-derived custom agent for tests\nbase: plan\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+          "utf-8"
+        );
+
+        const workspaceId = "ws-1";
+        const projects = new Map([
+          [
+            projectPath,
+            { workspaces: [{ id: workspaceId, path: projectPath, agentId: "researcher" }] },
+          ],
+        ]);
+        const service = await makeServiceWithConfig({
+          findWorkspace: mock(() => ({ projectPath, workspacePath: projectPath })),
+          loadConfigOrDefault: mock(() => ({
+            projects,
+            agentAiDefaults: {
+              plan: { reasoningMode: "pro" as const },
+              exec: { reasoningMode: "standard" as const },
+            },
+          })),
+        });
+        (
+          service as unknown as {
+            extensionMetadata: { getSnapshot: (id: string) => Promise<undefined> };
+          }
+        ).extensionMetadata = { getSnapshot: () => Promise.resolve(undefined) };
+        spyOn(service, "getInfo").mockResolvedValue({
+          id: workspaceId,
+          name: projectPath,
+          projectPath,
+          projectName: "hb-chain",
+          runtimeConfig: { type: "local" },
+        } as FrontendWorkspaceMetadata);
+
+        const result = await (
+          service as unknown as {
+            buildHeartbeatSendOptions(
+              id: string
+            ): Promise<{ sendOptions: { reasoningMode?: string } }>;
+          }
+        ).buildHeartbeatSendOptions(workspaceId);
+        expect(result.sendOptions.reasoningMode).toBe("pro");
+      } finally {
+        await fsPromises.rm(projectPath, { recursive: true, force: true });
+      }
+    });
+
     test("falls through to DEFAULT_MODEL as the final fallback", async () => {
       const projectPath = "/tmp/proj";
       const workspaceId = "ws-1";

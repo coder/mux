@@ -104,10 +104,13 @@ export function useRouting(): RoutingState {
           routeOverrides: overrides,
         })
         .catch(() => {
-          // Best-effort only; backend config reload will reconcile state.
+          // The optimistic update landed in the shared singleton store, so a
+          // failed write must re-fetch or the stale route survives navigation
+          // (same recovery as useMinThinkingLevels).
+          void store.refresh();
         });
     },
-    [api]
+    [api, store]
   );
 
   const setRoutePreferences = useCallback(

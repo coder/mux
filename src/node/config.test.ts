@@ -1566,6 +1566,47 @@ describe("Config", () => {
       });
     });
 
+    it("keeps a differing exec subagent reasoning mode during first-load cleanup", () => {
+      // UI Exec pro + sub-agent standard share a model: cleanup may drop the
+      // mirrored model but must keep the standard override (deleting it would
+      // silently flip the sub-agent to pro after restart).
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "standard" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toEqual({
+        reasoningMode: "standard",
+      });
+    });
+
+    it("removes a mirrored exec subagent reasoning mode during first-load cleanup", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
+    });
+
     it("preserves intentionally equal exec subagent defaults after migration marker is set", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),

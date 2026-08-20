@@ -10781,6 +10781,38 @@ export class WorkspaceService extends EventEmitter {
     return this.getGoalContinuationKickoffSendOptions(workspaceId);
   }
 
+  /**
+   * Declared-base-chain ancestor IDs for a workspace's selected agent
+   * (Settings/ACP parity). Falls back to the legacy Exec approximation when
+   * the agent definition cannot be read.
+   */
+  private async resolveWorkspaceAgentBaseChainIds(
+    workspaceId: string,
+    agentId: string
+  ): Promise<readonly string[]> {
+    if (agentId === WORKSPACE_DEFAULTS.agentId) {
+      return [];
+    }
+    try {
+      const metadata = await this.getInfo(workspaceId);
+      if (metadata) {
+        const runtime = createRuntimeForWorkspace(metadata);
+        const declared = await resolveDeclaredBaseChainIds({
+          runtime,
+          workspacePath: resolveWorkspaceRootPath(metadata, runtime),
+          agentId,
+          workspaceId,
+        });
+        if (declared) {
+          return declared;
+        }
+      }
+    } catch {
+      // Fall through to the approximation.
+    }
+    return [WORKSPACE_DEFAULTS.agentId];
+  }
+
   async getGoalContinuationKickoffSendOptions(
     workspaceId: string
   ): Promise<SendMessageOptions | null> {
@@ -10811,29 +10843,8 @@ export class WorkspaceService extends EventEmitter {
 
     // Custom agents inherit through their DECLARED base chain (a base: plan
     // agent must fall back to Plan's defaults, not Exec's), mirroring
-    // Settings/ACP/task-spawn resolution. When the definition cannot be read,
-    // keep the legacy Exec approximation.
-    let chainAgentIds: readonly string[] =
-      agentId === WORKSPACE_DEFAULTS.agentId ? [] : [WORKSPACE_DEFAULTS.agentId];
-    if (agentId !== WORKSPACE_DEFAULTS.agentId) {
-      try {
-        const metadata = await this.getInfo(workspaceId);
-        if (metadata) {
-          const runtime = createRuntimeForWorkspace(metadata);
-          const declared = await resolveDeclaredBaseChainIds({
-            runtime,
-            workspacePath: resolveWorkspaceRootPath(metadata, runtime),
-            agentId,
-            workspaceId,
-          });
-          if (declared) {
-            chainAgentIds = declared;
-          }
-        }
-      } catch {
-        // Approximation above stays in effect.
-      }
-    }
+    // Settings/ACP/task-spawn resolution.
+    const chainAgentIds = await this.resolveWorkspaceAgentBaseChainIds(workspaceId, agentId);
 
     // Each candidate pairs the model with the thinking level persisted alongside
     // it. Dropping the thinking level here caused goal continuations to stream
@@ -11537,13 +11548,22 @@ export class WorkspaceService extends EventEmitter {
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
     // Same fallback order as thinkingLevel (activity snapshots do not carry
-    // reasoningMode).
-    const reasoningMode = coerceOpenAIReasoningMode(
-      agentSettings?.reasoningMode ??
-        globalAgentDefaults?.reasoningMode ??
-        execAgentSettings?.reasoningMode ??
-        globalExecDefaults?.reasoningMode
-    );
+    // reasoningMode), but inherited through the agent's DECLARED base chain so
+    // heartbeats match ACP/task/goal resolution for base: plan custom agents.
+    let chainReasoningMode: OpenAIReasoningMode | undefined;
+    for (const ancestorId of await this.resolveWorkspaceAgentBaseChainIds(workspaceId, agentId)) {
+      chainReasoningMode = coerceOpenAIReasoningMode(
+        workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.reasoningMode ??
+          config.agentAiDefaults?.[ancestorId]?.reasoningMode
+      );
+      if (chainReasoningMode != null) {
+        break;
+      }
+    }
+    const reasoningMode =
+      coerceOpenAIReasoningMode(
+        agentSettings?.reasoningMode ?? globalAgentDefaults?.reasoningMode
+      ) ?? chainReasoningMode;
 
     return {
       sendOptions: {

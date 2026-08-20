@@ -589,6 +589,14 @@ function removeMirroredExecSubagentDefaults(params: {
     modified = true;
   }
 
+  if (
+    nextExecSubagentDefault.reasoningMode !== undefined &&
+    nextExecSubagentDefault.reasoningMode === execAgentDefault.reasoningMode
+  ) {
+    delete nextExecSubagentDefault.reasoningMode;
+    modified = true;
+  }
+
   if (!modified) {
     return { subagentAiDefaults: params.subagentAiDefaults, modified: false };
   }
@@ -596,7 +604,8 @@ function removeMirroredExecSubagentDefaults(params: {
   const subagentAiDefaults = { ...params.subagentAiDefaults };
   if (
     nextExecSubagentDefault.modelString === undefined &&
-    nextExecSubagentDefault.thinkingLevel === undefined
+    nextExecSubagentDefault.thinkingLevel === undefined &&
+    nextExecSubagentDefault.reasoningMode === undefined
   ) {
     delete subagentAiDefaults.exec;
   } else {

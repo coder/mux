@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import React from "react";
 
@@ -18,6 +18,7 @@ let configGetConfig: () => Promise<{
   routePriority: string[];
   routeOverrides: Record<string, string>;
 }>;
+let updateRoutePreferencesImpl: () => Promise<undefined>;
 
 async function* emptyStream() {
   await Promise.resolve();
@@ -35,7 +36,7 @@ function createStubApiClient(): APIClient {
     config: {
       getConfig: () => configGetConfig(),
       onConfigChanged: () => Promise.resolve(emptyStream()),
-      updateRoutePreferences: () => Promise.resolve(undefined),
+      updateRoutePreferences: () => updateRoutePreferencesImpl(),
     },
   } as unknown as APIClient;
 }
@@ -64,6 +65,7 @@ describe("useRouting", () => {
     routePriority = ["direct"];
     routeOverrides = {};
     configGetConfig = () => Promise.resolve({ routePriority, routeOverrides });
+    updateRoutePreferencesImpl = () => Promise.resolve(undefined);
   });
 
   afterEach(() => {
@@ -133,5 +135,24 @@ describe("useRouting", () => {
       expect(second.result.current.routeOverrides).toEqual(routeOverrides);
     });
     expect(configFetchCount).toBe(1);
+  });
+
+  test("failed route persistence refreshes the shared store from the backend", async () => {
+    // The optimistic update lands in the SINGLETON store, so a failed write
+    // must re-fetch: otherwise the stale route survives navigation and every
+    // picker keeps gating on state the backend never accepted.
+    updateRoutePreferencesImpl = () => Promise.reject(new Error("write failed"));
+    getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
+
+    const { result } = renderHook(() => useRouting(), { wrapper });
+    await waitFor(() => expect(result.current.routePriority).toEqual(["direct"]));
+
+    act(() => {
+      result.current.setRoutePriority(["mux-gateway", "direct"]);
+    });
+    expect(result.current.routePriority).toEqual(["mux-gateway", "direct"]);
+
+    await waitFor(() => expect(result.current.routePriority).toEqual(["direct"]));
   });
 });
