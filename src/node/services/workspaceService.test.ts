@@ -13685,6 +13685,29 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       expect(result?.model).toContain("sonnet");
     });
 
+    test("model-less reasoning-only agent default still contributes its fields", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          // "Inherit" model in settings persists entries with only thinking
+          // fields; the model must fall through while these fields apply.
+          agentAiDefaults: {
+            exec: { thinkingLevel: "high" as const, reasoningMode: "pro" as const },
+          },
+        })),
+      });
+      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toBeTruthy();
+      expect(result?.thinkingLevel).toBe("high");
+      expect(result?.reasoningMode).toBe("pro");
+    });
+
     test("falls through to DEFAULT_MODEL as the final fallback", async () => {
       const projectPath = "/tmp/proj";
       const workspaceId = "ws-1";

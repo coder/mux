@@ -9,6 +9,7 @@ import type { ORPCClient } from "../../src/node/acp/serverConnection";
 interface WorkspaceAiSettings {
   model: string;
   thinkingLevel: "off" | "low" | "medium" | "high" | "xhigh" | "max";
+  reasoningMode?: "standard" | "pro";
 }
 
 interface WorkspaceState {
@@ -246,6 +247,44 @@ describe("ACP config options", () => {
       "high",
       "xhigh",
     ]);
+  });
+
+  it("preserves pro reasoning mode across agent mode switches", async () => {
+    const harness = createHarness({
+      agentId: "plan",
+      aiSettings: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
+      aiSettingsByAgent: {
+        plan: { model: "anthropic:claude-opus-4-6", thinkingLevel: "high" },
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+      },
+    });
+
+    await handleSetConfigOption(harness.client, "ws-1", AGENT_MODE_CONFIG_ID, "exec", {
+      activeAgentId: "plan",
+    });
+
+    expect(harness.updateModeCalls).toHaveLength(1);
+    expect(harness.updateModeCalls[0]?.aiSettings.reasoningMode).toBe("pro");
+  });
+
+  it("preserves pro reasoning mode across model and thinking level changes", async () => {
+    const harness = createHarness({
+      agentId: "exec",
+      aiSettings: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+      aiSettingsByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+      },
+    });
+
+    await handleSetConfigOption(harness.client, "ws-1", "model", "anthropic:claude-opus-4-6", {
+      activeAgentId: "exec",
+    });
+    expect(harness.updateModeCalls[0]?.aiSettings.reasoningMode).toBe("pro");
+
+    await handleSetConfigOption(harness.client, "ws-1", "thinkingLevel", "medium", {
+      activeAgentId: "exec",
+    });
+    expect(harness.updateModeCalls[1]?.aiSettings.reasoningMode).toBe("pro");
   });
 
   it("clamps persisted thinking level when model changes", async () => {

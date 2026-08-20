@@ -184,6 +184,9 @@ async function resolveCurrentAiSettings(
         workspaceAiSettings.model,
         workspaceAiSettings.thinkingLevel
       ),
+      ...(workspaceAiSettings.reasoningMode != null
+        ? { reasoningMode: workspaceAiSettings.reasoningMode }
+        : {}),
     };
   }
 
@@ -191,6 +194,9 @@ async function resolveCurrentAiSettings(
   return {
     model: resolvedDefaults.model,
     thinkingLevel: enforceThinkingPolicy(resolvedDefaults.model, resolvedDefaults.thinkingLevel),
+    ...(resolvedDefaults.reasoningMode != null
+      ? { reasoningMode: resolvedDefaults.reasoningMode }
+      : {}),
   };
 }
 
@@ -358,7 +364,11 @@ export async function handleSetConfigOption(
     const existingSettings = workspace.aiSettingsByAgent?.[nextAgentId];
     const resolvedAiSettings =
       existingSettings?.model != null && existingSettings?.thinkingLevel != null
-        ? { model: existingSettings.model, thinkingLevel: existingSettings.thinkingLevel }
+        ? {
+            model: existingSettings.model,
+            thinkingLevel: existingSettings.thinkingLevel,
+            reasoningMode: existingSettings.reasoningMode,
+          }
         : await resolveAgentAiSettings(client, nextAgentId, trimmedWorkspaceId);
 
     const normalizedAiSettings: ResolvedAiSettings = {
@@ -367,6 +377,9 @@ export async function handleSetConfigOption(
         resolvedAiSettings.model,
         resolvedAiSettings.thinkingLevel
       ),
+      ...(resolvedAiSettings.reasoningMode != null
+        ? { reasoningMode: resolvedAiSettings.reasoningMode }
+        : {}),
     };
 
     await persistAgentAiSettings(client, trimmedWorkspaceId, nextAgentId, normalizedAiSettings);
@@ -390,9 +403,14 @@ export async function handleSetConfigOption(
       currentAiSettings.thinkingLevel
     );
 
+    // Retain pro mode across model changes (matching the settings UI); the
+    // send path re-gates per model so unsupported models are unaffected.
     await persistAgentAiSettings(client, trimmedWorkspaceId, currentAgentId, {
       model: trimmedValue,
       thinkingLevel: clampedThinkingLevel,
+      ...(currentAiSettings.reasoningMode != null
+        ? { reasoningMode: currentAiSettings.reasoningMode }
+        : {}),
     });
 
     return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });
@@ -410,6 +428,9 @@ export async function handleSetConfigOption(
     await persistAgentAiSettings(client, trimmedWorkspaceId, currentAgentId, {
       model: currentAiSettings.model,
       thinkingLevel: clampedThinkingLevel,
+      ...(currentAiSettings.reasoningMode != null
+        ? { reasoningMode: currentAiSettings.reasoningMode }
+        : {}),
     });
 
     return buildConfigOptions(client, trimmedWorkspaceId, { activeAgentId: currentAgentId });

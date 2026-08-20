@@ -10850,25 +10850,35 @@ export class WorkspaceService extends EventEmitter {
       { model: DEFAULT_MODEL },
     ];
 
+    // Resolve each field independently: agent defaults may set only a thinking
+    // level or reasoning mode ("Inherit" model), so a candidate without a model
+    // must still contribute its other fields (mirroring taskService resolution).
+    let model: string | undefined;
+    let thinkingLevel: ThinkingLevel | undefined;
+    let reasoningMode: OpenAIReasoningMode | undefined;
     for (const candidate of candidates) {
-      const raw = candidate.model;
-      if (typeof raw !== "string" || raw.trim().length === 0) {
-        continue;
+      if (model === undefined && typeof candidate.model === "string") {
+        const raw = candidate.model.trim();
+        if (raw.length > 0) {
+          const normalized = normalizeSelectedModel(raw);
+          if (isValidModelFormat(normalized)) {
+            model = normalized;
+          }
+        }
       }
-      const normalized = normalizeSelectedModel(raw.trim());
-      if (isValidModelFormat(normalized)) {
-        const thinkingLevel = coerceThinkingLevel(candidate.thinkingLevel);
-        const reasoningMode = coerceOpenAIReasoningMode(candidate.reasoningMode);
-        return {
-          model: normalized,
-          agentId,
-          ...(thinkingLevel != null ? { thinkingLevel } : {}),
-          ...(reasoningMode != null ? { reasoningMode } : {}),
-        };
-      }
+      thinkingLevel ??= coerceThinkingLevel(candidate.thinkingLevel) ?? undefined;
+      reasoningMode ??= coerceOpenAIReasoningMode(candidate.reasoningMode) ?? undefined;
     }
 
-    return null;
+    if (model === undefined) {
+      return null;
+    }
+    return {
+      model,
+      agentId,
+      ...(thinkingLevel != null ? { thinkingLevel } : {}),
+      ...(reasoningMode != null ? { reasoningMode } : {}),
+    };
   }
 
   async executeGoalContinuation(input: {
