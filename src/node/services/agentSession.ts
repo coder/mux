@@ -136,6 +136,7 @@ import { isAnthropic1MEffectivelyEnabled } from "@/common/utils/ai/providerOptio
 import {
   isNonRetryableSendError,
   isNonRetryableStreamError,
+  isProviderConfigFixableError,
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
@@ -1261,6 +1262,17 @@ export class AgentSession {
 
     this.startupAutoRetryAbandon = null;
     await this.persistAutoRetryState();
+  }
+
+  async handleProviderConfigChanged(): Promise<void> {
+    await this.loadAutoRetryEnabledPreference();
+    if (!isProviderConfigFixableError(this.startupAutoRetryAbandon?.reason ?? "")) {
+      return;
+    }
+
+    // Config changes only unlock retry. They must not resume the live stream (PR #2317 was
+    // rejected); after a later restart, normal startup recovery may resume the interrupted tail.
+    await this.clearStartupAutoRetryAbandon();
   }
 
   private async updateStartupAutoRetryAbandonFromFailure(

@@ -606,6 +606,7 @@ export class AIService extends EventEmitter {
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.providerService = providerService;
+    this.providerService.onConfigChanged(() => this.emit("providers-config-changed"));
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
     );
