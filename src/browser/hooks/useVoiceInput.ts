@@ -74,12 +74,20 @@ function hasTouchDictation(): boolean {
   return hasTouch;
 }
 
-const HAS_TOUCH_DICTATION = hasTouchDictation();
-const HAS_MEDIA_RECORDER = typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
-const HAS_GET_USER_MEDIA =
-  typeof window !== "undefined" &&
-  typeof navigator !== "undefined" &&
-  typeof navigator.mediaDevices?.getUserMedia === "function";
+// Capability checks run at call time, not module load: this module can be evaluated
+// before MediaRecorder/mediaDevices exist in the environment (notably under Bun's test
+// module caching), which would otherwise freeze stale negatives.
+function hasMediaRecorder(): boolean {
+  return typeof window !== "undefined" && typeof MediaRecorder !== "undefined";
+}
+
+function hasGetUserMedia(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    typeof navigator.mediaDevices?.getUserMedia === "function"
+  );
+}
 
 // =============================================================================
 // Global Key State Tracking
@@ -269,9 +277,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const start = useCallback(async () => {
     // Guard: only start from idle state with valid configuration
     const canStart =
-      HAS_MEDIA_RECORDER &&
-      HAS_GET_USER_MEDIA &&
-      !HAS_TOUCH_DICTATION &&
+      hasMediaRecorder() &&
+      hasGetUserMedia() &&
+      !hasTouchDictation() &&
       state === "idle" &&
       callbacksRef.current.isTranscriptionAvailable;
 
@@ -442,10 +450,10 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
 
   return {
     state,
-    isSupported: HAS_MEDIA_RECORDER && HAS_GET_USER_MEDIA,
+    isSupported: hasMediaRecorder() && hasGetUserMedia(),
     isAvailable: options.isTranscriptionAvailable,
-    shouldShowUI: HAS_MEDIA_RECORDER && !HAS_TOUCH_DICTATION,
-    requiresSecureContext: HAS_MEDIA_RECORDER && !HAS_GET_USER_MEDIA,
+    shouldShowUI: hasMediaRecorder() && !hasTouchDictation(),
+    requiresSecureContext: hasMediaRecorder() && !hasGetUserMedia(),
     mediaRecorder,
     start: () => void start(),
     stop,

@@ -9,11 +9,9 @@ import {
   test,
 } from "bun:test";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { fileURLToPath } from "node:url";
 import type { APIClient } from "@/browser/contexts/API";
-import { requireTestModule } from "@/browser/testUtils";
 import { installDom } from "../../../tests/ui/dom";
-import type * as UseVoiceInputModule from "./useVoiceInput";
+import { useVoiceInput } from "./useVoiceInput";
 
 let sampleByte = 128;
 let sampleAudioFrame: (() => void) | null = null;
@@ -97,12 +95,6 @@ function installVoiceGlobals(): void {
     value: { getUserMedia },
   });
 }
-
-installVoiceGlobals();
-
-const { useVoiceInput } = requireTestModule<typeof UseVoiceInputModule>(
-  fileURLToPath(new URL("./useVoiceInput.ts", import.meta.url))
-);
 
 function restoreGlobal(
   name: "MediaRecorder" | "AudioContext",
