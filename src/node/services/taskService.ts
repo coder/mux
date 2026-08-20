@@ -186,6 +186,13 @@ interface ResolvedWorkspaceAiSettings {
   reasoningMode?: OpenAIReasoningMode;
 }
 
+interface TaskParentAiMeta {
+  /** Parent's persisted selected agent (see persistSelectedAgentId). */
+  agentId?: string;
+  aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+  aiSettings?: ResolvedWorkspaceAiSettings;
+}
+
 export interface AgentTaskStatusLookup {
   exists: boolean;
   taskStatus: AgentTaskStatus | null;
@@ -1807,14 +1814,109 @@ export class TaskService {
     );
   }
 
+  /**
+   * Pro reasoning mode for a spawned task: configured sub-agent/agent
+   * defaults win (mirroring thinkingLevel), then the agent's base chain
+   * contributes (matching Settings display and ACP resolution), then tasks
+   * inherit the parent's persisted settings. The user toggles pro on the
+   * parent's ACTIVE agent, so the target agent's bucket rarely carries one —
+   * fall back to the parent's active-agent bucket (persisted selected agent,
+   * defaulting to exec), then legacy settings. Safe to pass through
+   * unconditionally: the send path re-gates per model (buildRequestHeaders is
+   * inert for unsupported models/routes).
+   *
+   * When no declared chain is provided (sync callers that cannot read agent
+   * definitions), the chain is approximated by the default base (plan -> plan,
+   * else exec, like ACP's getFallbackBaseAgentId).
+   */
+  private resolveTaskReasoningMode(params: {
+    cfg: ReturnType<Config["loadConfigOrDefault"]>;
+    parentMeta: TaskParentAiMeta;
+    agentId: string;
+    baseChainAgentIds?: readonly string[];
+  }): OpenAIReasoningMode | undefined {
+    const ownMode = coerceOpenAIReasoningMode(
+      params.cfg.subagentAiDefaults?.[params.agentId]?.reasoningMode ??
+        params.cfg.agentAiDefaults?.[params.agentId]?.reasoningMode
+    );
+    if (ownMode != null) {
+      return ownMode;
+    }
+
+    const chainIds = params.baseChainAgentIds ?? [params.agentId === "plan" ? "plan" : "exec"];
+    for (const baseId of chainIds) {
+      if (baseId === params.agentId) {
+        continue;
+      }
+      const chainMode = coerceOpenAIReasoningMode(
+        params.cfg.subagentAiDefaults?.[baseId]?.reasoningMode ??
+          params.cfg.agentAiDefaults?.[baseId]?.reasoningMode
+      );
+      if (chainMode != null) {
+        return chainMode;
+      }
+    }
+
+    const parentAiSettings = this.resolveWorkspaceAISettings(params.parentMeta, params.agentId);
+    const activeParentAiSettings = this.resolveWorkspaceAISettings(
+      params.parentMeta,
+      normalizeAgentId(params.parentMeta.agentId)
+    );
+    return coerceOpenAIReasoningMode(
+      parentAiSettings?.reasoningMode ?? activeParentAiSettings?.reasoningMode
+    );
+  }
+
+  /**
+   * Resolves the target agent's declared base chain (ordered ancestor IDs,
+   * excluding the agent itself) from its definition files, terminated with
+   * the ACP-style default base when the chain ends without declaring one.
+   * Returns undefined when the definition cannot be read, so callers keep the
+   * sync approximation.
+   */
+  private async resolveDeclaredBaseChainIds(params: {
+    runtime: Runtime;
+    workspacePath: string;
+    agentId: string;
+    workspaceId: string;
+  }): Promise<string[] | undefined> {
+    try {
+      const agentDefinition = await readAgentDefinition(
+        params.runtime,
+        params.workspacePath,
+        params.agentId
+      );
+      const chain = await resolveAgentInheritanceChain({
+        runtime: params.runtime,
+        workspacePath: params.workspacePath,
+        agentId: agentDefinition.id,
+        agentDefinition,
+        workspaceId: params.workspaceId,
+      });
+      const ids: string[] = [];
+      for (const entry of chain) {
+        if (entry.id !== params.agentId && !ids.includes(entry.id)) {
+          ids.push(entry.id);
+        }
+      }
+      // ACP parity: a chain terminus without a declared base still falls back
+      // to the default base (plan -> plan, else exec).
+      const terminus = chain[chain.length - 1]?.id ?? params.agentId;
+      const fallbackBase = terminus === "plan" ? "plan" : "exec";
+      if (fallbackBase !== terminus && fallbackBase !== params.agentId) {
+        if (!ids.includes(fallbackBase)) {
+          ids.push(fallbackBase);
+        }
+      }
+      return ids;
+    } catch {
+      return undefined;
+    }
+  }
+
   private resolveTaskAISettings(params: {
     cfg: ReturnType<Config["loadConfigOrDefault"]>;
-    parentMeta: {
-      /** Parent's persisted selected agent (see persistSelectedAgentId). */
-      agentId?: string;
-      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
-      aiSettings?: ResolvedWorkspaceAiSettings;
-    };
+    parentMeta: TaskParentAiMeta;
     agentId: string;
     modelString?: string;
     thinkingLevel?: ParsedThinkingInput;
@@ -1893,41 +1995,11 @@ export class TaskService {
       providersConfig
     );
 
-    // Pro reasoning mode: configured sub-agent/agent defaults win (mirroring
-    // thinkingLevel), then tasks inherit the parent's persisted settings.
-    // The user toggles pro on the parent's ACTIVE agent, so the target agent's
-    // bucket rarely carries one — fall back to the parent's active-agent bucket
-    // (persisted selected agent, defaulting to exec), then legacy settings.
-    // Safe to pass through unconditionally: the send path re-gates per model
-    // (buildRequestHeaders is inert for unsupported models/routes).
-    //
-    // Agents without their own configured default inherit from their default
-    // base (plan -> plan, else exec, like ACP's getFallbackBaseAgentId), so
-    // e.g. Explore picks up a pro configured on Exec, matching the Settings
-    // card and ACP resolution. This sync resolver cannot read agent
-    // definitions, so explicit custom `base:` chains are approximated by that
-    // default; the agent's own defaults above still always win.
-    const fallbackBaseAgentId = params.agentId === "plan" ? "plan" : "exec";
-    const baseSubagentDefault =
-      params.agentId !== fallbackBaseAgentId
-        ? params.cfg.subagentAiDefaults?.[fallbackBaseAgentId]
-        : undefined;
-    const baseAgentDefault =
-      params.agentId !== fallbackBaseAgentId
-        ? params.cfg.agentAiDefaults?.[fallbackBaseAgentId]
-        : undefined;
-    const activeParentAiSettings = this.resolveWorkspaceAISettings(
-      params.parentMeta,
-      normalizeAgentId(params.parentMeta.agentId)
-    );
-    const effectiveReasoningMode = coerceOpenAIReasoningMode(
-      subagentDefault?.reasoningMode ??
-        agentDefault?.reasoningMode ??
-        baseSubagentDefault?.reasoningMode ??
-        baseAgentDefault?.reasoningMode ??
-        parentAiSettings?.reasoningMode ??
-        activeParentAiSettings?.reasoningMode
-    );
+    const effectiveReasoningMode = this.resolveTaskReasoningMode({
+      cfg: params.cfg,
+      parentMeta: params.parentMeta,
+      agentId: params.agentId,
+    });
 
     return {
       taskModelString,
@@ -2966,16 +3038,38 @@ export class TaskService {
         return Err(`Task.createMany: unknown agentId (${agentId}). ${hint}`);
       }
 
-      const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
-        this.resolveTaskAISettings({
-          cfg,
-          parentMeta,
-          agentId,
-          modelString: args.modelString,
-          thinkingLevel: args.thinkingLevel,
-          parentRuntimeAiSettings: args.parentRuntimeAiSettings,
-          agentDefinitionAiDefaults,
-        });
+      const {
+        taskModelString,
+        canonicalModel,
+        effectiveThinkingLevel,
+        effectiveReasoningMode: fallbackReasoningMode,
+      } = this.resolveTaskAISettings({
+        cfg,
+        parentMeta,
+        agentId,
+        modelString: args.modelString,
+        thinkingLevel: args.thinkingLevel,
+        parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+        agentDefinitionAiDefaults,
+      });
+
+      // Declared base chains beat the sync approximation in
+      // resolveTaskAISettings (a custom agent with base: plan must inherit
+      // Plan's reasoning default, not Exec's), matching Settings/ACP.
+      const declaredBaseChainIds = await this.resolveDeclaredBaseChainIds({
+        runtime,
+        workspacePath: parentWorkspacePath,
+        agentId,
+        workspaceId: parentWorkspaceId,
+      });
+      const effectiveReasoningMode = declaredBaseChainIds
+        ? this.resolveTaskReasoningMode({
+            cfg,
+            parentMeta,
+            agentId,
+            baseChainAgentIds: declaredBaseChainIds,
+          })
+        : fallbackReasoningMode;
 
       const status: "queued" | "starting" =
         reservedActiveCount >= taskSettings.maxParallelAgentTasks ? "queued" : "starting";
@@ -4140,16 +4234,36 @@ export class TaskService {
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
     }
 
-    const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
-      this.resolveTaskAISettings({
-        cfg,
-        parentMeta,
-        agentId,
-        modelString: args.modelString,
-        thinkingLevel: args.thinkingLevel,
-        parentRuntimeAiSettings: args.parentRuntimeAiSettings,
-        agentDefinitionAiDefaults,
-      });
+    const {
+      taskModelString,
+      canonicalModel,
+      effectiveThinkingLevel,
+      effectiveReasoningMode: fallbackReasoningMode,
+    } = this.resolveTaskAISettings({
+      cfg,
+      parentMeta,
+      agentId,
+      modelString: args.modelString,
+      thinkingLevel: args.thinkingLevel,
+      parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+      agentDefinitionAiDefaults,
+    });
+
+    // Declared base chains beat the sync approximation (see createMany).
+    const declaredBaseChainIds = await this.resolveDeclaredBaseChainIds({
+      runtime,
+      workspacePath: parentWorkspacePath,
+      agentId,
+      workspaceId: parentWorkspaceId,
+    });
+    const effectiveReasoningMode = declaredBaseChainIds
+      ? this.resolveTaskReasoningMode({
+          cfg,
+          parentMeta,
+          agentId,
+          baseChainAgentIds: declaredBaseChainIds,
+        })
+      : fallbackReasoningMode;
 
     const createdAt = getIsoNow();
 

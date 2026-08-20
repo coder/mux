@@ -9638,6 +9638,62 @@ describe("TaskService", () => {
     expect(childEntry?.taskThinkingLevel).toBe("off");
   }, 20_000);
 
+  test("follows a custom agent's declared base chain for the reasoning default", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+
+    const projectPath = await createTestProject(rootDir, "repo", { initGit: false });
+
+    // Custom agent declaring base: plan; the reasoning default must follow the
+    // DECLARED chain (plan), not the hardcoded exec fallback.
+    const agentsDir = path.join(projectPath, ".mux", "agents");
+    await fsPromises.mkdir(agentsDir, { recursive: true });
+    await fsPromises.writeFile(
+      path.join(agentsDir, "researcher.md"),
+      `---\nname: Researcher\ndescription: Plan-derived custom agent for tests\nbase: plan\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+      "utf-8"
+    );
+
+    const parentId = "1111111111";
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        {
+          path: projectPath,
+          id: parentId,
+          name: "parent",
+          createdAt: new Date().toISOString(),
+          runtimeConfig: { type: "local" },
+          aiSettings: { model: "openai:gpt-5.6-sol", thinkingLevel: "high" },
+        },
+      ],
+      {
+        taskSettings: testTaskSettings(),
+        agentAiDefaults: {
+          plan: { reasoningMode: "pro" },
+          exec: { reasoningMode: "standard" },
+        },
+      }
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run researcher with plan pro", {
+      agentType: "researcher",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run researcher with plan pro",
+      expect.objectContaining({ agentId: "researcher", reasoningMode: "pro" }),
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
   test("does not inherit base-chain defaults when target agent has no global defaults", async () => {
     const config = await createTestConfig(rootDir);
     stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
