@@ -6,6 +6,7 @@
  */
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
+import { resolveConfiguredReasoningModeDefault } from "@/browser/utils/workspaceModeAi";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
@@ -40,10 +41,12 @@ export function applyCompactionOverrides(
   const requestedThinking =
     coerceThinkingLevel(preferredThinking ?? baseOptions.thinkingLevel) ?? "off";
   const thinkingLevel = enforceThinkingPolicy(compactionModel, requestedThinking);
-  // Same defaults-first order as thinkingLevel; the send path re-gates per
-  // model/route so this is inert for models without pro mode.
+  // Same defaults-first order as thinkingLevel, but inherited through
+  // Compact's configured base chain (compact -> exec) so a saved Exec pro
+  // default reaches compaction as the Settings card displays; the send path
+  // re-gates per model/route so this is inert for models without pro mode.
   const reasoningMode = coerceOpenAIReasoningMode(
-    agentAiDefaults.compact?.reasoningMode ?? baseOptions.reasoningMode
+    resolveConfiguredReasoningModeDefault("compact", agentAiDefaults) ?? baseOptions.reasoningMode
   );
 
   return {

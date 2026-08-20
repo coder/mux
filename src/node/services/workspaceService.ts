@@ -11139,12 +11139,23 @@ export class WorkspaceService extends EventEmitter {
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
     // Same fallback order as thinkingLevel (activity snapshots do not carry
-    // reasoningMode).
-    const reasoningMode = coerceOpenAIReasoningMode(
-      compactAgentSettings?.reasoningMode ??
-        globalCompactDefaults?.reasoningMode ??
-        execAgentSettings?.reasoningMode
-    );
+    // reasoningMode), inherited through compact's configured base chain so a
+    // saved Exec pro default reaches compaction (mirrors /compact's
+    // applyCompactionOverrides).
+    let chainReasoningMode: OpenAIReasoningMode | undefined;
+    for (const ancestorId of await this.resolveWorkspaceAgentBaseChainIds(workspaceId, "compact")) {
+      chainReasoningMode = coerceOpenAIReasoningMode(
+        workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.reasoningMode ??
+          config.agentAiDefaults?.[ancestorId]?.reasoningMode
+      );
+      if (chainReasoningMode != null) {
+        break;
+      }
+    }
+    const reasoningMode =
+      coerceOpenAIReasoningMode(
+        compactAgentSettings?.reasoningMode ?? globalCompactDefaults?.reasoningMode
+      ) ?? chainReasoningMode;
 
     return {
       model,
@@ -11483,11 +11494,6 @@ export class WorkspaceService extends EventEmitter {
     const agentId = normalizeAgentId(rawAgentId, WORKSPACE_DEFAULTS.agentId);
     const agentSettings =
       workspaceEntry?.aiSettingsByAgent?.[agentId] ?? workspaceEntry?.aiSettings;
-    const execAgentSettings =
-      agentId !== WORKSPACE_DEFAULTS.agentId
-        ? (workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId] ??
-          workspaceEntry?.aiSettings)
-        : undefined;
 
     const globalAgentDefaults = config.agentAiDefaults?.[agentId];
     const globalAgentDefaultModel = globalAgentDefaults?.modelString;
@@ -11500,25 +11506,47 @@ export class WorkspaceService extends EventEmitter {
         ? normalizedGlobalAgentDefaultModel
         : undefined;
 
-    const globalExecDefaults =
-      agentId !== WORKSPACE_DEFAULTS.agentId
-        ? config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]
-        : undefined;
-    const globalExecDefaultModel = globalExecDefaults?.modelString;
-    const normalizedGlobalExecDefaultModel =
-      typeof globalExecDefaultModel === "string"
-        ? normalizeSelectedModel(globalExecDefaultModel.trim())
-        : undefined;
-    const validGlobalExecDefaultModel =
-      normalizedGlobalExecDefaultModel && isValidModelFormat(normalizedGlobalExecDefaultModel)
-        ? normalizedGlobalExecDefaultModel
-        : undefined;
+    // Model, thinking, and reasoning all inherit field-wise through the
+    // agent's DECLARED base chain (workspace per-agent settings, then config
+    // defaults, per ancestor) so heartbeats match ACP/task/goal resolution.
+    // Resolving only some fields through the chain would combine, e.g.,
+    // Plan's pro with Exec's Anthropic model, where gating drops pro.
+    let chainModel: string | undefined;
+    let chainThinking: ThinkingLevel | undefined;
+    let chainReasoningMode: OpenAIReasoningMode | undefined;
+    for (const ancestorId of await this.resolveWorkspaceAgentBaseChainIds(workspaceId, agentId)) {
+      const ancestorSettings =
+        workspaceEntry?.aiSettingsByAgent?.[ancestorId] ??
+        (ancestorId === WORKSPACE_DEFAULTS.agentId ? workspaceEntry?.aiSettings : undefined);
+      const ancestorDefaults = config.agentAiDefaults?.[ancestorId];
+      if (chainModel === undefined) {
+        const defaultModelRaw = ancestorDefaults?.modelString;
+        const normalizedDefaultModel =
+          typeof defaultModelRaw === "string"
+            ? normalizeSelectedModel(defaultModelRaw.trim())
+            : undefined;
+        chainModel =
+          ancestorSettings?.model ??
+          (normalizedDefaultModel && isValidModelFormat(normalizedDefaultModel)
+            ? normalizedDefaultModel
+            : undefined);
+      }
+      chainThinking ??=
+        coerceThinkingLevel(ancestorSettings?.thinkingLevel ?? ancestorDefaults?.thinkingLevel) ??
+        undefined;
+      chainReasoningMode ??=
+        coerceOpenAIReasoningMode(
+          ancestorSettings?.reasoningMode ?? ancestorDefaults?.reasoningMode
+        ) ?? undefined;
+      if (chainModel !== undefined && chainThinking !== undefined && chainReasoningMode != null) {
+        break;
+      }
+    }
 
     const fallbackModel =
       agentSettings?.model ??
       validGlobalAgentDefaultModel ??
-      execAgentSettings?.model ??
-      validGlobalExecDefaultModel ??
+      chainModel ??
       activity?.lastModel ??
       WORKSPACE_DEFAULTS.model;
 
@@ -11532,33 +11560,16 @@ export class WorkspaceService extends EventEmitter {
       model = WORKSPACE_DEFAULTS.model;
     }
 
-    const globalAgentDefaultThinking = globalAgentDefaults?.thinkingLevel;
-    const globalExecDefaultThinking = globalExecDefaults?.thinkingLevel;
-
     const requestedThinking =
       agentSettings?.thinkingLevel ??
-      globalAgentDefaultThinking ??
-      execAgentSettings?.thinkingLevel ??
-      globalExecDefaultThinking ??
+      globalAgentDefaults?.thinkingLevel ??
+      chainThinking ??
       activity?.lastThinkingLevel ??
       WORKSPACE_DEFAULTS.thinkingLevel;
 
     const normalizedThinkingLevel =
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
-    // Same fallback order as thinkingLevel (activity snapshots do not carry
-    // reasoningMode), but inherited through the agent's DECLARED base chain so
-    // heartbeats match ACP/task/goal resolution for base: plan custom agents.
-    let chainReasoningMode: OpenAIReasoningMode | undefined;
-    for (const ancestorId of await this.resolveWorkspaceAgentBaseChainIds(workspaceId, agentId)) {
-      chainReasoningMode = coerceOpenAIReasoningMode(
-        workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.reasoningMode ??
-          config.agentAiDefaults?.[ancestorId]?.reasoningMode
-      );
-      if (chainReasoningMode != null) {
-        break;
-      }
-    }
     const reasoningMode =
       coerceOpenAIReasoningMode(
         agentSettings?.reasoningMode ?? globalAgentDefaults?.reasoningMode

@@ -13799,6 +13799,37 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       }
     });
 
+    test("idle compaction inherits reasoning through compact's configured base chain", async () => {
+      // Same class as the /compact frontend fix: exec's configured pro must
+      // reach backend compaction even with no workspace-level overrides.
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          agentAiDefaults: {
+            exec: { reasoningMode: "pro" as const },
+          },
+        })),
+      });
+      (
+        service as unknown as {
+          extensionMetadata: { getSnapshot: (id: string) => Promise<undefined> };
+        }
+      ).extensionMetadata = { getSnapshot: () => Promise.resolve(undefined) };
+
+      const result = await (
+        service as unknown as {
+          buildIdleCompactionSendOptions(id: string): Promise<{ reasoningMode?: string }>;
+        }
+      ).buildIdleCompactionSendOptions(workspaceId);
+      expect(result.reasoningMode).toBe("pro");
+    });
+
     test("heartbeat reasoning resolves through the selected agent's declared base chain", async () => {
       // Same parity requirement as goal kickoffs: a base: plan custom agent
       // must inherit Plan's configured Pro default, not the Exec fallback.
@@ -13824,8 +13855,16 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
           loadConfigOrDefault: mock(() => ({
             projects,
             agentAiDefaults: {
-              plan: { reasoningMode: "pro" as const },
-              exec: { reasoningMode: "standard" as const },
+              plan: {
+                modelString: "openai:gpt-5.6-sol",
+                thinkingLevel: "high" as const,
+                reasoningMode: "pro" as const,
+              },
+              exec: {
+                modelString: "anthropic:claude-sonnet-4-6",
+                thinkingLevel: "low" as const,
+                reasoningMode: "standard" as const,
+              },
             },
           })),
         });
@@ -13842,13 +13881,17 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
           runtimeConfig: { type: "local" },
         } as FrontendWorkspaceMetadata);
 
+        // Model, thinking, and reasoning must ALL resolve through the chain:
+        // inheriting pro beside exec's Anthropic model would gate pro out.
         const result = await (
           service as unknown as {
-            buildHeartbeatSendOptions(
-              id: string
-            ): Promise<{ sendOptions: { reasoningMode?: string } }>;
+            buildHeartbeatSendOptions(id: string): Promise<{
+              sendOptions: { model: string; thinkingLevel?: string; reasoningMode?: string };
+            }>;
           }
         ).buildHeartbeatSendOptions(workspaceId);
+        expect(result.sendOptions.model).toBe("openai:gpt-5.6-sol");
+        expect(result.sendOptions.thinkingLevel).toBe("high");
         expect(result.sendOptions.reasoningMode).toBe("pro");
       } finally {
         await fsPromises.rm(projectPath, { recursive: true, force: true });
