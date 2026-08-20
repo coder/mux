@@ -5,6 +5,8 @@ import {
   type InstructionSources,
   type WorkspaceInstructions,
 } from "@/common/types/instructions";
+import { normalizeAgentId } from "@/common/utils/agentIds";
+import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import type { Config } from "@/node/config";
 import {
   createRuntimeContextForWorkspace,
@@ -90,8 +92,14 @@ export class InstructionsService {
     );
 
     const trimmedOverride = modelOverride?.trim();
+    // Model selection is persisted per-agent (aiSettingsByAgent); workspace-scoped
+    // aiSettings is the legacy field. Resolve like the stream path does, otherwise
+    // token counting silently skips for workspaces without legacy settings.
+    const agentId = normalizeAgentId(metadata.agentId, WORKSPACE_DEFAULTS.agentId);
     const model =
       (trimmedOverride && trimmedOverride.length > 0 ? trimmedOverride : null) ??
+      metadata.aiSettingsByAgent?.[agentId]?.model ??
+      metadata.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]?.model ??
       metadata.aiSettings?.model ??
       null;
     const flatRaw = flattenInstructionFiles(sources);
