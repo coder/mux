@@ -5,6 +5,7 @@ name: NPM Publish (Reusable)
 #
 # OIDC TRUSTED PUBLISHING SETUP (on npmjs.com):
 #   New packages must be published manually once before npm allows trusted publisher setup.
+#   Repository renames do not update npm settings; reconfigure every existing package.
 #   For each package (@coder/shux, mux, @coder/mux-chat-components):
 #   1. Go to package settings → Trusted Publisher → GitHub Actions
 #   2. Configure:
