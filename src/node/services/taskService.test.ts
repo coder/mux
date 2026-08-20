@@ -287,6 +287,32 @@ async function saveLocalParentWorkspace(
   return { parentId, projectPath };
 }
 
+/** Write a runnable exec-derived custom agent definition into the project's .mux/agents. */
+async function writeCustomAgentDefinition(
+  projectPath: string,
+  extraFrontmatterLines: string[] = []
+): Promise<void> {
+  const agentsDir = path.join(projectPath, ".mux", "agents");
+  await fsPromises.mkdir(agentsDir, { recursive: true });
+  await fsPromises.writeFile(
+    path.join(agentsDir, "custom.md"),
+    [
+      "---",
+      "name: Custom",
+      "description: Exec-derived custom agent for tests",
+      "base: exec",
+      "subagent:",
+      "  runnable: true",
+      ...extraFrontmatterLines,
+      "---",
+      "",
+      "Test agent body.",
+      "",
+    ].join("\n"),
+    "utf-8"
+  );
+}
+
 function stubStableIds(config: Config, ids: string[], fallbackId = "fffffffff0"): void {
   let nextIdIndex = 0;
   const configWithStableId = config as unknown as { generateStableId: () => string };
@@ -9680,6 +9706,143 @@ describe("TaskService", () => {
         model: "openai:gpt-4o-mini",
         agentId: "custom",
         thinkingLevel: "off",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
+  test("agent definition ai defaults outrank parent inheritance when spawning a sub-agent", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    await writeCustomAgentDefinition(projectPath, [
+      "ai:",
+      "  model: openai:gpt-5.2",
+      "  thinkingLevel: medium",
+    ]);
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run task with pinned agent", {
+      agentType: "custom",
+      parentRuntimeAiSettings: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with pinned agent",
+      {
+        model: "openai:gpt-5.2",
+        agentId: "custom",
+        thinkingLevel: "medium",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+    const childEntry = findWorkspaceInConfig(config, created.data.taskId);
+    expect(childEntry?.aiSettings).toEqual({ model: "openai:gpt-5.2", thinkingLevel: "medium" });
+    expect(childEntry?.taskModelString).toBe("openai:gpt-5.2");
+    expect(childEntry?.taskThinkingLevel).toBe("medium");
+  }, 20_000);
+
+  test("explicit task args outrank agent definition ai defaults", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    await writeCustomAgentDefinition(projectPath, [
+      "ai:",
+      "  model: openai:gpt-5.2",
+      "  thinkingLevel: medium",
+    ]);
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run task with explicit model", {
+      agentType: "custom",
+      modelString: "openai:gpt-5.3-codex",
+      thinkingLevel: "xhigh",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with explicit model",
+      {
+        model: "openai:gpt-5.3-codex",
+        agentId: "custom",
+        thinkingLevel: "xhigh",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
+  test("configured agent defaults outrank agent definition ai defaults", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir, {
+      agentAiDefaults: {
+        custom: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      },
+    });
+    await writeCustomAgentDefinition(projectPath, [
+      "ai:",
+      "  model: openai:gpt-5.2",
+      "  thinkingLevel: medium",
+    ]);
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run task with configured agent", {
+      agentType: "custom",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with configured agent",
+      {
+        model: "anthropic:claude-haiku-4-5",
+        agentId: "custom",
+        thinkingLevel: "off",
+        experiments: undefined,
+      },
+      { agentInitiated: true }
+    );
+  }, 20_000);
+
+  test("agent definition ai.model abbreviations resolve and missing fields inherit per field", async () => {
+    const config = await createTestConfig(rootDir);
+    stubStableIds(config, ["aaaaaaaaaa"], "bbbbbbbbbb");
+    const { parentId, projectPath } = await saveLocalParentWorkspace(config, rootDir);
+    // Model-only ai block using a documented abbreviation; thinkingLevel must
+    // still inherit from the parent (field-wise, not all-or-nothing).
+    await writeCustomAgentDefinition(projectPath, ["ai:", "  model: haiku"]);
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { workspaceService });
+
+    const created = await createAgentTask(taskService, parentId, "run task with alias model", {
+      agentType: "custom",
+    });
+    expect(created.success).toBe(true);
+    if (!created.success) return;
+
+    expect(sendMessage).toHaveBeenCalledWith(
+      created.data.taskId,
+      "run task with alias model",
+      {
+        model: "anthropic:claude-haiku-4-5",
+        agentId: "custom",
+        thinkingLevel: "high",
         experiments: undefined,
       },
       { agentInitiated: true }
