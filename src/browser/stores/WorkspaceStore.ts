@@ -4786,12 +4786,12 @@ export class WorkspaceStore {
       return;
     }
 
-    // Regular messages (MuxMessage without type field)
+    // Regular messages (ShuxMessage without type field)
     if (isMuxMessage(data)) {
       const transient = this.assertChatTransientState(workspaceId);
 
       if (!transient.caughtUp) {
-        // Buffer historical MuxMessages
+        // Buffer historical ShuxMessages
         transient.historicalMessages.push(data);
       } else {
         // Process live events immediately (after history loaded)

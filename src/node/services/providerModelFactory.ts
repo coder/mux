@@ -66,7 +66,8 @@ import {
   normalizeToCanonical,
 } from "@/common/utils/ai/models";
 import type { AnthropicCacheTtl } from "@/common/utils/ai/cacheStrategy";
-import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { SHUX_APP_ATTRIBUTION_TITLE, SHUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import {
   resolveCustomProviderCredentials,
   resolveProviderCredentials,
@@ -95,12 +96,12 @@ const unlimitedTimeoutAgent = new EnvHttpProxyAgent({
 // Extend RequestInit with undici-specific dispatcher property (Node.js only)
 type RequestInitWithDispatcher = RequestInit & { dispatcher?: Dispatcher };
 
-const muxVersionFromEnv = (() => {
-  const value = process.env.MUX_VERSION?.trim();
+const shuxVersionFromEnv = (() => {
+  const value = resolveShuxEnvironmentValue("VERSION", process.env)?.trim();
   return value && value.length > 0 ? value : undefined;
 })();
 
-const muxVersionFromPackageJson = (() => {
+const shuxVersionFromPackageJson = (() => {
   if (typeof packageJson.version !== "string") {
     return undefined;
   }
@@ -108,16 +109,15 @@ const muxVersionFromPackageJson = (() => {
   return value.length > 0 ? value : undefined;
 })();
 
-// Stable default User-Agent for AI provider requests.
-// Prefer MUX_VERSION when provided by the runtime; otherwise fall back to package.json.
-// This keeps attribution consistent across all provider SDKs that use fetch.
-export const MUX_AI_PROVIDER_USER_AGENT = `mux/${
-  muxVersionFromEnv ?? muxVersionFromPackageJson ?? "dev"
+// Stable default User-Agent for AI provider requests. SHUX_VERSION is canonical;
+// the transition helper also accepts MUX_VERSION from existing launch scripts.
+export const SHUX_AI_PROVIDER_USER_AGENT = `shux/${
+  shuxVersionFromEnv ?? shuxVersionFromPackageJson ?? "dev"
 }`;
 
 assert(
-  MUX_AI_PROVIDER_USER_AGENT.length > "mux/".length,
-  "MUX_AI_PROVIDER_USER_AGENT must include a non-empty version"
+  SHUX_AI_PROVIDER_USER_AGENT.length > "shux/".length,
+  "SHUX_AI_PROVIDER_USER_AGENT must include a non-empty version"
 );
 
 /**
@@ -141,7 +141,7 @@ export function resolveAIProviderHeaderSource(
 /**
  * Build request headers for provider fetch calls.
  *
- * Always includes Mux attribution in User-Agent while preserving provider SDK info
+ * Always includes Shux attribution in User-Agent while preserving provider SDK info
  * for downstream diagnostics and compatibility.
  * Exported for testing.
  */
@@ -150,18 +150,18 @@ export function buildAIProviderRequestHeaders(existingHeaders: HeadersInit | und
   const existingUserAgent = headers.get("user-agent")?.trim();
 
   if (!existingUserAgent) {
-    headers.set("User-Agent", MUX_AI_PROVIDER_USER_AGENT);
+    headers.set("User-Agent", SHUX_AI_PROVIDER_USER_AGENT);
     return headers;
   }
 
   assert(existingUserAgent.length > 0, "existingUserAgent should be non-empty after trim");
 
-  // Avoid duplicating prefix when callers already include Mux attribution.
+  // Avoid duplicating prefix when callers already include Shux attribution.
   if (
-    existingUserAgent !== MUX_AI_PROVIDER_USER_AGENT &&
-    !existingUserAgent.startsWith(`${MUX_AI_PROVIDER_USER_AGENT} `)
+    existingUserAgent !== SHUX_AI_PROVIDER_USER_AGENT &&
+    !existingUserAgent.startsWith(`${SHUX_AI_PROVIDER_USER_AGENT} `)
   ) {
-    headers.set("User-Agent", `${MUX_AI_PROVIDER_USER_AGENT} ${existingUserAgent}`);
+    headers.set("User-Agent", `${SHUX_AI_PROVIDER_USER_AGENT} ${existingUserAgent}`);
   }
 
   return headers;
@@ -186,7 +186,7 @@ const defaultFetchWithUnlimitedTimeout = (async (
   const headers = buildAIProviderRequestHeaders(headerSource);
 
   // Capture final request headers for DevTools if a synthetic step ID is present.
-  // This runs after buildAIProviderRequestHeaders so the Mux user-agent is included.
+  // This runs after buildAIProviderRequestHeaders so the Shux user-agent is included.
   // The synthetic header is stripped before the request is sent.
   captureAndStripDevToolsHeader(headers);
 
@@ -402,7 +402,7 @@ export function countAnthropicCacheBreakpoints(requestBody: unknown): number {
 /**
  * Wrap fetch to normalize Anthropic cache_control directly on the final request body.
  *
- * This keeps routed Anthropic payloads aligned with Mux's manual cache markers
+ * This keeps routed Anthropic payloads aligned with Shux's manual cache markers
  * and lets a higher-level cacheTtl override win at the last wire-shaping step.
  *
  * Injects cache_control on:
@@ -591,11 +591,11 @@ export function buildAppAttributionHeaders(
   const existingLowercaseKeys = new Set(Object.keys(headers).map((key) => key.toLowerCase()));
 
   if (!existingLowercaseKeys.has("http-referer")) {
-    headers["HTTP-Referer"] = MUX_APP_ATTRIBUTION_URL;
+    headers["HTTP-Referer"] = SHUX_APP_ATTRIBUTION_URL;
   }
 
   if (!existingLowercaseKeys.has("x-title")) {
-    headers["X-Title"] = MUX_APP_ATTRIBUTION_TITLE;
+    headers["X-Title"] = SHUX_APP_ATTRIBUTION_TITLE;
   }
 
   return headers;
@@ -1028,7 +1028,7 @@ export class ProviderModelFactory {
       /**
        * Providers-config snapshot to create the model from. Passed by
        * resolveAndCreateModel so routing, the returned coderWire snapshot,
-       * and SDK model creation all read ONE config: another Mux process can
+       * and SDK model creation all read ONE config: another Shux process can
        * rewrite providers.jsonc between those steps (e.g. an authoritative
        * catalog refresh changing an instance's type), and a fresh reload
        * here would create a model on the new wire while the caller
@@ -1234,7 +1234,7 @@ export class ProviderModelFactory {
         const providerFetch = getProviderFetch(providerConfig);
         const muxAttributionHeaders = buildAppAttributionHeaders(providerConfig.headers);
 
-        // Pass only explicit OpenAI-compatible SDK settings so Mux-only config
+        // Pass only explicit OpenAI-compatible SDK settings so Shux-only config
         // fields such as models, enabled, and providerType never reach the SDK.
         const provider = createOpenAICompatible({
           name: providerName,
@@ -1482,13 +1482,13 @@ export class ProviderModelFactory {
 
         const webSocketTransport = createOpenAIWebSocketTransportFetch({
           // Codex OAuth requests must keep using the HTTP fetch wrapper above so
-          // Mux can rewrite the endpoint and attach ChatGPT OAuth headers.
+          // Shux can rewrite the endpoint and attach ChatGPT OAuth headers.
           enabled:
             webSocketTransportEnabled &&
             effectiveWireFormat === "responses" &&
             !shouldRouteThroughCodexOauth,
           baseFetch: fetchWithOpenAICodexNormalization as typeof fetch,
-          // The upstream WebSocket fetch defaults to api.openai.com. Pass Mux's
+          // The upstream WebSocket fetch defaults to api.openai.com. Pass Shux's
           // resolved base URL so custom/proxied OpenAI endpoints are not bypassed.
           webSocketUrl: resolveOpenAIWebSocketResponsesUrl(configWithCreds.baseURL),
         });
@@ -1640,7 +1640,7 @@ export class ProviderModelFactory {
         const resolvedApiKey = creds.apiKey;
         const baseFetch = getProviderFetch(providerConfig);
 
-        // Extract standard provider settings and Mux-local metadata before building extraBody.
+        // Extract standard provider settings and Shux-local metadata before building extraBody.
         // OpenRouter also has a request-level `models` fallback field capped at 3 entries; our
         // configured `models` catalog can be longer and must not be forwarded as request input.
         const {
@@ -1708,7 +1708,7 @@ export class ProviderModelFactory {
         const { region } = creds;
 
         // Optional AWS shared config profile name (equivalent to AWS_PROFILE).
-        // Useful for SSO profiles when Mux isn't launched with AWS_PROFILE set.
+        // Useful for SSO profiles when Shux isn't launched with AWS_PROFILE set.
         const profile =
           typeof providerConfig.profile === "string" && providerConfig.profile.trim()
             ? providerConfig.profile.trim()
@@ -1771,7 +1771,7 @@ export class ProviderModelFactory {
         return Ok(provider(modelId));
       }
 
-      // Handle Mux Gateway provider
+      // Handle Shux Gateway provider
       if (providerName === "mux-gateway") {
         // Resolve couponCode from config (single source of truth)
         const creds = resolveProviderCredentials("mux-gateway", providerConfig);
@@ -2059,7 +2059,7 @@ export class ProviderModelFactory {
         if (!wire) {
           return Err({
             type: "invalid_model_string",
-            message: `The Coder AI Gateway provider "${gatewayProvider.name}" (type ${gatewayProvider.type}) is not supported by Mux.`,
+            message: `The Coder AI Gateway provider "${gatewayProvider.name}" (type ${gatewayProvider.type}) is not supported by Shux.`,
           });
         }
 
@@ -2150,7 +2150,7 @@ export class ProviderModelFactory {
           fetch: coderFetch,
         });
         // The gateway intercepts both /responses and /chat/completions. Real
-        // OpenAI upstreams get the Responses API to match Mux's default OpenAI
+        // OpenAI upstreams get the Responses API to match Shux's default OpenAI
         // wire format; the other OpenAI-wire provider types front
         // OpenAI-compatible upstreams where only /chat/completions can be
         // assumed (see coderGatewayWireProtocol).
@@ -2269,7 +2269,7 @@ export class ProviderModelFactory {
          * retagged instance type diverging from the created fallback model.
          */
         coderSelectedInstance?: { name: string; type: string };
-        /** Whether the request is being routed through the Mux gateway. */
+        /** Whether the request is being routed through the Shux gateway. */
         routedThroughGateway: boolean;
         /** Route provider chosen by backend routing (direct provider or gateway). */
         routeProvider?: ProviderName;
@@ -2424,7 +2424,7 @@ export class ProviderModelFactory {
       );
     }
 
-    // Stream result normalization currently only understands Mux gateway responses,
+    // Stream result normalization currently only understands Shux gateway responses,
     // so keep this flag mux-gateway-specific until the downstream normalization path
     // is generalized too.
     const routedThroughGateway = effectiveModelString.startsWith("mux-gateway:");

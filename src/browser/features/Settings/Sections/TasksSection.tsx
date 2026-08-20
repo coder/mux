@@ -71,7 +71,7 @@ function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null
     case "project":
       return `.mux/agents/${agent.id}.md`;
     case "global":
-      return `~/.mux/agents/${agent.id}.md`;
+      return `~/.shux/agents/${agent.id}.md`;
     default:
       return null;
   }

@@ -19,9 +19,9 @@ function toNonNegativeInt(value: number | undefined): number {
 }
 
 /**
- * Convert Mux usage fields into ACP's usage shape.
+ * Convert Shux usage fields into ACP's usage shape.
  *
- * Mux primarily uses inputTokens/outputTokens/totalTokens, while some integrations may still pass
+ * Shux primarily uses inputTokens/outputTokens/totalTokens, while some integrations may still pass
  * promptTokens/completionTokens aliases.
  */
 export function convertToAcpUsage(muxUsage: MuxUsageLike): Usage {

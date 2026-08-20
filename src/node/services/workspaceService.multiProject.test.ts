@@ -1673,13 +1673,13 @@ describe("WorkspaceService multi-project lifecycle", () => {
           if (options?.projectPath === projectAPath) {
             return {
               renameWorkspace: renameWorkspaceAMock,
-              getMuxHome: mock(() => rootDir),
+              getShuxHome: mock(() => rootDir),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           if (options?.projectPath === projectBPath) {
             return {
               renameWorkspace: renameWorkspaceBMock,
-              getMuxHome: mock(() => rootDir),
+              getShuxHome: mock(() => rootDir),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);
@@ -1846,13 +1846,13 @@ describe("WorkspaceService multi-project lifecycle", () => {
           if (options?.projectPath === projectAPath) {
             return {
               renameWorkspace: renameWorkspaceAMock,
-              getMuxHome: mock(() => rootDir),
+              getShuxHome: mock(() => rootDir),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           if (options?.projectPath === projectBPath) {
             return {
               renameWorkspace: renameWorkspaceBMock,
-              getMuxHome: mock(() => rootDir),
+              getShuxHome: mock(() => rootDir),
             } as unknown as ReturnType<typeof runtimeFactory.createRuntime>;
           }
           throw new Error(`Unexpected projectPath: ${options?.projectPath ?? "missing"}`);

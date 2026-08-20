@@ -5,7 +5,7 @@ import type { MuxMessage } from "@/common/types/message";
 import { extractEditedFileDiffs, extractEditedFilePaths } from "./extractEditedFiles";
 
 /**
- * Helper to create a mock MuxMessage with file edit tool results.
+ * Helper to create a mock ShuxMessage with file edit tool results.
  */
 function createAssistantMessage(
   toolCalls: Array<{

@@ -1,13 +1,13 @@
 ---
 title: AGENTS.md
-description: Agent instructions for AI assistants working on the Mux codebase
+description: Agent instructions for AI assistants working on the Shux codebase
 ---
 
 **Prime directive:** keep edits minimal and token-efficient—say only what conveys actionable signal.
 
 ## Project Snapshot
 
-- `mux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
+- `shux`: Electron + React desktop app for parallel agent workflows; UX must be fast, responsive, predictable.
 - Minor breaking changes are expected, but critical flows must allow upgrade↔downgrade without friction; skip migrations when breakage is tightly scoped.
 - **Before creating or updating any PR, commit, or public issue**, you **MUST** read the `pull-requests` skill (`agent_skill_read`) for attribution footer requirements and workflow conventions. Do not skip this step.
 
@@ -19,7 +19,8 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 - Core files: `src/main.ts`, `src/preload.ts`, `src/App.tsx`, `src/config.ts`.
 - Up-to-date model names: see `src/common/knownModels.ts` for current provider model IDs.
-- Persistent data: `~/.mux/config.json`, `~/.mux/src/<project>/<branch>` (worktrees), `~/.mux/sessions/<workspace>/chat.jsonl`.
+- Persistent data: `~/.shux/config.json`, `~/.shux/src/<project>/<branch>` (worktrees), `~/.shux/sessions/<workspace>/chat.jsonl`.
+- Rename compatibility is centralized in `src/common/compat/legacyMux.ts` and `src/node/compat/shuxTransition.ts`; do not add scattered `mux` fallbacks. Project-local `.mux/`, stable external IDs, and documented aliases remain compatibility contracts.
 
 ## Documentation Rules
 
@@ -37,7 +38,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 
 ## Key Features & Performance
 
-- Core UX: projects sidebar (left panel), workspace management (local git worktrees or SSH clones), config stored in `~/.mux/config.json`.
+- Core UX: projects sidebar (left panel), workspace management (local git worktrees or SSH clones), config stored in `~/.shux/config.json`.
 - Fetch bulk data in one IPC call—no O(n) frontend→backend loops.
 - **React Compiler enabled** — auto-memoization handles components/hooks; do not add manual `React.memo()`, `useMemo`, or `useCallback` for memoization purposes. Focus instead on fixing unstable object references that the compiler cannot optimize (e.g., `new Set()` in state setters, inline object literals as props).
 - **useEffect** — Before adding effects, consult the `react-effects` skill. Most effects for derived state, prop resets, or event-triggered logic are anti-patterns.
@@ -49,7 +50,7 @@ description: Agent instructions for AI assistants working on the Mux codebase
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
 - `.mux/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
-- Do not pipe/redirect/wrap `run_and_report` output; keep helper markers intact so Mux can show clean step status.
+- Do not pipe/redirect/wrap `run_and_report` output; keep helper markers intact so Shux can show clean step status.
 - `./scripts/wait_pr_ready.sh <pr_number>` is the preferred tail-end helper after local validation and after you've exhausted useful local work.
 - `./scripts/wait_pr_checks.sh <pr_number>` is the checks watcher; `wait_pr_ready.sh` must execute `wait_pr_checks.sh --once` on each loop iteration.
 - `./scripts/wait_pr_codex.sh <pr_number>` is the Codex gate used by `wait_pr_ready.sh`.
@@ -192,7 +193,7 @@ Freely make breaking changes, and reorganize / cleanup IPC as needed.
 
 ## Debugging & Diagnostics
 
-- Debug CLI (`src/cli/debug/index.ts`): `bun run debug list-workspaces`, `bun run debug costs <workspace-id>`, `bun run debug send-message <workspace-id> [--edit <message-id>] [--message <text>]`. Workspace names live in `~/.mux/sessions/`. To inspect raw provider requests, enable API Debug Logs and read `~/.mux/sessions/<workspace>/devtools.jsonl`.
+- Debug CLI (`src/cli/debug/index.ts`): `bun run debug list-workspaces`, `bun run debug costs <workspace-id>`, `bun run debug send-message <workspace-id> [--edit <message-id>] [--message <text>]`. Workspace names live in `~/.shux/sessions/`. To inspect raw provider requests, enable API Debug Logs and read `~/.shux/sessions/<workspace>/devtools.jsonl`.
 
 ## UX Guardrails
 

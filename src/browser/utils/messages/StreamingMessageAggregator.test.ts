@@ -2064,7 +2064,7 @@ describe("StreamingMessageAggregator", () => {
   });
 
   describe("live compaction boundary pruning", () => {
-    // handleMessage expects ChatMuxMessage (type: "message"), matching how the
+    // handleMessage expects ChatShuxMessage (type: "message"), matching how the
     // backend emits events via emitChatEvent({ ...message, type: "message" }).
     const asChatMessage = (msg: ReturnType<typeof createMuxMessage>) => ({
       ...msg,

@@ -1,9 +1,9 @@
-import { Config } from "mux/node/config";
+import { Config } from "shux/node/config";
 import assert from "node:assert";
 
-import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "mux/common/types/workspace";
-import { type ExtensionMetadata, readExtensionMetadata } from "mux/node/utils/extensionMetadata";
-import { createRuntime } from "mux/node/runtime/runtimeFactory";
+import type { FrontendWorkspaceMetadata, WorkspaceActivitySnapshot } from "shux/common/types/workspace";
+import { type ExtensionMetadata, readExtensionMetadata } from "shux/node/utils/extensionMetadata";
+import { createRuntime } from "shux/node/runtime/runtimeFactory";
 
 import type { ApiClient } from "./api/client";
 
@@ -66,7 +66,7 @@ export async function getAllWorkspacesFromFiles(options?: {
   const workspaces = await promiseWithTimeout(
     config.getAllWorkspaceMetadata(),
     timeoutMs,
-    "Read mux workspaces from files"
+    "Read shux workspaces from files"
   );
   const extensionMeta = readExtensionMetadata();
   return enrichAndSort(workspaces, extensionMeta);
@@ -83,11 +83,11 @@ export async function getAllWorkspacesFromApi(
   const timeoutMs = options?.timeoutMs ?? DEFAULT_WORKSPACE_LIST_TIMEOUT_MS;
 
   const [workspaces, activityById] = await Promise.all([
-    promiseWithTimeout(client.workspace.list(), timeoutMs, "mux API workspace.list"),
+    promiseWithTimeout(client.workspace.list(), timeoutMs, "shux API workspace.list"),
     promiseWithTimeout(
       client.workspace.activity.list() as Promise<Record<string, WorkspaceActivitySnapshot>>,
       timeoutMs,
-      "mux API workspace.activity.list"
+      "shux API workspace.activity.list"
     ),
   ]);
 

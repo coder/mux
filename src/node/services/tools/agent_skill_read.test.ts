@@ -132,7 +132,7 @@ describe("agent_skill_read", () => {
     const tool = createAgentSkillReadTool(baseConfig);
 
     const raw: unknown = await Promise.resolve(
-      tool.execute!({ name: "mux-docs" }, mockToolCallOptions)
+      tool.execute!({ name: "shux-docs" }, mockToolCallOptions)
     );
 
     const parsed = AgentSkillReadToolResultSchema.safeParse(raw);
@@ -145,7 +145,7 @@ describe("agent_skill_read", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.skill.scope).toBe("built-in");
-      expect(result.skill.frontmatter.name).toBe("mux-docs");
+      expect(result.skill.frontmatter.name).toBe("shux-docs");
     }
   });
 

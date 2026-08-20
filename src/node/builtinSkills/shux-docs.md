@@ -1,28 +1,28 @@
 ---
-name: mux-docs
-description: Index + offline snapshot of mux documentation (progressive disclosure).
+name: shux-docs
+description: Index + offline snapshot of shux documentation (progressive disclosure).
 ---
 
-# mux docs
+# shux docs
 
-This built-in skill helps the agent answer questions about **mux** (Coding Agent Multiplexer) without dumping the entire docs into context.
+This built-in skill helps the agent answer questions about **shux** (Coding Agent Multiplexer) without dumping the entire docs into context.
 
 ## How to use
 
 ### Prefer: read the bundled docs snapshot (recommended)
 
-This skill bundles an **offline snapshot of the mux docs** under `references/docs/`.
+This skill bundles an **offline snapshot of the shux docs** under `references/docs/`.
 
 Why prefer the bundled snapshot?
 
 1. The docs tree below is guaranteed to match what’s embedded.
-2. It’s more likely to match _your installed mux version_ (the live site may be ahead).
+2. It’s more likely to match _your installed shux version_ (the live site may be ahead).
 
 To read a specific page:
 
 ```ts
 agent_skill_read_file({
-  name: "mux-docs",
+  name: "shux-docs",
   filePath: "references/docs/config/models.mdx",
 });
 ```
@@ -47,12 +47,12 @@ Use this index to find a page's:
 - **Documentation**
   - **Getting Started**
     - Introduction (`/`) → `references/docs/index.mdx`
-    - Install (`/install`) → `references/docs/install.mdx`: Download and install Mux for macOS, Linux, and Windows
+    - Install (`/install`) → `references/docs/install.mdx`: Download and install Shux for macOS, Linux, and Windows
     - **Models**
-      - Models (`/config/models`) → `references/docs/config/models.mdx`: Select and configure AI models in Mux
+      - Models (`/config/models`) → `references/docs/config/models.mdx`: Select and configure AI models in Shux
       - Providers (`/config/providers`) → `references/docs/config/providers.mdx`: Configure API keys and settings for AI providers
     - Why Parallelize? (`/getting-started/why-parallelize`) → `references/docs/getting-started/why-parallelize.mdx`: Use cases for running multiple AI agents in parallel
-    - Mux Gateway (`/getting-started/mux-gateway`) → `references/docs/getting-started/mux-gateway.mdx`: Log in to Mux Gateway to get evaluation credits
+    - Shux Gateway (`/getting-started/mux-gateway`) → `references/docs/getting-started/mux-gateway.mdx`: Log in to Shux Gateway to get evaluation credits
     - CLI (`/reference/cli`) → `references/docs/reference/cli.mdx`: Run one-off agent tasks and durable workflows from the command line
   - **Workspaces**
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx`: Isolated development environments for parallel agent work
@@ -62,10 +62,10 @@ Use this index to find a page's:
     - **Compaction**
       - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx`: Managing conversation context size with compaction
       - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx`: Commands for manually managing conversation context
-      - Automatic Compaction (`/workspaces/compaction/automatic`) → `references/docs/workspaces/compaction/automatic.mdx`: Let Mux automatically compact your conversations based on usage or idle time
+      - Automatic Compaction (`/workspaces/compaction/automatic`) → `references/docs/workspaces/compaction/automatic.mdx`: Let Shux automatically compact your conversations based on usage or idle time
       - Customization (`/workspaces/compaction/customization`) → `references/docs/workspaces/compaction/customization.mdx`: Customize the compaction system prompt
     - **Runtimes**
-      - Runtimes (`/runtime`) → `references/docs/runtime/index.mdx`: Configure where and how Mux executes agent workspaces
+      - Runtimes (`/runtime`) → `references/docs/runtime/index.mdx`: Configure where and how Shux executes agent workspaces
       - Local Runtime (`/runtime/local`) → `references/docs/runtime/local.mdx`: Run agents directly in your project directory
       - Worktree Runtime (`/runtime/worktree`) → `references/docs/runtime/worktree.mdx`: Isolated git worktree environments for parallel agent work
       - SSH Runtime (`/runtime/ssh`) → `references/docs/runtime/ssh.mdx`: Run agents on remote hosts over SSH for security and performance
@@ -81,43 +81,44 @@ Use this index to find a page's:
     - Instruction Files (`/agents/instruction-files`) → `references/docs/agents/instruction-files.mdx`: Configure agent behavior with AGENTS.md files
     - Agent Skills (`/agents/agent-skills`) → `references/docs/agents/agent-skills.mdx`: Share reusable workflows and references with skills
     - Plan Mode (`/agents/plan-mode`) → `references/docs/agents/plan-mode.mdx`: Review and collaborate on plans before execution
-    - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx`: How Mux constructs the system prompt for AI models
+    - System Prompt (`/agents/system-prompt`) → `references/docs/agents/system-prompt.mdx`: How Shux constructs the system prompt for AI models
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx`: Tips and tricks for getting the most out of your AI agents
-    - Best of N (`/agents/best-of-n`) → `references/docs/agents/best-of-n.mdx`: Improve plans, analysis, and reviews by asking Mux to explore multiple candidate answers in parallel
+    - Best of N (`/agents/best-of-n`) → `references/docs/agents/best-of-n.mdx`: Improve plans, analysis, and reviews by asking Shux to explore multiple candidate answers in parallel
   - **Configuration**
     - MCP Servers (`/config/mcp-servers`) → `references/docs/config/mcp-servers.mdx`: Extend agent capabilities with Model Context Protocol servers
     - Policy File (`/config/policy-file`) → `references/docs/config/policy-file.mdx`: Admin-enforced restrictions for providers, models, MCP, and runtimes
     - Project Secrets (`/config/project-secrets`) → `references/docs/config/project-secrets.mdx`: Manage environment variables and API keys for your projects
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx`: Configure a separate Git identity for AI-generated commits
-    - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx`: Complete keyboard shortcut reference for Mux
+    - Keyboard Shortcuts (`/config/keybinds`) → `references/docs/config/keybinds.mdx`: Complete keyboard shortcut reference for Shux
     - Notifications (`/config/notifications`) → `references/docs/config/notifications.mdx`: Configure how agents notify you about important events
-    - Server Access (`/config/server-access`) → `references/docs/config/server-access.mdx`: Configure authentication and session controls for mux server/browser mode
-    - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx`: Vim-style editing in the Mux chat input
+    - Server Access (`/config/server-access`) → `references/docs/config/server-access.mdx`: Configure authentication and session controls for shux server/browser mode
+    - Vim Mode (`/config/vim-mode`) → `references/docs/config/vim-mode.mdx`: Vim-style editing in the Shux chat input
   - **Guides**
-    - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx`: Automate your workflows with mux run in GitHub Actions
-    - Symbol Shortcuts (`/guides/symbol-shortcuts`) → `references/docs/guides/symbol-shortcuts.mdx`: Insert math and trading symbols in the Mux chat input with LaTeX-style backslash commands
+    - GitHub Actions (`/guides/github-actions`) → `references/docs/guides/github-actions.mdx`: Automate your workflows with shux run in GitHub Actions
+    - Symbol Shortcuts (`/guides/symbol-shortcuts`) → `references/docs/guides/symbol-shortcuts.mdx`: Insert math and trading symbols in the Shux chat input with LaTeX-style backslash commands
     - Agentic Git Identity (`/config/agentic-git-identity`) → `references/docs/config/agentic-git-identity.mdx`: Configure a separate Git identity for AI-generated commits
     - Prompting Tips (`/agents/prompting-tips`) → `references/docs/agents/prompting-tips.mdx`: Tips and tricks for getting the most out of your AI agents
   - **Integrations**
-    - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx`: Pair Mux workspaces with VS Code and Cursor editors
-    - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx`: Connect Mux to Zed, Neovim, and JetBrains via the Agent Client Protocol
+    - VS Code Extension (`/integrations/vscode-extension`) → `references/docs/integrations/vscode-extension.mdx`: Pair Shux workspaces with VS Code and Cursor editors
+    - ACP (Editor Integrations) (`/integrations/acp`) → `references/docs/integrations/acp.mdx`: Connect Shux to Zed, Neovim, and JetBrains via the Agent Client Protocol
   - **Reference**
+    - Mux compatibility (`/reference/mux-compatibility`) → `references/docs/reference/mux-compatibility.mdx`: Upgrade, downgrade, storage, command, environment, and deep-link compatibility during the Shux rename
     - Debugging (`/reference/debugging`) → `references/docs/reference/debugging.mdx`: View live backend logs and diagnose issues
-    - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx`: What Mux collects, what it doesn’t, and how to disable it
-    - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx`: Develop and test Mux UI states in isolation
-    - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx`: Run Terminal-Bench benchmarks with the Mux adapter
+    - Telemetry (`/reference/telemetry`) → `references/docs/reference/telemetry.mdx`: What Shux collects, what it doesn’t, and how to disable it
+    - Storybook (`/reference/storybook`) → `references/docs/reference/storybook.mdx`: Develop and test Shux UI states in isolation
+    - Terminal Benchmarking (`/reference/benchmarking`) → `references/docs/reference/benchmarking.mdx`: Run Terminal-Bench benchmarks with the Shux adapter
     - Context Boundaries for Compaction and Reset (`/adr/0003-context-boundaries-for-compaction-and-reset`) → `references/docs/adr/0003-context-boundaries-for-compaction-and-reset.md`: Architecture decision for modeling provider context windows separately from transcript history
-    - CLI Goal Runs are not strict /goal aliases (`/adr/0004-cli-goal-runs-are-not-strict-goal-aliases`) → `references/docs/adr/0004-cli-goal-runs-are-not-strict-goal-aliases.md`: Architecture decision for giving mux run --goal CLI-specific completion and limit semantics
-    - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md`: Agent instructions for AI assistants working on the Mux codebase
+    - CLI Goal Runs are not strict /goal aliases (`/adr/0004-cli-goal-runs-are-not-strict-goal-aliases`) → `references/docs/adr/0004-cli-goal-runs-are-not-strict-goal-aliases.md`: Architecture decision for giving shux run --goal CLI-specific completion and limit semantics
+    - AGENTS.md (`/AGENTS`) → `references/docs/AGENTS.md`: Agent instructions for AI assistants working on the Shux codebase
 <!-- END DOCS_TREE -->
 
 1. Read the docs navigation (source of truth for which pages exist):
 
 ```ts
-agent_skill_read_file({ name: "mux-docs", filePath: "references/docs/docs.json" });
+agent_skill_read_file({ name: "shux-docs", filePath: "references/docs/docs.json" });
 ```
 
-2. Read a specific page by path (mirrors `docs/` in the mux repo):
+2. Read a specific page by path (mirrors `docs/` in the shux repo):
 
 - `/agents` → `references/docs/agents/index.mdx`
 - `/config/models` → `references/docs/config/models.mdx`
@@ -125,7 +126,7 @@ agent_skill_read_file({ name: "mux-docs", filePath: "references/docs/docs.json" 
 
 ```ts
 agent_skill_read_file({
-  name: "mux-docs",
+  name: "shux-docs",
   filePath: "references/docs/config/models.mdx",
 });
 ```
@@ -137,7 +138,7 @@ Notes:
 
 ## When to use
 
-Use this skill when the user asks how mux works (workspaces, runtimes, agents, models, hooks, keybinds, etc.).
+Use this skill when the user asks how shux works (workspaces, runtimes, agents, models, hooks, keybinds, etc.).
 
 ## Links
 

@@ -127,7 +127,7 @@ export const modelsExtra: Record<string, ModelData> = {
     input_cost_per_image_token: 0.000008, // $8 per million image input tokens
     cache_read_input_image_token_cost: 0.000002, // $2 per million cached image input tokens
     output_cost_per_image_token: 0.00003, // $30 per million generated image output tokens
-    output_cost_per_token: 0.00003, // Mux maps image output tokens through outputTokens.
+    output_cost_per_token: 0.00003, // Shux maps image output tokens through outputTokens.
     litellm_provider: "openai",
     mode: "image_generation",
     supported_endpoints: ["/v1/images/generations"],
@@ -317,7 +317,7 @@ export const modelsExtra: Record<string, ModelData> = {
 
   // GPT-5.5 - Released April 23, 2026
   // Public API support covers Responses, Chat Completions, and Batch with a native
-  // 1.05M context window and 128K max output. When routed through Codex OAuth, Mux
+  // 1.05M context window and 128K max output. When routed through Codex OAuth, Shux
   // caps the effective window separately at 272K because the ChatGPT routing layer is lower.
   // Base pricing: $5/M input, $30/M output, $0.50/M cached input.
   // Above 272K prompt tokens: $10/M input, $45/M output, $1/M cached input.

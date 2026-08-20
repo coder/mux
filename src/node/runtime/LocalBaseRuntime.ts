@@ -29,7 +29,7 @@ import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 import { buildShellExport } from "./shellEnv";
-import { sanitizeMuxChildEnv } from "./childProcessEnv";
+import { sanitizeShuxChildEnv } from "./childProcessEnv";
 
 /**
  * Abstract base class for local runtimes (both WorktreeRuntime and LocalRuntime).
@@ -88,7 +88,7 @@ export abstract class LocalBaseRuntime implements Runtime {
     const spawnArgs = ["-c", `${nonInteractivePrelude}\n${command}`];
 
     const defaultPath = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
-    const mergedEnv = sanitizeMuxChildEnv({ ...process.env, ...(options.env ?? {}) });
+    const mergedEnv = sanitizeShuxChildEnv({ ...process.env, ...(options.env ?? {}) });
     const basePath =
       (options.env?.PATH && options.env.PATH.length > 0
         ? mergedEnv.PATH
@@ -406,8 +406,8 @@ export abstract class LocalBaseRuntime implements Runtime {
     return Promise.resolve(isWindows ? (process.env.TEMP ?? "C:\\Temp") : "/tmp");
   }
 
-  getMuxHome(): string {
-    return "~/.mux";
+  getShuxHome(): string {
+    return "~/.shux";
   }
 
   /**
@@ -421,18 +421,18 @@ export abstract class LocalBaseRuntime implements Runtime {
    * Helper to run .mux/init hook if it exists and is executable.
    * Shared between WorktreeRuntime and LocalRuntime.
    * @param workspacePath - Path to the workspace directory
-   * @param muxEnv - MUX_ environment variables (from getMuxEnv)
+   * @param shuxEnv - Canonical SHUX_ variables plus legacy MUX_ aliases
    * @param initLogger - Logger for streaming output
    * @param abortSignal - Optional abort signal
    */
   protected async runInitHook(
     workspacePath: string,
-    muxEnv: Record<string, string>,
+    shuxEnv: Record<string, string>,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    // Hook path is derived from MUX_PROJECT_PATH in muxEnv
-    const projectPath = muxEnv.MUX_PROJECT_PATH;
+    // Hook path is derived from the canonical SHUX_PROJECT_PATH value.
+    const projectPath = shuxEnv.SHUX_PROJECT_PATH;
     const hookPath = getInitHookPath(projectPath);
     initLogger.logStep(`Running init hook: ${hookPath}`);
 
@@ -451,7 +451,7 @@ export abstract class LocalBaseRuntime implements Runtime {
         stdio: ["ignore", "pipe", "pipe"],
         env: {
           ...process.env,
-          ...muxEnv,
+          ...shuxEnv,
         },
         // Prevent console window from appearing on Windows
         windowsHide: true,

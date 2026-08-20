@@ -159,7 +159,7 @@ describe("instructionFiles", () => {
     });
 
     it("should mark global files as muxOnly and skip nested .mux lookup", async () => {
-      // Global scope reads ~/.mux itself, which is Mux-dedicated by construction.
+      // Global scope reads ~/.mux itself, which is Shux-dedicated by construction.
       await fs.writeFile(path.join(tempDir, "AGENTS.md"), "global instructions");
       await fs.mkdir(path.join(tempDir, ".mux"));
       await fs.writeFile(path.join(tempDir, ".mux", "AGENTS.md"), "should not be read");

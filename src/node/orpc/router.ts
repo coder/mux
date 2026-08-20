@@ -1,4 +1,5 @@
 import { os, ORPCError } from "@orpc/server";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import { DEFAULT_CODER_ARCHIVE_BEHAVIOR } from "@/common/config/coderArchiveBehavior";
 import * as schemas from "@/common/orpc/schemas";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
@@ -1022,15 +1023,14 @@ export const router = (authToken?: string) => {
             return config;
           });
 
-          if (process.env.MUX_NO_API_SERVER !== "1") {
+          if (resolveShuxEnvironmentValue("NO_API_SERVER", process.env) !== "1") {
             const authToken = context.serverService.getApiAuthToken();
             if (!authToken) {
               throw new Error("API server auth token not initialized");
             }
 
-            const envPort = process.env.MUX_SERVER_PORT
-              ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
-              : undefined;
+            const envPortRaw = resolveShuxEnvironmentValue("SERVER_PORT", process.env);
+            const envPort = envPortRaw ? Number.parseInt(envPortRaw, 10) : undefined;
             const portToUse = envPort ?? port ?? 0;
             const hostToUse = bindHost ?? "127.0.0.1";
 
@@ -1153,7 +1153,7 @@ export const router = (authToken?: string) => {
             // Subagent defaults: exec is canonical active storage, non-exec entries
             // support legacy mirror compatibility.
             subagentAiDefaults: config.subagentAiDefaults ?? {},
-            // Mux Governor enrollment status (safe fields only - token never exposed)
+            // Shux Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
             chatTranscriptFullWidth: config.chatTranscriptFullWidth === true,
@@ -2544,7 +2544,7 @@ export const router = (authToken?: string) => {
           });
 
           if (!creds.isConfigured || !creds.couponCode) {
-            return Err("Mux Gateway is not logged in");
+            return Err("Shux Gateway is not logged in");
           }
 
           let response: Awaited<ReturnType<typeof fetch>>;
@@ -2557,7 +2557,7 @@ export const router = (authToken?: string) => {
             });
           } catch (error) {
             const message = getErrorMessage(error);
-            return Err(`Mux Gateway balance request failed: ${message}`);
+            return Err(`Shux Gateway balance request failed: ${message}`);
           }
 
           if (response.status === 401) {
@@ -2581,7 +2581,7 @@ export const router = (authToken?: string) => {
             }
             const prefix = body.trim().slice(0, 200);
             return Err(
-              `Mux Gateway balance request failed (HTTP ${response.status}): ${
+              `Shux Gateway balance request failed (HTTP ${response.status}): ${
                 prefix || response.statusText
               }`
             );
@@ -2592,7 +2592,7 @@ export const router = (authToken?: string) => {
             json = await response.json();
           } catch (error) {
             const message = getErrorMessage(error);
-            return Err(`Mux Gateway balance response was not valid JSON: ${message}`);
+            return Err(`Shux Gateway balance response was not valid JSON: ${message}`);
           }
 
           const payload = json as {
@@ -2613,7 +2613,7 @@ export const router = (authToken?: string) => {
             !Number.isInteger(concurrency) ||
             concurrency < 0
           ) {
-            return Err("Mux Gateway returned an invalid balance payload");
+            return Err("Shux Gateway returned an invalid balance payload");
           }
 
           return Ok({

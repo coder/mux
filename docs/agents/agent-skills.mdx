@@ -7,20 +7,20 @@ description: Share reusable workflows and references with skills
 
 Agent Skills are reusable, file-based “playbooks” that you can share across projects or keep workspace-local.
 
-Mux follows the Agent Skills specification and exposes skills to models in two steps:
+Shux follows the Agent Skills specification and exposes skills to models in two steps:
 
-1. **Index in the system prompt**: Mux lists available skills (name + description).
+1. **Index in the system prompt**: Shux lists available skills (name + description).
 2. **Tool-based loading**: the agent calls tools to load a full skill when needed.
 
 Skills help you practice progressive disclosure, where the LLM sees only the necessary context to complete
 the task at hand.
 
-The easiest way to invoke a skill in Mux is to use the `/<skill-name>` slash command. For example:
-`/mux-docs suggest tool hooks for this project`.
+The easiest way to invoke a skill in Shux is to use the `/<skill-name>` slash command. For example:
+`/shux-docs suggest tool hooks for this project`.
 
 You can find a list of community-maintained, curated skills at [skills.sh](https://skills.sh/).
 
-You can easily add those skills to your Mux instance with:
+You can easily add those skills to your Shux instance with:
 
 ```bash
 npx skills add https://github.com/anthropics/skills --skill frontend-design
@@ -28,20 +28,20 @@ npx skills add https://github.com/anthropics/skills --skill frontend-design
 
 ## Where skills live
 
-Mux discovers skills from these locations:
+Shux discovers skills from these locations:
 
 - **Project**: `.mux/skills/<skill-name>/SKILL.md`
 - **Project (cross-tool)**: `.agents/skills/<skill-name>/SKILL.md`
-- **Global (Mux-specific)**: `~/.mux/skills/<skill-name>/SKILL.md`
+- **Global (Shux-specific)**: `~/.shux/skills/<skill-name>/SKILL.md`
 - **Universal (cross-tool)**: `~/.agents/skills/<skill-name>/SKILL.md`
-- **Built-in**: shipped with Mux
+- **Built-in**: shipped with Shux
 
-For a workspace that executes in a subproject, Mux checks the working directory and each parent directory through the checkout root. It never searches above the checkout. A nearer project definition wins over a farther one; within the same directory, `.mux/skills` wins over `.agents/skills`.
+For a workspace that executes in a subproject, Shux checks the working directory and each parent directory through the checkout root. It never searches above the checkout. A nearer project definition wins over a farther one; within the same directory, `.mux/skills` wins over `.agents/skills`.
 
-After project skills, the remaining precedence order is **global (`~/.mux/skills`) > universal (`~/.agents/skills`) > built-in**. Built-in skills behave like any other skill for precedence purposes, so any project or global skill with the same name overrides them.
+After project skills, the remaining precedence order is **global (`~/.shux/skills`) > universal (`~/.agents/skills`) > built-in**. Built-in skills behave like any other skill for precedence purposes, so any project or global skill with the same name overrides them.
 
 <Info>
-  Mux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
+  Shux reads skills using the active workspace runtime. For SSH workspaces, skills are read from the
   remote host.
 </Info>
 
@@ -52,14 +52,14 @@ Many repositories already ship skills in Claude Code's directories. Enable the *
 - **Workspace-local**: `.claude/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.claude/skills/<skill-name>/SKILL.md`
 
-Within the same directory, compat roots have the lowest precedence (`.mux/skills` > `.agents/skills` > `.claude/skills`); a nearer directory still wins over a farther one. The global roots use the same convention order. Compat roots are read-only: Mux never writes or deletes skills in `.claude` directories. Skills that package Mux workflow scripts are not discovered from `.claude` roots.
+Within the same directory, compat roots have the lowest precedence (`.mux/skills` > `.agents/skills` > `.claude/skills`); a nearer directory still wins over a farther one. The global roots use the same convention order. Compat roots are read-only: Shux never writes or deletes skills in `.claude` directories. Skills that package Shux workflow scripts are not discovered from `.claude` roots.
 
 ### Agent Plugins (experiment)
 
 Enable the **Agent Plugins** experiment (Settings → Experiments) to also discover skills packaged in [Agent Plugins 1.0.0](https://agent-plugins.org) directories — a plugin is a directory with a `plugin.json` manifest plus an optional `skills/` folder. Plugins are discovered from:
 
 - **Workspace-local**: `.mux/plugins/<plugin>/` and `.agents/plugins/<plugin>/`
-- **Global**: `~/.mux/plugins/<plugin>/` and `~/.agents/plugins/<plugin>/`
+- **Global**: `~/.shux/plugins/<plugin>/` and `~/.agents/plugins/<plugin>/`
 
 Plugin skills have the lowest precedence within their scope and are read-only. A broken plugin (or a broken skill inside one) never affects other plugins or skills. Plugins can also ship MCP servers; see [MCP servers](/config/mcp-servers#agent-plugins-servers-experiment).
 
@@ -80,12 +80,12 @@ Skill directory names must match `^[a-z0-9]+(?:-[a-z0-9]+)*$` (1–64 chars).
 ## `SKILL.md` format
 
 `SKILL.md` must start with YAML frontmatter delimited by `---` on its own line.
-Mux enforces a 1MB maximum file size for `SKILL.md`.
+Shux enforces a 1MB maximum file size for `SKILL.md`.
 
 Required fields:
 
 - `name`: must match the directory name
-- `description`: short summary shown in Mux’s skills index
+- `description`: short summary shown in Shux’s skills index
 
 Optional fields:
 
@@ -93,12 +93,12 @@ Optional fields:
 - `compatibility`
 - `metadata` (string key/value map)
 - `disable-model-invocation` (boolean) — set to `true` to omit a skill from the system prompt index (see [Unadvertised skills](#unadvertised-skills) below). This spelling is shared with other agent tools such as Claude Code, so portable skills work unchanged.
-- `advertise` (boolean) — Mux-specific equivalent: `advertise: false` behaves like `disable-model-invocation: true`. If both are set, the opt-out wins.
+- `advertise` (boolean) — Shux-specific equivalent: `advertise: false` behaves like `disable-model-invocation: true`. If both are set, the opt-out wins.
 - `user-invocable` (boolean) — set to `false` to hide a skill from user-facing invocation surfaces (see [Controlling who invokes a skill](#controlling-who-invokes-a-skill)).
 - `argument-hint` (string) — short hint describing the arguments a skill expects (for example `[issue-number]`), shown next to the skill in invocation UIs (see [Skill arguments](#skill-arguments)).
 - `when_to_use` (string) — extra model-facing guidance appended to the skill’s entry in the skills index. The kebab-case spelling `when-to-use` is also accepted; the underscore spelling wins if both are set.
 
-Mux ignores unknown frontmatter keys (for example `allowed-tools`).
+Shux ignores unknown frontmatter keys (for example `allowed-tools`).
 
 ## Controlling who invokes a skill
 
@@ -113,18 +113,18 @@ Combining them makes a **reference-only** skill: it is neither indexed for the m
 
 ### Unadvertised skills
 
-By default, Mux _advertises_ skills by listing them in the system prompt’s `<agent-skills>` index.
+By default, Shux _advertises_ skills by listing them in the system prompt’s `<agent-skills>` index.
 
-Set `disable-model-invocation: true` (or the Mux-specific `advertise: false`) in the frontmatter to exclude a skill from that index. Unadvertised skills:
+Set `disable-model-invocation: true` (or the Shux-specific `advertise: false`) in the frontmatter to exclude a skill from that index. Unadvertised skills:
 
 - **Are not listed** in the system prompt (reducing token overhead)
 - **Can still be invoked** via `/{skill-name}` slash command or `agent_skill_read({ name: "skill-name" })`
-- **Still appear** in Mux’s UI lists (for example `/` slash suggestions) and in ACP clients’ command lists
+- **Still appear** in Shux’s UI lists (for example `/` slash suggestions) and in ACP clients’ command lists
 - **Are useful for**: skills meant only for sub-agents, advanced users, or internal orchestration
 
 ### Example: `deep-review` skill
 
-The Mux repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.mux/skills/deep-review/SKILL.md`.
+The Shux repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.mux/skills/deep-review/SKILL.md`.
 
 {/* BEGIN DEEP_REVIEW_SKILL */}
 
@@ -220,7 +220,7 @@ Use this rubric to avoid blind spots:
 
 ## Skill arguments
 
-Slash invocations can carry arguments after the skill name, for example `/fix-issue 123 high`. If the skill body contains placeholders, Mux substitutes them before the model sees the skill:
+Slash invocations can carry arguments after the skill name, for example `/fix-issue 123 high`. If the skill body contains placeholders, Shux substitutes them before the model sees the skill:
 
 - `$ARGUMENTS` — the full argument text (`123 high`)
 - `$1` … `$9` — whitespace-tokenized positional arguments (`$1` is `123`); absent positions become empty strings
@@ -274,7 +274,7 @@ Rules and limits:
 
 - Slash command invocation supports only a single skill as the first token (for example `/{skill-name}` or `/{skill-name} ...`).
 - Skill bodies may be truncated when injected to avoid accidental mega-prompts.
-- `allowed-tools` is not enforced by Mux (it is tolerated in frontmatter, but ignored).
+- `allowed-tools` is not enforced by Shux (it is tolerated in frontmatter, but ignored).
 
 ## Further reading
 

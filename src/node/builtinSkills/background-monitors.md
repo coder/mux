@@ -9,12 +9,12 @@ Use this skill when you need a long-running watcher for CI, mergeability, PR rev
 
 ## What wakes the parent
 
-Mux wakes the owning workspace in these cases:
+Shux wakes the owning workspace in these cases:
 
 - A background **task** or **workflow** reaches a terminal state (`completed`, `failed`, `interrupted`, or `error`).
 - A raw background `bash` process is launched with a `monitor` block and a complete output line matches the monitor regex.
 
-Use `bash({ run_in_background: true, monitor: { filter: "FAILED|ERROR", max_events: 1 } })` for line-oriented shell output watchers such as dev servers, watch tests, and log tails. The process keeps running; Mux wakes the parent with the matched lines, and the parent should call `task_await` only if it needs surrounding/full output.
+Use `bash({ run_in_background: true, monitor: { filter: "FAILED|ERROR", max_events: 1 } })` for line-oriented shell output watchers such as dev servers, watch tests, and log tails. The process keeps running; Shux wakes the parent with the matched lines, and the parent should call `task_await` only if it needs surrounding/full output.
 
 Use background `task({ run_in_background: true, ... })` or `workflow_run({ run_in_background: true, ... })` for state polling that is not naturally a single process output stream, such as CI checks, mergeability, PR reviews, deployments, and queue state.
 
@@ -84,7 +84,7 @@ Instructions:
 });
 ```
 
-The parent may end its turn after the `task` tool returns. Mux will wake the parent when the monitor task calls `agent_report` or settles terminally.
+The parent may end its turn after the `task` tool returns. Shux will wake the parent when the monitor task calls `agent_report` or settles terminally.
 
 ### Parallel PR monitors
 

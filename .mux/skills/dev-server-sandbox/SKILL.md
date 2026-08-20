@@ -1,17 +1,17 @@
 ---
 name: dev-server-sandbox
-description: Run multiple isolated mux dev-server instances (temp MUX_ROOT + free ports)
+description: Run multiple isolated mux dev-server instances (temp SHUX_ROOT + free ports)
 ---
 
 # `dev-server` sandbox instances
 
 `make dev-server` starts the mux backend server, which uses a lockfile at:
 
-- `<MUX_ROOT>/server.lock` (defaults to `~/.mux-dev/server.lock` in development)
+- `<SHUX_ROOT>/server.lock` (defaults to `~/.shux-dev/server.lock` in development)
 
-This means you can only run **one** dev server per mux root directory.
+This means you can only run **one** dev server per shux root directory.
 
-This skill documents the repo workflow for starting **multiple** dev-server instances in parallel (including from different git worktrees) by giving each instance its own temporary `MUX_ROOT`.
+This skill documents the repo workflow for starting **multiple** dev-server instances in parallel (including from different git worktrees) by giving each instance its own temporary `SHUX_ROOT`.
 
 ## Quick start
 
@@ -21,13 +21,14 @@ make dev-server-sandbox
 
 ## What it does
 
-- Creates a fresh temporary `MUX_ROOT` directory
+- Creates a fresh temporary `SHUX_ROOT` directory
 - Copies these files into the sandbox if present (unless disabled by flags):
   - `providers.jsonc` (provider config)
   - `config.json` (project list)
   - Each file is seeded independently from the first root that has it
-    (`$MUX_ROOT`, then `~/.mux-dev`, then `~/.mux`), so a root with only
-    `config.json` doesn't drop provider config
+    (`$SHUX_ROOT`, then leftover `$MUX_ROOT`, then `~/.shux[-dev]`, then
+    leftover `~/.mux[-dev]` / `.cmux`), so a root with only `config.json`
+    doesn't drop provider config
 - Provider credential env vars are stripped from the server's env when they
   could silently override or mismatch the intended setup: all of them with
   `--clean-providers` (including Bedrock's `AWS_REGION` and
@@ -36,7 +37,7 @@ make dev-server-sandbox
   `providers.jsonc` entry that has an `apiKey` but no explicit `baseUrl`
   (API key env vars are always kept so env-key fallback still works)
 - Picks free ports (`BACKEND_PORT`, `VITE_PORT`)
-- Disables tutorials by default inside the sandbox (`MUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
+- Disables tutorials by default inside the sandbox (`SHUX_ENABLE_TUTORIALS_IN_SANDBOX=1` opts back in)
 - Allows all hosts (`VITE_ALLOWED_HOSTS=all`) so it works behind port-forwarding domains
 - Runs `make dev-server` with those env overrides
 
@@ -72,8 +73,8 @@ make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers"
 # Clear projects from config.json (preserves other config)
 make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-projects"
 
-# Use a specific root to seed from (default: per-file from $MUX_ROOT, ~/.mux-dev, ~/.mux)
-SEED_MUX_ROOT=~/.mux-dev make dev-server-sandbox
+# Use a specific root to seed from (default: per-file from $SHUX_ROOT, leftover $MUX_ROOT, ~/.shux[-dev], leftover ~/.mux[-dev]/.cmux)
+SEED_SHUX_ROOT=~/.shux-dev make dev-server-sandbox
 
 # Keep the sandbox root directory after exit (useful for debugging)
 KEEP_SANDBOX=1 make dev-server-sandbox
@@ -82,7 +83,7 @@ KEEP_SANDBOX=1 make dev-server-sandbox
 BACKEND_PORT=3001 VITE_PORT=5174 make dev-server-sandbox
 
 # Re-enable tutorials for sandbox dogfooding
-MUX_ENABLE_TUTORIALS_IN_SANDBOX=1 make dev-server-sandbox
+SHUX_ENABLE_TUTORIALS_IN_SANDBOX=1 make dev-server-sandbox
 
 # Override which make binary to use
 MAKE=gmake make dev-server-sandbox

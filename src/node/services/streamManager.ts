@@ -107,11 +107,11 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 export type StreamTextOnChunk = NonNullable<Parameters<typeof streamText>[0]["onChunk"]>;
 
 const EMPTY_STREAM_OUTPUT_ERROR_MESSAGE =
-  "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
+  "The model ended the stream before producing any assistant-visible output. This usually means the upstream stream was dropped rather than completed normally. Shux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
 
 const MAX_EMPTY_STREAM_RECOVERY_ATTEMPTS = 1;
 const STREAM_TRUNCATED_MESSAGE_SUFFIX =
-  "stream closed unexpectedly before the response completed. Mux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
+  "stream closed unexpectedly before the response completed. Shux will retry automatically when possible, and if retries keep failing you should try again or switch models.";
 
 class EmptyStreamOutputError extends Error {
   constructor() {
@@ -582,7 +582,7 @@ interface WorkspaceStreamInfo {
   // Track if a previousResponseId retry happened after a step completed so
   // stream-end uses cumulative usage instead of the retried step's totalUsage.
   didRetryPreviousResponseIdAtStep: boolean;
-  // Track when Mux restarted the stream after an empty-output completion so
+  // Track when Shux restarted the stream after an empty-output completion so
   // stream-end prefers cumulative usage across attempts instead of the final
   // attempt's totalUsage only.
   didRetryAfterEmptyOutput?: boolean;
@@ -965,7 +965,7 @@ export class StreamManager extends EventEmitter {
 
   /**
    * Create a temporary directory for a stream token
-   * Use ~/.mux-tmp instead of system temp directory (e.g., /var/folders/...)
+   * Use ~/.shux-tmp instead of system temp directory (e.g., /var/folders/...)
    * because macOS user-scoped temp paths are extremely long, which leads to:
    * - Agent mistakes when copying/manipulating paths
    * - Harder to read in tool outputs
@@ -974,7 +974,7 @@ export class StreamManager extends EventEmitter {
    * Uses the Runtime abstraction so temp directories work for both local and SSH runtimes.
    */
   public async createTempDirForStream(streamToken: StreamToken, runtime: Runtime): Promise<string> {
-    const tempDir = `~/.mux-tmp/${streamToken}`;
+    const tempDir = `~/.shux-tmp/${streamToken}`;
 
     // Resolve ~ in the runtime's context.
     //
@@ -3140,7 +3140,7 @@ export class StreamManager extends EventEmitter {
 
               case "reasoning-end": {
                 // xAI (and OpenAI store=false) put reasoningEncryptedContent on reasoning-end.
-                // Mux streams reasoning as many tiny delta parts; providers expect one
+                // Shux streams reasoning as many tiny delta parts; providers expect one
                 // reasoning item with encrypted content. Attach metadata to the first part
                 // of the contiguous reasoning run so convertToModelMessages can replay it
                 // even if later parts lack providerOptions.

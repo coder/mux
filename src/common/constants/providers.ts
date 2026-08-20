@@ -105,7 +105,7 @@ const fromDotSeparatedGatewayModelId = (
 // Order determines display order in UI (Settings, model selectors, etc.)
 export const PROVIDER_DEFINITIONS = {
   "mux-gateway": {
-    displayName: "Mux Gateway",
+    displayName: "Shux Gateway",
     import: () => import("ai"),
     factoryName: "createGateway",
     requiresApiKey: true, // Uses couponCode

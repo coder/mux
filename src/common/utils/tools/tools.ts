@@ -153,7 +153,7 @@ export interface ToolConfiguration {
   /** Environment secrets to inject (optional) */
   secrets?: Record<string, string>;
   /** MUX_ environment variables (MUX_PROJECT_PATH, MUX_RUNTIME) - set from init hook env */
-  muxEnv?: Record<string, string>;
+  shuxEnv?: Record<string, string>;
   /** Temporary directory for tool outputs in runtime's context (local or remote) */
   runtimeTempDir: string;
   /** Model used for capability checks when the runtime model is a configured alias. */
@@ -183,11 +183,11 @@ export interface ToolConfiguration {
   workspaceProjectPath?: string;
   /** Absolute cwd for workspace-scoped tools that accept execution-relative paths. */
   workspaceExecutionRootPath?: string;
-  /** Workspace session directory (e.g. ~/.mux/sessions/<workspaceId>) for persistent tool state */
+  /** Workspace session directory (e.g. ~/.shux/sessions/<workspaceId>) for persistent tool state */
   workspaceSessionDir?: string;
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
-  /** Pre-resolved mux-managed resource scope (global ~/.mux vs project root). */
+  /** Pre-resolved mux-managed resource scope (global ~/.shux vs project root). */
   muxScope?: MuxToolScope;
   /** Optional skill roots override for tests and isolated workflow resolution. */
   agentSkillsRoots?: ToolAgentSkillsRoots;
@@ -495,9 +495,9 @@ function wrapToolsWithHooks(
     cwd: config.cwd,
     runtimeTempDir: config.runtimeTempDir,
     workspaceId: config.workspaceId,
-    // Match bash tool behavior: muxEnv is present and secrets override it.
+    // Match bash tool behavior: shuxEnv is present and secrets override it.
     env: {
-      ...(config.muxEnv ?? {}),
+      ...(config.shuxEnv ?? {}),
       ...(config.secrets ?? {}),
     },
   };
@@ -958,7 +958,7 @@ export async function getToolsForModel(
             ...baseTools,
             ...(mcpTools ?? {}),
             // Google exposes native Search and URL Context as provider-executed tools for
-            // Gemini 3+. These coexist with Mux function tools in the standard streaming API.
+            // Gemini 3+. These coexist with Shux function tools in the standard streaming API.
             google_search: google.tools.googleSearch({}) as Tool,
             url_context: google.tools.urlContext({}) as Tool,
           };
@@ -990,7 +990,7 @@ export async function getToolsForModel(
       // the workspace has a parentWorkspaceId), so withhold the review_pane_*
       // tools from sub-agents to keep the toolset in sync with the system prompt.
       enableReviewPane: !config.enableAgentReport,
-      // Mux global tools are always created; tool policy (agent frontmatter)
+      // Shux global tools are always created; tool policy (agent frontmatter)
       // controls which agents can actually use them.
       enableMuxGlobalAgentsTools: true,
     })

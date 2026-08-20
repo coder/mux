@@ -112,7 +112,7 @@ const VERBATIM_ATTRIBUTES = "* -text -eol -ident -filter -working-tree-encoding\
 
 const GIT_IDENTITY_ARGS = [
   "-c",
-  "user.name=Mux Settings Backup",
+  "user.name=Shux Settings Backup",
   "-c",
   "user.email=mux-settings-backup@localhost",
   "-c",
@@ -339,7 +339,7 @@ async function exists(filePath: string): Promise<boolean> {
 
 /**
  * A cache directory holds the local allowlisted payload, which includes files still awaiting the
- * user's approval, so it must be a real directory under the Mux root rather than a link out of
+ * user's approval, so it must be a real directory under the Shux root rather than a link out of
  * it. `mkdir` with `recursive` succeeds on a symlink to an existing directory, and a
  * pre-created per-repository link passes the origin check when its target is a valid clone, so
  * both the root and the path below it are checked.
@@ -847,7 +847,7 @@ export class BackupRepoCache {
     await assertNotSymlink(this.options.cacheRoot);
     await fs.mkdir(this.options.cacheRoot, { recursive: true, mode: 0o700 });
     // chmod as well: mkdir's mode applies only at creation, and this tree holds exported
-    // payload bytes and unredacted restore snapshots, written by git and by Mux with modes
+    // payload bytes and unredacted restore snapshots, written by git and by Shux with modes
     // that assume nobody else can traverse this far. Owner-only at the top is the boundary
     // that keeps every file below private, including caches made before this rule.
     await fs.chmod(this.options.cacheRoot, 0o700);
@@ -876,7 +876,7 @@ export class BackupRepoCache {
       await this.createCache();
     }
     // Both run every time rather than only at creation, so a cache made by an earlier version
-    // of this code, or altered since, is brought back to the state Mux expects before any
+    // of this code, or altered since, is brought back to the state Shux expects before any
     // other git command trusts what is stored there.
     try {
       await this.sanitizeCacheConfig();
@@ -897,7 +897,7 @@ export class BackupRepoCache {
    * `url.*.pushInsteadOf` rewrites where a push lands after the URL checks pass,
    * `include.path` splices in another file, and keys like `core.sshCommand` or
    * `credential.helper` name commands to execute. That is an open-ended surface, so only
-   * validated platform flags and recognized repository extensions survive; every key Mux
+   * validated platform flags and recognized repository extensions survive; every key Shux
    * depends on is rewritten to its known value. User-global and system configuration are untouched:
    * the user's own git setup, honored the same way the user's own `git push` would honor it.
    *
@@ -972,7 +972,7 @@ export class BackupRepoCache {
     }
     await fs.rename(rewritePath, configPath);
     // Worktree-scoped config is trusted by git the same way (it can hold `core.worktree`
-    // too), and everything Mux keeps is in the file just written, so it is removed rather
+    // too), and everything Shux keeps is in the file just written, so it is removed rather
     // than parsed. `extensions.worktreeConfig` is not a kept key, so a leftover file would be
     // inert anyway; earlier versions of this code let `git sparse-checkout set` create it.
     await fs.rm(path.join(gitDir, "config.worktree"), { force: true });
@@ -1197,7 +1197,7 @@ export class BackupRepoCache {
   }
 
   /**
-   * Only the managed directory is materialized. Mux reads and writes nothing else, and a
+   * Only the managed directory is materialized. Shux reads and writes nothing else, and a
    * checkout of the whole branch fails on any path elsewhere in the repository that this
    * platform cannot create, which would block a backup whose own payload is fine.
    *
@@ -1295,7 +1295,7 @@ export class BackupRepoCache {
     // reset and be read back as if it were the remote's backup. The whole worktree,
     // not just the current managed path: the cache identity is repository and branch,
     // so exports written under a previously configured subdirectory would otherwise
-    // accumulate outside every later sparse checkout. Mux owns this worktree.
+    // accumulate outside every later sparse checkout. Shux owns this worktree.
     await this.localGit(["clean", "-fdx"]);
   }
 

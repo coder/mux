@@ -2,7 +2,7 @@
  * Creates an oRPC router proxy that delegates procedure calls to a running server via HTTP.
  *
  * This allows using trpc-cli with an oRPC router without needing to initialize
- * services locally - calls are forwarded to a running mux server.
+ * services locally - calls are forwarded to a running shux server.
  *
  * The returned router maintains the same structure and schemas as the original,
  * so trpc-cli can extract procedure metadata for CLI generation.

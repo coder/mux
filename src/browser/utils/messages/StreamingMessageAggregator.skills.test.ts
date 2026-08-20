@@ -283,7 +283,7 @@ describe("Loaded skills tracking", () => {
     const skillDefs = [
       { name: "tests", description: "Testing skill", scope: "project" as const },
       { name: "pull-requests", description: "PR guidelines", scope: "project" as const },
-      { name: "mux-docs", description: "Documentation", scope: "built-in" as const },
+      { name: "shux-docs", description: "Documentation", scope: "built-in" as const },
     ];
 
     for (const [index, skill] of skillDefs.entries()) {
@@ -298,8 +298,8 @@ describe("Loaded skills tracking", () => {
     const skills = aggregator.getLoadedSkills();
     expect(skills).toHaveLength(3);
     expect(skills.map((skill) => skill.name).sort()).toEqual([
-      "mux-docs",
       "pull-requests",
+      "shux-docs",
       "tests",
     ]);
   });

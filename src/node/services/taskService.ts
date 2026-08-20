@@ -2336,7 +2336,7 @@ export class TaskService {
           });
         }
       } catch (error: unknown) {
-        // Startup recovery is best-effort: one read-only/corrupt child must not prevent Mux startup
+        // Startup recovery is best-effort: one read-only/corrupt child must not prevent Shux startup
         // or block reconciliation of the remaining persistent children.
         log.warn("Failed to persist persistent sub-agent execution reconciliation", {
           taskId: task.id,
@@ -2522,7 +2522,7 @@ export class TaskService {
         };
         const sendResult = await this.workspaceService.sendMessage(
           task.id,
-          "Mux restarted before these parent guidance updates could run. Apply them in order and continue:\n\n" +
+          "Shux restarted before these parent guidance updates could run. Apply them in order and continue:\n\n" +
             pendingGuidance
               .map((guidance, index) => `${index + 1}. ${guidance.message}`)
               .join("\n\n"),
@@ -2551,7 +2551,7 @@ export class TaskService {
         continue;
       }
 
-      // Best-effort: if mux restarted mid-stream, nudge the agent to continue and report.
+      // Best-effort: if shux restarted mid-stream, nudge the agent to continue and report.
       // Only do this when the task has no blocking running descendants, to avoid duplicate spawns.
       const hasBlockingActiveDescendants =
         this.listBlockingActiveDescendantAgentTaskIdsUsingIndex(taskIndex, task.id).length > 0;
@@ -2581,7 +2581,7 @@ export class TaskService {
         : "When you have a final answer, return it in your final assistant message.";
       const sendResult = await this.workspaceService.sendMessage(
         task.id,
-        "Mux restarted while this task was running. Continue where you left off. " +
+        "Shux restarted while this task was running. Continue where you left off. " +
           restartCompletionInstruction,
         {
           model,
@@ -2628,7 +2628,7 @@ export class TaskService {
     }
 
     // Restart-safety for git patch artifacts:
-    // - If mux crashed mid-generation, patch artifacts can be left "pending".
+    // - If shux crashed mid-generation, patch artifacts can be left "pending".
     // - Completed tasks can be stranded in config until cleanup runs again, so restart should
     //   resume artifact generation and re-run the deletion pass.
     const completedReportTasks = this.listAgentTaskWorkspaces(config).filter(
@@ -4733,7 +4733,7 @@ export class TaskService {
             ];
             if (workspace.taskStatus == null || previousStatus === "awaiting_report") {
               // Persist the legacy implicit-running state so startup recovery can replay this durable
-              // guidance if Mux exits before the replacement turn accepts it.
+              // guidance if Shux exits before the replacement turn accepts it.
               workspace.taskStatus = "running";
             }
           },

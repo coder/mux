@@ -11,16 +11,22 @@ installEpipeGuard(process.stdout);
 installEpipeGuard(process.stderr);
 
 // Enable source map support for better error stack traces in production
+import "@/node/compat/installLegacyMuxEnvironment";
 import "source-map-support/register";
-import * as fs from "node:fs";
 import { promises as fsPromises } from "node:fs";
 import * as path from "node:path";
 import { createRequire } from "node:module";
+import { cleanupObsoleteShuxBinArtifacts, getShuxHome } from "@/common/constants/paths";
+import { getElectronAppIdentity } from "@/common/compat/electronAppIdentity";
 import {
-  cleanupObsoleteMuxBinArtifacts,
-  getMuxHome,
-  migrateLegacyMuxHome,
-} from "@/common/constants/paths";
+  SUPPORTED_SHUX_PROTOCOL_SCHEMES,
+  resolveShuxEnvironmentValue,
+} from "@/common/compat/legacyMux";
+import { SHUX_PRODUCT_DESCRIPTION } from "@/common/constants/product";
+import {
+  initializeShuxHomeTransition,
+  initializeShuxUserDataTransition,
+} from "@/node/compat/shuxTransition";
 
 // Fix PATH on macOS when launched from Finder (not terminal).
 // GUI apps inherit minimal PATH from launchd, missing Homebrew tools like git-lfs.
@@ -33,15 +39,6 @@ if (process.platform === "darwin") {
     // App works with existing PATH; debug log for troubleshooting
     console.debug("[fix-path] Failed to enrich PATH:", e);
   }
-}
-
-// Migrate ~/.cmux and clean obsolete mux-managed bin artifacts before startup uses mux home paths.
-try {
-  migrateLegacyMuxHome();
-  cleanupObsoleteMuxBinArtifacts();
-} catch (error) {
-  // Startup initialization must never crash the app.
-  console.debug("[mux-home] Failed mux home startup migrations:", error);
 }
 
 import { randomBytes } from "crypto";
@@ -67,23 +64,94 @@ import {
   shell,
 } from "electron";
 
-// Pin the Linux app name so the window groups under mux.desktop instead of a
-// generic "Electron" entry. Launch modes that don't expose our package.json
-// (e.g. the Nix package's `electron dist/cli/index.js`) otherwise fall back to
-// the "Electron" default. setName sets WM_CLASS (XWayland matches
-// StartupWMClass=mux); CHROME_DESKTOP sets the native-Wayland app_id (same var
-// Electron sets from package.json desktopName when it can read it). Must run
-// before the ready event. sanitizeMuxChildEnv strips CHROME_DESKTOP from child
-// processes so apps launched from mux terminals don't inherit our identity.
-if (process.platform === "linux") {
-  app.setName("mux");
-  process.env.CHROME_DESKTOP = "mux.desktop";
+const getShuxEnv = (suffix: string): string | undefined =>
+  resolveShuxEnvironmentValue(suffix, process.env);
+
+const isE2ETest = getShuxEnv("E2E") === "1";
+const forceDistLoad = getShuxEnv("E2E_LOAD_DIST") === "1";
+
+// Split display name from desktop/userData identity before Electron creates windows.
+// Linux keeps the lowercase slug for WM_CLASS / Wayland app_id; other platforms use "Shux"
+// so app.getName() (and the macOS application menu) stay display-cased. userData is set
+// explicitly to the slug directory later so setName() cannot fork storage casing.
+const electronAppIdentity = getElectronAppIdentity(process.platform);
+app.setName(electronAppIdentity.appName);
+if (electronAppIdentity.chromeDesktop != null) {
+  // sanitizeShuxChildEnv strips CHROME_DESKTOP from child processes launched in terminals.
+  process.env.CHROME_DESKTOP = electronAppIdentity.chromeDesktop;
 }
 
-// Enable local crash dump collection so renderer SIGSEGV produces a minidump
-// at ~/.config/mux/Crashpad/completed/*.dmp — no data leaves the machine.
-// Must be called as early as possible, before app.whenReady().
-crashReporter.start({ uploadToServer: false });
+async function isUsableDirectory(candidatePath: string): Promise<boolean> {
+  try {
+    return (await fsPromises.stat(candidatePath)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Home and userData transitions must finish before crashReporter, the single-instance
+ * lock, services, or windows. Electron is already imported (CJS hoists requires), but
+ * app.setPath("userData") still has to complete before those later APIs run.
+ */
+async function initializeShuxDesktopStorage(): Promise<void> {
+  try {
+    const transition = await initializeShuxHomeTransition();
+    cleanupObsoleteShuxBinArtifacts(transition.activePath);
+    for (const issue of transition.issues) {
+      console.debug("[shux-transition]", issue);
+    }
+  } catch (error) {
+    // Startup initialization must never crash the app.
+    console.debug("[shux-transition] Failed home transition:", error);
+  }
+
+  if (isE2ETest) {
+    // E2E state remains inside the explicitly isolated SHUX_ROOT/MUX_ROOT directory.
+    const e2eUserData = path.join(getShuxHome(), "user-data");
+    try {
+      await fsPromises.mkdir(e2eUserData, { recursive: true });
+      app.setPath("userData", e2eUserData);
+      console.log("Using test userData directory:", e2eUserData);
+    } catch (error) {
+      console.warn("Failed to prepare test userData directory:", error);
+    }
+    return;
+  }
+
+  const appDataDir = app.getPath("appData");
+  const canonicalUserData = path.join(appDataDir, electronAppIdentity.userDataDirName);
+  try {
+    const transition = await initializeShuxUserDataTransition({
+      appDataDir,
+      platform: process.platform,
+    });
+    if (await isUsableDirectory(transition.activePath)) {
+      app.setPath("userData", transition.activePath);
+    } else {
+      console.debug(
+        "[shux-transition] Refusing to set userData to a non-directory:",
+        transition.activePath
+      );
+    }
+    for (const issue of transition.issues) {
+      console.debug("[shux-transition]", issue);
+    }
+  } catch (error) {
+    // Never fall back to Electron's name-derived userData: display-cased setName("Shux")
+    // would otherwise create a parallel Shux/ directory beside the canonical shux/ slug.
+    // Also never point userData at an obstructing file or broken alias.
+    console.debug("[shux-transition] Failed Electron userData transition:", error);
+    if (await isUsableDirectory(canonicalUserData)) {
+      app.setPath("userData", canonicalUserData);
+    } else {
+      console.debug(
+        "[shux-transition] Refusing to set userData to a non-directory:",
+        canonicalUserData
+      );
+    }
+  }
+}
 
 // Increase renderer V8 heap limit from default ~4GB to 8GB.
 // At ~3.9GB usage, the default limit causes frequent Mark-Compact GC cycles
@@ -94,9 +162,9 @@ app.commandLine.appendSwitch("js-flags", "--max-old-space-size=8192");
 import type { Config } from "../node/config";
 import type { ServiceContainer } from "../node/services/serviceContainer";
 import { VERSION } from "../version";
-import type { MuxDeepLinkPayload } from "../common/types/deepLink";
+import type { DeepLinkPayload } from "../common/types/deepLink";
 import type { UpdateStatus } from "../common/orpc/types";
-import { parseMuxDeepLink } from "../common/utils/deepLink";
+import { parseShuxDeepLink } from "../common/utils/deepLink";
 
 import { normalizeAndValidateExternalUrl } from "./utils/normalizeAndValidateExternalUrl";
 import { hasSameOrigin } from "./utils/hasSameOrigin";
@@ -108,9 +176,9 @@ import windowStateKeeper from "electron-window-state";
 import { getTitleBarOptions } from "./titleBarOptions";
 import { isUpdateInstallInProgress } from "./updateInstallState";
 import {
-  getMuxDeepLinksFromArgv,
-  getMuxProtocolClientRegistration,
-} from "./utils/muxProtocolRegistration";
+  getShuxDeepLinksFromArgv,
+  getShuxProtocolClientRegistration,
+} from "./utils/shuxProtocolRegistration";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 
@@ -133,38 +201,23 @@ import { log } from "@/node/services/log";
 let config: Config | null = null;
 let services: ServiceContainer | null = null;
 const requireDesktopModule = createRequire(__filename);
-const isE2ETest = process.env.MUX_E2E === "1";
-const forceDistLoad = process.env.MUX_E2E_LOAD_DIST === "1";
 
-if (isE2ETest) {
-  // For e2e tests, use a test-specific userData directory
-  // Note: getMuxHome() already respects MUX_ROOT for test isolation
-  const e2eUserData = path.join(getMuxHome(), "user-data");
-  try {
-    fs.mkdirSync(e2eUserData, { recursive: true });
-    app.setPath("userData", e2eUserData);
-    console.log("Using test userData directory:", e2eUserData);
-  } catch (error) {
-    console.warn("Failed to prepare test userData directory:", error);
-  }
-}
-
-// MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
+// SHUX_PROXY_URI is canonical; the transition layer mirrors legacy MUX_PROXY_URI.
 const localhostProxyTemplate =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
-  process.env.MUX_PROXY_URI?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
+  getShuxEnv("PROXY_URI")?.trim() || process.env.VSCODE_PROXY_URI?.trim() || undefined;
 
-const devServerPort = process.env.MUX_DEVSERVER_PORT ?? "5173";
+const devServerPort = getShuxEnv("DEVSERVER_PORT") ?? "5173";
 
 console.log(
-  `Mux starting - version: ${(VERSION as { git?: string; buildTime?: string }).git ?? "(dev)"} (built: ${(VERSION as { git?: string; buildTime?: string }).buildTime ?? "dev-mode"})`
+  `Shux starting - version: ${(VERSION as { git?: string; buildTime?: string }).git ?? "(dev)"} (built: ${(VERSION as { git?: string; buildTime?: string }).buildTime ?? "dev-mode"})`
 );
 console.log("Main process starting...");
 
-// Debug: abort immediately if MUX_DEBUG_START_TIME is set
-// This is used to measure baseline startup time without full initialization
-if (process.env.MUX_DEBUG_START_TIME === "1") {
-  console.log("MUX_DEBUG_START_TIME is set - aborting immediately");
+// Debug: abort immediately if SHUX_DEBUG_START_TIME (or legacy MUX_DEBUG_START_TIME) is set.
+// This is used to measure baseline startup time without full initialization.
+if (getShuxEnv("DEBUG_START_TIME") === "1") {
+  console.log("SHUX_DEBUG_START_TIME is set - aborting immediately");
   process.exit(0);
 }
 
@@ -201,31 +254,9 @@ process.on("unhandledRejection", (reason, promise) => {
   }
 });
 
-// Single instance lock (can be disabled for development with CMUX_ALLOW_MULTIPLE_INSTANCES=1)
-const allowMultipleInstances = process.env.CMUX_ALLOW_MULTIPLE_INSTANCES === "1";
-const gotTheLock = allowMultipleInstances || app.requestSingleInstanceLock();
-console.log("Single instance lock acquired:", gotTheLock);
-
-if (!gotTheLock) {
-  // Another instance is already running, quit this one
-  console.log("Another instance is already running, quitting...");
-  app.quit();
-} else {
-  // This is the primary instance
-  console.log("This is the primary instance");
-  app.on("second-instance", (_event, argv) => {
-    // Someone tried to run a second instance, focus our window instead
-    console.log("Second instance attempted to start");
-
-    try {
-      handleArgvMuxDeepLinks(argv);
-    } catch (error) {
-      console.debug("[deep-link] Failed to parse second-instance argv for mux deep links:", error);
-    }
-
-    focusMainWindow();
-  });
-}
+// Single-instance locking can be disabled for development with SHUX_ALLOW_MULTIPLE_INSTANCES=1.
+// The compatibility layer also accepts MUX_ and the older CMUX_ spelling.
+const allowMultipleInstances = getShuxEnv("ALLOW_MULTIPLE_INSTANCES") === "1";
 
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
@@ -234,55 +265,55 @@ let isQuitting = false;
 let latestUpdateStatus: UpdateStatus = { type: "idle" };
 let isUpdateClosePromptOpen = false;
 
-// mux:// deep links can arrive before the main window exists / finishes loading.
-const bufferedMuxDeepLinks: MuxDeepLinkPayload[] = [];
+// shux:// and legacy mux:// deep links can arrive before the main window finishes loading.
+const bufferedShuxDeepLinks: DeepLinkPayload[] = [];
 let mainWindowFinishedLoading = false;
 
 function focusMainWindow() {
   if (!mainWindow) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
-  // Closing Mux on Windows hides to tray; show it again when a second-instance launch occurs.
+  // Closing Shux on Windows hides to tray; show it again when a second-instance launch occurs.
   mainWindow.show();
   mainWindow.focus();
 }
 
-function flushBufferedMuxDeepLinks() {
+function flushBufferedShuxDeepLinks() {
   if (!mainWindow || !mainWindowFinishedLoading) return;
 
-  while (bufferedMuxDeepLinks.length > 0) {
-    const payload = bufferedMuxDeepLinks[0];
+  while (bufferedShuxDeepLinks.length > 0) {
+    const payload = bufferedShuxDeepLinks[0];
     try {
       mainWindow.webContents.send("mux:deep-link", payload);
-      bufferedMuxDeepLinks.shift();
+      bufferedShuxDeepLinks.shift();
     } catch (error) {
       // Best-effort: never crash startup if the renderer isn't ready.
-      console.debug("[deep-link] Failed to send mux deep link payload:", error);
+      console.debug("[deep-link] Failed to send shux/mux deep-link payload:", error);
       return;
     }
   }
 }
 
-function handleMuxDeepLink(raw: string) {
+function handleShuxDeepLink(raw: string) {
   try {
-    const payload = parseMuxDeepLink(raw);
+    const payload = parseShuxDeepLink(raw);
     if (!payload) return;
 
     // Buffer until the renderer has finished loading.
     if (!mainWindow || !mainWindowFinishedLoading) {
-      bufferedMuxDeepLinks.push(payload);
+      bufferedShuxDeepLinks.push(payload);
       return;
     }
 
     mainWindow.webContents.send("mux:deep-link", payload);
   } catch (error) {
     // Best-effort: never crash startup if argv parsing/protocol handling is weird.
-    console.debug(`[deep-link] Failed to handle mux deep link: ${raw}`, error);
+    console.debug(`[deep-link] Failed to handle shux/mux deep link: ${raw}`, error);
   }
 }
 
-function handleArgvMuxDeepLinks(argv: string[]) {
-  for (const arg of getMuxDeepLinksFromArgv(argv)) {
-    handleMuxDeepLink(arg);
+function handleArgvShuxDeepLinks(argv: string[]) {
+  for (const arg of getShuxDeepLinksFromArgv(argv)) {
+    handleShuxDeepLink(arg);
   }
 }
 
@@ -290,21 +321,21 @@ function handleArgvMuxDeepLinks(argv: string[]) {
 if (process.platform === "darwin") {
   app.on("open-url", (event, url) => {
     event.preventDefault();
-    handleMuxDeepLink(url);
+    handleShuxDeepLink(url);
     focusMainWindow();
   });
 }
 
 // Initial launch: Windows/Linux deep links are passed in argv.
 try {
-  handleArgvMuxDeepLinks(process.argv);
+  handleArgvShuxDeepLinks(process.argv);
 } catch (error) {
-  console.debug("[deep-link] Failed to parse initial argv for mux deep links:", error);
+  console.debug("[deep-link] Failed to parse initial argv for shux/mux deep links:", error);
 }
 
-function registerMuxProtocolClient() {
+function registerShuxProtocolClients() {
   try {
-    const registration = getMuxProtocolClientRegistration({
+    const registration = getShuxProtocolClientRegistration({
       platform: process.platform,
       isPackaged: app.isPackaged,
       defaultApp: process.defaultApp,
@@ -312,15 +343,16 @@ function registerMuxProtocolClient() {
       execPath: process.execPath,
     });
 
-    if (registration) {
-      app.setAsDefaultProtocolClient("mux", registration.executable, registration.args);
-      return;
+    for (const scheme of SUPPORTED_SHUX_PROTOCOL_SCHEMES) {
+      if (registration) {
+        app.setAsDefaultProtocolClient(scheme, registration.executable, registration.args);
+      } else {
+        app.setAsDefaultProtocolClient(scheme);
+      }
     }
-
-    app.setAsDefaultProtocolClient("mux");
   } catch (error) {
     // Best-effort: never crash startup if protocol registration fails.
-    console.debug("[deep-link] Failed to register mux:// protocol handler:", error);
+    console.debug("[deep-link] Failed to register shux:// and mux:// handlers:", error);
   }
 }
 
@@ -459,7 +491,7 @@ function loadTrayIconImage() {
   return image;
 }
 
-function openMuxFromTray() {
+function openShuxFromTray() {
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.show();
@@ -470,7 +502,7 @@ function openMuxFromTray() {
   // On macOS the app stays open after all windows are closed; recreate the window.
   if (process.platform === "darwin") {
     if (!services) {
-      console.warn(`[${timestamp()}] [tray] Cannot open mux (services not loaded yet)`);
+      console.warn(`[${timestamp()}] [tray] Cannot open shux (services not loaded yet)`);
       return;
     }
 
@@ -508,9 +540,9 @@ function createTray() {
 
   const menu = Menu.buildFromTemplate([
     {
-      label: "Open mux",
+      label: "Open Shux",
       click: () => {
-        openMuxFromTray();
+        openShuxFromTray();
       },
     },
     {
@@ -627,7 +659,7 @@ async function loadServices(): Promise<void> {
   });
 
   // Generate auth token (use env var or random per-session)
-  const authToken = process.env.MUX_SERVER_AUTH_TOKEN ?? randomBytes(32).toString("hex");
+  const authToken = getShuxEnv("SERVER_AUTH_TOKEN") ?? randomBytes(32).toString("hex");
 
   // Store auth token so the API server can be restarted via Settings.
   services.serverService.setApiAuthToken(authToken);
@@ -635,7 +667,7 @@ async function loadServices(): Promise<void> {
   // Keep PATH-related recovery honest: Settings can re-check the current process view, but
   // shell/profile changes made after launch still need a full app relaunch to rerun startup PATH setup.
   services.windowService.setRestartAppHandler(() => {
-    assert(app, "Electron app must be available to restart mux");
+    assert(app, "Electron app must be available to restart shux");
     app.relaunch();
     app.quit();
   });
@@ -712,7 +744,7 @@ async function loadServices(): Promise<void> {
     }
 
     // Even if WSL is the default, don't warn if Git for Windows bash is available
-    // (Mux will use that instead).
+    // (Shux will use that instead).
     if (looksLikeWsl && isBashAvailable()) {
       return false;
     }
@@ -746,7 +778,7 @@ async function loadServices(): Promise<void> {
   });
 
   // Start HTTP/WS API server for CLI access (unless explicitly disabled)
-  if (process.env.MUX_NO_API_SERVER !== "1") {
+  if (getShuxEnv("NO_API_SERVER") !== "1") {
     const lockfile = new ServerLockfile(config.rootDir);
     const existing = await lockfile.read();
 
@@ -763,9 +795,8 @@ async function loadServices(): Promise<void> {
         const serveStatic = loadedConfig.apiServerServeWebUi === true;
         const configuredPort = loadedConfig.apiServerPort;
 
-        const envPortRaw = process.env.MUX_SERVER_PORT
-          ? Number.parseInt(process.env.MUX_SERVER_PORT, 10)
-          : undefined;
+        const envServerPort = getShuxEnv("SERVER_PORT");
+        const envPortRaw = envServerPort ? Number.parseInt(envServerPort, 10) : undefined;
         const envPort =
           envPortRaw !== undefined && Number.isFinite(envPortRaw) ? envPortRaw : undefined;
 
@@ -839,7 +870,7 @@ function createWindow() {
   mainWindowFinishedLoading = false;
 
   const useDevServer = (isE2ETest && !forceDistLoad) || (!app.isPackaged && !forceDistLoad);
-  const devHost = process.env.MUX_DEVSERVER_HOST ?? "127.0.0.1";
+  const devHost = getShuxEnv("DEVSERVER_HOST") ?? "127.0.0.1";
   const devServerUrl = `http://${devHost}:${devServerPort}`;
   let devServerRetryTimeout: ReturnType<typeof setTimeout> | null = null;
   let devServerRetryAttempt = 0;
@@ -905,11 +936,11 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, "../preload.js"),
-      // Disable the native spellchecker: mux is a coding tool where inputs are
+      // Disable the native spellchecker: shux is a coding tool where inputs are
       // full of code, paths, and identifiers that trigger noisy red squiggles.
       spellcheck: false,
     },
-    title: "mux - coder multiplexer",
+    title: SHUX_PRODUCT_DESCRIPTION,
     // Hide menu bar on Linux by default (like VS Code)
     // User can press Alt to toggle it
     autoHideMenuBar: process.platform === "linux",
@@ -930,7 +961,7 @@ function createWindow() {
   services.windowService.setMainWindow(mainWindow);
 
   mainWindow.on("close", (event) => {
-    // Close-to-tray behavior: when the user closes the main window, keep mux
+    // Close-to-tray behavior: when the user closes the main window, keep shux
     // running in the tray/menu bar so it can be re-opened from there.
     //
     // Only hide when the tray exists to avoid trapping the user with no UI path
@@ -954,7 +985,7 @@ function createWindow() {
         defaultId: 0,
         cancelId: 2,
         message: "An update is ready to install.",
-        detail: "Install now to restart and apply the update, or keep Mux running in the tray.",
+        detail: "Install now to restart and apply the update, or keep Shux running in the tray.",
       };
 
       const promptWindow = mainWindow;
@@ -1045,7 +1076,7 @@ function createWindow() {
     console.log(`[${timestamp()}] [window] Content finished loading`);
 
     mainWindowFinishedLoading = true;
-    flushBufferedMuxDeepLinks();
+    flushBufferedShuxDeepLinks();
 
     // NOTE: Tokenizer modules are NOT loaded at startup anymore!
     // The Proxy in tokenizer.ts loads them on-demand when first accessed.
@@ -1091,7 +1122,7 @@ function createWindow() {
   });
 
   // Forward renderer console errors to the log service so they reach the log
-  // file (~/.mux/logs/mux.log) and Output Tab even when the UI is white/blank.
+  // file (~/.shux/logs/mux.log) and Output Tab even when the UI is white/blank.
   // The renderer's global error handlers (window.addEventListener("error")) log
   // to console.error, but that stays in renderer memory only — the main process
   // never sees it without this hook.
@@ -1115,8 +1146,8 @@ function createWindow() {
 }
 
 async function maybeRunAttachFileSmokeTest(): Promise<boolean> {
-  const pngPath = process.env.MUX_ATTACH_FILE_SMOKE_TEST_PNG_PATH?.trim();
-  const jpegPath = process.env.MUX_ATTACH_FILE_SMOKE_TEST_JPEG_PATH?.trim();
+  const pngPath = getShuxEnv("ATTACH_FILE_SMOKE_TEST_PNG_PATH")?.trim();
+  const jpegPath = getShuxEnv("ATTACH_FILE_SMOKE_TEST_JPEG_PATH")?.trim();
   if ((pngPath == null || pngPath.length === 0) && (jpegPath == null || jpegPath.length === 0)) {
     return false;
   }
@@ -1135,8 +1166,42 @@ async function maybeRunAttachFileSmokeTest(): Promise<boolean> {
   return true;
 }
 
-// Only setup app handlers if we got the lock
-if (gotTheLock) {
+void startDesktopAfterStorage().catch((error) => {
+  // Startup initialization must never crash the app.
+  console.debug("[shux-transition] Failed desktop storage bootstrap:", error);
+});
+
+async function startDesktopAfterStorage(): Promise<void> {
+  await initializeShuxDesktopStorage();
+  // Enable local crash dump collection after userData points at canonical shux storage.
+  // No crash data leaves the machine.
+  crashReporter.start({ uploadToServer: false });
+
+  const gotTheLock = allowMultipleInstances || app.requestSingleInstanceLock();
+  console.log("Single instance lock acquired:", gotTheLock);
+
+  if (!gotTheLock) {
+    console.log("Another instance is already running, quitting...");
+    app.quit();
+    return;
+  }
+
+  console.log("This is the primary instance");
+  app.on("second-instance", (_event, argv) => {
+    console.log("Second instance attempted to start");
+
+    try {
+      handleArgvShuxDeepLinks(argv);
+    } catch (error) {
+      console.debug(
+        "[deep-link] Failed to parse second-instance argv for shux/mux deep links:",
+        error
+      );
+    }
+
+    focusMainWindow();
+  });
+
   void app.whenReady().then(async () => {
     try {
       console.log("App ready, creating window...");
@@ -1145,11 +1210,7 @@ if (gotTheLock) {
         return;
       }
 
-      registerMuxProtocolClient();
-
-      // Safe to retry after ready: mux home migrations are idempotent.
-      migrateLegacyMuxHome();
-      cleanupObsoleteMuxBinArtifacts();
+      registerShuxProtocolClients();
 
       // Install React DevTools in development
       if (!app.isPackaged) {
@@ -1270,7 +1331,7 @@ if (gotTheLock) {
     // hidden by close-to-tray.
     // Guard: services must be loaded (prevents race if activate fires during startup).
     if (app.isReady() && services) {
-      openMuxFromTray();
+      openShuxFromTray();
     }
   });
 }

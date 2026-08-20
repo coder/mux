@@ -10,13 +10,13 @@
  *
  * Hook Location:
  *   1. .mux/tool_hook (project-level, committed)
- *   2. ~/.mux/tool_hook (user-level, personal)
+ *   2. ~/.shux/tool_hook (user-level, personal)
  *
  * Protocol:
- *   1. Hook receives MUX_TOOL, MUX_TOOL_INPUT, MUX_EXEC, etc. as env vars
+ *   1. Hook receives SHUX_TOOL, SHUX_TOOL_INPUT, SHUX_EXEC, etc. as env vars
  *   2. Hook runs pre-logic
- *   3. Hook prints $MUX_EXEC (the unique marker) to signal readiness
- *   4. Mux executes the tool, sends result JSON to hook's stdin
+ *   3. Hook prints $SHUX_EXEC (the unique marker) to signal readiness
+ *   4. Shux executes the tool, sends result JSON to hook's stdin
  *   5. Hook reads result, runs post-logic
  *   6. Hook exits (non-zero = failure fed back to LLM)
  *
@@ -27,6 +27,7 @@
 
 import * as crypto from "crypto";
 import * as path from "path";
+import { withLegacyMuxEnvironmentAliases } from "@/common/compat/legacyMux";
 import { flattenToolHookValueToEnv } from "@/common/utils/tools/toolHookEnv";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
@@ -66,6 +67,24 @@ export function joinPathLike(basePath: string, ...parts: string[]): string {
     return path.join(basePath, ...parts);
   }
   return path.posix.join(basePath, ...parts);
+}
+
+/**
+ * User-global hooks/tool_env live in the runtime shux home, not a hardcoded ~/.mux.
+ * Local `~/.shux` resolves through expandTilde → getShuxHome(), so SHUX_ROOT and a
+ * leftover ~/.mux stay on one tree. Project-local files remain under `.mux/`.
+ */
+async function getUserGlobalConfigPath(runtime: Runtime, filename: string): Promise<string | null> {
+  try {
+    const userHome = await runtime.resolvePath(runtime.getShuxHome());
+    const userPath = joinPathLike(userHome, filename);
+    if (await isFile(runtime, userPath)) {
+      return userPath;
+    }
+  } catch {
+    // resolvePath failed - skip user-level file
+  }
+  return null;
 }
 
 function getToolInputValueForEnv(context: {
@@ -137,18 +156,7 @@ export async function getHookPath(runtime: Runtime, projectDir: string): Promise
     return projectHook;
   }
 
-  // Fall back to user-level hook (resolve ~ for SSH compatibility)
-  try {
-    const homeDir = await runtime.resolvePath("~");
-    const userHook = joinPathLike(homeDir, ".mux", HOOK_FILENAME);
-    if (await isFile(runtime, userHook)) {
-      return userHook;
-    }
-  } catch {
-    // resolvePath failed - skip user hook
-  }
-
-  return null;
+  return getUserGlobalConfigPath(runtime, HOOK_FILENAME);
 }
 
 /**
@@ -163,18 +171,7 @@ export async function getToolEnvPath(runtime: Runtime, projectDir: string): Prom
     return projectEnv;
   }
 
-  // Fall back to user-level tool_env (resolve ~ for SSH compatibility)
-  try {
-    const homeDir = await runtime.resolvePath("~");
-    const userEnv = joinPathLike(homeDir, ".mux", TOOL_ENV_FILENAME);
-    if (await isFile(runtime, userEnv)) {
-      return userEnv;
-    }
-  } catch {
-    // resolvePath failed - skip user tool_env
-  }
-
-  return null;
+  return getUserGlobalConfigPath(runtime, TOOL_ENV_FILENAME);
 }
 
 /**
@@ -188,17 +185,7 @@ export async function getPreHookPath(runtime: Runtime, projectDir: string): Prom
     return projectHook;
   }
 
-  try {
-    const homeDir = await runtime.resolvePath("~");
-    const userHook = joinPathLike(homeDir, ".mux", PRE_HOOK_FILENAME);
-    if (await isFile(runtime, userHook)) {
-      return userHook;
-    }
-  } catch {
-    // resolvePath failed - skip user hook
-  }
-
-  return null;
+  return getUserGlobalConfigPath(runtime, PRE_HOOK_FILENAME);
 }
 
 /**
@@ -215,17 +202,7 @@ export async function getPostHookPath(
     return projectHook;
   }
 
-  try {
-    const homeDir = await runtime.resolvePath("~");
-    const userHook = joinPathLike(homeDir, ".mux", POST_HOOK_FILENAME);
-    if (await isFile(runtime, userHook)) {
-      return userHook;
-    }
-  } catch {
-    // resolvePath failed - skip user hook
-  }
-
-  return null;
+  return getUserGlobalConfigPath(runtime, POST_HOOK_FILENAME);
 }
 
 // When probing hook files over SSH, avoid hanging on dead connections.
@@ -260,7 +237,7 @@ export interface HookTimingOptions {
  * @param runtime Runtime to execute the hook in
  * @param hookPath Path to the hook executable
  * @param context Hook context with tool info
- * @param executeTool Callback to execute the actual tool (called when hook signals __MUX_EXEC__)
+ * @param executeTool Callback to execute the actual tool (called when hook signals __SHUX_EXEC__)
  * @param timingOptions Optional timing/warning configuration
  * @returns Hook result with success status and any stderr output
  */
@@ -290,7 +267,7 @@ export async function runWithHook<T>(
       const tempDir = context.runtimeTempDir ?? "/tmp";
       toolInputPath = joinPathLike(
         tempDir,
-        `mux-tool-input-${Date.now()}-${crypto.randomUUID()}.json`
+        `shux-tool-input-${Date.now()}-${crypto.randomUUID()}.json`
       );
       await writeFileString(runtime, toolInputPath, context.toolInput);
       toolInputEnv = "__MUX_TOOL_INPUT_FILE__";
@@ -305,23 +282,24 @@ export async function runWithHook<T>(
 
   const toolInputValueForEnv = getToolInputValueForEnv(context);
 
-  const hookEnv: Record<string, string> = {
+  const canonicalHookEnv: Record<string, string> = {
     ...(context.env ?? {}),
-    MUX_TOOL: context.tool,
-    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+    SHUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "SHUX_TOOL_INPUT", {
       maxValueLength: TOOL_INPUT_ENV_LIMIT,
       maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
       maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
     }),
     // Ensure the base JSON env var cannot be overwritten by flattened fields.
-    MUX_TOOL_INPUT: toolInputEnv,
-    MUX_WORKSPACE_ID: context.workspaceId,
-    MUX_PROJECT_DIR: context.projectDir,
-    MUX_EXEC: execMarker,
+    SHUX_TOOL_INPUT: toolInputEnv,
+    SHUX_WORKSPACE_ID: context.workspaceId,
+    SHUX_PROJECT_DIR: context.projectDir,
+    SHUX_EXEC: execMarker,
   };
   if (toolInputPath) {
-    hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
+    canonicalHookEnv.SHUX_TOOL_INPUT_PATH = toolInputPath;
   }
+  const hookEnv = withLegacyMuxEnvironmentAliases(canonicalHookEnv);
 
   const abortController = new AbortController();
   let timeoutPhase: "pre" | "post" | "external" | undefined;
@@ -418,7 +396,7 @@ export async function runWithHook<T>(
     }
   })();
 
-  // Read stdout, watching for __MUX_EXEC__ marker
+  // Read stdout, watching for __SHUX_EXEC__ marker
   const stdoutReader = stream.stdout.getReader();
   const decoder = new TextDecoder();
   try {
@@ -459,7 +437,7 @@ export async function runWithHook<T>(
       stdoutAfterMarker = stdoutBuffer.slice(markerIdx + execMarker.length);
 
       // Execute tool + send result to hook stdin in the background so we can
-      // continue draining stdout (hooks may log after __MUX_EXEC__).
+      // continue draining stdout (hooks may log after __SHUX_EXEC__).
       toolPromise = (async () => {
         try {
           try {
@@ -503,7 +481,7 @@ export async function runWithHook<T>(
     stdoutReader.releaseLock();
   }
 
-  // If hook exited before __MUX_EXEC__, close stdin
+  // If hook exited before __SHUX_EXEC__, close stdin
   if (!toolExecuted) {
     // Cancel the pre-hook timeout.
     if (preTimeoutHandle) {
@@ -651,22 +629,23 @@ export async function runPreHook(
 
   const toolInputValueForEnv = getToolInputValueForEnv(context);
 
-  const hookEnv: Record<string, string> = {
+  const canonicalHookEnv: Record<string, string> = {
     ...(context.env ?? {}),
-    MUX_TOOL: context.tool,
-    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+    SHUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "SHUX_TOOL_INPUT", {
       maxValueLength: TOOL_INPUT_ENV_LIMIT,
       maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
       maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
     }),
     // Ensure the base JSON env var cannot be overwritten by flattened fields.
-    MUX_TOOL_INPUT: toolInputEnv,
-    MUX_WORKSPACE_ID: context.workspaceId,
-    MUX_PROJECT_DIR: context.projectDir,
+    SHUX_TOOL_INPUT: toolInputEnv,
+    SHUX_WORKSPACE_ID: context.workspaceId,
+    SHUX_PROJECT_DIR: context.projectDir,
   };
   if (toolInputPath) {
-    hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
+    canonicalHookEnv.SHUX_TOOL_INPUT_PATH = toolInputPath;
   }
+  const hookEnv = withLegacyMuxEnvironmentAliases(canonicalHookEnv);
 
   try {
     const result = await execBuffered(runtime, shellEscape(hookPath), {
@@ -723,7 +702,7 @@ export async function runPostHook(
   // Prepare tool result (best-effort file; env var placeholder if large)
   const resultPath = joinPathLike(
     context.runtimeTempDir ?? "/tmp",
-    `mux-tool-result-${Date.now()}-${crypto.randomUUID()}.json`
+    `shux-tool-result-${Date.now()}-${crypto.randomUUID()}.json`
   );
   let resultPathForEnv: string | undefined;
   let resultEnv = resultJson;
@@ -741,31 +720,32 @@ export async function runPostHook(
 
   const toolInputValueForEnv = getToolInputValueForEnv(context);
 
-  const hookEnv: Record<string, string> = {
+  const canonicalHookEnv: Record<string, string> = {
     ...(context.env ?? {}),
-    MUX_TOOL: context.tool,
-    ...flattenToolHookValueToEnv(toolInputValueForEnv, "MUX_TOOL_INPUT", {
+    SHUX_TOOL: context.tool,
+    ...flattenToolHookValueToEnv(toolInputValueForEnv, "SHUX_TOOL_INPUT", {
       maxValueLength: TOOL_INPUT_ENV_LIMIT,
       maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
       maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
     }),
-    ...flattenToolHookValueToEnv(toolResult, "MUX_TOOL_RESULT", {
+    ...flattenToolHookValueToEnv(toolResult, "SHUX_TOOL_RESULT", {
       maxValueLength: TOOL_INPUT_ENV_LIMIT,
       maxVars: FLATTENED_TOOL_ENV_MAX_VARS,
       maxArrayLength: FLATTENED_TOOL_ENV_MAX_ARRAY_LENGTH,
     }),
     // Ensure base JSON env vars cannot be overwritten by flattened fields.
-    MUX_TOOL_INPUT: toolInputEnv,
-    MUX_WORKSPACE_ID: context.workspaceId,
-    MUX_PROJECT_DIR: context.projectDir,
-    MUX_TOOL_RESULT: resultEnv,
+    SHUX_TOOL_INPUT: toolInputEnv,
+    SHUX_WORKSPACE_ID: context.workspaceId,
+    SHUX_PROJECT_DIR: context.projectDir,
+    SHUX_TOOL_RESULT: resultEnv,
   };
   if (toolInputPath) {
-    hookEnv.MUX_TOOL_INPUT_PATH = toolInputPath;
+    canonicalHookEnv.SHUX_TOOL_INPUT_PATH = toolInputPath;
   }
   if (resultPathForEnv) {
-    hookEnv.MUX_TOOL_RESULT_PATH = resultPathForEnv;
+    canonicalHookEnv.SHUX_TOOL_RESULT_PATH = resultPathForEnv;
   }
+  const hookEnv = withLegacyMuxEnvironmentAliases(canonicalHookEnv);
 
   const cleanup = async () => {
     await cleanupInput();
@@ -826,7 +806,7 @@ async function prepareToolInput(
       const tempDir = runtimeTempDir ?? "/tmp";
       toolInputPath = joinPathLike(
         tempDir,
-        `mux-tool-input-${Date.now()}-${crypto.randomUUID()}.json`
+        `shux-tool-input-${Date.now()}-${crypto.randomUUID()}.json`
       );
       await writeFileString(runtime, toolInputPath, toolInput);
       toolInputEnv = "__MUX_TOOL_INPUT_FILE__";

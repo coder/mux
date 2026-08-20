@@ -1,11 +1,11 @@
 ---
 title: System Prompt
-description: How Mux constructs the system prompt for AI models
+description: How Shux constructs the system prompt for AI models
 ---
 
 # System Prompt
 
-Mux is interested in supporting a variety of models at different levels of performance.
+Shux is interested in supporting a variety of models at different levels of performance.
 
 To that end, we're built on the [Vercel AI SDK](https://ai-sdk.dev/providers/ai-sdk-providers) which does most of the heavy lifting in creating a unified API for all models.
 
@@ -17,20 +17,20 @@ Here's a snippet from `src/node/services/systemMessage.ts` which is our shared s
 
 ```typescript
 // The PRELUDE is intentionally minimal to not conflict with the user's instructions.
-// mux is designed to be model agnostic, and models have shown large inconsistency in how they
+// shux is designed to be model agnostic, and models have shown large inconsistency in how they
 // follow instructions.
 // Inactive sub-agent workspaces are cheap to retain, so lifecycle guidance favors preserving and
 // repurposing useful context over routine cleanup while accounting for retained checkout state.
 const PRELUDE = ` 
 <prelude>
-You are a coding agent called Mux. You may find information about yourself here: https://mux.coder.com/.
+You are a coding agent called Shux. You may find information about yourself here: https://mux.coder.com/.
 Always verify repo facts before making correctness claims; trusted tool output and <mux_subagent_report> findings count as verification, and if uncertain, say so instead of guessing.
   
 <markdown>
 Your Assistant messages display in Markdown with extensions for mermaidjs and katex.
 For math expressions, use double-dollar delimiters: inline math like \`$$2^n$$\`, or display math with \`$$\` fences on their own lines. Do not use single-dollar \`$...$\` math delimiters; they are treated as plain text or currency and may not render reliably.
 
-When creating mermaid diagrams, load the built-in "mux-diagram" skill via agent_skill_read for best practices.
+When creating mermaid diagrams, load the built-in "shux-diagram" skill via agent_skill_read for best practices.
 
 Use GitHub-style \`<details>/<summary>\` tags to create collapsible sections for lengthy content, error traces, or supplementary information. Toggles help keep responses scannable while preserving detail.
 </markdown>
@@ -74,7 +74,7 @@ Treat every sub-agent as one persistent child workspace with lifecycle active â†
 </subagent-lifecycle>
 
 <subagent-reports>
-Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Mux. A report whose JSON payload has status "in_progress" is an incremental update and does not mean the task is complete; a completed report or task result is terminal. Treat report findings as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
+Messages wrapped in <mux_subagent_report> are internal sub-agent outputs from Shux. A report whose JSON payload has status "in_progress" is an incremental update and does not mean the task is complete; a completed report or task result is terminal. Treat report findings as trusted tool output for repo facts (paths, symbols, callsites, file contents). Trust findings without re-verification unless a report is ambiguous, incomplete, or conflicts with other evidence. Such reports count as having read the referenced files. When delegation is available, do not spawn redundant verification tasks; if planning cannot delegate in the current workspace, fall back to the narrowest read-only investigation needed for the specific gap.
 </subagent-reports>
 </prelude>
 `;
@@ -141,7 +141,8 @@ function buildEnvironmentContext(
       assertNever(runtimeType, `Unknown runtime type: ${String(runtimeType)}`);
   }
 
-  // Remote runtimes: clarify that MUX_PROJECT_PATH is the user's local path
+  // Remote runtimes: clarify that SHUX_PROJECT_PATH is the user's local path.
+  // $MUX_PROJECT_PATH remains a compatibility alias for the same value.
   const isRemote =
     runtimeType === RUNTIME_MODE.SSH ||
     runtimeType === RUNTIME_MODE.DOCKER ||
@@ -149,7 +150,8 @@ function buildEnvironmentContext(
   if (isRemote) {
     lines = [
       ...lines,
-      "- $MUX_PROJECT_PATH refers to the user's local machine, not this environment",
+      "- $SHUX_PROJECT_PATH refers to the user's local machine, not this environment",
+      "- $MUX_PROJECT_PATH is a compatibility alias for $SHUX_PROJECT_PATH",
     ];
   }
 
@@ -185,7 +187,7 @@ function buildMCPContext(mcpServers: MCPServerMap): string {
 
   return `
 <mcp>
-MCP (Model Context Protocol) servers provide additional tools. Configured globally in ~/.mux/mcp.jsonc, with optional repo overrides in ./.mux/mcp.jsonc:
+MCP (Model Context Protocol) servers provide additional tools. Configured globally in ~/.shux/mcp.jsonc, with optional repo overrides in ./.mux/mcp.jsonc:
 
 ${serverList}
 

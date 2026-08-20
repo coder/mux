@@ -1,7 +1,7 @@
 /**
- * OAuth service for Mux Governor enrollment.
+ * OAuth service for Shux Governor enrollment.
  *
- * Similar pattern to MuxGatewayOauthService but:
+ * Similar pattern to ShuxGatewayOauthService but:
  * - Takes a user-provided governor origin (not hardcoded)
  * - Persists credentials to config.json (muxGovernorUrl + muxGovernorToken)
  */
@@ -66,7 +66,7 @@ export class MuxGovernorOauthService {
           renderOAuthCallbackHtml({
             title: r.success ? "Enrollment complete" : "Enrollment failed",
             message: r.success
-              ? "You can return to Mux. You may now close this tab."
+              ? "You can return to Shux. You may now close this tab."
               : (r.error ?? "Unknown error"),
             success: r.success,
           }),
@@ -115,7 +115,7 @@ export class MuxGovernorOauthService {
           error: null,
         });
       } else {
-        result = Err(`Mux Governor OAuth error: ${callbackOrDone.error}`);
+        result = Err(`Shux Governor OAuth error: ${callbackOrDone.error}`);
       }
 
       // Render the final browser response based on exchange outcome.
@@ -129,7 +129,7 @@ export class MuxGovernorOauthService {
     })();
 
     log.debug(
-      `Mux Governor OAuth desktop flow started (flowId=${flowId}, origin=${governorOrigin})`
+      `Shux Governor OAuth desktop flow started (flowId=${flowId}, origin=${governorOrigin})`
     );
 
     return Ok({ flowId, authorizeUrl, redirectUri: loopback.redirectUri });
@@ -144,7 +144,7 @@ export class MuxGovernorOauthService {
 
   async cancelDesktopFlow(flowId: string): Promise<void> {
     if (!this.desktopFlows.has(flowId)) return;
-    log.debug(`Mux Governor OAuth desktop flow cancelled (flowId=${flowId})`);
+    log.debug(`Shux Governor OAuth desktop flow cancelled (flowId=${flowId})`);
     await this.desktopFlows.cancel(flowId);
   }
 
@@ -183,7 +183,7 @@ export class MuxGovernorOauthService {
       expiresAtMs: Date.now() + DEFAULT_SERVER_TIMEOUT_MS,
     });
 
-    log.debug(`Mux Governor OAuth server flow started (state=${state}, origin=${governorOrigin})`);
+    log.debug(`Shux Governor OAuth server flow started (state=${state}, origin=${governorOrigin})`);
 
     return Ok({ authorizeUrl, state });
   }
@@ -238,7 +238,7 @@ export class MuxGovernorOauthService {
       const message = input.errorDescription
         ? `${input.error}: ${input.errorDescription}`
         : input.error;
-      return Err(`Mux Governor OAuth error: ${message}`);
+      return Err(`Shux Governor OAuth error: ${message}`);
     }
 
     if (!input.code) {
@@ -262,7 +262,7 @@ export class MuxGovernorOauthService {
       return Err(`Failed to save Governor credentials: ${message}`);
     }
 
-    log.debug(`Mux Governor OAuth exchange completed (state=${input.state})`);
+    log.debug(`Shux Governor OAuth exchange completed (state=${input.state})`);
 
     this.windowService?.focusMainWindow();
 
@@ -292,20 +292,20 @@ export class MuxGovernorOauthService {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
-        const prefix = `Mux Governor exchange failed (${response.status})`;
+        const prefix = `Shux Governor exchange failed (${response.status})`;
         return Err(errorText ? `${prefix}: ${errorText}` : prefix);
       }
 
       const json = (await response.json()) as { access_token?: unknown };
       const token = typeof json.access_token === "string" ? json.access_token : null;
       if (!token) {
-        return Err("Mux Governor exchange response missing access_token");
+        return Err("Shux Governor exchange response missing access_token");
       }
 
       return Ok(token);
     } catch (error) {
       const message = getErrorMessage(error);
-      return Err(`Mux Governor exchange failed: ${message}`);
+      return Err(`Shux Governor exchange failed: ${message}`);
     }
   }
 }

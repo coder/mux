@@ -883,7 +883,7 @@ export class WorktreeArchiveSnapshotService {
       args[0] === "am"
         ? {
             ...GIT_NO_HOOKS_ENV,
-            GIT_COMMITTER_NAME: "Mux Archive Restore",
+            GIT_COMMITTER_NAME: "Shux Archive Restore",
             GIT_COMMITTER_EMAIL: "mux-archive-restore@local",
           }
         : GIT_NO_HOOKS_ENV;

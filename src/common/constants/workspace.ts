@@ -7,5 +7,5 @@ import type { RuntimeConfig } from "@/common/types/runtime";
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeConfig = {
   type: "worktree",
-  srcBaseDir: "~/.mux/src",
+  srcBaseDir: "~/.shux/src",
 } as const;

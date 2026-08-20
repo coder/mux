@@ -260,7 +260,7 @@ export function getAnthropic1MContextMode(
 }
 
 /**
- * Check if a model supports Anthropic's optional 1M beta mode used by Mux's context toggle.
+ * Check if a model supports Anthropic's optional 1M beta mode used by Shux's context toggle.
  *
  * Native long-context models like Claude Opus 4.6, Claude Sonnet 4.6, and GPT-5.5 expose
  * their larger window directly through model metadata and should not appear behind this toggle.

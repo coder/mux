@@ -20,12 +20,12 @@ export const CODER_OAUTH_DISCOVERY_PATH = "/.well-known/oauth-authorization-serv
 export const CODER_OAUTH_CALLBACK_PATH = "/callback";
 
 /** Client name registered via RFC 7591 dynamic client registration. */
-export const CODER_OAUTH_CLIENT_NAME = "Mux";
+export const CODER_OAUTH_CLIENT_NAME = "Shux";
 
 /**
  * AI Gateway data-plane mount point on the deployment. Newer coderd also
  * serves the canonical alias /api/v2/ai-gateway, but the legacy prefix is
- * kept for backward compatibility and works on every deployment Mux
+ * kept for backward compatibility and works on every deployment Shux
  * supports, so it stays the single prefix used here.
  */
 export const CODER_AIBRIDGE_PATH = "/api/v2/aibridge";
@@ -70,13 +70,13 @@ export interface CoderGatewayProvider {
  * Default probe set when the providers listing is unavailable: every
  * non-Copilot type under its default (name === type) instance name. Copilot
  * is excluded because its gateway routes require request-time tokens only an
- * official Copilot client can mint — Mux's Coder OAuth token is not enough.
+ * official Copilot client can mint — Shux's Coder OAuth token is not enough.
  */
 export const CODER_GATEWAY_DEFAULT_PROVIDER_NAMES: readonly string[] =
   CODER_GATEWAY_PROVIDER_TYPES.filter((type) => type !== "copilot");
 
 /**
- * Wire protocol Mux must speak to a gateway provider, derived from its type.
+ * Wire protocol Shux must speak to a gateway provider, derived from its type.
  * Mirrors the gateway's own client mapping: anthropic/bedrock are served by
  * its Anthropic client (/v1/messages), everything else by its OpenAI client.
  * Only the real OpenAI upstream reliably supports the Responses API; the

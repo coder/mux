@@ -1,5 +1,5 @@
 /**
- * Voice input via backend transcription (Mux Gateway or OpenAI credentials).
+ * Voice input via backend transcription (Shux Gateway or OpenAI credentials).
  *
  * State machine: idle → requesting → recording → transcribing → idle
  *
@@ -20,7 +20,7 @@ export interface UseVoiceInputOptions {
   onError?: (error: string) => void;
   /** Called after successful transcription if stop({ send: true }) was used */
   onSend?: () => void;
-  /** Whether voice transcription is available (OpenAI key set OR Mux Gateway configured). */
+  /** Whether voice transcription is available (OpenAI key set OR Shux Gateway configured). */
   isTranscriptionAvailable: boolean;
   /**
    * When true, hook manages global keybinds during recording:

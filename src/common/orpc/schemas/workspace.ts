@@ -40,7 +40,7 @@ export const BestOfGroupSchema = z.object({
  * value for new goals in this workspace". A workspace with all three
  * fields null is semantically identical to no override at all — the
  * backend should drop the entire object in that case to keep
- * `~/.mux/config.json` tidy.
+ * `~/.shux/config.json` tidy.
  *
  * Mirrors the heartbeat pattern (per-workspace override of a global
  * default, persisted inside `WorkspaceConfigSchema`) so the
@@ -286,7 +286,7 @@ export const FrontendWorkspaceMetadataSchema = WorkspaceMetadataSchema.extend({
     .meta({ description: "Worktree path (uses workspace name as directory)" }),
   incompatibleRuntime: z.string().optional().meta({
     description:
-      "If set, this workspace has an incompatible runtime configuration (e.g., from a newer version of mux). The workspace should be displayed but interactions should show this error message.",
+      "If set, this workspace has an incompatible runtime configuration (e.g., from a newer version of Shux). The workspace should be displayed but interactions should show this error message.",
   }),
   isRemoving: z.boolean().optional().meta({
     description: "True if this workspace is currently being deleted (deletion in progress).",

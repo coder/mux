@@ -30,7 +30,7 @@ import { DisposableTempDir } from "@/node/services/tempDir";
 
 import { createTaskTool } from "./tools/task";
 import { createTestToolConfig } from "./tools/testHelpers";
-import { MUX_APP_ATTRIBUTION_TITLE, MUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
+import { SHUX_APP_ATTRIBUTION_TITLE, SHUX_APP_ATTRIBUTION_URL } from "@/constants/appAttribution";
 import type { ProviderName } from "@/common/constants/providers";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
@@ -3870,7 +3870,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     });
   });
 
-  it("deep-merges provider extras under Mux-built provider options", async () => {
+  it("deep-merges provider extras under Shux-built provider options", async () => {
     using muxHome = new DisposableTempDir("ai-service-model-overrides-provider-extras");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -4055,7 +4055,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     expect(startStreamArgs[20]).toEqual({});
   });
 
-  it("preserves Mux-built provider options when provider extras conflict", async () => {
+  it("preserves Shux-built provider options when provider extras conflict", async () => {
     using muxHome = new DisposableTempDir("ai-service-model-overrides-conflict");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -4092,7 +4092,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     });
   });
 
-  it("deep-merges nested provider extras with Mux-built options", async () => {
+  it("deep-merges nested provider extras with Shux-built options", async () => {
     using muxHome = new DisposableTempDir("ai-service-model-overrides-nested");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -4157,7 +4157,7 @@ describe("AIService.streamMessage model parameter overrides", () => {
     });
   });
 
-  it("Mux values win on nested leaf conflicts during deep merge", async () => {
+  it("Shux values win on nested leaf conflicts during deep merge", async () => {
     using muxHome = new DisposableTempDir("ai-service-model-overrides-nested-conflict");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -4451,8 +4451,8 @@ describe("normalizeAnthropicBaseURL", () => {
 describe("buildAppAttributionHeaders", () => {
   it("adds both headers when no headers exist", () => {
     expect(buildAppAttributionHeaders(undefined)).toEqual({
-      "HTTP-Referer": MUX_APP_ATTRIBUTION_URL,
-      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+      "HTTP-Referer": SHUX_APP_ATTRIBUTION_URL,
+      "X-Title": SHUX_APP_ATTRIBUTION_TITLE,
     });
   });
 
@@ -4461,7 +4461,7 @@ describe("buildAppAttributionHeaders", () => {
     const result = buildAppAttributionHeaders(existing);
     expect(result).toEqual({
       "HTTP-Referer": "https://example.com",
-      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+      "X-Title": SHUX_APP_ATTRIBUTION_TITLE,
     });
   });
 
@@ -4476,8 +4476,8 @@ describe("buildAppAttributionHeaders", () => {
     const result = buildAppAttributionHeaders(existing);
     expect(result).toEqual({
       "x-custom": "value",
-      "HTTP-Referer": MUX_APP_ATTRIBUTION_URL,
-      "X-Title": MUX_APP_ATTRIBUTION_TITLE,
+      "HTTP-Referer": SHUX_APP_ATTRIBUTION_URL,
+      "X-Title": SHUX_APP_ATTRIBUTION_TITLE,
     });
   });
 

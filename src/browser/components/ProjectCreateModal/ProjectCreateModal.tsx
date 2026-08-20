@@ -191,7 +191,7 @@ export const ProjectCreateForm = React.forwardRef<ProjectCreateFormHandle, Proje
         const existingProjects = await api.projects.list();
         const existingPaths = new Map(existingProjects);
 
-        // Backend handles path resolution (bare names → ~/.mux/projects/name)
+        // Backend handles path resolution (bare names → ~/.shux/projects/name)
         const result = await api.projects.create({ projectPath: trimmedPath });
 
         if (result.success) {

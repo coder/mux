@@ -405,9 +405,9 @@ describe("PortableDesktopExperimentWarning", () => {
     await waitFor(() => {
       expect(getPrereqStatus).toHaveBeenCalledTimes(2);
     });
-    expect(view.getByRole("button", { name: "Restart Mux" })).toBeTruthy();
+    expect(view.getByRole("button", { name: "Restart Shux" })).toBeTruthy();
 
-    fireEvent.click(view.getByRole("button", { name: "Restart Mux" }));
+    fireEvent.click(view.getByRole("button", { name: "Restart Shux" }));
 
     await waitFor(() => {
       expect(restartApp).toHaveBeenCalledTimes(1);
@@ -435,7 +435,7 @@ describe("PortableDesktopExperimentWarning", () => {
       expect(view.container.textContent).toContain("Portable Desktop is currently disabled");
     });
 
-    fireEvent.click(view.getByRole("button", { name: "Restart Mux" }));
+    fireEvent.click(view.getByRole("button", { name: "Restart Shux" }));
 
     await waitFor(() => {
       expect(view.container.textContent).toContain("Restart is only available in the desktop app.");

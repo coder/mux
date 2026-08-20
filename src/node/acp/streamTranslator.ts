@@ -464,7 +464,7 @@ export class StreamTranslator {
         return null;
       }
 
-      // `todo_write` is Mux's canonical execution-plan surface. Mirror it into
+      // `todo_write` is Shux's canonical execution-plan surface. Mirror it into
       // ACP `sessionUpdate: "plan"` so editors can render native plan UIs.
       const entries = parseTodoWritePlanEntries(rawInput);
       if (entries == null) {
@@ -630,7 +630,7 @@ export class StreamTranslator {
   clearSession(sessionId: string): void {
     assert(sessionId.trim().length > 0, "clearSession: sessionId must be non-empty");
 
-    // ACP currently has no explicit session/close notification. When Mux evicts
+    // ACP currently has no explicit session/close notification. When Shux evicts
     // inactive sessions (idle timeout/LRU), proactively clear message/tool-call
     // bookkeeping so long-lived editor connections cannot accumulate stale state.
     const scopedPrefix = `${sessionId}${SESSION_SCOPED_TOOL_KEY_DELIMITER}`;

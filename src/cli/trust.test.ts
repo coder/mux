@@ -9,7 +9,7 @@ const BUN_EXECUTABLE = process.execPath;
 const TRUST_ENTRY = path.join(import.meta.dir, "trust.ts");
 const INDEX_ENTRY = path.join(import.meta.dir, "index.ts");
 
-describe("mux trust CLI", () => {
+describe("shux trust CLI", () => {
   test("normalizes implicit cwd to git root but preserves explicit --dir", async () => {
     using tmp = new DisposableTempDir("trust-cli-dir");
     const repo = path.join(tmp.path, "repo");

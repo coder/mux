@@ -45,7 +45,7 @@ describe("backup adapters", () => {
     expect(changes.map((change) => change.path)).toContain("mux/AGENTS.md");
 
     const pushed = await gitRepo.commitAndPush(repository, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
     expect(pushed.changed).toBe(true);
@@ -56,7 +56,7 @@ describe("backup adapters", () => {
     const second = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
     const unchanged = await gitRepo.commitAndPush(second, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: second.remoteCommit,
     });
     expect(unchanged.changed).toBe(false);
@@ -75,7 +75,7 @@ describe("backup adapters", () => {
       "-c",
       "user.email=mux@example.com",
       "-c",
-      "user.name=Mux",
+      "user.name=Shux",
       "commit",
       "-m",
       "seed ignore rules",
@@ -89,7 +89,7 @@ describe("backup adapters", () => {
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(repository, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
 
@@ -108,7 +108,7 @@ describe("backup adapters", () => {
       "-c",
       "user.email=mux@example.com",
       "-c",
-      "user.name=Mux",
+      "user.name=Shux",
       "commit",
       "-m",
       "ignore the managed path",
@@ -162,7 +162,7 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
 
@@ -190,7 +190,7 @@ describe("backup adapters", () => {
 
     try {
       await gitRepo.commitAndPush(second, {
-        message: "Back up Mux settings",
+        message: "Back up Shux settings",
         expectedRemoteCommit: second.remoteCommit,
       });
       throw new Error("Expected the moved remote to be reported");
@@ -207,7 +207,7 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
 
@@ -233,7 +233,7 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
 
@@ -476,7 +476,7 @@ describe("backup adapters", () => {
     const first = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: first.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(first, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: first.remoteCommit,
     });
 
@@ -488,7 +488,7 @@ describe("backup adapters", () => {
     expect(second.remoteCommit).toBeNull();
     await payload.exportTo({ repositoryRoot: second.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(second, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: second.remoteCommit,
     });
 
@@ -891,7 +891,7 @@ describe("backup adapters", () => {
     const repository = await gitRepo.prepare(settings);
     await payload.exportTo({ repositoryRoot: repository.rootDir, managedPath: settings.path });
     await gitRepo.commitAndPush(repository, {
-      message: "Back up Mux settings",
+      message: "Back up Shux settings",
       expectedRemoteCommit: repository.remoteCommit,
     });
 

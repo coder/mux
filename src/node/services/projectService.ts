@@ -35,7 +35,7 @@ import type { BranchListResult } from "@/common/orpc/types";
 import type { ProjectRemoveErrorSchema } from "@/common/orpc/schemas/errors";
 import type { FileTreeNode } from "@/common/utils/git/numstatParser";
 import * as path from "path";
-import { getMuxProjectsDir } from "@/common/constants/paths";
+import { getShuxProjectsDir } from "@/common/constants/paths";
 import { expandTilde } from "@/node/runtime/tildeExpansion";
 import { getErrorMessage } from "@/common/utils/errors";
 import { deriveProjectHierarchy, isPathDescendant } from "@/common/utils/subProjects";
@@ -147,7 +147,7 @@ function resolveProjectParentDir(
   parentDir: string | null | undefined,
   defaultProjectDir: string | undefined
 ): string {
-  const rawParentDir = parentDir ?? defaultProjectDir ?? getMuxProjectsDir();
+  const rawParentDir = parentDir ?? defaultProjectDir ?? getShuxProjectsDir();
   const trimmedParentDir = rawParentDir.trim();
 
   if (!trimmedParentDir) {
@@ -458,7 +458,7 @@ export class ProjectService {
       }
 
       // Resolve the path:
-      // - Bare names like "my-project" → ~/.mux/projects/my-project
+      // - Bare names like "my-project" → ~/.shux/projects/my-project
       // - Paths with ~ → expand to home directory
       // - Absolute/relative paths → resolve normally
       const isBareProjectName =
@@ -478,7 +478,7 @@ export class ProjectService {
         projectPath.startsWith("~/") ||
         projectPath.startsWith("~\\")
       ) {
-        // Tilde expansion - uses expandTilde to respect MUX_ROOT for ~/.mux paths
+        // Tilde expansion - uses expandTilde to respect MUX_ROOT for ~/.shux paths
         normalizedPath = path.resolve(expandTilde(projectPath));
       } else {
         normalizedPath = path.resolve(projectPath);
@@ -1158,7 +1158,7 @@ export class ProjectService {
       }
 
       // Self-healing: purge workspace entries whose backing directories no longer exist.
-      // This handles the case where a user manually deleted workspace dirs from ~/.mux/src/.
+      // This handles the case where a user manually deleted workspace dirs from ~/.shux/src/.
       // Only check local/worktree runtimes — remote runtimes (SSH, Docker, devcontainer)
       // have paths on the remote host that won't exist locally.
       const localRuntimeTypes = new Set(["local", "worktree"]);

@@ -32,7 +32,7 @@ function renderComposerDecoration(args: ComponentProps<typeof ConcurrentLocalWar
       <ConcurrentLocalWarningDecoration {...args} />
       <div className="border-border bg-surface-primary border-t px-4 py-3">
         <div className="border-border bg-background-secondary text-muted mx-auto max-w-4xl rounded-lg border px-3 py-2 text-sm">
-          Ask Mux anything...
+          Ask Shux anything...
         </div>
       </div>
     </div>

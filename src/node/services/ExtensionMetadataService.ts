@@ -11,7 +11,7 @@ import {
   type ExtensionMetadata,
   type ExtensionMetadataFile,
 } from "@/node/utils/extensionMetadata";
-import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
+import { getShuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { GoalSnapshot } from "@/common/types/goal";
 import { log } from "@/node/services/log";
@@ -29,7 +29,7 @@ import { log } from "@/node/services/log";
  * - todoStatus: Status derived from the current todo list (preferred sidebar progress surface)
  * - hasTodos: Whether the workspace still had todos when streaming last stopped
  *
- * File location: ~/.mux/extensionMetadata.json
+ * File location: ~/.shux/extensionMetadata.json
  *
  * Design:
  * - Stateless: reads from disk on every operation, no in-memory cache
@@ -111,7 +111,7 @@ export class ExtensionMetadataService {
   }
 
   constructor(filePath?: string) {
-    this.filePath = filePath ?? getMuxExtensionMetadataPath();
+    this.filePath = filePath ?? getShuxExtensionMetadataPath();
   }
 
   /**

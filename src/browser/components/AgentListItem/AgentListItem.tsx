@@ -1376,7 +1376,7 @@ function RegularAgentListItemInner(props: AgentListItemProps) {
               ) : awaitingUserQuestion ? (
                 <div className="text-muted flex min-w-0 items-center gap-1.5 text-xs leading-4">
                   <MessageCircleQuestionMark className="h-3 w-3 shrink-0" strokeWidth={1.8} />
-                  <span className="min-w-0 truncate">Mux has a few questions</span>
+                  <span className="min-w-0 truncate">Shux has a few questions</span>
                 </div>
               ) : shouldShowHiddenSubAgentsStatus && hiddenSubAgentsPresentation ? (
                 <SidebarActivityIndicator

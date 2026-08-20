@@ -19,7 +19,7 @@ export async function resolveAgentsPathWithinRoot(agentsRoot: string): Promise<R
     rootReal = await fsPromises.realpath(agentsRoot);
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {
-      // Root directory does not exist yet (for example, first run or ~/.mux removed).
+      // Root directory does not exist yet (for example, first run or ~/.shux removed).
       // Treat it as a missing AGENTS.md so callers can recover by returning empty content
       // or creating the directory before writing.
       return {

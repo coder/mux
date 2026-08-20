@@ -906,21 +906,21 @@ function BrowserViewerState(props: {
     if (props.isStarting || props.sessionStatus === "starting") {
       return {
         title: "Connecting to browser preview",
-        description: "Mux is attaching to the selected agent-owned browser session.",
+        description: "Shux is attaching to the selected agent-owned browser session.",
       };
     }
 
     if (props.sessionStatus === "error") {
       return {
         title: "Browser preview unavailable",
-        description: "Mux will keep retrying while the selected browser session is available.",
+        description: "Shux will keep retrying while the selected browser session is available.",
       };
     }
 
     if (props.selectedSession != null || props.hasDiscoveredSessions) {
       return {
         title: "Waiting for browser frames",
-        description: "Mux found a browser session and is waiting for live preview frames.",
+        description: "Shux found a browser session and is waiting for live preview frames.",
       };
     }
 
@@ -934,7 +934,7 @@ function BrowserViewerState(props: {
     return {
       title: "Waiting for browser preview",
       description:
-        "Mux will attach automatically when an agent-owned browser session is available for this project.",
+        "Shux will attach automatically when an agent-owned browser session is available for this project.",
     };
   })();
 

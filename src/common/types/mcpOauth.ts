@@ -46,7 +46,7 @@ export interface MCPOAuthTokens {
    * clientInformation) before it would use refresh_token; when missing it
    * invalidated the stored tokens and demanded interactive re-auth. The
    * official SDK v2 ignores it, but the persisted store keeps round-tripping
-   * it so downgrading Mux does not break token refresh across app restarts.
+   * it so downgrading Shux does not break token refresh across app restarts.
    */
   authorization_server?: string;
   /** Token endpoint bound to authorization_server; required alongside it. */

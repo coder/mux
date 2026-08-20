@@ -183,7 +183,7 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
 
         if (skillCtx.kind === "project-runtime") {
           // Runtime discovery mirrors the shared default roots contract so project-runtime
-          // listings include .mux/skills and .agents/skills plus ~/.mux/skills and ~/.agents/skills.
+          // listings include .mux/skills and .agents/skills plus ~/.shux/skills and ~/.agents/skills.
           const roots =
             skillCtx.roots ??
             getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath, {

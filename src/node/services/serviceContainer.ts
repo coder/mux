@@ -86,7 +86,7 @@ import type { ORPCContext } from "@/node/orpc/context";
 export class ServiceContainer {
   public readonly workflowRuntimeFactory = new QuickJSRuntimeFactory();
   public readonly config: Config;
-  // Core services — instantiated by createCoreServices (shared with `mux run` CLI)
+  // Core services — instantiated by createCoreServices (shared with `shux run` CLI)
   private readonly historyService: CoreServices["historyService"];
   public readonly aiService: CoreServices["aiService"];
   public readonly workspaceService: CoreServices["workspaceService"];
@@ -255,7 +255,7 @@ export class ServiceContainer {
       this.idleCompactionService.recordOutcome(workspaceId, outcome)
     );
     // IdleDispatcher + goal continuation bridge are owned by createCoreServices
-    // so the wiring works for `mux run` too. Share the same dispatcher with
+    // so the wiring works for `shux run` too. Share the same dispatcher with
     // HeartbeatService — its priority ordering ensures an active goal
     // suppresses background heartbeats.
     this.idleDispatcher = core.idleDispatcher;
@@ -545,10 +545,10 @@ export class ServiceContainer {
         log.warn("[MemoryConsolidation] launch sweep failed", { error });
       });
 
-    // Refresh mux-owned Coder SSH config in background (handles binary path changes on restart)
+    // Refresh shux-owned Coder SSH config in background (handles binary path changes on restart)
     // Skip getCoderInfo() to avoid caching "unavailable" if coder isn't installed yet
     void this.coderService.ensureMuxCoderSSHConfig().catch((error: unknown) => {
-      log.warn("Background mux SSH config setup failed", { error });
+      log.warn("Background shux SSH config setup failed", { error });
     });
 
     log.info("[startup] ServiceContainer.initialize completed", {

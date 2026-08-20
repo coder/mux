@@ -17,7 +17,7 @@ export interface TimedLine {
 
 /**
  * Persisted state for init hooks.
- * Stored in ~/.mux/sessions/{workspaceId}/init-status.json
+ * Stored in ~/.shux/sessions/{workspaceId}/init-status.json
  */
 export interface InitStatus {
   status: "running" | "success" | "error";
@@ -303,7 +303,7 @@ export class InitStateManager extends EventEmitter {
 
     // Persist FIRST - ensures file exists before in-memory state shows completion
     await this.store.persist(workspaceId, stateToPerist, {
-      // If WorkspaceService.remove() cleared init state, do not recreate ~/.mux/sessions/<id>/
+      // If WorkspaceService.remove() cleared init state, do not recreate ~/.shux/sessions/<id>/
       shouldWrite: () => this.store.hasState(workspaceId),
     });
 

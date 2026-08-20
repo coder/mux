@@ -102,7 +102,7 @@ const DEFAULT_THINKING_POLICY: ThinkingPolicy = ["off", "low", "medium", "high"]
  * Returns the policy for a model that matches an explicit reasoning rule, or `null`
  * when the model falls through to {@link DEFAULT_THINKING_POLICY}.
  *
- * A non-null result means Mux explicitly recognizes the model as a reasoning model,
+ * A non-null result means Shux explicitly recognizes the model as a reasoning model,
  * which is the signal used to decide whether to apply a default thinking floor.
  */
 function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
@@ -168,7 +168,7 @@ function getExplicitThinkingPolicy(modelString: string): ThinkingPolicy | null {
     return ["high"];
   }
 
-  // Gemini Flash chat models support minimal/low/medium/high. Mux exposes minimal as "off".
+  // Gemini Flash chat models support minimal/low/medium/high. Shux exposes minimal as "off".
   if (isGeminiFlashThinkingLevelModelName(withoutProviderNamespace)) {
     return ["off", "low", "medium", "high"];
   }
@@ -205,7 +205,7 @@ function thinkingLevelIndex(level: ThinkingLevel): number {
 /**
  * Default *minimum* thinking level (floor) for a model.
  *
- * Most users never want off/low thinking, so models Mux explicitly recognizes as
+ * Most users never want off/low thinking, so models Shux explicitly recognizes as
  * reasoning models default to a "medium" floor — hiding off/low in the thinking slider
  * so cycling is more efficient.
  *
@@ -227,7 +227,7 @@ export function getDefaultMinimumThinkingLevel(
 }
 
 /**
- * True when Mux explicitly recognizes the model's reasoning levels (i.e. it matches a
+ * True when Shux explicitly recognizes the model's reasoning levels (i.e. it matches a
  * specific rule rather than falling through to the shared default policy).
  *
  * Used to gate the per-model minimum-thinking control: only recognized reasoning models
@@ -291,7 +291,7 @@ export function lookupMinThinkingLevelOverride(
  * Most models treat an unset level as "off". Models that reject disabled
  * thinking (Mythos-class Anthropic, see {@link anthropicRejectsDisabledThinking})
  * clamp unset/legacy "off" up through the thinking policy instead, so the
- * level Mux tracks (provider options, replay transforms, metadata) matches the
+ * level Shux tracks (provider options, replay transforms, metadata) matches the
  * provider's actual always-thinking behavior. Without this, the wire request
  * would run adaptive thinking while the message pipeline skips the Anthropic
  * thinking replay transforms (`anthropicThinkingEnabled` keys off "off"),

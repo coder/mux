@@ -503,7 +503,7 @@ describe("availableRoutes", () => {
     expect(routes).toEqual([
       {
         route: "mux-gateway",
-        displayName: "Mux Gateway",
+        displayName: "Shux Gateway",
         isConfigured: false,
       },
       {
@@ -569,7 +569,7 @@ describe("availableRoutes", () => {
     expect(routes).toEqual([
       {
         route: "mux-gateway",
-        displayName: "Mux Gateway",
+        displayName: "Shux Gateway",
         isConfigured: false,
       },
       {
@@ -625,7 +625,7 @@ describe("availableRoutes", () => {
     expect(routes).toEqual([
       {
         route: "mux-gateway",
-        displayName: "Mux Gateway",
+        displayName: "Shux Gateway",
         isConfigured: false,
       },
       {

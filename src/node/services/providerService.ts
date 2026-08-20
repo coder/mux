@@ -518,8 +518,8 @@ export class ProviderService {
         }
       }
 
-      // Mux Gateway-specific fields (check couponCode first, fallback to legacy voucher).
-      // Gateway stores enabled/models in the global config (~/.mux/config.json), not
+      // Shux Gateway-specific fields (check couponCode first, fallback to legacy voucher).
+      // Gateway stores enabled/models in the global config (~/.shux/config.json), not
       // in providers.jsonc, so override the generic isEnabled with the gateway-specific value.
       if (provider === "mux-gateway") {
         const muxConfig = config as { couponCode?: string; voucher?: string };

@@ -30,11 +30,11 @@ const INSTRUCTION_FILE_NAMES = ["AGENTS.md", "AGENT.md", "CLAUDE.md"] as const;
 const LOCAL_INSTRUCTION_FILENAME = "AGENTS.local.md";
 
 /**
- * Mux-dedicated instruction subdirectory. `<dir>/.mux/AGENTS.md` (plus an
+ * Shux-dedicated instruction subdirectory. `<dir>/.mux/AGENTS.md` (plus an
  * optional `<dir>/.mux/AGENTS.local.md`) is read in addition to the shared
- * base files. Because only Mux reads files under `.mux/`, this is where scoped
+ * base files. Because only Shux reads files under `.mux/`, this is where scoped
  * `Model:`/`Mode:` directives live — keeping them out of the shared AGENTS.md
- * that non-Mux agents also consume. Only the `AGENTS.md` name is supported
+ * that non-Shux agents also consume. Only the `AGENTS.md` name is supported
  * here (no AGENT.md/CLAUDE.md fallback; those exist for other tools' sake).
  */
 const MUX_INSTRUCTION_SUBDIR = ".mux";
@@ -142,9 +142,9 @@ async function readInstructionSetWith(
   scope: InstructionScope,
   projectName?: string
 ): Promise<InstructionSet | null> {
-  // The global set lives inside the Mux home itself (~/.mux/AGENTS.md), so its
-  // files are Mux-dedicated by construction — scoped Model:/Mode: directives
-  // are honored there and we must not look for a nested ~/.mux/.mux/AGENTS.md.
+  // The global set lives inside the Shux home itself (~/.shux/AGENTS.md), so its
+  // files are Shux-dedicated by construction — scoped Model:/Mode: directives
+  // are honored there and we must not look for a nested ~/.shux/.mux/AGENTS.md.
   const isGlobalScope = scope === INSTRUCTION_SCOPE.GLOBAL;
 
   const base = await readBaseInstructionFile(reader, directory, scope, projectName, isGlobalScope);
@@ -161,9 +161,9 @@ async function readInstructionSetWith(
       )
     : ({ exists: false } satisfies ReadInstructionFileResult);
 
-  // Mux-dedicated companion: <dir>/.mux/AGENTS.md (+ .local.md). Read
+  // Shux-dedicated companion: <dir>/.mux/AGENTS.md (+ .local.md). Read
   // independently of the shared base file so a repo can provide only
-  // Mux-specific instructions. Skipped for the global set (see above).
+  // Shux-specific instructions. Skipped for the global set (see above).
   let muxBase: ReadInstructionFileResult = { exists: false };
   let muxLocal: ReadInstructionFileResult = { exists: false };
   if (!isGlobalScope) {
@@ -265,7 +265,7 @@ export async function readInstructionSetFromRuntime(
  * All found instruction sets are returned as separate entries.
  *
  * This allows for layered instructions where:
- * - Global instructions (~/.mux/AGENTS.md) apply to all projects
+ * - Global instructions (~/.shux/AGENTS.md) apply to all projects
  * - Project instructions (workspace/AGENTS.md) add project-specific context
  *
  * @param directories - List of (directory, scope, projectName?) tuples in priority order

@@ -16,7 +16,7 @@ import type { ArchivePreflightResult, ArchiveWorkspaceResult } from "@/common/or
 import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
 import type { WorkspaceSelection } from "@/browser/components/ProjectSidebar/ProjectSidebar";
 import type { RuntimeConfig } from "@/common/types/runtime";
-import type { MuxDeepLinkPayload } from "@/common/types/deepLink";
+import type { DeepLinkPayload } from "@/common/types/deepLink";
 import {
   deleteWorkspaceStorage,
   getAgentIdKey,
@@ -732,10 +732,10 @@ export function WorkspaceProvider(props: WorkspaceProviderProps) {
     [workspaceDraftsByProjectState]
   );
 
-  const pendingDeepLinksRef = useRef<MuxDeepLinkPayload[]>([]);
+  const pendingDeepLinksRef = useRef<DeepLinkPayload[]>([]);
 
   const handleDeepLink = useCallback(
-    (payload: MuxDeepLinkPayload) => {
+    (payload: DeepLinkPayload) => {
       if (payload.type !== "new_chat") {
         return;
       }

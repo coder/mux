@@ -593,7 +593,7 @@ function collectToolHookEnvVarsFromZodSchema(schema: unknown): ToolHookEnvVarDoc
     if (type === "array" || type === "tuple") {
       // Arrays also get a _COUNT env var.
       add({
-        envVar: toolHookEnvVarName("MUX_TOOL_INPUT", [...options.keyPath, "COUNT"], {
+        envVar: toolHookEnvVarName("SHUX_TOOL_INPUT", [...options.keyPath, "COUNT"], {
           allowPlaceholders: true,
         }),
         jsonPath: options.jsonPath ? `${options.jsonPath}.length` : "length",
@@ -664,7 +664,7 @@ function collectToolHookEnvVarsFromZodSchema(schema: unknown): ToolHookEnvVarDoc
     if (options.keyPath.length === 0) return;
 
     add({
-      envVar: toolHookEnvVarName("MUX_TOOL_INPUT", options.keyPath, { allowPlaceholders: true }),
+      envVar: toolHookEnvVarName("SHUX_TOOL_INPUT", options.keyPath, { allowPlaceholders: true }),
       jsonPath: options.jsonPath || "(root)",
       type,
       description: description ?? "",

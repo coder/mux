@@ -59,7 +59,7 @@ export interface MemoryScopeContext {
   /** Workspace ID; workspace scope root is <sessionDir>/memory. */
   workspaceId: string;
   /**
-   * Stable project identity from Mux config (the project root path, never the
+   * Stable project identity from Shux config (the project root path, never the
    * per-workspace checkout path). Used for the host-local project memory root
    * and sidecar logical keys; empty when no project identity is available.
    */
@@ -888,7 +888,7 @@ export class MemoryService extends EventEmitter {
     const content = await store.readFilePrefix(relPath, MEMORY_MAX_FILE_BYTES + 1);
     if (Buffer.byteLength(content, "utf-8") > MEMORY_MAX_FILE_BYTES) {
       throw new MemoryCommandError(
-        `${virtualPath} exceeds the ${MEMORY_MAX_FILE_BYTES}-byte memory file cap (likely edited outside Mux, bypassing write caps); shrink or delete it`
+        `${virtualPath} exceeds the ${MEMORY_MAX_FILE_BYTES}-byte memory file cap (likely edited outside Shux, bypassing write caps); shrink or delete it`
       );
     }
     return content;
@@ -1041,7 +1041,7 @@ export class MemoryService extends EventEmitter {
           let description = "";
           try {
             // Bounded prefix read: files can bypass service write caps when
-            // edited outside Mux, and this runs on every memory-enabled stream startup.
+            // edited outside Shux, and this runs on every memory-enabled stream startup.
             description = extractMemoryDescription(
               await store.readFilePrefix(relPath, MEMORY_INDEX_DESCRIPTION_PREFIX_BYTES)
             );

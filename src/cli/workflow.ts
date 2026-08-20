@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * `mux workflow` - Headless CLI runner for durable workflow scripts.
+ * `shux workflow` - Headless CLI runner for durable workflow scripts.
  */
 
 import * as fs from "node:fs/promises";
@@ -178,12 +178,12 @@ function parseRuntimeConfig(value: string | undefined): RuntimeConfig {
   const parsed = parseRuntimeModeAndHost(value);
   if (!parsed) {
     throw new Error(
-      `Invalid runtime: '${value}'. Use 'local'. Other runtimes are not supported by mux workflow yet.`
+      `Invalid runtime: '${value}'. Use 'local'. Other runtimes are not supported by shux workflow yet.`
     );
   }
   if (parsed.mode !== RUNTIME_MODE.LOCAL) {
     throw new Error(
-      `mux workflow currently supports only local runtime. Unsupported runtime: ${parsed.mode}`
+      `shux workflow currently supports only local runtime. Unsupported runtime: ${parsed.mode}`
     );
   }
   return { type: "local" };
@@ -229,7 +229,7 @@ function buildExperimentsObject(experimentIds: readonly string[]) {
     programmaticToolCallingExclusive: experimentIds.includes(
       EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE
     ),
-    // Invoking `mux workflow` is an explicit opt-in, so the dynamic-workflows
+    // Invoking `shux workflow` is an explicit opt-in, so the dynamic-workflows
     // experiment is enabled implicitly for this invocation (never persisted).
     dynamicWorkflows: true,
     workspaceHeartbeats: experimentIds.includes(EXPERIMENT_IDS.WORKSPACE_HEARTBEATS),
@@ -253,47 +253,47 @@ async function disposeWorkflowResources(input: {
   try {
     input.session?.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose session", { error: getErrorMessage(error) });
+    log.warn("shux workflow: failed to dispose session", { error: getErrorMessage(error) });
   }
   try {
     input.services?.mcpServerManager.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose MCP server manager", {
+    log.warn("shux workflow: failed to dispose MCP server manager", {
       error: getErrorMessage(error),
     });
   }
   try {
     await input.codexOauthService?.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose Codex OAuth service", {
+    log.warn("shux workflow: failed to dispose Codex OAuth service", {
       error: getErrorMessage(error),
     });
   }
   try {
     await input.coderOauthService?.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose Coder OAuth service", {
+    log.warn("shux workflow: failed to dispose Coder OAuth service", {
       error: getErrorMessage(error),
     });
   }
   try {
     input.realProviderService?.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose real-config provider service", {
+    log.warn("shux workflow: failed to dispose real-config provider service", {
       error: getErrorMessage(error),
     });
   }
   try {
     input.policyService?.dispose();
   } catch (error) {
-    log.warn("mux workflow: failed to dispose policy service", {
+    log.warn("shux workflow: failed to dispose policy service", {
       error: getErrorMessage(error),
     });
   }
   try {
     await input.services?.backgroundProcessManager.terminateAll();
   } catch (error) {
-    log.warn("mux workflow: failed to terminate background processes", {
+    log.warn("shux workflow: failed to terminate background processes", {
       error: getErrorMessage(error),
     });
   }
@@ -337,12 +337,12 @@ async function createWorkflowContext(options: {
     }
 
     const workspaceId = generateWorkspaceId();
-    assert(workspaceId.length > 0, "mux workflow generated an empty workspace id");
+    assert(workspaceId.length > 0, "shux workflow generated an empty workspace id");
     const runtimeConfig = parseRuntimeConfig(options.opts.runtime);
     const projectTrusted = await resolveProjectTrusted(realConfig, options.projectDir);
 
-    // Enforce managed policy (MUX_POLICY_FILE / Mux Governor) in headless
-    // workflows too, matching the desktop wiring: without this, `mux workflow`
+    // Enforce managed policy (MUX_POLICY_FILE / Shux Governor) in headless
+    // workflows too, matching the desktop wiring: without this, `shux workflow`
     // would keep using providers/models/credentials that providerAccess now
     // denies. Bind to the REAL config so governor enrollment settings
     // (muxGovernorUrl/Token) are honored.
@@ -359,7 +359,7 @@ async function createWorkflowContext(options: {
     services.aiService.setCodexOauthService(codexOauthService);
     // Bind Coder OAuth to the REAL config (not the ephemeral tempDir copy):
     // Coder rotates the refresh token on every use, so persisting rotations
-    // only to tempDir would strand ~/.mux/providers.jsonc with a consumed
+    // only to tempDir would strand ~/.shux/providers.jsonc with a consumed
     // (dead) refresh token once this CLI session exits.
     realProviderService = new ProviderService(realConfig, policyService);
     coderOauthService = new CoderOauthService(
@@ -389,7 +389,7 @@ async function createWorkflowContext(options: {
       projectName: path.basename(options.projectDir),
       runtimeConfig,
     });
-    assert(workspacePath.length > 0, "mux workflow workspace path must be non-empty");
+    assert(workspacePath.length > 0, "shux workflow workspace path must be non-empty");
 
     return {
       realConfig,
@@ -561,9 +561,9 @@ function configureLogging(options: Pick<WorkflowCLIOptions, "logLevel" | "verbos
 export async function main(): Promise<number> {
   const program = new Command();
   program
-    .name("mux workflow")
+    .name("shux workflow")
     .description(
-      "Run mux workflow scripts by explicit script path.\n\nExperimental: invoking this command implicitly enables the dynamic-workflows\nexperiment for this invocation only."
+      "Run shux workflow scripts by explicit script path.\n\nExperimental: invoking this command implicitly enables the dynamic-workflows\nexperiment for this invocation only."
     )
     .option("-d, --dir <path>", "project directory")
     .option("-r, --runtime <runtime>", "runtime type (currently only local is supported)", "local")

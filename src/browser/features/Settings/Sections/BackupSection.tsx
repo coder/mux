@@ -53,7 +53,7 @@ type BackupDraft = SettingsBackupInput;
 const DEFAULT_DRAFT: BackupDraft = {
   repoUrl: "",
   branch: "main",
-  path: "mux/",
+  path: "shux/",
 };
 
 function toDraft(settings: SettingsBackupInput): BackupDraft {
@@ -529,7 +529,7 @@ export function BackupSection() {
       <div>
         <h3 className="text-foreground text-sm font-medium">Settings backup</h3>
         <p className="text-muted mt-1 text-xs">
-          Back up portable Mux settings to a git repository using credentials already available on
+          Back up portable Shux settings to a git repository using credentials already available on
           this machine.
         </p>
       </div>
@@ -565,7 +565,7 @@ export function BackupSection() {
               onChange={(event) =>
                 setDraft((current) => ({ ...current, path: event.target.value }))
               }
-              placeholder="mux/"
+              placeholder="shux/"
               disabled={busy}
             />
           </label>
@@ -612,7 +612,7 @@ export function BackupSection() {
           <div className="min-w-0">
             <h3 className="text-foreground text-sm font-medium">Repository access</h3>
             <p className="text-muted mt-1 text-xs">
-              Mux tries SSH, GitHub CLI credentials, then system git credentials.
+              Shux tries SSH, GitHub CLI credentials, then system git credentials.
             </p>
           </div>
           <Button
@@ -777,7 +777,7 @@ export function BackupSection() {
                 Approve the listed executable MCP command changes
               </span>
               <span className="text-muted mt-0.5 block text-xs">
-                Restoring writes these commands, and Mux runs them when the server starts. Restore
+                Restoring writes these commands, and Shux runs them when the server starts. Restore
                 is blocked until you approve them.
               </span>
               <ul className="mt-2 space-y-1.5">
@@ -797,7 +797,7 @@ export function BackupSection() {
         isOpen={restoreConfirmationOpen}
         title="Restore settings backup?"
         description="This overwrites local files and portable preferences that are present in the backup. Local-only files are kept."
-        warning="Mux will create a safety snapshot first, but restoring can immediately change settings in open windows."
+        warning="Shux will create a safety snapshot first, but restoring can immediately change settings in open windows."
         confirmLabel={activeAction === "restore" ? "Restoring..." : "Restore settings"}
         confirmVariant="destructive"
         onConfirm={handleRestore}

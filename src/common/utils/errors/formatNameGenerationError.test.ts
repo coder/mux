@@ -50,8 +50,8 @@ describe("formatNameGenerationError", () => {
       authKind: "api_key_missing",
       provider: "mux-gateway",
     });
-    expect(result.title).toBe("Mux Gateway not connected");
-    expect(result.hint).toContain("Mux Gateway");
+    expect(result.title).toBe("Shux Gateway not connected");
+    expect(result.hint).toContain("Shux Gateway");
     expect(result.docsPath).toBe("/getting-started/mux-gateway");
   });
 

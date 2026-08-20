@@ -2,7 +2,7 @@
 
 /**
  * Downloads the latest model prices and context window data from LiteLLM
- * and saves the subset Mux consumes to src/common/utils/tokens/models.json.
+ * and saves the subset Shux consumes to src/common/utils/tokens/models.json.
  */
 
 const LITELLM_URL =
@@ -44,7 +44,7 @@ function pruneModelData(data: unknown): Record<string, Record<string, unknown>> 
 
     const metadata = rawMetadata as Record<string, unknown>;
     const retained: Record<string, unknown> = {};
-    // Keep models.json small: Mux only reads pricing, token limits, provider, mode, and media
+    // Keep models.json small: Shux only reads pricing, token limits, provider, mode, and media
     // capability fields, while upstream LiteLLM ships many provider-specific fields we never use.
     for (const field of RETAINED_FIELDS) {
       if (metadata[field] !== undefined) {

@@ -1,3 +1,4 @@
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import assert from "@/common/utils/assert";
 import CRC32 from "crc-32";
 import { LRUCache } from "lru-cache";
@@ -22,12 +23,12 @@ export interface Tokenizer {
 const APPROX_ENCODING = "approx-4";
 
 function shouldUseApproxTokenizer(): boolean {
-  // MUX_FORCE_REAL_TOKENIZER=1 overrides approx mode (for tests that need real tokenization)
-  // MUX_APPROX_TOKENIZER=1 enables fast approximate mode (default in Jest)
-  if (process.env.MUX_FORCE_REAL_TOKENIZER === "1") {
+  // SHUX_FORCE_REAL_TOKENIZER=1 overrides approx mode (for tests that need real tokenization)
+  // SHUX_APPROX_TOKENIZER=1 enables fast approximate mode (default in Jest)
+  if (resolveShuxEnvironmentValue("FORCE_REAL_TOKENIZER", process.env) === "1") {
     return false;
   }
-  return process.env.MUX_APPROX_TOKENIZER === "1";
+  return resolveShuxEnvironmentValue("APPROX_TOKENIZER", process.env) === "1";
 }
 
 function approximateCount(text: string): number {

@@ -3,7 +3,7 @@ title: MCP Servers
 description: Extend agent capabilities with Model Context Protocol servers
 ---
 
-MCP (Model Context Protocol) servers provide additional tools to agents. Configure them globally in `~/.mux/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`.
+MCP (Model Context Protocol) servers provide additional tools to agents. Configure them globally in `~/.shux/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`.
 
 ## Configuration
 
@@ -11,7 +11,7 @@ You can either configure the servers in the UI (`Ctrl+,`):
 
 ![MCP Servers UI](../img/mcp-servers-1.webp)
 
-Or directly in your MCP config file (global: `~/.mux/mcp.jsonc`, repo overrides: `./.mux/mcp.jsonc`):
+Or directly in your MCP config file (global: `~/.shux/mcp.jsonc`, repo overrides: `./.mux/mcp.jsonc`):
 
 ```jsonc
 {
@@ -34,18 +34,18 @@ Manage MCP servers in **Settings → MCP** (or by editing the config files direc
 
 MCP servers have two scopes:
 
-- **Configuration** is global with optional repo overrides — Global config lives in `~/.mux/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`
+- **Configuration** is global with optional repo overrides — Global config lives in `~/.shux/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`
 - **Runtime instances** are per-workspace — Each workspace runs its own server processes, so state in one workspace doesn't affect another
 
 ## Per-workspace overrides
 
-mux supports per-workspace MCP overrides (enable/disable servers and restrict tool allowlists) without modifying the shared config files (`~/.mux/mcp.jsonc` / `./.mux/mcp.jsonc`).
+Shux supports per-workspace MCP overrides (enable/disable servers and restrict tool allowlists) without modifying the shared config files (`~/.shux/mcp.jsonc` / `./.mux/mcp.jsonc`).
 
 These overrides are stored in a workspace-local file: `.mux/mcp.local.jsonc`.
 
 - This file is intended to be **gitignored** (it contains local-only workspace preferences)
-- When Mux writes this file, it also adds it to the workspace's local git excludes (`.git/info/exclude`) so it doesn't get accidentally committed
-- Older mux versions stored these overrides in `~/.mux/config.json`; mux will migrate them into `.mux/mcp.local.jsonc` on first use
+- When Shux writes this file, it also adds it to the workspace's local git excludes (`.git/info/exclude`) so it doesn't get accidentally committed
+- Older Mux versions stored these overrides in `~/.mux/config.json`; Shux will migrate them into `.mux/mcp.local.jsonc` on first use
 
 This means you configure servers once (globally or with repo overrides), but each workspace (branch) gets isolated server instances with independent state.
 
@@ -59,7 +59,7 @@ With the **Agent Plugins** experiment enabled (Settings → Experiments), MCP se
 - **Host-only** — plugin servers are skipped for SSH and devcontainer workspaces
 - **Branch-following** — in a workspace, repo plugin servers load from the workspace's own checkout (matching skill discovery), while server identities stay stable across worktrees of the same project
 
-Stdio plugin servers launch with the spec's `PLUGIN_ROOT` and `PLUGIN_DATA` environment variables; per-plugin data directories live under `~/.mux/plugin-data/`.
+Stdio plugin servers launch with the spec's `PLUGIN_ROOT` and `PLUGIN_DATA` environment variables; per-plugin data directories live under `~/.shux/plugin-data/`.
 
 ## Behavior
 

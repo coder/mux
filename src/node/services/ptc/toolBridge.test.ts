@@ -110,7 +110,7 @@ describe("ToolBridge", () => {
   });
 
   describe("register", () => {
-    it("registers tools under mux namespace", () => {
+    it("registers the same tools object under shux and mux", () => {
       const mockRegisterObject = mock(
         (_name: string, _obj: Record<string, () => Promise<unknown>>) => undefined
       );
@@ -123,12 +123,15 @@ describe("ToolBridge", () => {
       const bridge = new ToolBridge(tools);
       bridge.register(mockRuntime);
 
-      expect(mockRegisterObject).toHaveBeenCalledTimes(1);
-      const call = mockRegisterObject.mock.calls[0] as unknown as [string, Record<string, unknown>];
-      const [name, obj] = call;
-      expect(name).toBe("mux");
-      expect(typeof obj).toBe("object");
-      expect(typeof obj.file_read).toBe("function");
+      expect(mockRegisterObject).toHaveBeenCalledTimes(2);
+      const calls = mockRegisterObject.mock.calls as unknown as Array<
+        [string, Record<string, unknown>]
+      >;
+      expect(calls.map(([name]) => name)).toEqual(["shux", "mux"]);
+      const [, shuxObj] = calls[0];
+      const [, muxObj] = calls[1];
+      expect(muxObj).toBe(shuxObj);
+      expect(typeof shuxObj.file_read).toBe("function");
     });
 
     it("enforces capability grants: denied tools are excluded, stubbed, and never leak", async () => {
@@ -170,7 +173,7 @@ describe("ToolBridge", () => {
         await bash({});
         expect.unreachable("Should have thrown");
       } catch (e) {
-        expect(String(e)).toContain("Capability denied: mux.bash is not granted");
+        expect(String(e)).toContain("Capability denied: shux.bash is not granted");
       }
       expect(executed).toHaveBeenCalledTimes(1); // bash never ran
     });

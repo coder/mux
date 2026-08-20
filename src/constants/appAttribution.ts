@@ -1,7 +1,8 @@
 // App attribution values for AI provider requests.
 //
 // These are used by OpenRouter (and other compatible platforms) to attribute
-// requests to mux (e.g., for leaderboards).
+// requests to shux. The URL stays on the existing domain until redirects and
+// external release infrastructure move.
 
-export const MUX_APP_ATTRIBUTION_TITLE = "mux";
-export const MUX_APP_ATTRIBUTION_URL = "https://mux.coder.com";
+export const SHUX_APP_ATTRIBUTION_TITLE = "shux";
+export const SHUX_APP_ATTRIBUTION_URL = "https://mux.coder.com";

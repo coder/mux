@@ -342,7 +342,7 @@ async function fetchProtectedResourceScopes(url: URL): Promise<string[]> {
  * refused to use a stored refresh_token without them and instead invalidated
  * the tokens and demanded interactive re-login. The official SDK v2 ignores
  * these fields (it stamps `issuer` instead — see MCPOAuthTokens.issuer), but
- * we keep round-tripping them so downgrading Mux does not break token
+ * we keep round-tripping them so downgrading Shux does not break token
  * refresh after an app restart.
  */
 function parseAuthorizationServerBinding(value: {
@@ -1197,7 +1197,7 @@ export class McpOauthService {
         return Promise.resolve(flow.codeVerifier);
       },
       invalidateCredentials: async (scope) => {
-        // "discovery" (SDK v2) refers to cached AS metadata, which Mux does
+        // "discovery" (SDK v2) refers to cached AS metadata, which Shux does
         // not persist; nothing to invalidate.
         if (scope === "discovery") {
           return;
@@ -1216,7 +1216,7 @@ export class McpOauthService {
           response_types: ["code"],
           grant_types: ["authorization_code", "refresh_token"],
           token_endpoint_auth_method: "none",
-          client_name: "Mux",
+          client_name: "Shux",
           scope: flow.scope,
         };
       },
@@ -1280,7 +1280,7 @@ export class McpOauthService {
       },
       codeVerifier: () => Promise.reject(new Error("PKCE verifier is not available")),
       invalidateCredentials: async (scope) => {
-        // "discovery" (SDK v2) refers to cached AS metadata, which Mux does
+        // "discovery" (SDK v2) refers to cached AS metadata, which Shux does
         // not persist; nothing to invalidate.
         if (scope === "discovery") {
           return;
@@ -1348,7 +1348,7 @@ export class McpOauthService {
       renderOAuthCallbackHtml({
         title: result.success ? "Login complete" : "Login failed",
         message: result.success
-          ? "You can return to Mux. You may now close this tab."
+          ? "You can return to Shux. You may now close this tab."
           : result.error,
         success: result.success,
       })
@@ -1687,7 +1687,7 @@ export class McpOauthService {
   }
 
   private async persistStoreLocked(store: McpOauthStoreFile): Promise<void> {
-    // Ensure ~/.mux exists.
+    // Ensure ~/.shux exists.
     await fsPromises.mkdir(this.config.rootDir, { recursive: true });
 
     await writeFileAtomic(this.storeFilePath, JSON.stringify(store, null, 2), {

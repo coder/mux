@@ -13,6 +13,7 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
+      "shux/*": ["../src/*"],
       "mux/*": ["../src/*"],
       "@/*": ["../src/*"]
     }

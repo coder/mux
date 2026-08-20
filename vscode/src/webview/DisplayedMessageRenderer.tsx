@@ -1,16 +1,16 @@
 import React from "react";
 
-import type { DisplayedMessage } from "mux/common/types/message";
+import type { DisplayedMessage } from "shux/common/types/message";
 
-import { AssistantMessage } from "mux/browser/features/Messages/AssistantMessage";
-import { HistoryHiddenMessage } from "mux/browser/features/Messages/HistoryHiddenMessage";
-import { InitMessage } from "mux/browser/features/Messages/InitMessage";
-import { MarkdownRenderer } from "mux/browser/features/Messages/MarkdownRenderer";
-import { MessageWindow } from "mux/browser/features/Messages/MessageWindow";
-import { ReasoningMessage } from "mux/browser/features/Messages/ReasoningMessage";
-import { StreamErrorMessage } from "mux/browser/features/Messages/StreamErrorMessage";
-import { ToolMessage } from "mux/browser/features/Messages/ToolMessage";
-import { UserMessage } from "mux/browser/features/Messages/UserMessage";
+import { AssistantMessage } from "shux/browser/features/Messages/AssistantMessage";
+import { HistoryHiddenMessage } from "shux/browser/features/Messages/HistoryHiddenMessage";
+import { InitMessage } from "shux/browser/features/Messages/InitMessage";
+import { MarkdownRenderer } from "shux/browser/features/Messages/MarkdownRenderer";
+import { MessageWindow } from "shux/browser/features/Messages/MessageWindow";
+import { ReasoningMessage } from "shux/browser/features/Messages/ReasoningMessage";
+import { StreamErrorMessage } from "shux/browser/features/Messages/StreamErrorMessage";
+import { ToolMessage } from "shux/browser/features/Messages/ToolMessage";
+import { UserMessage } from "shux/browser/features/Messages/UserMessage";
 
 export function DisplayedMessageRenderer(props: {
   message: DisplayedMessage;

@@ -2,7 +2,7 @@ import type z from "zod";
 import type { MuxProviderOptionsSchema } from "../orpc/schemas";
 
 /**
- * Mux provider-specific options that get passed through the stack.
+ * Shux provider-specific options that get passed through the stack.
  * Used by both frontend and backend to configure provider-specific features
  * without polluting function signatures with individual flags.
  *

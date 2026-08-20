@@ -1,8 +1,11 @@
-# mux server Docker image
+# Shux server Docker image
 # Multi-stage build with esbuild bundling for minimal runtime image
 #
-# Build:   docker build -t mux-server .
-# Run:     docker run -p 3000:3000 -v ~/.mux:/root/.mux mux-server
+# Build:   docker build -t shux-server .
+# Run:     docker run -p 3000:3000 -v ~/.shux:/root/.mux shux-server
+#
+# /root/.mux remains the container volume target so existing images and compose
+# volumes can upgrade and downgrade against the same data.
 #
 # See docker-compose.yml for easier orchestration
 
@@ -39,8 +42,9 @@ COPY scripts/postinstall.sh scripts/
 # tsgo typechecks electron-importing sources, so the optional electron package must
 # install even though the server image never runs it. Its binary download can fail
 # transiently, and bun then silently drops the package instead of failing the install.
-# Skip the unused download, and Electron-ABI native rebuilds via MUX_HEADLESS.
-RUN MUX_HEADLESS=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile && \
+# Skip the unused download, and Electron-ABI native rebuilds via SHUX_HEADLESS.
+# Keep MUX_HEADLESS set for older postinstall tooling in cached dependency layers.
+RUN SHUX_HEADLESS=1 MUX_HEADLESS=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 bun install --frozen-lockfile && \
     touch node_modules/.installed
 
 # Copy build orchestration files used by Make targets.
@@ -82,7 +86,7 @@ FROM node:22-slim
 ARG VERSION=dev
 LABEL org.opencontainers.image.source="https://github.com/coder/mux"
 LABEL org.opencontainers.image.version="${VERSION}"
-LABEL org.opencontainers.image.description="Mux server — parallel AI agent workflows"
+LABEL org.opencontainers.image.description="Shux server — parallel AI agent workflows"
 LABEL org.opencontainers.image.licenses="AGPL-3.0"
 
 WORKDIR /app
@@ -125,11 +129,12 @@ COPY --from=builder /app/dist/typescript-lib ./dist/typescript-lib
 # Copy runtime bundles last (most volatile layer during backend iteration).
 COPY --from=builder /app/dist/runtime ./dist/runtime
 
-# Create mux data directory
+# Keep the established container data path for existing volumes and downgraded images.
 RUN mkdir -p /root/.mux
 
-# Default environment variables
+# SHUX_ROOT is canonical; MUX_ROOT keeps older image entry points on the same volume.
 ENV NODE_ENV=production
+ENV SHUX_ROOT=/root/.mux
 ENV MUX_ROOT=/root/.mux
 
 # Expose server port
@@ -139,7 +144,7 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
 
-# Run bundled mux server
+# Run bundled shux server
 # --host 0.0.0.0: bind to all interfaces (required for Docker networking)
 # --port 3000: default port (can be remapped via docker run -p)
 ENTRYPOINT ["node", "dist/runtime/server-bundle.js"]

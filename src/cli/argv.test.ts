@@ -111,7 +111,7 @@ describe("getArgsAfterSplice", () => {
 
   test("packaged electron: returns args after firstArgIndex", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
-    // Simulates: ./mux api --help -> after splice -> ./mux --help
+    // Simulates: ./shux api --help -> after splice -> ./mux --help
     const argvAfterSplice = ["./mux", "--help"];
     expect(getArgsAfterSplice(argvAfterSplice, env)).toEqual(["--help"]);
   });
@@ -147,8 +147,9 @@ describe("isElectronLaunchArg", () => {
     expect(isElectronLaunchArg("--enable-logging", env)).toBe(true);
   });
 
-  test("returns true for mux:// deep links in packaged mode", () => {
+  test("returns true for canonical and legacy deep links in packaged mode", () => {
     const env = detectCliEnvironment({ electron: "33.0.0" }, undefined);
+    expect(isElectronLaunchArg("shux://chat/new?foo=bar", env)).toBe(true);
     expect(isElectronLaunchArg("mux://chat/new?foo=bar", env)).toBe(true);
   });
 

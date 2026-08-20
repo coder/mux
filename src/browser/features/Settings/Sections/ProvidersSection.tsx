@@ -522,7 +522,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError("Shux API not connected.");
       return;
     }
 
@@ -638,7 +638,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError("Shux API not connected.");
       return;
     }
 
@@ -712,7 +712,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCodexOauthStatus("error");
-      setCodexOauthError("Mux API not connected.");
+      setCodexOauthError("Shux API not connected.");
       return;
     }
 
@@ -830,7 +830,7 @@ export function ProvidersSection() {
       if (isDesktop) {
         if (!api) {
           setMuxGatewayLoginStatus("error");
-          setMuxGatewayLoginError("Mux API not connected.");
+          setMuxGatewayLoginError("Shux API not connected.");
           return;
         }
 
@@ -985,8 +985,8 @@ export function ProvidersSection() {
       : muxGatewayLoginInProgress
         ? "Waiting for login..."
         : muxGatewayIsLoggedIn
-          ? "Re-login to Mux Gateway"
-          : "Login to Mux Gateway";
+          ? "Re-login to Shux Gateway"
+          : "Login to Shux Gateway";
 
   // --- GitHub Copilot Device Code Flow ---
   const [copilotLoginStatus, setCopilotLoginStatus] = useState<CopilotLoginStatus>("idle");
@@ -1183,7 +1183,7 @@ export function ProvidersSection() {
 
     if (!api) {
       setCoderLoginStatus("error");
-      setCoderLoginError("Mux API not connected.");
+      setCoderLoginError("Shux API not connected.");
       return;
     }
 
@@ -1359,7 +1359,7 @@ export function ProvidersSection() {
       return;
     }
 
-    // Fetch lazily when the user expands the Mux Gateway provider.
+    // Fetch lazily when the user expands the Shux Gateway provider.
     //
     // Important: avoid auto-retrying after a failure. If the request fails,
     // `muxGatewayAccountStatus` remains null and we'd otherwise trigger a refresh
@@ -1622,7 +1622,7 @@ export function ProvidersSection() {
     setCustomProviderSubmitAttempted(true);
 
     if (!api) {
-      setCustomProviderSubmitError("Mux API not connected.");
+      setCustomProviderSubmitError("Shux API not connected.");
       return;
     }
 
@@ -1711,7 +1711,7 @@ export function ProvidersSection() {
       if (!api) {
         setCustomProviderRemoveErrors((prev) => ({
           ...prev,
-          [provider]: "Mux API not connected.",
+          [provider]: "Shux API not connected.",
         }));
         return;
       }
@@ -1788,7 +1788,7 @@ export function ProvidersSection() {
     <div className="space-y-2">
       <p className="text-muted mb-4 text-xs">
         Configure API keys and endpoints for AI providers. Keys are stored in{" "}
-        <code className="text-accent">~/.mux/providers.jsonc</code>
+        <code className="text-accent">~/.shux/providers.jsonc</code>
       </p>
 
       {policyState.status.state === "enforced" && (
@@ -1895,7 +1895,7 @@ export function ProvidersSection() {
                     <div className="border-border-medium space-y-3 border-t px-4 py-3">
                       {isBuiltInProvider(provider) && isCustomOpenAICompatible && (
                         <div className="border-warning/40 bg-warning/10 text-warning rounded-md border px-3 py-2 text-xs">
-                          This custom provider id now matches a built-in provider. Mux will keep
+                          This custom provider id now matches a built-in provider. Shux will keep
                           using your custom configuration.
                         </div>
                       )}
@@ -1985,14 +1985,14 @@ export function ProvidersSection() {
                               {muxGatewayLoginStatus === "waiting" && muxGatewayAuthorizeUrl && (
                                 <Button
                                   size="sm"
-                                  aria-label="Copy and open Mux Gateway authorization page"
+                                  aria-label="Copy and open Shux Gateway authorization page"
                                   onClick={() => {
                                     void navigator.clipboard.writeText(muxGatewayAuthorizeUrl);
                                     window.open(muxGatewayAuthorizeUrl, "_blank", "noopener");
                                   }}
                                   className="h-8 px-3 text-xs"
                                 >
-                                  Copy & Open Mux Gateway
+                                  Copy & Open Shux Gateway
                                 </Button>
                               )}
 
@@ -2041,7 +2041,7 @@ export function ProvidersSection() {
                                 Account
                               </label>
                               <span className="text-muted text-xs">
-                                Balance and limits from Mux Gateway
+                                Balance and limits from Shux Gateway
                               </span>
                             </div>
                             <Button
@@ -2296,7 +2296,7 @@ export function ProvidersSection() {
 
                           {isRemoteServer ? (
                             <p className="text-muted text-xs">
-                              Login with Coder requires the desktop app or a locally hosted Mux
+                              Login with Coder requires the desktop app or a locally hosted Shux
                               server: the OAuth callback must reach this machine, and Coder has no
                               device-authorization grant for remote logins.
                             </p>

@@ -111,26 +111,72 @@ describe("PlatformPaths", () => {
       const testPath = path.join("/", "home", "user", "project");
       expect(PlatformPaths.expandHome(testPath)).toBe(testPath);
     });
-    test("expands ~/.mux to MUX_ROOT when set", () => {
+    test("expands canonical and legacy home paths to SHUX_ROOT", () => {
+      const originalShuxRoot = process.env.SHUX_ROOT;
       const originalMuxRoot = process.env.MUX_ROOT;
-      const testMuxRoot = path.join(os.tmpdir(), "mux-root-test");
-      process.env.MUX_ROOT = testMuxRoot;
+      const testShuxRoot = path.join(os.tmpdir(), "shux-root-test");
+      process.env.SHUX_ROOT = testShuxRoot;
+      delete process.env.MUX_ROOT;
 
       try {
         const sep = path.sep;
-        const muxPath = `~${sep}.mux${sep}src${sep}project`;
-        expect(PlatformPaths.expandHome(muxPath)).toBe(path.join(testMuxRoot, "src", "project"));
+        for (const directory of [".shux", ".mux", ".cmux"]) {
+          const shuxPath = `~${sep}${directory}${sep}src${sep}project`;
+          expect(PlatformPaths.expandHome(shuxPath)).toBe(
+            path.join(testShuxRoot, "src", "project")
+          );
+          expect(PlatformPaths.expandHome(`~${sep}${directory}`)).toBe(testShuxRoot);
+        }
 
         // Other ~ paths should still resolve to the actual OS home directory.
         const home = os.homedir();
-        const homePath = `~${sep}projects${sep}mux`;
-        expect(PlatformPaths.expandHome(homePath)).toBe(path.join(home, "projects", "mux"));
+        const homePath = `~${sep}projects${sep}shux`;
+        expect(PlatformPaths.expandHome(homePath)).toBe(path.join(home, "projects", "shux"));
       } finally {
-        if (originalMuxRoot === undefined) {
-          delete process.env.MUX_ROOT;
-        } else {
-          process.env.MUX_ROOT = originalMuxRoot;
-        }
+        if (originalShuxRoot === undefined) delete process.env.SHUX_ROOT;
+        else process.env.SHUX_ROOT = originalShuxRoot;
+        if (originalMuxRoot === undefined) delete process.env.MUX_ROOT;
+        else process.env.MUX_ROOT = originalMuxRoot;
+      }
+    });
+
+    test("accepts MUX_ROOT when SHUX_ROOT is not set", () => {
+      const originalShuxRoot = process.env.SHUX_ROOT;
+      const originalMuxRoot = process.env.MUX_ROOT;
+      const testLegacyRoot = path.join(os.tmpdir(), "mux-root-test");
+      delete process.env.SHUX_ROOT;
+      process.env.MUX_ROOT = testLegacyRoot;
+
+      try {
+        expect(PlatformPaths.expandHome("~/.shux/src/project")).toBe(
+          path.join(testLegacyRoot, "src", "project")
+        );
+        expect(PlatformPaths.expandHome("~/.cmux/src/project")).toBe(
+          path.join(testLegacyRoot, "src", "project")
+        );
+      } finally {
+        if (originalShuxRoot === undefined) delete process.env.SHUX_ROOT;
+        else process.env.SHUX_ROOT = originalShuxRoot;
+        if (originalMuxRoot === undefined) delete process.env.MUX_ROOT;
+        else process.env.MUX_ROOT = originalMuxRoot;
+      }
+    });
+
+    test("leaves product-home tilde paths on OS home when no explicit root is set", () => {
+      const originalShuxRoot = process.env.SHUX_ROOT;
+      const originalMuxRoot = process.env.MUX_ROOT;
+      delete process.env.SHUX_ROOT;
+      delete process.env.MUX_ROOT;
+
+      try {
+        expect(PlatformPaths.expandHome("~/.cmux/src/project")).toBe(
+          path.join(os.homedir(), ".cmux", "src", "project")
+        );
+      } finally {
+        if (originalShuxRoot === undefined) delete process.env.SHUX_ROOT;
+        else process.env.SHUX_ROOT = originalShuxRoot;
+        if (originalMuxRoot === undefined) delete process.env.MUX_ROOT;
+        else process.env.MUX_ROOT = originalMuxRoot;
       }
     });
 

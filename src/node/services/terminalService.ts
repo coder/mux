@@ -1,8 +1,9 @@
 import { EventEmitter } from "events";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import { spawn } from "child_process";
 import { secretsToRecord } from "@/common/types/secrets";
 import type { Config } from "@/node/config";
-import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
+import { getShuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import type { PTYService } from "@/node/services/ptyService";
 import type { TerminalWindowManager } from "@/desktop/terminalWindowManager";
 import type {
@@ -18,7 +19,7 @@ import {
 } from "@/node/runtime/runtimeHelpers";
 import { log } from "@/node/services/log";
 import { isCommandAvailable, findAvailableCommand } from "@/node/utils/commandDiscovery";
-import { sanitizeMuxChildEnv } from "@/node/runtime/childProcessEnv";
+import { sanitizeShuxChildEnv } from "@/node/runtime/childProcessEnv";
 import { Terminal } from "@xterm/headless";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { NO_OSC_IDLE_FALLBACK_MS } from "@/constants/terminalActivity";
@@ -88,16 +89,18 @@ export class TerminalService {
   }
 
   private getProxyUriEnv(): Record<string, string> {
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty/whitespace-only env vars should be treated as unset
     const vscodeProxyUri = process.env.VSCODE_PROXY_URI?.trim() || undefined;
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- intentional: empty/whitespace-only env vars should be treated as unset
-    const muxProxyUri = process.env.MUX_PROXY_URI?.trim() || vscodeProxyUri;
+    const shuxProxyUri = resolveShuxEnvironmentValue("PROXY_URI", process.env)?.trim();
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty/whitespace-only env vars should be treated as unset
+    const muxProxyUri = shuxProxyUri || vscodeProxyUri;
 
     const proxyUriEnv: Record<string, string> = {};
     if (vscodeProxyUri != null) {
       proxyUriEnv.VSCODE_PROXY_URI = vscodeProxyUri;
     }
     if (muxProxyUri != null) {
+      proxyUriEnv.SHUX_PROXY_URI = muxProxyUri;
       proxyUriEnv.MUX_PROXY_URI = muxProxyUri;
     }
 
@@ -140,8 +143,8 @@ export class TerminalService {
       // We intentionally skip dynamic values (like cost/model) because long-lived shells would go stale.
       const runtimeType = getRuntimeType(workspaceMetadata.runtimeConfig);
       const shouldInjectLocalEnv = runtimeType === "local" || runtimeType === "worktree";
-      const muxEnv = shouldInjectLocalEnv
-        ? getMuxEnv(workspaceMetadata.projectPath, runtimeType, workspaceMetadata.name, {
+      const shuxEnv = shouldInjectLocalEnv
+        ? getShuxEnv(workspaceMetadata.projectPath, runtimeType, workspaceMetadata.name, {
             workspaceId: workspaceMetadata.id,
           })
         : undefined;
@@ -155,7 +158,9 @@ export class TerminalService {
       // Any process launched from this terminal inherits these variables.
       // Proxy URI propagation allows terminal tools to construct externally reachable links.
       // MUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI, and falls back to it when unset.
-      const terminalEnv = muxEnv ? { ...muxEnv, ...this.getProxyUriEnv(), ...secrets } : undefined;
+      const terminalEnv = shuxEnv
+        ? { ...shuxEnv, ...this.getProxyUriEnv(), ...secrets }
+        : undefined;
 
       // 4. Setup emitters and buffer
       // We don't know the sessionId yet (PTYService generates it), but PTYService uses a callback.
@@ -670,10 +675,10 @@ export class TerminalService {
         cwd: availableTerminal.cwd,
         detached: true,
         stdio: "ignore",
-        // Strip mux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
+        // Strip shux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
         // identity) so apps launched from this shell don't inherit them.
-        // sanitizeMuxChildEnv copies its input, so pass process.env directly.
-        env: sanitizeMuxChildEnv(process.env),
+        // sanitizeShuxChildEnv copies its input, so pass process.env directly.
+        env: sanitizeShuxChildEnv(process.env),
       });
       child.unref();
     } else {
