@@ -639,7 +639,11 @@ export async function buildStreamSystemContext(
     // and the agent id (so per-agent sections work). The effective mode names
     // the injected <mode-...> tag; agentDefinition.id (may have fallen back
     // to exec) is the prompt actually in effect.
-    { agentSystemPromptSections, modes: [effectiveMode, agentDefinition.id] }
+    {
+      agentSystemPromptSections,
+      modes: [effectiveMode, agentDefinition.id],
+      projectConfigs: cfg.projects,
+    }
   );
 
   // Append the hot-memories block (memory-hot-set sub-experiment). Placed at

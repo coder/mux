@@ -19,6 +19,8 @@ export interface OpenSettingsOptions {
   runtimesProjectPath?: string;
   /** When opening the Secrets settings, pre-select this project scope. */
   secretsProjectPath?: string;
+  /** When opening the Instructions settings, pre-select this project. */
+  instructionsProjectPath?: string;
 }
 
 interface SettingsContextValue {
@@ -46,6 +48,10 @@ interface SettingsContextValue {
   /** One-shot hint for SecretsSection to pre-select a project scope. */
   secretsProjectPath: string | null;
   setSecretsProjectPath: (path: string | null) => void;
+
+  /** One-shot hint for InstructionsSection to pre-select a project. */
+  instructionsProjectPath: string | null;
+  setInstructionsProjectPath: (path: string | null) => void;
 }
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
@@ -64,6 +70,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
   const [providersStartCoderLogin, setProvidersStartCoderLogin] = useState(false);
   const [runtimesProjectPath, setRuntimesProjectPath] = useState<string | null>(null);
   const [secretsProjectPath, setSecretsProjectPath] = useState<string | null>(null);
+  const [instructionsProjectPath, setInstructionsProjectPath] = useState<string | null>(null);
 
   const closeCallbacksRef = useRef(new Set<() => void>());
 
@@ -90,6 +97,11 @@ export function SettingsProvider(props: { children: ReactNode }) {
       } else {
         setSecretsProjectPath(null);
       }
+      if (nextSection === "instructions") {
+        setInstructionsProjectPath(options?.instructionsProjectPath ?? null);
+      } else {
+        setInstructionsProjectPath(null);
+      }
       router.navigateToSettings(nextSection);
     },
     [router]
@@ -111,6 +123,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
       setProvidersStartCoderLogin(false);
       setRuntimesProjectPath(null);
       setSecretsProjectPath(null);
+      setInstructionsProjectPath(null);
       for (const callback of closeCallbacksRef.current) {
         callback();
       }
@@ -123,6 +136,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
     setProvidersStartCoderLogin(false);
     setRuntimesProjectPath(null);
     setSecretsProjectPath(null);
+    setInstructionsProjectPath(null);
     router.navigateFromSettings();
   }, [router]);
 
@@ -138,6 +152,9 @@ export function SettingsProvider(props: { children: ReactNode }) {
       }
       if (section !== "secrets") {
         setSecretsProjectPath(null);
+      }
+      if (section !== "instructions") {
+        setInstructionsProjectPath(null);
       }
       router.navigateToSettings(section, options);
     },
@@ -160,6 +177,8 @@ export function SettingsProvider(props: { children: ReactNode }) {
       setRuntimesProjectPath,
       secretsProjectPath,
       setSecretsProjectPath,
+      instructionsProjectPath,
+      setInstructionsProjectPath,
     }),
     [
       isOpen,
@@ -172,6 +191,7 @@ export function SettingsProvider(props: { children: ReactNode }) {
       providersStartCoderLogin,
       runtimesProjectPath,
       secretsProjectPath,
+      instructionsProjectPath,
     ]
   );
 

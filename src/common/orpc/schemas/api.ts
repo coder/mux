@@ -794,6 +794,15 @@ export const projects = {
       .passthrough(),
     output: z.void(),
   },
+  setCustomInstructions: {
+    input: z
+      .object({
+        projectPath: z.string(),
+        customInstructions: z.string().nullish(),
+      })
+      .passthrough(),
+    output: z.void(),
+  },
   mcp: {
     list: {
       input: z.object({ projectPath: z.string() }),

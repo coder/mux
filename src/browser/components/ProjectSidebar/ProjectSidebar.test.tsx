@@ -268,6 +268,7 @@ function createProjectContextValue(
     updateSecrets: () => Promise.resolve(),
     updateDisplayName: () => resolveVoidResult(),
     updateColor: () => resolveVoidResult(),
+    updateCustomInstructions: () => resolveVoidResult(),
     assignWorkspaceToSubProject: () => resolveVoidResult(),
     hasAnyProject: false,
     resolveNewChatProjectPath: () => null,
@@ -527,6 +528,8 @@ function installProjectSidebarTestDoubles() {
     setRuntimesProjectPath: () => undefined,
     secretsProjectPath: null,
     setSecretsProjectPath: () => undefined,
+    instructionsProjectPath: null,
+    setInstructionsProjectPath: () => undefined,
   }));
   spyOn(WorkspaceContextModule, "useWorkspaceActions").mockImplementation(
     () =>
@@ -1330,6 +1333,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
       updateColor: () => resolveVoidResult(),
+      updateCustomInstructions: () => resolveVoidResult(),
       assignWorkspaceToSubProject: () => resolveVoidResult(),
       hasAnyProject: true,
       resolveNewChatProjectPath: () => "/projects/demo-project",
@@ -1920,6 +1924,7 @@ describe("ProjectSidebar multi-project completed-subagent toggles", () => {
       updateSecrets: () => Promise.resolve(),
       updateDisplayName: () => resolveVoidResult(),
       updateColor: () => resolveVoidResult(),
+      updateCustomInstructions: () => resolveVoidResult(),
       assignWorkspaceToSubProject: () => resolveVoidResult(),
       hasAnyProject: true,
       resolveNewChatProjectPath: () => "/projects/demo-project",
@@ -2345,6 +2350,7 @@ describe("ProjectSidebar project actions menu", () => {
       "Edit name",
       "Add sub-project",
       "Manage secrets",
+      "Instructions",
       "Change color",
       "Delete...",
     ]);
@@ -2373,6 +2379,13 @@ describe("ProjectSidebar project actions menu", () => {
 
     expect(settingsOpenMock).toHaveBeenCalledWith("secrets", {
       secretsProjectPath: demoProjectPath,
+    });
+
+    fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));
+    fireEvent.click(view.getByRole("button", { name: "Instructions" }));
+
+    expect(settingsOpenMock).toHaveBeenCalledWith("instructions", {
+      instructionsProjectPath: demoProjectPath,
     });
 
     fireEvent.click(view.getByRole("button", { name: "Project options for demo-project" }));

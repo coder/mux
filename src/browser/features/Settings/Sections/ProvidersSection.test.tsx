@@ -558,6 +558,8 @@ describe("ProvidersSection", () => {
       setRuntimesProjectPath: () => undefined,
       secretsProjectPath: null,
       setSecretsProjectPath: () => undefined,
+      instructionsProjectPath: null,
+      setInstructionsProjectPath: () => undefined,
     }));
 
     render(

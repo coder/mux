@@ -2198,7 +2198,8 @@ export class AIService extends EventEmitter {
         runtime,
         workspacePath,
         capabilityModelString,
-        agentSystemPromptSections
+        agentSystemPromptSections,
+        cfg.projects
       );
       recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
 

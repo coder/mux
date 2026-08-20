@@ -82,7 +82,12 @@ export class InstructionsService {
     // historical bug in the prompt builder.
     const { runtime } = createRuntimeContextForWorkspace(metadata);
     const workspaceRootPath = resolveWorkspaceRootPath(metadata, runtime);
-    const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+    const sources = await loadInstructionSources(
+      metadata,
+      runtime,
+      workspaceRootPath,
+      this.config.loadConfigOrDefault().projects
+    );
 
     const trimmedOverride = modelOverride?.trim();
     const model =

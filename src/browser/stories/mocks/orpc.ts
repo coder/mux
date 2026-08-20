@@ -1386,6 +1386,18 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
         }
         return Promise.resolve();
       },
+      setCustomInstructions: (input: {
+        projectPath: string;
+        customInstructions?: string | null;
+      }) => {
+        const project = projects.get(input.projectPath);
+        if (project) {
+          project.customInstructions = input.customInstructions?.trim()
+            ? input.customInstructions
+            : undefined;
+        }
+        return Promise.resolve();
+      },
       secrets: {
         get: (input: { projectPath: string }) =>
           Promise.resolve(projectSecrets.get(input.projectPath) ?? []),

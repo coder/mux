@@ -30,6 +30,8 @@ import {
 import type { Runtime } from "@/node/runtime/Runtime";
 import { resolveWorkspaceRootPath } from "@/node/runtime/runtimeHelpers";
 import { getMuxHome } from "@/common/constants/paths";
+import { stripTrailingSlashes } from "@/node/utils/pathUtils";
+import type { ProjectConfig } from "@/common/types/project";
 import { getAvailableTools } from "@/common/utils/tools/toolDefinitions";
 import { getToolAvailabilityOptions } from "@/common/utils/tools/toolAvailability";
 import { assertNever } from "@/common/utils/assertNever";
@@ -303,13 +305,19 @@ export async function readToolInstructions(
   runtime: Runtime,
   workspacePath: string,
   modelString: string,
-  agentInstructions?: readonly string[]
+  agentInstructions?: readonly string[],
+  projectConfigs?: Map<string, ProjectConfig>
 ): Promise<Record<string, string>> {
   // Tool instructions read the same `AGENTS.md` files as the system prompt;
   // anchor at the workspace root so sub-project workspaces still see parent
   // project tool sections (see `loadInstructionSources` doc).
   const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
-  const sources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+  const sources = await loadInstructionSources(
+    metadata,
+    runtime,
+    workspaceRootPath,
+    projectConfigs
+  );
   const globalContents = collectInstructionContents([sources.global]);
   const contextContents = collectInstructionContents(sources.context);
 
@@ -458,12 +466,14 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
+ * @param projectConfigs - Project configs from ~/.mux/config.json for per-project customInstructions
  * @returns Structured instruction sources (global + ordered context entries)
  */
 export async function loadInstructionSources(
   metadata: WorkspaceMetadata,
   runtime: Runtime,
-  workspaceRootPath: string
+  workspaceRootPath: string,
+  projectConfigs?: Map<string, ProjectConfig>
 ): Promise<InstructionSources> {
   // `workspaceRootPath` is the parent project's checkout root — *without* the
   // optional sub-project segment. Callers that hand us the execution path
@@ -475,7 +485,54 @@ export async function loadInstructionSources(
     ? await readMultiProjectContextInstructions(metadata, runtime, workspaceRootPath)
     : await readSingleProjectContextInstructions(metadata, runtime, workspaceRootPath);
 
-  return { global, context };
+  // Config-stored per-project instructions (Settings → Instructions) come after
+  // the repo-file sets so user settings layer on top of committed guidance.
+  const settingsSets = buildProjectSettingsInstructionSets(metadata, projectConfigs);
+
+  return { global, context: [...context, ...settingsSets] };
+}
+
+/**
+ * Synthesize instruction sets from `customInstructions` persisted per project
+ * in `~/.mux/config.json` (Settings → Instructions). Flowing them through
+ * `InstructionSources` keeps the right-sidebar Instructions tab and the prompt
+ * builder in lockstep, and `muxOnly: true` gives scoped Model:/Mode:/Tool:
+ * directives the same semantics as `.mux/AGENTS.md` (config.json is
+ * Mux-dedicated by construction).
+ */
+function buildProjectSettingsInstructionSets(
+  metadata: WorkspaceMetadata,
+  projectConfigs: Map<string, ProjectConfig> | undefined
+): InstructionSet[] {
+  if (!projectConfigs) return [];
+  const configPath = path.join(getMuxHome(), "config.json");
+  const sets: InstructionSet[] = [];
+  for (const project of getProjects(metadata)) {
+    const normalizedPath = stripTrailingSlashes(project.projectPath);
+    const content = projectConfigs.get(normalizedPath)?.customInstructions?.trim();
+    if (!content) continue;
+    sets.push({
+      scope: INSTRUCTION_SCOPE.PROJECT,
+      projectName: project.projectName,
+      directory: getMuxHome(),
+      files: [
+        {
+          // Suffix with the project path so multi-project workspaces keep a
+          // unique identity per file (the panel keys token counts by path).
+          path: `${configPath}#${normalizedPath}`,
+          filename: "Project instructions",
+          isLocal: false,
+          muxOnly: true,
+          scope: INSTRUCTION_SCOPE.PROJECT,
+          projectName: project.projectName,
+          content,
+          bytes: Buffer.byteLength(content, "utf8"),
+        },
+      ],
+      combinedContent: content,
+    });
+  }
+  return sets;
 }
 
 /**
@@ -485,7 +542,8 @@ export async function loadInstructionSources(
  * 1. Global: ~/.mux/AGENTS.md (always included; Mux-dedicated)
  * 2. Context: workspace/AGENTS.md (+ workspace/.mux/AGENTS.md) plus project repo instructions
  *    for multi-project workspaces, or workspace/AGENTS.md OR project/AGENTS.md for
- *    single-project workspaces
+ *    single-project workspaces, plus per-project `customInstructions` from
+ *    ~/.mux/config.json when options.projectConfigs is provided
  * 3. Model: Extracts "Model: <regex>" sections from Mux-dedicated sources only
  *    (agent definition → .mux/AGENTS.md context files → ~/.mux/AGENTS.md), if modelString provided
  * 4. Mode: Extracts "Mode: <mode>" sections from the same Mux-dedicated sources for every
@@ -526,6 +584,11 @@ export async function buildSystemMessage(
      * injected <mode-...> tag. Duplicates are ignored.
      */
     modes?: readonly string[];
+    /**
+     * Project configs from ~/.mux/config.json, used to append per-project
+     * `customInstructions` (Settings → Instructions) to the prompt.
+     */
+    projectConfigs?: Map<string, ProjectConfig>;
   }
 ): Promise<string> {
   if (!metadata) throw new Error("Invalid workspace metadata: metadata is required");
@@ -561,7 +624,12 @@ export async function buildSystemMessage(
   // back to the resolved root so the parent project's AGENTS.md is still read.
   // For non-sub-project workspaces this is a no-op (root === execution path).
   const workspaceRootPath = subProjectAwareWorkspaceRoot(metadata, runtime, workspacePath);
-  const instructionSources = await loadInstructionSources(metadata, runtime, workspaceRootPath);
+  const instructionSources = await loadInstructionSources(
+    metadata,
+    runtime,
+    workspaceRootPath,
+    options?.projectConfigs
+  );
   // Mux-dedicated per-file contents (<dir>/.mux/AGENTS.md context files, then
   // the global ~/.mux/AGENTS.md set, which is Mux-dedicated by construction).
   // Scoped Model:/Mode: directives are honored ONLY in Mux-dedicated sources

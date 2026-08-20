@@ -3492,6 +3492,24 @@ export const router = (authToken?: string) => {
             return config;
           });
         }),
+      setCustomInstructions: t
+        .input(schemas.projects.setCustomInstructions.input)
+        .output(schemas.projects.setCustomInstructions.output)
+        .handler(async ({ context, input }) => {
+          await context.config.editConfig((config) => {
+            const normalizedPath = stripTrailingSlashes(input.projectPath);
+            const project = config.projects.get(normalizedPath);
+            if (!project) {
+              throw new Error(`Project not found: ${normalizedPath}`);
+            }
+            // Store undefined for blank input to keep config.json minimal.
+            const customInstructions = input.customInstructions ?? undefined;
+            project.customInstructions = customInstructions?.trim()
+              ? customInstructions
+              : undefined;
+            return config;
+          });
+        }),
       remove: t
         .input(schemas.projects.remove.input)
         .output(schemas.projects.remove.output)

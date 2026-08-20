@@ -296,6 +296,10 @@ export const ProjectConfigSchema = z.object({
     description:
       "Whether the user has confirmed trust for this project. Untrusted projects cannot run hooks or user scripts.",
   }),
+  customInstructions: z.string().optional().meta({
+    description:
+      "Custom system prompt appended for every workspace in this project (Settings → Instructions)",
+  }),
 });
 
 export type WorktreeArchiveSnapshotProject = z.infer<typeof WorktreeArchiveSnapshotProjectSchema>;

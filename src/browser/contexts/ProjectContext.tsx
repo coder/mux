@@ -97,6 +97,10 @@ export interface ProjectContext {
   updateSecrets: (projectPath: string, secrets: Secret[]) => Promise<void>;
   updateDisplayName: (projectPath: string, displayName: string | null) => Promise<Result<void>>;
   updateColor: (projectPath: string, color: string | null) => Promise<Result<void>>;
+  updateCustomInstructions: (
+    projectPath: string,
+    customInstructions: string | null
+  ) => Promise<Result<void>>;
 
   assignWorkspaceToSubProject: (
     projectPath: string,
@@ -550,6 +554,20 @@ export function ProjectProvider(props: { children: ReactNode }) {
     [api, refreshProjects]
   );
 
+  const updateCustomInstructions = useCallback(
+    async (projectPath: string, customInstructions: string | null): Promise<Result<void>> => {
+      if (!api) return { success: false, error: "API not connected" };
+      try {
+        await api.projects.setCustomInstructions({ projectPath, customInstructions });
+        await refreshProjects();
+        return { success: true, data: undefined };
+      } catch (error) {
+        return { success: false, error: getErrorMessage(error) };
+      }
+    },
+    [api, refreshProjects]
+  );
+
   const assignWorkspaceToSubProject = useCallback(
     async (
       projectPath: string,
@@ -602,6 +620,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       updateSecrets,
       updateDisplayName,
       updateColor,
+      updateCustomInstructions,
       assignWorkspaceToSubProject,
     }),
     [
@@ -627,6 +646,7 @@ export function ProjectProvider(props: { children: ReactNode }) {
       updateSecrets,
       updateDisplayName,
       updateColor,
+      updateCustomInstructions,
       assignWorkspaceToSubProject,
     ]
   );

@@ -120,6 +120,7 @@ import {
   KeyRound,
   Palette,
   Pencil,
+  ScrollText,
   Trash,
   Plus,
 } from "lucide-react";
@@ -1426,6 +1427,19 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     [MOBILE_BREAKPOINT, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop, settings]
   );
 
+  const handleOpenInstructions = useCallback(
+    (projectPath: string) => {
+      // Same mobile collapse behavior as handleOpenSecrets.
+      if (window.innerWidth <= MOBILE_BREAKPOINT && !collapsed) {
+        persistMobileSidebarScrollTop(mobileScrollTopRef.current);
+        onToggleCollapsed();
+      }
+      // Navigate to Settings → Instructions with the project pre-selected.
+      settings.open("instructions", { instructionsProjectPath: projectPath });
+    },
+    [MOBILE_BREAKPOINT, collapsed, onToggleCollapsed, persistMobileSidebarScrollTop, settings]
+  );
+
   const closeProjectContextMenu = useCallback(() => {
     projectContextMenu.close();
     setProjectMenuTargetPath(null);
@@ -1543,6 +1557,15 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
     handleOpenSecrets(projectMenuTargetPath);
     closeProjectContextMenu();
   }, [closeProjectContextMenu, handleOpenSecrets, projectMenuTargetPath]);
+
+  const handleProjectMenuInstructions = useCallback(() => {
+    if (!projectMenuTargetPath) {
+      return;
+    }
+
+    handleOpenInstructions(projectMenuTargetPath);
+    closeProjectContextMenu();
+  }, [closeProjectContextMenu, handleOpenInstructions, projectMenuTargetPath]);
 
   const handleProjectMenuDelete = useCallback(
     (buttonElement?: HTMLElement) => {
@@ -3336,6 +3359,14 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
               disabled={!hasProjectMenuTarget}
               onClick={() => {
                 handleProjectMenuManageSecrets();
+              }}
+            />
+            <PositionedMenuItem
+              icon={<ScrollText className="h-4 w-4 shrink-0" strokeWidth={1.8} />}
+              label="Instructions"
+              disabled={!hasProjectMenuTarget}
+              onClick={() => {
+                handleProjectMenuInstructions();
               }}
             />
             <PositionedMenuItem

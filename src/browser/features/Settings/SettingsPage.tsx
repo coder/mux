@@ -17,6 +17,7 @@ import {
   Server,
   Lock,
   ArchiveRestore,
+  ScrollText,
 } from "lucide-react";
 import { useSettings } from "@/browser/contexts/SettingsContext";
 import { useOnboardingPause } from "@/browser/features/SplashScreens/SplashScreenProvider";
@@ -32,6 +33,7 @@ import { MemorySection } from "./Sections/MemorySection";
 import { Button } from "@/browser/components/Button/Button";
 import { MCPSettingsSection } from "./Sections/MCPSettingsSection";
 import { SecretsSection } from "./Sections/SecretsSection";
+import { InstructionsSection } from "./Sections/InstructionsSection";
 import { LayoutsSection } from "./Sections/LayoutsSection";
 import { RuntimesSection } from "./Sections/RuntimesSection";
 import { ExperimentsSection } from "./Sections/ExperimentsSection";
@@ -55,6 +57,12 @@ const BASE_SECTIONS: SettingsSection[] = [
     label: "Agents",
     icon: <Bot className="h-4 w-4" />,
     component: TasksSection,
+  },
+  {
+    id: "instructions",
+    label: "Instructions",
+    icon: <ScrollText className="h-4 w-4" />,
+    component: InstructionsSection,
   },
   {
     id: "providers",

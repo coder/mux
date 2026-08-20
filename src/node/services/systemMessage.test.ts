@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { buildSystemMessage, extractToolInstructions, readToolInstructions } from "./systemMessage";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
+import type { ProjectConfig } from "@/common/types/project";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 
 const extractTagContent = (message: string, tagName: string): string | null => {
@@ -319,6 +320,115 @@ Include the secondary project context too.
     const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
     expect(customInstructions).toContain("Use the primary project context.");
     expect(customInstructions).toContain("Include the secondary project context too.");
+  });
+
+  describe("project customInstructions from config", () => {
+    const singleProjectMetadata = (projectPath: string): WorkspaceMetadata => ({
+      id: "test-workspace",
+      name: "test-workspace",
+      projectName: "test-project",
+      projectPath,
+      runtimeConfig: DEFAULT_RUNTIME_CONFIG,
+    });
+
+    test("appends only the workspace's own project instructions", async () => {
+      const projectConfigs = new Map<string, ProjectConfig>([
+        [projectDir, { workspaces: [], customInstructions: "Never touch the legacy folder." }],
+        [
+          path.join(tempDir, "other-project"),
+          { workspaces: [], customInstructions: "Unrelated project guidance." },
+        ],
+      ]);
+
+      const systemMessage = await buildSystemMessage(
+        singleProjectMetadata(projectDir),
+        runtime,
+        workspaceDir,
+        undefined,
+        undefined,
+        undefined,
+        { projectConfigs }
+      );
+
+      const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+      expect(customInstructions).toContain("Never touch the legacy folder.");
+      expect(customInstructions).not.toContain("Unrelated project guidance.");
+    });
+
+    test("skips blank customInstructions", async () => {
+      const projectConfigs = new Map<string, ProjectConfig>([
+        [projectDir, { workspaces: [], customInstructions: "   \n\t" }],
+      ]);
+
+      const systemMessage = await buildSystemMessage(
+        singleProjectMetadata(projectDir),
+        runtime,
+        workspaceDir,
+        undefined,
+        undefined,
+        undefined,
+        { projectConfigs }
+      );
+
+      expect(systemMessage).not.toContain("<custom-instructions>");
+    });
+
+    test("includes customInstructions from every project in a multi-project workspace", async () => {
+      const { metadata } = await createMultiProjectFixture();
+      const projectConfigs = new Map<string, ProjectConfig>(
+        (metadata.projects ?? []).map((project, index) => [
+          project.projectPath,
+          { workspaces: [], customInstructions: `Guidance for project number ${index + 1}.` },
+        ])
+      );
+
+      const systemMessage = await buildSystemMessage(
+        metadata,
+        runtime,
+        workspaceDir,
+        undefined,
+        undefined,
+        undefined,
+        { projectConfigs }
+      );
+
+      const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+      expect(customInstructions).toContain("Guidance for project number 1.");
+      expect(customInstructions).toContain("Guidance for project number 2.");
+    });
+
+    test("honors scoped Model: sections like other Mux-dedicated sources", async () => {
+      const projectConfigs = new Map<string, ProjectConfig>([
+        [
+          projectDir,
+          {
+            workspaces: [],
+            customInstructions: `Unscoped project guidance.
+## Model: sonnet
+Scoped project model guidance.
+`,
+          },
+        ],
+      ]);
+
+      const systemMessage = await buildSystemMessage(
+        singleProjectMetadata(projectDir),
+        runtime,
+        workspaceDir,
+        undefined,
+        "anthropic:claude-3.5-sonnet",
+        undefined,
+        { projectConfigs }
+      );
+
+      const customInstructions = extractTagContent(systemMessage, "custom-instructions") ?? "";
+      expect(customInstructions).toContain("Unscoped project guidance.");
+      expect(customInstructions).not.toContain("Scoped project model guidance.");
+
+      const modelSection =
+        extractTagContent(systemMessage, "model-anthropic-claude-3-5-sonnet") ?? "";
+      expect(modelSection).toContain("Scoped project model guidance.");
+    });
   });
 
   test("preserves bash tool instructions from every multi-project context source", async () => {
