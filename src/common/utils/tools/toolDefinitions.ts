@@ -35,6 +35,7 @@ import { z } from "zod";
 import {
   AgentIdSchema,
   AgentSkillPackageSchema,
+  BestOfGroupSchema,
   SkillNameSchema,
   WorkflowRunRecordSchema,
   WorkflowRunStatusSchema,
@@ -1370,6 +1371,7 @@ export const TaskListToolTaskSchema = z
     workspaceId: z.string().optional(),
     modelString: z.string().optional(),
     thinkingLevel: TaskThinkingLevelSchema.optional(),
+    bestOf: BestOfGroupSchema.optional(),
     workflowProgress: WorkflowProgressSummarySchema.optional(),
     depth: z.number().int().min(0),
   })
@@ -2290,7 +2292,7 @@ export const TOOL_DEFINITIONS = {
     description:
       "List descendant tasks for the current workspace, including status + metadata. " +
       "This includes sub-agent tasks, background bash tasks, and top-level workflow runs, but omits workflow-owned sub-agents/background bash tasks whose reports are consumed through parent workflow runs. " +
-      "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks, inactive persistent sub-agents, and resumable workflow runs. The default statuses find unfinished work; request `reported` explicitly for completed persistent sub-agents. " +
+      "Use this after compaction, interruptions, workflow_run errors/aborts, or an app restart to rediscover active tasks, inactive persistent sub-agents, and resumable workflow runs. Sub-agent rows from grouped runs include `bestOf` metadata so they can be distinguished from the standalone reusable bench. The default statuses find unfinished work; request `reported` explicitly for completed persistent sub-agents. " +
       "When recovering an uncertain workflow_run, omit statuses first or include pending/running/backgrounded as well as interrupted/failed/completed; terminal-only filters can hide unfinished workflow runs. Pending runs may need workflow_resume because no runner may be active yet. " +
       "Workflow rows may include compact `workflowProgress` so callers can see the latest phase before deciding whether to await, resume, or leave the run alone. " +
       "The legacy includeArchived option only affects archived workspace-turn and bash records; sub-agents remain one inactive/active task identity. " +
