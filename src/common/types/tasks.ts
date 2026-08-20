@@ -7,7 +7,7 @@ import type {
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import assert from "@/common/utils/assert";
 import { normalizeAgentId } from "@/common/utils/agentIds";
-import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
+import { coerceOpenAIReasoningMode, coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export type { SubagentAiDefaults, SubagentAiDefaultsEntry };
 export { TASK_SETTINGS_LIMITS } from "@/common/config/schemas/taskSettings";
@@ -64,12 +64,13 @@ export function normalizeSubagentAiDefaults(raw: unknown): SubagentAiDefaults {
         : undefined;
 
     const thinkingLevel: ThinkingLevel | undefined = coerceThinkingLevel(entry.thinkingLevel);
+    const reasoningMode = coerceOpenAIReasoningMode(entry.reasoningMode);
 
-    if (!modelString && !thinkingLevel) {
+    if (!modelString && !thinkingLevel && !reasoningMode) {
       continue;
     }
 
-    result[agentType] = { modelString, thinkingLevel };
+    result[agentType] = { modelString, thinkingLevel, reasoningMode };
   }
 
   return result;

@@ -1893,8 +1893,8 @@ export class TaskService {
       providersConfig
     );
 
-    // Pro reasoning mode is a per-workspace choice (agent/subagent defaults do
-    // not carry it), so tasks inherit it from the parent's persisted settings.
+    // Pro reasoning mode: configured sub-agent/agent defaults win (mirroring
+    // thinkingLevel), then tasks inherit the parent's persisted settings.
     // The user toggles pro on the parent's ACTIVE agent, so the target agent's
     // bucket rarely carries one — fall back to the parent's active-agent bucket
     // (persisted selected agent, defaulting to exec), then legacy settings.
@@ -1905,7 +1905,10 @@ export class TaskService {
       normalizeAgentId(params.parentMeta.agentId)
     );
     const effectiveReasoningMode = coerceOpenAIReasoningMode(
-      parentAiSettings?.reasoningMode ?? activeParentAiSettings?.reasoningMode
+      subagentDefault?.reasoningMode ??
+        agentDefault?.reasoningMode ??
+        parentAiSettings?.reasoningMode ??
+        activeParentAiSettings?.reasoningMode
     );
 
     return {
@@ -3702,7 +3705,8 @@ export class TaskService {
     const reasoningMode = coerceOpenAIReasoningMode(
       targetAiSettings != null
         ? targetAiSettings.reasoningMode
-        : (parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
+        : (workspaceTurnAgentDefault?.reasoningMode ??
+            parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
             activeParentAiSettings?.reasoningMode ??
             parentMeta.aiSettings?.reasoningMode)
     );

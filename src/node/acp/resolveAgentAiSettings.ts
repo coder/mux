@@ -7,10 +7,9 @@ export interface ResolvedAiSettings {
   model: string;
   thinkingLevel: ThinkingLevel;
   /**
-   * OpenAI pro reasoning mode. A per-workspace choice: populated only when
-   * session state is read from workspace metadata buckets (agent AI defaults
-   * never carry it), and threaded into prompt sends so ACP sessions do not
-   * silently downgrade pro workspaces to standard.
+   * OpenAI pro reasoning mode, resolved from configured agent AI defaults or
+   * workspace metadata buckets and threaded into prompt sends so ACP sessions
+   * do not silently downgrade pro workspaces to standard.
    */
   reasoningMode?: OpenAIReasoningMode;
 }
@@ -23,16 +22,23 @@ function getFallbackBaseAgentId(agentId: string): string {
   return agentId === DEFAULT_PLAN_AGENT_ID ? DEFAULT_PLAN_AGENT_ID : DEFAULT_EXEC_AGENT_ID;
 }
 
+interface ConfigAiDefaultsEntry {
+  modelString?: string;
+  thinkingLevel?: ThinkingLevel;
+  reasoningMode?: OpenAIReasoningMode;
+}
+
 function resolveInheritedConfigDefaults(
   agentId: string,
   agentDefsById: ReadonlyMap<string, { base?: string }>,
-  agentAiDefaults: Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>
-): { modelString?: string; thinkingLevel?: ThinkingLevel } | undefined {
+  agentAiDefaults: Record<string, ConfigAiDefaultsEntry>
+): ConfigAiDefaultsEntry | undefined {
   const visited = new Set<string>([agentId]);
   let cursor = agentId;
 
   let inheritedModel: string | undefined;
   let inheritedThinkingLevel: ThinkingLevel | undefined;
+  let inheritedReasoningMode: OpenAIReasoningMode | undefined;
 
   while (true) {
     const baseAgentId = agentDefsById.get(cursor)?.base ?? getFallbackBaseAgentId(cursor);
@@ -47,8 +53,13 @@ function resolveInheritedConfigDefaults(
       // still provide missing fields.
       inheritedModel ??= inheritedDefaults.modelString;
       inheritedThinkingLevel ??= inheritedDefaults.thinkingLevel;
+      inheritedReasoningMode ??= inheritedDefaults.reasoningMode;
 
-      if (inheritedModel != null && inheritedThinkingLevel != null) {
+      if (
+        inheritedModel != null &&
+        inheritedThinkingLevel != null &&
+        inheritedReasoningMode != null
+      ) {
         break;
       }
     }
@@ -57,13 +68,14 @@ function resolveInheritedConfigDefaults(
     cursor = baseAgentId;
   }
 
-  if (inheritedModel == null && inheritedThinkingLevel == null) {
+  if (inheritedModel == null && inheritedThinkingLevel == null && inheritedReasoningMode == null) {
     return undefined;
   }
 
   return {
     modelString: inheritedModel,
     thinkingLevel: inheritedThinkingLevel,
+    reasoningMode: inheritedReasoningMode,
   };
 }
 
@@ -120,8 +132,11 @@ export async function resolveAgentAiSettings(
     descriptorDefaults?.thinkingLevel ??
     DEFAULT_THINKING_LEVEL;
 
+  const reasoningMode = directDefaults?.reasoningMode ?? inheritedDefaults?.reasoningMode;
+
   return {
     model,
     thinkingLevel,
+    ...(reasoningMode != null ? { reasoningMode } : {}),
   };
 }

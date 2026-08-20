@@ -60,6 +60,7 @@ import { Ok, Err } from "@/common/types/result";
 import {
   coerceOpenAIReasoningMode,
   coerceThinkingLevel,
+  type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import {
@@ -3739,23 +3740,28 @@ export class AgentSession {
   private getPreferredCompactionSettings(): {
     model: string | null;
     thinkingLevel: ThinkingLevel | null;
+    reasoningMode: OpenAIReasoningMode | null;
   } {
     try {
       const maybeConfig = this.config as Config & {
         loadConfigOrDefault?: () => {
-          agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
+          agentAiDefaults?: Record<
+            string,
+            { modelString?: string; thinkingLevel?: string; reasoningMode?: string }
+          >;
         } | null;
       };
       if (typeof maybeConfig.loadConfigOrDefault !== "function") {
-        return { model: null, thinkingLevel: null };
+        return { model: null, thinkingLevel: null, reasoningMode: null };
       }
 
       const compactDefaults = maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact;
       const thinkingLevel = coerceThinkingLevel(compactDefaults?.thinkingLevel) ?? null;
+      const reasoningMode = coerceOpenAIReasoningMode(compactDefaults?.reasoningMode) ?? null;
 
       const compactModelString = compactDefaults?.modelString;
       if (typeof compactModelString !== "string") {
-        return { model: null, thinkingLevel };
+        return { model: null, thinkingLevel, reasoningMode };
       }
 
       // Gateway-preserving: a cross-typed Coder compaction default
@@ -3763,12 +3769,12 @@ export class AgentSession {
       // openai:<claude>, which would bypass the explicitly selected route.
       const normalized = normalizeSelectedModel(compactModelString.trim());
       if (!isValidModelFormat(normalized)) {
-        return { model: null, thinkingLevel };
+        return { model: null, thinkingLevel, reasoningMode };
       }
 
-      return { model: normalized, thinkingLevel };
+      return { model: normalized, thinkingLevel, reasoningMode };
     } catch {
-      return { model: null, thinkingLevel: null };
+      return { model: null, thinkingLevel: null, reasoningMode: null };
     }
   }
 
@@ -3805,6 +3811,11 @@ export class AgentSession {
         undefined,
         this.getProvidersConfigSafe()
       ),
+      // Compact-agent default wins over the stream's mode (same order as
+      // thinkingLevel); the send path re-gates per model/route.
+      ...(compactSettings.reasoningMode != null
+        ? { reasoningMode: compactSettings.reasoningMode }
+        : {}),
       maxOutputTokens: undefined,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
     };

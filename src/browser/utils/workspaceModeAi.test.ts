@@ -133,6 +133,36 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result.resolvedReasoningMode).toBe("pro");
   });
 
+  test("applies a configured agent-default pro mode over the workspace's current mode", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "standard",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
+  test("agent defaults without reasoningMode fall through to the workspace mode", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol" },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
   test("inherits the workspace's current pro mode during background sync", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",

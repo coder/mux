@@ -10,7 +10,7 @@ import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import { coerceThinkingLevel } from "@/common/types/thinking";
+import { coerceOpenAIReasoningMode, coerceThinkingLevel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
 /**
@@ -40,6 +40,11 @@ export function applyCompactionOverrides(
   const requestedThinking =
     coerceThinkingLevel(preferredThinking ?? baseOptions.thinkingLevel) ?? "off";
   const thinkingLevel = enforceThinkingPolicy(compactionModel, requestedThinking);
+  // Same defaults-first order as thinkingLevel; the send path re-gates per
+  // model/route so this is inert for models without pro mode.
+  const reasoningMode = coerceOpenAIReasoningMode(
+    agentAiDefaults.compact?.reasoningMode ?? baseOptions.reasoningMode
+  );
 
   return {
     ...baseOptions,
@@ -48,6 +53,7 @@ export function applyCompactionOverrides(
     skipAiSettingsPersistence: true,
     model: compactionModel,
     thinkingLevel,
+    ...(reasoningMode != null ? { reasoningMode } : {}),
     maxOutputTokens: compactData.maxOutputTokens,
     // Disable all tools during compaction - regex .* matches all tool names
     toolPolicy: [{ regex_match: ".*", action: "disable" }],

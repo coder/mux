@@ -3,7 +3,7 @@ import { z } from "zod";
 import { AgentIdSchema, RuntimeEnablementIdSchema } from "../../schemas/ids";
 import { ProjectConfigSchema } from "../../schemas/project";
 import { RuntimeEnablementOverridesSchema } from "../../schemas/runtimeEnablement";
-import { ThinkingLevelSchema } from "../../types/thinking";
+import { OpenAIReasoningModeSchema, ThinkingLevelSchema } from "../../types/thinking";
 import { CODER_ARCHIVE_BEHAVIORS } from "../coderArchiveBehavior";
 import { WORKTREE_ARCHIVE_BEHAVIORS } from "../worktreeArchiveBehavior";
 import { UserPreferencesSchema } from "./userPreferences";
@@ -22,6 +22,9 @@ export type { TaskSettings } from "./taskSettings";
 export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
+  // Sparse like the other fields: only explicit "pro" is persisted; absent
+  // inherits the workspace's current reasoning mode.
+  reasoningMode: OpenAIReasoningModeSchema.optional(),
   enabled: z.boolean().optional(),
   advisorEnabled: z.boolean().optional(),
 });
@@ -31,6 +34,7 @@ export const AgentAiDefaultsSchema = z.record(AgentIdSchema, AgentAiDefaultsEntr
 export const SubagentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
+  reasoningMode: OpenAIReasoningModeSchema.optional(),
 });
 
 export const SubagentAiDefaultsSchema = z.record(AgentIdSchema, SubagentAiDefaultsEntrySchema);

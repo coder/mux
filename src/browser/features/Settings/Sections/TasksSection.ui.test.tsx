@@ -21,6 +21,8 @@ let apiMock: {
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({ api: apiMock }),
+  // ThinkingSelectorControl's useMinThinkingLevels degrades to defaults without an API.
+  useOptionalAPI: () => null,
 }));
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
@@ -38,6 +40,7 @@ void mock.module("@/browser/hooks/useModelsFromSettings", () => ({
       "anthropic:foo",
       "anthropic:ui-exec",
       "openai:gpt-5-pro",
+      "openai:gpt-5.6-sol",
       "openai:subagent-model",
       "xai:grok-code-fast-1",
     ],
@@ -80,7 +83,7 @@ void mock.module("@/browser/components/SelectPrimitive/SelectPrimitive", () => (
     children: React.ReactNode;
   }) => (
     <select
-      aria-label="Reasoning"
+      aria-label="Select"
       value={props.value}
       onChange={(event) => props.onValueChange(event.currentTarget.value)}
     >
@@ -146,6 +149,14 @@ function getLatestSavePayload(saveConfig: ReturnType<typeof mock>) {
     agentAiDefaults: AgentAiDefaults;
     subagentAiDefaults?: SubagentAiDefaults;
   };
+}
+
+// The Reasoning control is the shared ThinkingSelectorControl (inline menu, not
+// a native select), so tests drive it by opening the trigger and clicking rows.
+function selectReasoningOption(container: HTMLElement, optionName: string) {
+  fireEvent.click(within(container).getByRole("button", { name: "Reasoning" }));
+  const listbox = within(container).getByRole("listbox", { name: "Reasoning effort" });
+  fireEvent.click(within(listbox).getByRole("option", { name: optionName }));
 }
 
 describe("TasksSection Exec subagent defaults", () => {
@@ -228,9 +239,7 @@ describe("TasksSection Exec subagent defaults", () => {
     fireEvent.change(within(card).getByLabelText("Model"), {
       target: { value: "" },
     });
-    fireEvent.change(within(card).getByLabelText("Reasoning"), {
-      target: { value: "__inherit__" },
-    });
+    selectReasoningOption(card, "Inherit");
 
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
@@ -356,9 +365,7 @@ describe("TasksSection Exec subagent defaults", () => {
     });
     const row = await view.findByRole("group", { name: "Exec defaults" });
 
-    fireEvent.change(within(row).getByLabelText("Reasoning"), {
-      target: { value: "high" },
-    });
+    selectReasoningOption(row, "High");
 
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
@@ -403,5 +410,63 @@ describe("TasksSection Exec subagent defaults", () => {
     const payload = getLatestSavePayload(view.saveConfig);
 
     expect(payload.subagentAiDefaults).toEqual({});
+  });
+
+  test("toggling Pro mode persists the agent default and its legacy sub-agent mirror", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        explore: { modelString: "openai:gpt-5.6-sol" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    const proToggle = card.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    fireEvent.click(proToggle);
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore?.reasoningMode).toBe("pro");
+    expect(payload.subagentAiDefaults?.explore?.reasoningMode).toBe("pro");
+  });
+
+  test("toggling Pro mode off removes the persisted reasoning mode", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        explore: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    const proToggle = card.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    expect(proToggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(proToggle);
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore?.reasoningMode).toBeUndefined();
+    expect(payload.agentAiDefaults.explore?.modelString).toBe("openai:gpt-5.6-sol");
+  });
+
+  test("hides the Pro mode toggle for models without pro support", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        explore: { modelString: "anthropic:foo" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+
+    expect(within(card).getByRole("listbox", { name: "Reasoning effort" })).toBeTruthy();
+    expect(card.querySelector('[data-component="ProModeToggle"]')).toBeNull();
   });
 });

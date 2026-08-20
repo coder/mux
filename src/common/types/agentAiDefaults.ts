@@ -4,7 +4,7 @@ import type {
 } from "@/common/config/schemas/appConfigOnDisk";
 import { AgentIdSchema } from "@/common/orpc/schemas";
 import { normalizeAgentId } from "@/common/utils/agentIds";
-import { coerceThinkingLevel, type ThinkingLevel } from "./thinking";
+import { coerceOpenAIReasoningMode, coerceThinkingLevel, type ThinkingLevel } from "./thinking";
 
 export type { AgentAiDefaults, AgentAiDefaultsEntry };
 
@@ -27,16 +27,23 @@ export function normalizeAgentAiDefaults(raw: unknown): AgentAiDefaults {
         : undefined;
 
     const thinkingLevel: ThinkingLevel | undefined = coerceThinkingLevel(entry.thinkingLevel);
+    const reasoningMode = coerceOpenAIReasoningMode(entry.reasoningMode);
 
     const enabled = typeof entry.enabled === "boolean" ? entry.enabled : undefined;
     const advisorEnabled =
       typeof entry.advisorEnabled === "boolean" ? entry.advisorEnabled : undefined;
 
-    if (!modelString && !thinkingLevel && enabled === undefined && advisorEnabled === undefined) {
+    if (
+      !modelString &&
+      !thinkingLevel &&
+      !reasoningMode &&
+      enabled === undefined &&
+      advisorEnabled === undefined
+    ) {
       continue;
     }
 
-    result[agentId] = { modelString, thinkingLevel, enabled, advisorEnabled };
+    result[agentId] = { modelString, thinkingLevel, reasoningMode, enabled, advisorEnabled };
   }
 
   return result;

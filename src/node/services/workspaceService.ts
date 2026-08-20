@@ -10833,6 +10833,7 @@ export class WorkspaceService extends EventEmitter {
       {
         model: config.agentAiDefaults?.[agentId]?.modelString,
         thinkingLevel: config.agentAiDefaults?.[agentId]?.thinkingLevel,
+        reasoningMode: config.agentAiDefaults?.[agentId]?.reasoningMode,
       },
       {
         model: execAgentSettings?.model,
@@ -10843,6 +10844,7 @@ export class WorkspaceService extends EventEmitter {
         ? {
             model: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
             thinkingLevel: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.thinkingLevel,
+            reasoningMode: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.reasoningMode,
           }
         : {},
       { model: DEFAULT_MODEL },
@@ -11091,10 +11093,12 @@ export class WorkspaceService extends EventEmitter {
     const normalizedThinkingLevel =
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
-    // Same persisted-settings fallback order as thinkingLevel (global defaults
-    // and activity snapshots do not carry reasoningMode).
+    // Same fallback order as thinkingLevel (activity snapshots do not carry
+    // reasoningMode).
     const reasoningMode = coerceOpenAIReasoningMode(
-      compactAgentSettings?.reasoningMode ?? execAgentSettings?.reasoningMode
+      compactAgentSettings?.reasoningMode ??
+        globalCompactDefaults?.reasoningMode ??
+        execAgentSettings?.reasoningMode
     );
 
     return {
@@ -11497,10 +11501,13 @@ export class WorkspaceService extends EventEmitter {
     const normalizedThinkingLevel =
       coerceThinkingLevel(requestedThinking) ?? WORKSPACE_DEFAULTS.thinkingLevel;
 
-    // Same persisted-settings fallback order as thinkingLevel (global defaults
-    // and activity snapshots do not carry reasoningMode).
+    // Same fallback order as thinkingLevel (activity snapshots do not carry
+    // reasoningMode).
     const reasoningMode = coerceOpenAIReasoningMode(
-      agentSettings?.reasoningMode ?? execAgentSettings?.reasoningMode
+      agentSettings?.reasoningMode ??
+        globalAgentDefaults?.reasoningMode ??
+        execAgentSettings?.reasoningMode ??
+        globalExecDefaults?.reasoningMode
     );
 
     return {

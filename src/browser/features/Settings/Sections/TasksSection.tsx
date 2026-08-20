@@ -6,6 +6,7 @@ import { Input } from "@/browser/components/Input/Input";
 import { Switch } from "@/browser/components/Switch/Switch";
 import { Button } from "@/browser/components/Button/Button";
 import { ModelSelector } from "@/browser/components/ModelSelector/ModelSelector";
+import { ThinkingSelectorControl } from "@/browser/components/ThinkingSelector/ThinkingSelector";
 import {
   Select,
   SelectContent,
@@ -43,12 +44,14 @@ import {
   type TaskSettings,
 } from "@/common/types/tasks";
 import {
+  coerceThinkingLevel,
   getThinkingOptionLabel,
   THINKING_LEVEL_OFF,
+  type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import { getErrorMessage } from "@/common/utils/errors";
-import { enforceThinkingPolicy, getThinkingPolicyForModel } from "@/common/utils/thinking/policy";
+import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
 import { WORKSPACE_DEFAULTS } from "@/constants/workspaceDefaults";
 import { FALLBACK_AGENTS, deriveTasksSectionAgentGroups } from "./TasksSection.agents";
@@ -85,6 +88,7 @@ function updateAgentDefaultEntry(
   if (
     !updated.modelString &&
     !updated.thinkingLevel &&
+    !updated.reasoningMode &&
     updated.enabled === undefined &&
     updated.advisorEnabled === undefined
   ) {
@@ -112,7 +116,11 @@ function updateSubagentDefaultEntry(
     updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
   }
 
-  if (updated.modelString === undefined && updated.thinkingLevel === undefined) {
+  if (
+    updated.modelString === undefined &&
+    updated.thinkingLevel === undefined &&
+    updated.reasoningMode === undefined
+  ) {
     delete next[normalizedId];
   } else {
     next[normalizedId] = updated;
@@ -139,7 +147,11 @@ function getSubagentAiDefaultsForSave(
       continue;
     }
 
-    if (entry.modelString === undefined && entry.thinkingLevel === undefined) {
+    if (
+      entry.modelString === undefined &&
+      entry.thinkingLevel === undefined &&
+      entry.reasoningMode === undefined
+    ) {
       // Legacy mirrored subagent entries are derived from agent defaults, not
       // user-managed sparse overrides, so clearing AI fields must remove stale
       // mirrors before router reconciliation can restore them.
@@ -150,6 +162,7 @@ function getSubagentAiDefaultsForSave(
     next[agentId] = {
       modelString: entry.modelString,
       thinkingLevel: entry.thinkingLevel,
+      reasoningMode: entry.reasoningMode,
     };
   }
 
@@ -323,6 +336,9 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
     if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
       return false;
     }
+    if ((aEntry?.reasoningMode ?? undefined) !== (bEntry?.reasoningMode ?? undefined)) {
+      return false;
+    }
     if ((aEntry?.enabled ?? undefined) !== (bEntry?.enabled ?? undefined)) {
       return false;
     }
@@ -358,6 +374,9 @@ function areSubagentAiDefaultsEqual(a: SubagentAiDefaults, b: SubagentAiDefaults
     if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
       return false;
     }
+    if ((aEntry?.reasoningMode ?? undefined) !== (bEntry?.reasoningMode ?? undefined)) {
+      return false;
+    }
   }
 
   return true;
@@ -369,6 +388,7 @@ function coerceAgentId(value: unknown): string {
 interface AiDefaultsControlsProps {
   modelValue: string;
   thinkingValue: string;
+  reasoningModeValue: OpenAIReasoningMode;
   effectiveModel: string;
   models: string[];
   hiddenModelsForSelector: string[];
@@ -380,10 +400,10 @@ interface AiDefaultsControlsProps {
   showThinkingResetButton?: boolean;
   onModelChange: (value: string) => void;
   onThinkingChange: (value: string) => void;
+  onReasoningModeChange: (mode: OpenAIReasoningMode) => void;
 }
 
 function AiDefaultsControls(props: AiDefaultsControlsProps) {
-  const allowedThinkingLevels = getThinkingPolicyForModel(props.effectiveModel);
   const inheritLabel = props.inheritLabel ?? "Inherit";
   const resetModelLabel = props.resetModelLabel ?? "Reset";
   const resetThinkingLabel = props.resetThinkingLabel ?? "Reset";
@@ -423,19 +443,21 @@ function AiDefaultsControls(props: AiDefaultsControlsProps) {
       <div className="space-y-1">
         <div className="text-muted text-xs">Reasoning</div>
         <div className="flex items-center gap-2">
-          <Select value={props.thinkingValue} onValueChange={props.onThinkingChange}>
-            <SelectTrigger className="border-border-medium bg-modal-bg h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={INHERIT}>{inheritLabel}</SelectItem>
-              {allowedThinkingLevels.map((level) => (
-                <SelectItem key={level} value={level}>
-                  {getThinkingOptionLabel(level, props.effectiveModel)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* Shared composer picker so settings inherit the same features
+              (route-aware Pro mode, provider Fast mode) as the chat input. */}
+          <ThinkingSelectorControl
+            modelString={props.effectiveModel}
+            thinkingLevel={coerceThinkingLevel(props.thinkingValue) ?? THINKING_LEVEL_OFF}
+            onThinkingLevelChange={(level) => props.onThinkingChange(level)}
+            reasoningMode={props.reasoningModeValue}
+            onReasoningModeChange={props.onReasoningModeChange}
+            variant="box"
+            inheritOption={{
+              label: inheritLabel,
+              selected: props.thinkingValue === INHERIT,
+              onSelect: () => props.onThinkingChange(INHERIT),
+            }}
+          />
           {props.showThinkingResetButton === true && props.thinkingValue !== INHERIT ? (
             <Button
               type="button"
@@ -783,6 +805,19 @@ export function TasksSection() {
     );
   };
 
+  const setAgentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentDefaultEntry(prev, agentId, (updated) => {
+        // "standard" is the wire default; keep entries sparse by only persisting "pro".
+        if (mode === "pro") {
+          updated.reasoningMode = "pro";
+        } else {
+          delete updated.reasoningMode;
+        }
+      })
+    );
+  };
+
   const setSubagentModel = (agentId: string, value: string) => {
     setSubagentAiDefaults((prev) =>
       updateSubagentDefaultEntry(prev, agentId, (updated) => {
@@ -804,6 +839,18 @@ export function TasksSection() {
         }
 
         updated.thinkingLevel = value as ThinkingLevel;
+      })
+    );
+  };
+
+  const setSubagentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
+    setSubagentAiDefaults((prev) =>
+      updateSubagentDefaultEntry(prev, agentId, (updated) => {
+        if (mode === "pro") {
+          updated.reasoningMode = "pro";
+        } else {
+          delete updated.reasoningMode;
+        }
       })
     );
   };
@@ -1032,6 +1079,7 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
+          reasoningModeValue={entry?.reasoningMode ?? "standard"}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
@@ -1045,6 +1093,12 @@ export function TasksSection() {
             setAgentThinking(agent.id, value);
             if (writesSubagentAiDefaults) {
               setSubagentThinking(agent.id, value);
+            }
+          }}
+          onReasoningModeChange={(mode) => {
+            setAgentReasoningMode(agent.id, mode);
+            if (writesSubagentAiDefaults) {
+              setSubagentReasoningMode(agent.id, mode);
             }
           }}
         />
@@ -1084,6 +1138,7 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
+          reasoningModeValue={entry?.reasoningMode ?? uiExecEntry?.reasoningMode ?? "standard"}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
@@ -1095,6 +1150,7 @@ export function TasksSection() {
           showThinkingResetButton
           onModelChange={(value) => setSubagentModel("exec", value)}
           onThinkingChange={(value) => setSubagentThinking("exec", value)}
+          onReasoningModeChange={(mode) => setSubagentReasoningMode("exec", mode)}
         />
       </div>
     );
@@ -1151,11 +1207,13 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
+          reasoningModeValue={entry?.reasoningMode ?? "standard"}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
           onModelChange={(value) => setAgentModel(agentId, value)}
           onThinkingChange={(value) => setAgentThinking(agentId, value)}
+          onReasoningModeChange={(mode) => setAgentReasoningMode(agentId, mode)}
         />
       </div>
     );
