@@ -56,8 +56,10 @@ import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
+import { resolveConfiguredReasoningModeDefault } from "@/browser/utils/workspaceModeAi";
 import {
   getModelKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getInputKey,
@@ -764,7 +766,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
   const { open } = useSettings();
   const { selectedWorkspace, beginWorkspaceCreation } = useWorkspaceContext();
-  const { agentId, currentAgent } = useAgent();
+  const { agentId, currentAgent, agents } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
   const agentColor = currentAgent?.uiColor ?? "var(--color-border-light)";
@@ -1300,6 +1302,17 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
       agentAiDefaults[normalizedAgentId]?.thinkingLevel ?? existingThinking ?? "off";
     const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
 
+    // Configured reasoning defaults (direct or base-chain) must reach the
+    // first turn of a new workspace too, not just post-creation agent syncs.
+    const reasoningKey = getReasoningModeKey(scopeId);
+    const existingReasoning = readPersistedState<OpenAIReasoningMode>(reasoningKey, "standard");
+    const resolvedReasoning =
+      resolveConfiguredReasoningModeDefault(
+        normalizedAgentId,
+        agentAiDefaults,
+        new Map(agents.map((agent) => [agent.id, agent.base]))
+      ) ?? existingReasoning;
+
     if (existingModel !== resolvedModel) {
       setWorkspaceModelWithOrigin(scopeId, resolvedModel, isExplicitAgentSwitch ? "agent" : "sync");
     }
@@ -1307,7 +1320,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, creationParentProjectPath, defaultModel, variant]);
+
+    if (existingReasoning !== resolvedReasoning) {
+      updatePersistedState(reasoningKey, resolvedReasoning);
+    }
+  }, [agentAiDefaults, agentId, agents, creationParentProjectPath, defaultModel, variant]);
 
   const chatDockColumnWidthClass = useChatDockColumnWidthClass();
 

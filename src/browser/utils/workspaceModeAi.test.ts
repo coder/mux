@@ -148,6 +148,57 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result.resolvedReasoningMode).toBe("pro");
   });
 
+  test("inherits a base agent's pro default through the base chain", () => {
+    // Custom agent (base: exec) with no own entry; exec's configured pro must
+    // apply, matching ACP resolution and the Settings card display.
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "researcher",
+      agentAiDefaults: {
+        exec: { reasoningMode: "pro" },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "standard",
+      agentBaseById: new Map([["researcher", "exec"]]),
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
+  test("an explicit standard override beats a base agent's pro default", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "researcher",
+      agentAiDefaults: {
+        exec: { reasoningMode: "pro" },
+        researcher: { reasoningMode: "standard" },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("standard");
+  });
+
+  test("survives a base-chain cycle without recursing forever", () => {
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "a",
+      agentAiDefaults: {},
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "off",
+      existingReasoningMode: "pro",
+      agentBaseById: new Map([
+        ["a", "b"],
+        ["b", "a"],
+      ]),
+    });
+
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
   test("agent defaults without reasoningMode fall through to the workspace mode", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",

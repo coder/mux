@@ -18,6 +18,30 @@ function normalizeAgentId(agentId: string): string {
   return normalizeWorkspaceAgentId(agentId, "exec");
 }
 
+/**
+ * Resolves the configured reasoning-mode default for an agent, walking the
+ * base chain like the backend's resolveAgentAiSettings so custom agents
+ * (base: exec) inherit an ancestor's pro default. Unknown agents fall back to
+ * the same default base (plan -> plan, otherwise exec).
+ */
+export function resolveConfiguredReasoningModeDefault(
+  agentId: string,
+  agentAiDefaults: AgentAiDefaults,
+  agentBaseById?: ReadonlyMap<string, string | undefined>
+): OpenAIReasoningMode | undefined {
+  const visited = new Set<string>();
+  let cursor = agentId;
+  while (!visited.has(cursor)) {
+    visited.add(cursor);
+    const configured = coerceOpenAIReasoningMode(agentAiDefaults[cursor]?.reasoningMode);
+    if (configured != null) {
+      return configured;
+    }
+    cursor = agentBaseById?.get(cursor) ?? (cursor === "plan" ? "plan" : "exec");
+  }
+  return undefined;
+}
+
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately
 // (like propose_plan Implement / Continue in Auto) resolve the same settings as sync effects.
 export function resolveWorkspaceAiSettingsForAgent(args: {
@@ -29,6 +53,8 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   existingModel: string;
   existingThinking: ThinkingLevel;
   existingReasoningMode?: OpenAIReasoningMode;
+  /** Agent id -> base id, for base-chain reasoning-mode inheritance (custom agents). */
+  agentBaseById?: ReadonlyMap<string, string | undefined>;
 }): {
   resolvedModel: string;
   resolvedThinking: ThinkingLevel;
@@ -67,15 +93,21 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
     coerceThinkingLevel(globalDefault?.thinkingLevel) ?? inheritedThinking ?? "off";
 
   // Configured agent defaults win, mirroring model/thinking precedence (only
-  // explicit "pro" is persisted there, so absent falls through). Otherwise
-  // restore the agent's saved pro-mode choice alongside model/thinking on
-  // explicit switches, else inherit the workspace's current mode.
+  // explicit "pro"/"standard" are persisted there, so absent falls through);
+  // the base chain contributes when the agent has no own entry, matching ACP
+  // resolution and the Settings card display. Otherwise restore the agent's
+  // saved pro-mode choice alongside model/thinking on explicit switches, else
+  // inherit the workspace's current mode.
   // When a per-agent entry exists but lacks reasoningMode (legacy entry saved
   // before pro mode shipped), treat absent as "standard" — matching the
   // WorkspaceContext seeding semantics — instead of inheriting a possibly-pro
   // workspace mode from the previously active agent.
   const resolvedReasoningMode =
-    coerceOpenAIReasoningMode(globalDefault?.reasoningMode) ??
+    resolveConfiguredReasoningModeDefault(
+      normalizedAgentId,
+      args.agentAiDefaults,
+      args.agentBaseById
+    ) ??
     (args.useWorkspaceByAgentFallback && workspaceOverride != null
       ? (coerceOpenAIReasoningMode(workspaceOverride.reasoningMode) ?? "standard")
       : (coerceOpenAIReasoningMode(args.existingReasoningMode) ?? "standard"));
