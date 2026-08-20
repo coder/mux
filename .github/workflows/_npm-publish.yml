@@ -9,7 +9,7 @@ name: NPM Publish (Reusable)
 #   1. Go to package settings → Trusted Publisher → GitHub Actions
 #   2. Configure:
 #      - Owner: coder
-#      - Repository: mux
+#      - Repository: shux
 #      - Workflow filename: publish-npm.yml  (the caller, NOT this reusable)
 #      - Allowed action: npm publish
 #      - Environment: (leave blank)

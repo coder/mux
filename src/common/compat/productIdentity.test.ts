@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
 import { AppInfo as ElectronBuilderAppInfo } from "app-builder-lib/out/appInfo";
 import packageJson from "../../../package.json";
+import chatComponentsPackageJson from "../../../packages/chat-components/package.json";
 import legacyPackageJson from "../../../packages/mux-compat/package.json";
 import vscodePackageJson from "../../../vscode/package.json";
 import { resolveMacPackagedAppNames } from "./macPackagedApp";
@@ -103,6 +104,13 @@ describe("shux package transition contract", () => {
   test("keeps the Linux desktop name visible while WM class follows the slug", () => {
     expect(packageJson.build.linux.desktop?.StartupWMClass).toBe(packageJson.build.executableName);
     expect(packageJson.build.linux.desktop).not.toHaveProperty("Name");
+  });
+
+  test("matches all npm package metadata to the GitHub provenance repository", () => {
+    // npm trusted publishing rejects provenance when package metadata points at a renamed repo.
+    for (const publishedPackage of [packageJson, legacyPackageJson, chatComponentsPackageJson]) {
+      expect(publishedPackage.repository.url).toBe("git+https://github.com/coder/shux.git");
+    }
   });
 
   test("keeps the published mux forwarding package version-locked to @coder/shux", () => {

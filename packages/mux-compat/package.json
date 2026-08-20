@@ -14,7 +14,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/coder/mux.git",
+    "url": "git+https://github.com/coder/shux.git",
     "directory": "packages/mux-compat"
   },
   "license": "AGPL-3.0-only"

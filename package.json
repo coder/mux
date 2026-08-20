@@ -12,7 +12,7 @@
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/coder/mux.git"
+    "url": "git+https://github.com/coder/shux.git"
   },
   "publishConfig": {
     "access": "public"
