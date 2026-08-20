@@ -100,6 +100,7 @@ import { classify429Capacity } from "@/common/utils/errors/classify429Capacity";
 import { extractChunkDeltaText } from "@/common/utils/ai/streamChunks";
 import { PROVIDER_DEFINITIONS } from "@/common/constants/providers";
 import { isRefusalFinishReason } from "@/common/utils/messages/refusalFinishReason";
+import { getOpenAIResponsesBaseUrlHint } from "@/node/services/utils/openAIResponsesBaseUrlHint";
 
 // Disable noisy AI SDK warning logging.
 globalThis.AI_SDK_LOG_WARNINGS = false;
@@ -3829,6 +3830,16 @@ export class StreamManager extends EventEmitter {
       // Friendly normalization for expired mux-gateway sessions.
       errorMessage = MUX_GATEWAY_SESSION_EXPIRED_MESSAGE;
     }
+
+    const openAIResponsesBaseUrlHint = getOpenAIResponsesBaseUrlHint({
+      model: streamInfo.model,
+      providersConfig: this.getProvidersConfig(),
+      error: actualError,
+    });
+    if (openAIResponsesBaseUrlHint) {
+      errorMessage = `${errorMessage}\n\n${openAIResponsesBaseUrlHint}`;
+    }
+
     errorType = coerceStreamErrorTypeForMessage(errorType, errorMessage);
 
     return {
