@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
 
-import { shouldEnableTelemetry, type TelemetryEnablementContext } from "./telemetryService";
+import {
+  shouldEnableTelemetry,
+  TelemetryService,
+  type TelemetryEnablementContext,
+} from "./telemetryService";
 
 function createContext(overrides: Partial<TelemetryEnablementContext>): TelemetryEnablementContext {
   return {
     env: overrides.env ?? {},
     isElectron: overrides.isElectron ?? false,
     isPackaged: overrides.isPackaged ?? null,
+    disabledByConfig: overrides.disabledByConfig,
   };
 }
 
@@ -84,6 +89,32 @@ describe("TelemetryService enablement", () => {
     expect(enabled).toBe(true);
   });
 
+  test("disables telemetry when the config opt-out is set", () => {
+    const enabled = shouldEnableTelemetry(
+      createContext({
+        env: {},
+        isElectron: true,
+        isPackaged: true,
+        disabledByConfig: true,
+      })
+    );
+
+    expect(enabled).toBe(false);
+  });
+
+  test("the env var hard-off wins even when config says enabled", () => {
+    const enabled = shouldEnableTelemetry(
+      createContext({
+        env: { MUX_DISABLE_TELEMETRY: "1" },
+        isElectron: true,
+        isPackaged: true,
+        disabledByConfig: false,
+      })
+    );
+
+    expect(enabled).toBe(false);
+  });
+
   test("enables telemetry in NODE_ENV=development by default", () => {
     // Telemetry is now enabled by default in dev mode
     const enabled = shouldEnableTelemetry(
@@ -106,6 +137,17 @@ describe("TelemetryService enablement", () => {
     );
 
     expect(enabled).toBe(true);
+  });
+
+  test("isExplicitlyDisabled reflects the config opt-out like the env var", () => {
+    // Features gated on explicit opt-out (e.g. link sharing) must treat the
+    // Settings toggle the same as MUX_DISABLE_TELEMETRY=1.
+    let disabled = false;
+    const service = new TelemetryService(undefined, () => disabled);
+
+    expect(service.isExplicitlyDisabled()).toBe(false);
+    disabled = true;
+    expect(service.isExplicitlyDisabled()).toBe(true);
   });
 
   test("dev opt-in does not bypass test env disable", () => {
