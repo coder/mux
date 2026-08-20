@@ -1240,9 +1240,10 @@ export class StreamingMessageAggregator {
           let assistantUpdatedTodos = false;
           for (const part of message.parts) {
             if (isDynamicToolPart(part) && part.state === "output-available") {
-              // Replay deliberately omits the timestamp so historical
-              // assisted-review pins don't all light up as "new" on initial
-              // load; only live updates get a fresh addedAt.
+              // Replay deliberately omits the live context so historical
+              // events don't re-fire user-visible side effects: assisted-review
+              // pins don't light up as "new" and notify results don't re-send
+              // browser notifications on every hydration.
               this.processToolResult(part.toolName, part.input, part.output);
               if (
                 part.toolName === "todo_write" &&
@@ -2583,7 +2584,10 @@ export class StreamingMessageAggregator {
     toolName: string,
     input: unknown,
     output: unknown,
-    messageContext?: { timestamp?: number }
+    // Present only for live (non-replay) tool results. History hydration and reconnect
+    // replay omit it so user-visible side effects (browser notifications, assisted-review
+    // "new" badges) never re-fire for events the user already saw.
+    liveContext?: { timestamp: number }
   ): void {
     // Update TODO state if this was a successful todo_write.
     // We still reconstruct from history so interrupted/incomplete plans survive reloads;
@@ -2640,14 +2644,14 @@ export class StreamingMessageAggregator {
             // Carry forward addedAt for `add` ops only so a refined
             // comment doesn't reset the "new" badge.
             candidate.addedAt = previous.addedAt;
-          } else if (messageContext?.timestamp !== undefined) {
+          } else if (liveContext !== undefined) {
             // `replace` op (or first time we've seen this key under any op):
             // stamp with the current message's timestamp. `replace` is an
             // explicit republish, so reuse of an old key should still
             // re-arm the "new" badge. Replay deliberately omits the
             // timestamp so historical pins don't all light up as "new"
             // on initial load.
-            candidate.addedAt = messageContext.timestamp;
+            candidate.addedAt = liveContext.timestamp;
           }
           next.push(candidate);
         }
@@ -2683,8 +2687,11 @@ export class StreamingMessageAggregator {
       }
     }
 
-    // Handle browser notifications when Electron wasn't available
-    if (toolName === "notify") {
+    // Handle browser notifications when Electron wasn't available.
+    // Live results only: notify outputs are persisted in history with their routing
+    // metadata, so history hydration and reconnect replay would otherwise re-fire
+    // OS notifications for past events on every workspace switch or reload (#2547).
+    if (toolName === "notify" && liveContext !== undefined) {
       const result = parseNotifySuccessResult(output);
       if (result) {
         const uiOnlyNotify = getToolOutputUiOnly(output)?.notify;
@@ -2782,11 +2789,15 @@ export class StreamingMessageAggregator {
 
         // Process tool result to update derived state (todos, agentStatus, etc.)
         // Live updates stamp a fresh `Date.now()` so the Assisted-review "new"
-        // badge can highlight just-introduced pins (the replay path
-        // intentionally omits this so historical pins don't flash on load).
-        this.processToolResult(data.toolName, toolPart.input, data.result, {
-          timestamp: Date.now(),
-        });
+        // badge can highlight just-introduced pins. Reconnect replay re-emits
+        // tool-call-end for already-completed calls, so treat those like the
+        // history-hydration path: no fresh timestamp and no notification re-fire.
+        this.processToolResult(
+          data.toolName,
+          toolPart.input,
+          data.result,
+          data.replay === true ? undefined : { timestamp: Date.now() }
+        );
 
         // Tool output is now stable - invalidate all caches.
         this.markMessageDirty(data.messageId);

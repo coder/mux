@@ -141,6 +141,7 @@ function endToolCall(
     result: unknown;
     timestamp?: number;
     parentToolCallId?: string;
+    replay?: boolean;
   }
 ): void {
   aggregator.handleToolCallEnd({
@@ -152,6 +153,7 @@ function endToolCall(
     result: options.result,
     timestamp: options.timestamp ?? Date.now(),
     parentToolCallId: options.parentToolCallId,
+    replay: options.replay,
   });
 }
 
@@ -4299,5 +4301,128 @@ describe("review_pane_update -> assistedReviewHunks", () => {
     const pins = aggregator.getAssistedReviewHunks();
     expect(pins).toHaveLength(1);
     expect(pins[0].path).toBe("src/bar.ts");
+  });
+});
+
+/**
+ * Tests for notify tool results -> Web Notifications routing.
+ *
+ * The notify tool persists its routing metadata (`notifiedVia: "browser"`) in
+ * history, so the aggregator must fire Web Notifications only for live tool
+ * results. History hydration and reconnect replay re-process the same outputs
+ * on every workspace switch/reload and must stay silent (#2547).
+ */
+class FakeNotification {
+  static permission = "granted";
+  static created: Array<{ title: string; body?: string }> = [];
+  onclick: (() => void) | null = null;
+
+  constructor(title: string, options?: { body?: string }) {
+    FakeNotification.created.push({ title, body: options?.body });
+  }
+
+  static requestPermission(): Promise<string> {
+    return Promise.resolve("granted");
+  }
+}
+
+function withFakeNotificationWindow<T>(fn: () => T): T {
+  const globalWithWindow = globalThis as unknown as { window?: unknown };
+  const previousWindow = globalWithWindow.window;
+  FakeNotification.created = [];
+  globalWithWindow.window = { Notification: FakeNotification, focus: () => undefined };
+  try {
+    return fn();
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalWithWindow.window;
+    } else {
+      globalWithWindow.window = previousWindow;
+    }
+  }
+}
+
+function browserNotifyOutput(title: string, message?: string) {
+  return {
+    success: true,
+    title,
+    message,
+    ui_only: { notify: { notifiedVia: "browser", workspaceId: TEST_WORKSPACE_ID } },
+  };
+}
+
+function runNotifyTool(
+  aggregator: StreamingMessageAggregator,
+  options: { messageId?: string; toolCallId?: string; replay?: boolean } = {}
+): void {
+  const messageId = options.messageId ?? "msg-1";
+  const toolCallId = options.toolCallId ?? "tc-notify";
+  startToolCall(aggregator, {
+    messageId,
+    toolCallId,
+    toolName: "notify",
+    args: { title: "Task done" },
+  });
+  endToolCall(aggregator, {
+    messageId,
+    toolCallId,
+    toolName: "notify",
+    result: browserNotifyOutput("Task done", "All checks passed"),
+    replay: options.replay,
+  });
+}
+
+describe("notify tool -> browser notifications", () => {
+  test("live notify results fire a browser notification", () => {
+    withFakeNotificationWindow(() => {
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator, { messageId: "msg-1" });
+
+      runNotifyTool(aggregator);
+
+      expect(FakeNotification.created).toEqual([{ title: "Task done", body: "All checks passed" }]);
+    });
+  });
+
+  test("replayed tool-call-end does not re-fire the notification", () => {
+    // Reconnect replay re-emits tool-call-end (replay: true) for already-completed
+    // calls of an active stream; the user was already notified when it ran live.
+    withFakeNotificationWindow(() => {
+      const aggregator = createTestAggregator();
+      startTestStream(aggregator, { messageId: "msg-1" });
+
+      runNotifyTool(aggregator, { replay: true });
+
+      expect(FakeNotification.created).toEqual([]);
+    });
+  });
+
+  test("history hydration does not re-fire notifications; later live ones still do", () => {
+    // Workspace switches and reloads hydrate the full transcript through
+    // loadHistoricalMessages; historical notify results must stay silent.
+    withFakeNotificationWindow(() => {
+      const aggregator = createTestAggregator();
+      const message = createMuxMessage("msg-1", "assistant", "", {
+        historySequence: 1,
+        timestamp: Date.now(),
+        muxMetadata: { type: "normal", requestedModel: TEST_MODEL },
+      });
+      message.parts.push({
+        type: "dynamic-tool",
+        toolCallId: "tc-notify",
+        toolName: "notify",
+        state: "output-available",
+        input: { title: "Task done" },
+        output: browserNotifyOutput("Task done", "All checks passed"),
+      });
+
+      aggregator.loadHistoricalMessages([message]);
+      expect(FakeNotification.created).toEqual([]);
+
+      // A genuinely new notify after hydration still notifies.
+      startTestStream(aggregator, { messageId: "msg-2", historySequence: 2 });
+      runNotifyTool(aggregator, { messageId: "msg-2", toolCallId: "tc-notify-2" });
+      expect(FakeNotification.created).toEqual([{ title: "Task done", body: "All checks passed" }]);
+    });
   });
 });
