@@ -10159,16 +10159,30 @@ export class TaskService {
   }
 
   private buildWorkspaceTurnReportMarkdown(event: StreamEndEvent): string {
-    // Text parts are provider stream deltas, so inserting separators here turns token boundaries
-    // into arbitrary Markdown line breaks and can split headings, links, and code spans.
-    const text = event.parts
-      .filter(
-        (part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>
-          part.type === "text"
-      )
-      .map((part) => part.text)
-      .join("")
-      .trim();
+    const textRuns: string[] = [];
+    let currentTextRun: string[] = [];
+    const flushTextRun = () => {
+      const text = currentTextRun.join("");
+      if (text.length > 0) {
+        textRuns.push(text);
+      }
+      currentTextRun = [];
+    };
+
+    for (const part of event.parts) {
+      if (part.type === "text") {
+        // Adjacent text parts are provider stream deltas; concatenate them exactly so token
+        // boundaries do not become arbitrary Markdown line breaks.
+        currentTextRun.push(part.text);
+      } else {
+        // A tool or reasoning part separates rendered text blocks. Preserve that boundary when
+        // projecting the turn into one report body instead of running the blocks together.
+        flushTextRun();
+      }
+    }
+    flushTextRun();
+
+    const text = textRuns.join("\n\n").trim();
     return text.length > 0 ? text : "Workspace turn completed without final text output.";
   }
 

@@ -2806,13 +2806,23 @@ describe("TaskService", () => {
           turnId: "turn",
         },
       },
-      // StreamManager stores provider text deltas as adjacent parts; report assembly must
-      // concatenate them exactly instead of turning token boundaries into Markdown newlines.
       parts: [
+        // StreamManager stores provider text deltas as adjacent parts; concatenate them exactly.
         { type: "text", text: "## Verified" },
         { type: "text", text: " root" },
         { type: "text", text: " cause\n\n" },
         { type: "text", text: "- Fixed" },
+        // Non-text parts separate rendered text runs and must remain a report block boundary.
+        {
+          type: "dynamic-tool",
+          toolCallId: "call-1",
+          toolName: "bash",
+          input: { script: "true" },
+          state: "output-available",
+          output: { success: true },
+        },
+        { type: "text", text: "Follow-up" },
+        { type: "text", text: " complete." },
       ],
     });
 
@@ -2821,8 +2831,8 @@ describe("TaskService", () => {
       status: "completed",
       workspaceId: "childworkspace",
       messageId: "msg_1",
-      reportMarkdown: "## Verified root cause\n\n- Fixed",
-      finalMessageRef: { messageId: "msg_1", agentId: "exec", textCharCount: 31 },
+      reportMarkdown: "## Verified root cause\n\n- Fixed\n\nFollow-up complete.",
+      finalMessageRef: { messageId: "msg_1", agentId: "exec", textCharCount: 50 },
     });
     const childConfig = findWorkspaceInConfig(config, "childworkspace");
     expect(childConfig?.parentWorkspaceId).toBeUndefined();
