@@ -334,10 +334,10 @@ describe("agentSkillsService", () => {
       "init",
       "loop",
       "orchestrate",
-      "xum-diagram",
-      "xum-docs",
       "spawn",
       "workflow-authoring",
+      "xum-diagram",
+      "xum-docs",
     ]);
 
     const foo = skills.find((s) => s.name === "foo");
@@ -1004,10 +1004,10 @@ describe("agentSkillsService", () => {
       "init",
       "loop",
       "orchestrate",
-      "xum-diagram",
-      "xum-docs",
       "spawn",
       "workflow-authoring",
+      "xum-diagram",
+      "xum-docs",
     ]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();

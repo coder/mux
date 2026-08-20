@@ -100,7 +100,7 @@ describe("UpdaterService", () => {
       expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
         provider: "github",
         owner: "coder",
-        repo: "mux",
+        repo: "xum",
         releaseType: "release",
       });
     });
@@ -114,7 +114,7 @@ describe("UpdaterService", () => {
       expect(mockAutoUpdater.setFeedURL).toHaveBeenCalledWith({
         provider: "github",
         owner: "coder",
-        repo: "mux",
+        repo: "xum",
         releaseType: "prerelease",
       });
       expect(mockAutoUpdater.allowPrerelease).toBe(true);
@@ -134,7 +134,7 @@ describe("UpdaterService", () => {
       expect(mockAutoUpdater.setFeedURL).toHaveBeenLastCalledWith({
         provider: "github",
         owner: "coder",
-        repo: "mux",
+        repo: "xum",
         releaseType: "prerelease",
       });
       expect(mockAutoUpdater.channel).toBe("nightly");

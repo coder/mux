@@ -299,8 +299,8 @@ describe("Loaded skills tracking", () => {
     expect(skills).toHaveLength(3);
     expect(skills.map((skill) => skill.name).sort()).toEqual([
       "pull-requests",
-      "xum-docs",
       "tests",
+      "xum-docs",
     ]);
   });
 
