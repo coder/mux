@@ -397,7 +397,7 @@ jobs:
       - name: Run unit tests (Windows smoke)
         shell: pwsh
         run: |
-          bun test src/node/utils/paths.test.ts src/node/utils/main/bashPath.test.ts src/node/utils/main/resolveLocalPtyShell.test.ts
+          bun test src/node/utils/paths.test.ts src/node/utils/main/bashPath.test.ts src/node/utils/main/resolveLocalPtyShell.test.ts src/node/runtime/SSH2ConnectionPool.test.ts
       - name: Run Windows integration smoke tests
         shell: pwsh
         run: |
