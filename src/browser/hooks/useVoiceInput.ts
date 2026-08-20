@@ -9,6 +9,10 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { matchesKeybind, KEYBINDS } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
+import {
+  shouldTranscribeRecording,
+  SILENCE_GATE_SAMPLE_INTERVAL_MS,
+} from "@/browser/utils/voice/silenceGate";
 import type { APIClient } from "@/browser/contexts/API";
 import { trackVoiceTranscription } from "@/common/telemetry";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -122,6 +126,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const meterIntervalRef = useRef<number | null>(null);
+  const rmsFramesRef = useRef<number[]>([]);
 
   // Flags set before stopping to control post-stop behavior
   const shouldSendRef = useRef(false);
@@ -206,6 +213,60 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     streamRef.current = null;
   }, []);
 
+  const stopMetering = useCallback(() => {
+    if (meterIntervalRef.current !== null) {
+      window.clearInterval(meterIntervalRef.current);
+      meterIntervalRef.current = null;
+    }
+
+    const audioContext = audioContextRef.current;
+    audioContextRef.current = null;
+    audioContext?.close().catch(() => undefined);
+  }, []);
+
+  const startMetering = useCallback(
+    (stream: MediaStream) => {
+      stopMetering();
+      rmsFramesRef.current = [];
+
+      try {
+        const audioContext = new AudioContext();
+        audioContextRef.current = audioContext;
+
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        const source = audioContext.createMediaStreamSource(stream);
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+
+        meterIntervalRef.current = window.setInterval(() => {
+          if (data.length === 0) {
+            stopMetering();
+            return;
+          }
+
+          try {
+            analyser.getByteTimeDomainData(data);
+
+            let sum = 0;
+            for (const sample of data) {
+              const normalized = (sample - 128) / 128;
+              sum += normalized * normalized;
+            }
+            rmsFramesRef.current.push(Math.sqrt(sum / data.length));
+          } catch {
+            rmsFramesRef.current = [];
+            stopMetering();
+          }
+        }, SILENCE_GATE_SAMPLE_INTERVAL_MS);
+      } catch {
+        // Metering is best-effort; the gate fails open when no samples are available.
+        stopMetering();
+      }
+    },
+    [stopMetering]
+  );
+
   // ---------------------------------------------------------------------------
   // Start Recording
   // ---------------------------------------------------------------------------
@@ -243,12 +304,21 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         // Check if this was a cancel (discard audio) or normal stop (transcribe)
         const cancelled = wasCancelledRef.current;
         wasCancelledRef.current = false;
+        const recordingDurationMs = Date.now() - recordingStartTimeRef.current;
+        const shouldTranscribe = shouldTranscribeRecording({
+          rmsFrames: rmsFramesRef.current,
+          durationMs: recordingDurationMs,
+        });
 
         const blob = new Blob(chunksRef.current, { type: mimeType });
         chunksRef.current = [];
         releaseStream();
+        stopMetering();
 
         if (cancelled) {
+          setState("idle");
+        } else if (!shouldTranscribe) {
+          shouldSendRef.current = false;
           setState("idle");
         } else {
           void transcribe(blob);
@@ -258,15 +328,20 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       recorder.onerror = () => {
         callbacksRef.current.onError?.("Recording failed");
         releaseStream();
+        stopMetering();
         setState("idle");
       };
 
       recorderRef.current = recorder;
       setMediaRecorder(recorder);
+      startMetering(stream);
       recorder.start();
       recordingStartTimeRef.current = Date.now();
       setState("recording");
     } catch (err) {
+      stopMetering();
+      releaseStream();
+
       const msg = getErrorMessage(err);
       const isPermissionDenied = msg.includes("Permission denied") || msg.includes("NotAllowed");
 
@@ -277,7 +352,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
       );
       setState("idle");
     }
-  }, [state, transcribe, releaseStream]);
+  }, [state, transcribe, releaseStream, startMetering, stopMetering]);
 
   // ---------------------------------------------------------------------------
   // Stop Recording (triggers transcription)
@@ -319,8 +394,9 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
     return () => {
       recorderRef.current?.stop();
       releaseStream();
+      stopMetering();
     };
-  }, [releaseStream]);
+  }, [releaseStream, stopMetering]);
 
   // ---------------------------------------------------------------------------
   // Recording keybinds (when useRecordingKeybinds is true)
