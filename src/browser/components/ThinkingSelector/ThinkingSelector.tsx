@@ -299,6 +299,9 @@ export const ThinkingSelectorControl: React.FC<ThinkingSelectorControlProps> = (
 
       {isOpen && (
         <div
+          // Box menus open downward inside a scrollable settings pane; scroll the
+          // menu into view on open so bottom rows aren't hidden below the fold.
+          ref={variant === "box" ? (node) => node?.scrollIntoView({ block: "nearest" }) : undefined}
           className={cn(
             "absolute left-0 z-[1020] w-52",
             variant === "composer" ? "bottom-full mb-1" : "top-full mt-1 min-w-full",
