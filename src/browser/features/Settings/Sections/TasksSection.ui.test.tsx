@@ -521,6 +521,49 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(payload.subagentAiDefaults).toEqual({});
   });
 
+  test("displays base-chain-inherited Pro mode and disables it in one click", async () => {
+    // Explore has no direct override; its base exec supplies pro, which ACP
+    // resolution applies, so the toggle must start pressed and one click must
+    // persist an explicit standard override.
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { reasoningMode: "pro" },
+        explore: { modelString: "openai:gpt-5.6-sol" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    const proToggle = card.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    expect(proToggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(proToggle);
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore?.reasoningMode).toBe("standard");
+  });
+
+  test("hides the Pro mode toggle on the Dream card even for pro-capable models", async () => {
+    // Dream's headless requests (raw streamText) never apply reasoningMode,
+    // so the card must not offer a toggle that cannot affect them.
+    advisorExperimentEnabled = true; // shared experiment mock also enables memory consolidation
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        dream: { modelString: "openai:gpt-5.6-sol" },
+      },
+    });
+
+    await view.findByText("Dream");
+    const card = getAgentCardByName(view, "Dream");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+
+    expect(within(card).getByRole("listbox", { name: "Reasoning effort" })).toBeTruthy();
+    expect(card.querySelector('[data-component="ProModeToggle"]')).toBeNull();
+  });
+
   test("hides the Pro mode toggle for models without pro support", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {

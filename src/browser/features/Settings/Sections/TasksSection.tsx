@@ -389,6 +389,8 @@ interface AiDefaultsControlsProps {
   modelValue: string;
   thinkingValue: string;
   reasoningModeValue: OpenAIReasoningMode;
+  /** Forwarded to the picker; false hides the Pro toggle (e.g. Dream, whose requests never apply reasoningMode). */
+  allowProMode?: boolean;
   effectiveModel: string;
   models: string[];
   hiddenModelsForSelector: string[];
@@ -451,6 +453,7 @@ function AiDefaultsControls(props: AiDefaultsControlsProps) {
             onThinkingLevelChange={(level) => props.onThinkingChange(level)}
             reasoningMode={props.reasoningModeValue}
             onReasoningModeChange={props.onReasoningModeChange}
+            allowProMode={props.allowProMode}
             variant="box"
             inheritOption={{
               label: inheritLabel,
@@ -1117,7 +1120,13 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
-          reasoningModeValue={entry?.reasoningMode ?? "standard"}
+          reasoningModeValue={
+            entry?.reasoningMode ?? (baseChainInheritsPro(agent.id) ? "pro" : "standard")
+          }
+          // Dream runs outside the send path (raw streamText in
+          // memoryConsolidation) and never applies reasoningMode, so don't
+          // offer a Pro toggle that cannot affect its requests.
+          allowProMode={agent.id !== "dream"}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
@@ -1245,7 +1254,9 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
-          reasoningModeValue={entry?.reasoningMode ?? "standard"}
+          reasoningModeValue={
+            entry?.reasoningMode ?? (baseChainInheritsPro(agentId) ? "pro" : "standard")
+          }
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
