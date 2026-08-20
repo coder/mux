@@ -455,6 +455,29 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(payload.agentAiDefaults.explore?.modelString).toBe("openai:gpt-5.6-sol");
   });
 
+  test("disabling inherited Pro mode persists an explicit standard override", async () => {
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+    });
+
+    const row = await view.findByRole("group", { name: "Exec defaults" });
+    fireEvent.click(within(row).getByRole("button", { name: /Reasoning/ }));
+    const proToggle = row.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    // Inherited from UI Exec, so the toggle starts pressed with no override.
+    expect(proToggle.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(proToggle);
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.subagentAiDefaults?.exec?.reasoningMode).toBe("standard");
+    // UI Exec's own default stays pro; only the sub-agent override changes.
+    expect(payload.agentAiDefaults.exec?.reasoningMode).toBe("pro");
+  });
+
   test("hides the Pro mode toggle for models without pro support", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {

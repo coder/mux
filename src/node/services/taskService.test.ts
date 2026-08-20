@@ -22377,7 +22377,10 @@ describe("TaskService", () => {
       string,
       { modelString: string; thinkingLevel: ThinkingLevel; enabled?: boolean }
     >;
-    subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>;
+    subagentAiDefaults?: Record<
+      string,
+      { modelString?: string; thinkingLevel?: ThinkingLevel; reasoningMode?: "standard" | "pro" }
+    >;
     sendMessageOverride?: ReturnType<typeof mock>;
     aiServiceOverrides?: Parameters<typeof createAIServiceMocks>[1];
   }) {
@@ -22563,6 +22566,24 @@ describe("TaskService", () => {
       .flatMap((project) => project.workspaces)
       .find((workspace) => workspace.id === childId);
     expect(updatedTask?.aiSettings?.reasoningMode).toBe("pro");
+  });
+
+  test("plan handoff applies a configured exec reasoning default when the plan phase ran standard", async () => {
+    const { childId, sendMessage, internal } = await setupPlanModeStreamEndHarness({
+      subagentAiDefaults: {
+        exec: { reasoningMode: "pro" },
+      },
+    });
+
+    await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledWith(
+      childId,
+      expect.stringContaining("Implement the plan"),
+      expect.objectContaining({ agentId: "exec", reasoningMode: "pro" }),
+      expect.objectContaining({ synthetic: true })
+    );
   });
 
   test("stream-end with propose_plan success uses global exec defaults for handoff", async () => {

@@ -844,10 +844,17 @@ export function TasksSection() {
   };
 
   const setSubagentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
+    // Deleting the override falls back to the UI agent default, so when that
+    // default is pro, turning the toggle off must persist an explicit
+    // "standard" or the inherited pro would win and the toggle could never
+    // disable it. Delete (sparse storage) only when nothing pro is inherited.
+    const inheritsPro = agentAiDefaults[agentId]?.reasoningMode === "pro";
     setSubagentAiDefaults((prev) =>
       updateSubagentDefaultEntry(prev, agentId, (updated) => {
         if (mode === "pro") {
           updated.reasoningMode = "pro";
+        } else if (inheritsPro) {
+          updated.reasoningMode = "standard";
         } else {
           delete updated.reasoningMode;
         }

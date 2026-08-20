@@ -11778,7 +11778,7 @@ export class TaskService {
 
       // Use the same sub-agent resolution as Task.create so Plan to Exec honors
       // subagentAiDefaults before UI agent defaults, then inherits the plan task settings.
-      const { taskModelString, canonicalModel, effectiveThinkingLevel } =
+      const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
         this.resolveTaskAISettings({
           cfg: this.config.loadConfigOrDefault(),
           parentMeta: {},
@@ -11789,25 +11789,28 @@ export class TaskService {
           },
         });
 
-      // Plan -> Exec continues in the same workspace, so its own persisted pro
-      // choice carries over (resolveTaskAISettings sees an empty parentMeta here).
-      // A PRO toggle during the plan phase persists under the plan agent's
-      // bucket (aiSettingsByAgent), so read the still-current plan agent's
-      // settings first and only then fall back to legacy aiSettings.
+      // Reasoning mode mirrors resolveTaskAISettings precedence: configured
+      // exec sub-agent/agent defaults win (effectiveReasoningMode; parentMeta is
+      // empty here so it carries only those), then the same-workspace plan phase
+      // carries over. A PRO toggle during the plan phase persists under the plan
+      // agent's bucket (aiSettingsByAgent), so read the still-current plan
+      // agent's settings first and only then fall back to legacy aiSettings.
       const planAgentSettings = this.resolveWorkspaceAISettings(
         args.entry.workspace,
         normalizeAgentId(args.entry.workspace.agentId, "plan")
       );
-      const planPhaseReasoningMode = coerceOpenAIReasoningMode(
-        planAgentSettings?.reasoningMode ?? args.entry.workspace.aiSettings?.reasoningMode
-      );
+      const handoffReasoningMode =
+        effectiveReasoningMode ??
+        coerceOpenAIReasoningMode(
+          planAgentSettings?.reasoningMode ?? args.entry.workspace.aiSettings?.reasoningMode
+        );
       await this.editWorkspaceEntry(args.workspaceId, (workspace) => {
         workspace.agentId = targetAgentId;
         workspace.agentType = targetAgentId;
         workspace.aiSettings = {
           model: canonicalModel,
           thinkingLevel: effectiveThinkingLevel,
-          ...(planPhaseReasoningMode != null ? { reasoningMode: planPhaseReasoningMode } : {}),
+          ...(handoffReasoningMode != null ? { reasoningMode: handoffReasoningMode } : {}),
         };
         workspace.taskModelString = taskModelString;
         workspace.taskThinkingLevel = effectiveThinkingLevel;
@@ -11827,7 +11830,7 @@ export class TaskService {
             model: taskModelString,
             agentId: targetAgentId,
             thinkingLevel: effectiveThinkingLevel,
-            ...(planPhaseReasoningMode != null ? { reasoningMode: planPhaseReasoningMode } : {}),
+            ...(handoffReasoningMode != null ? { reasoningMode: handoffReasoningMode } : {}),
             experiments: args.entry.workspace.taskExperiments,
           },
           { synthetic: true, agentInitiated: true }
