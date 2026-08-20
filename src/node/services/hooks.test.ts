@@ -51,6 +51,54 @@ describe("hooks", () => {
       const result = await getHookPath(runtime, tempDir);
       expect(result).toBeNull();
     });
+
+    test("falls back to the user-global hook in getShuxHome()", async () => {
+      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-hooks-"));
+      const previousRoot = process.env.SHUX_ROOT;
+      process.env.SHUX_ROOT = shuxHome;
+      const hookPath = path.join(shuxHome, "tool_hook");
+      await fs.writeFile(hookPath, "#!/bin/bash\necho test");
+      await fs.chmod(hookPath, 0o755);
+
+      try {
+        const result = await getHookPath(runtime, tempDir);
+        expect(result).toBe(hookPath);
+      } finally {
+        if (previousRoot === undefined) {
+          delete process.env.SHUX_ROOT;
+        } else {
+          process.env.SHUX_ROOT = previousRoot;
+        }
+        await fs.rm(shuxHome, { recursive: true, force: true });
+      }
+    });
+
+    test("prefers project-local .mux hook over the user-global shux home", async () => {
+      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-hooks-"));
+      const previousRoot = process.env.SHUX_ROOT;
+      process.env.SHUX_ROOT = shuxHome;
+      const userHookPath = path.join(shuxHome, "tool_hook");
+      await fs.writeFile(userHookPath, "#!/bin/bash\necho user");
+      await fs.chmod(userHookPath, 0o755);
+
+      const projectHookDir = path.join(tempDir, ".mux");
+      const projectHookPath = path.join(projectHookDir, "tool_hook");
+      await fs.mkdir(projectHookDir, { recursive: true });
+      await fs.writeFile(projectHookPath, "#!/bin/bash\necho project");
+      await fs.chmod(projectHookPath, 0o755);
+
+      try {
+        const result = await getHookPath(runtime, tempDir);
+        expect(result).toBe(projectHookPath);
+      } finally {
+        if (previousRoot === undefined) {
+          delete process.env.SHUX_ROOT;
+        } else {
+          process.env.SHUX_ROOT = previousRoot;
+        }
+        await fs.rm(shuxHome, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("getToolEnvPath", () => {
@@ -76,6 +124,26 @@ describe("hooks", () => {
 
       const result = await getToolEnvPath(runtime, tempDir);
       expect(result).toBeNull();
+    });
+
+    test("falls back to user-global tool_env in getShuxHome()", async () => {
+      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-tool-env-"));
+      const previousRoot = process.env.SHUX_ROOT;
+      process.env.SHUX_ROOT = shuxHome;
+      const envPath = path.join(shuxHome, "tool_env");
+      await fs.writeFile(envPath, "export FOO=user");
+
+      try {
+        const result = await getToolEnvPath(runtime, tempDir);
+        expect(result).toBe(envPath);
+      } finally {
+        if (previousRoot === undefined) {
+          delete process.env.SHUX_ROOT;
+        } else {
+          process.env.SHUX_ROOT = previousRoot;
+        }
+        await fs.rm(shuxHome, { recursive: true, force: true });
+      }
     });
   });
 

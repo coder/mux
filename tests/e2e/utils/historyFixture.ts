@@ -299,7 +299,7 @@ export function parseHistoryProfilesFromEnv(rawProfiles: string | undefined): Hi
   );
   if (invalidProfile) {
     throw new Error(
-      `Invalid MUX_E2E_PERF_PROFILES entry "${invalidProfile}". Expected one of: ${HISTORY_PROFILE_NAMES.join(", ")}.`
+      `Invalid SHUX_E2E_PERF_PROFILES entry "${invalidProfile}". Expected one of: ${HISTORY_PROFILE_NAMES.join(", ")}.`
     );
   }
 

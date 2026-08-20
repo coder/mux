@@ -22712,7 +22712,7 @@ describe("TaskService", () => {
 
   test("workflow-owned plan propose_plan finalizes with plan markdown instead of exec handoff", async () => {
     const projectName = `repo-${path.basename(rootDir)}`;
-    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    const planPath = path.join(os.homedir(), ".shux", "plans", projectName, "agent_plan_child.md");
     await fsPromises.mkdir(path.dirname(planPath), { recursive: true });
     await fsPromises.writeFile(
       planPath,
@@ -22760,7 +22760,7 @@ describe("TaskService", () => {
 
   test("workflow-owned plan propose_plan with missing plan file keeps requiring propose_plan", async () => {
     const projectName = `repo-missing-${path.basename(rootDir)}`;
-    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    const planPath = path.join(os.homedir(), ".shux", "plans", projectName, "agent_plan_child.md");
     await fsPromises.rm(planPath, { force: true });
 
     const workflowRunId = "wfr_plan_missing";
@@ -22802,7 +22802,7 @@ describe("TaskService", () => {
 
   test("interrupted workflow-owned plan with successful propose_plan resolves as plan output", async () => {
     const projectName = `repo-interrupted-${path.basename(rootDir)}`;
-    const planPath = path.join(os.homedir(), ".mux", "plans", projectName, "agent_plan_child.md");
+    const planPath = path.join(os.homedir(), ".shux", "plans", projectName, "agent_plan_child.md");
     await fsPromises.mkdir(path.dirname(planPath), { recursive: true });
     await fsPromises.writeFile(
       planPath,

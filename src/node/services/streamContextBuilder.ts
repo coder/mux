@@ -124,7 +124,7 @@ export async function buildPlanInstructions(
   // Construct plan mode instruction if in plan mode
   // This is done backend-side because we have access to the plan file path
   let effectiveAdditionalInstructions = additionalSystemInstructions;
-  const muxHome = runtime.getMuxHome();
+  const muxHome = runtime.getShuxHome();
   const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
 
   // Read plan file (handles legacy migration transparently)
@@ -409,7 +409,7 @@ function resolveAncestorPlanContext(args: {
       planFilePath: getPlanFilePath(
         currentWorkspace.workspaceName,
         currentWorkspace.projectName,
-        args.runtime.getMuxHome()
+        args.runtime.getShuxHome()
       ),
     });
 
@@ -634,7 +634,7 @@ export async function buildStreamSystemContext(
     mergedAdditionalInstructions,
     modelString,
     mcpServers,
-    // "Mode: <mode>" sections in Mux-dedicated instruction sources match the
+    // "Mode: <mode>" sections in Shux-dedicated instruction sources match the
     // effective mode (so "Mode: plan" also covers custom plan-like agents)
     // and the agent id (so per-agent sections work). The effective mode names
     // the injected <mode-...> tag; agentDefinition.id (may have fallen back

@@ -431,7 +431,7 @@ jobs:
           STARTUP_TIMEOUT: 30
         run: |
           # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
-          TARBALL=$(ls mux-*.tgz | head -1)
+          TARBALL=$(ls shux-*.tgz | head -1)
           PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: failure()

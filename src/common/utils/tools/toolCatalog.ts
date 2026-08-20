@@ -590,9 +590,9 @@ function renameLegacyToolSearchResultPart(part: ToolResultPart): ToolResultPart 
  * the tool names they matched, so tools discovered in earlier turns (or
  * before a mid-turn stream retry) re-activate without a new search. Accepts
  * both provider-shaped ModelMessages (tool-result parts, `{type:"json"}` /
- * `{type:"text"}` output encodings plus raw result objects) and MuxMessages
- * (dynamic-tool parts with raw outputs) — aiService seeds from MuxMessages
- * because the agent-transition sentinel is computed before the Mux→Model
+ * `{type:"text"}` output encodings plus raw result objects) and ShuxMessages
+ * (dynamic-tool parts with raw outputs) — aiService seeds from ShuxMessages
+ * because the agent-transition sentinel is computed before the Shux→Model
  * conversion runs. Callers intersect the result with the current deferred set.
  */
 export function extractPreActivatedToolNames(
@@ -627,7 +627,7 @@ export function extractPreActivatedToolNames(
 
 /**
  * AI SDK 7 reserves the legacy `tool_search` name for OpenAI's native tool.
- * Rewrite only completed historical Mux search calls, request-only, so old
+ * Rewrite only completed historical Shux search calls, request-only, so old
  * workspaces remain usable without relabeling unrelated MCP tools.
  */
 export function normalizeLegacyToolSearchMessages(messages: ModelMessage[]): ModelMessage[] {

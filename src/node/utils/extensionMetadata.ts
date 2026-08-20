@@ -1,6 +1,6 @@
 import { readFileSync, existsSync } from "fs";
 
-import { getMuxExtensionMetadataPath } from "@/common/constants/paths";
+import { getShuxExtensionMetadataPath } from "@/common/constants/paths";
 import type { WorkspaceActivitySnapshot } from "@/common/types/workspace";
 import type { GoalSnapshot } from "@/common/types/goal";
 import { GoalSnapshotSchema } from "@/common/orpc/schemas/goal";
@@ -159,7 +159,7 @@ export function toWorkspaceActivitySnapshot(
  * Used by both the main app and VS Code extension (vscode/src/muxConfig.ts).
  */
 export function readExtensionMetadata(): Map<string, ExtensionMetadata> {
-  const metadataPath = getMuxExtensionMetadataPath();
+  const metadataPath = getShuxExtensionMetadataPath();
 
   if (!existsSync(metadataPath)) {
     return new Map();

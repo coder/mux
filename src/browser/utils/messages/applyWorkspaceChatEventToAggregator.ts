@@ -232,7 +232,7 @@ export function applyWorkspaceChatEventToAggregator(
     return "immediate";
   }
 
-  // init-* and ChatMuxMessage are handled via the aggregator's unified handleMessage.
+  // init-* and ChatShuxMessage are handled via the aggregator's unified handleMessage.
   if (isMuxMessage(event) || isInitStart(event) || isInitOutput(event) || isInitEnd(event)) {
     aggregator.handleMessage(event);
     return "immediate";

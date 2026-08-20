@@ -627,7 +627,7 @@ describe("ProviderService.getConfig", () => {
         provider_access: [{ id: "openai" }],
       },
       async (config, service, policyService) => {
-        // A second Config on the same root stands in for another Mux process
+        // A second Config on the same root stands in for another Shux process
         // holding the providers file lock while setModels waits for it.
         const otherProcess = new Config(config.rootDir);
         let releaseLock!: () => void;

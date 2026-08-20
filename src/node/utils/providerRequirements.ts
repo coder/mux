@@ -340,7 +340,7 @@ export function resolveProviderCredentials(
       : { isConfigured: false, missingRequirement: "region" };
   }
 
-  // Mux Gateway: coupon code required (no env var support)
+  // Shux Gateway: coupon code required (no env var support)
   if (provider === "mux-gateway") {
     const couponCode = config.couponCode ?? config.voucher;
     return couponCode

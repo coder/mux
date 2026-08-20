@@ -1378,7 +1378,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
   describe("GPT-5.6 explicit prompt caching serialization", () => {
     // Production-path wire test: createOpenAI + capture fetch + streamText
-    // (the same streaming parser Mux uses), not intermediate TS objects.
+    // (the same streaming parser Shux uses), not intermediate TS objects.
     const providersConfig: ProvidersConfigMap = {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
@@ -1456,7 +1456,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
       // Production system-message shape from the cache strategy helper.
       const cachedSystem = createOpenAICachedSystemMessage(
-        "You are Mux.",
+        "You are Shux.",
         "openai:gpt-5.6-luna",
         "openai",
         providersConfig
@@ -1530,7 +1530,7 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(responsesSystem?.content).toEqual([
         {
           type: "input_text",
-          text: "You are Mux.",
+          text: "You are Shux.",
           prompt_cache_breakpoint: { mode: "explicit" },
         },
       ]);
@@ -1546,7 +1546,7 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(chatSystem?.content).toEqual([
         {
           type: "text",
-          text: "You are Mux.",
+          text: "You are Shux.",
           prompt_cache_breakpoint: { mode: "explicit" },
         },
       ]);
@@ -1562,7 +1562,7 @@ describe("buildProviderOptions - OpenAI", () => {
   });
 
   describe("OpenAI conversation state management", () => {
-    test("does not reuse previousResponseId when Mux already sends explicit GPT-5.5 history", () => {
+    test("does not reuse previousResponseId when Shux already sends explicit GPT-5.5 history", () => {
       const messages = [
         createMuxMessage("assistant-1", "assistant", "", {
           model: "mux-gateway:openai/gpt-5.5",
@@ -2041,10 +2041,10 @@ describe("buildRequestHeaders", () => {
     });
   }
 
-  // Native xhigh effort no longer needs a Mux-internal override header: the
+  // Native xhigh effort no longer needs a Shux-internal override header: the
   // SDK accepts effort "xhigh" directly (see buildProviderOptions tests above),
   // so buildRequestHeaders is thinking-level-independent.
-  test("does not emit any Mux-internal effort header for native-xhigh models", () => {
+  test("does not emit any Shux-internal effort header for native-xhigh models", () => {
     expect(buildRequestHeaders("anthropic:claude-opus-4-7")).toBeUndefined();
     expect(buildRequestHeaders("anthropic:claude-sonnet-5")).toBeUndefined();
   });
@@ -2253,6 +2253,13 @@ describe("buildRequestHeaders", () => {
       expected: { [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
     },
     {
+      name: "should include X-Mux-Workspace-Id for mux-gateway routes",
+      model: "mux-gateway:openai/gpt-5.2",
+      options: undefined,
+      workspaceId: "a1b2c3d4e5",
+      expected: { [MUX_WORKSPACE_ID_HEADER]: "a1b2c3d4e5" },
+    },
+    {
       name: "should encode non-header-safe workspace IDs before attaching request header",
       model: "openai:gpt-5.2",
       options: undefined,
@@ -2280,9 +2287,18 @@ describe("buildRequestHeaders", () => {
     },
   ] as const) {
     test(name, () => {
-      expect(buildRequestHeaders(model, options, workspaceId)).toEqual(expected);
+      const headers = buildRequestHeaders(model, options, workspaceId);
+      expect(headers).toEqual(expected);
+      expect(headers?.["X-Shux-Workspace-Id"]).toBeUndefined();
     });
   }
+
+  test("workspace correlation header uses the mux wire name, not Shux", () => {
+    expect(MUX_WORKSPACE_ID_HEADER).toBe("X-Mux-Workspace-Id");
+    const headers = buildRequestHeaders("openai:gpt-5.2", undefined, "ws-id");
+    expect(headers?.["X-Mux-Workspace-Id"]).toBe("ws-id");
+    expect(headers?.["X-Shux-Workspace-Id"]).toBeUndefined();
+  });
 
   test("should return undefined when no workspaceId and no provider-specific headers apply", () => {
     expect(buildRequestHeaders("openai:gpt-5.2")).toBeUndefined();

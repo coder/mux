@@ -519,7 +519,7 @@ export function GeneralSection() {
           <div className="flex items-center justify-between gap-4">
             <div className="flex-1">
               <div className="text-foreground text-sm">Launch behavior</div>
-              <div className="text-muted text-xs">What to show when Mux starts</div>
+              <div className="text-muted text-xs">What to show when Shux starts</div>
             </div>
             <Select
               value={launchBehavior}
@@ -771,7 +771,7 @@ export function GeneralSection() {
         <div className="flex-1">
           <div className="text-foreground text-sm">Worktree archive behavior</div>
           <div className="text-muted text-xs">
-            Control whether archived mux-managed worktrees stay on disk, are deleted, or are
+            Control whether archived shux-managed worktrees stay on disk, are deleted, or are
             snapshotted so they can be restored on unarchive.
           </div>
         </div>
@@ -830,7 +830,7 @@ export function GeneralSection() {
                 setDefaultProjectDir(e.target.value)
               }
               onBlur={handleCloneDirBlur}
-              placeholder="~/.mux/projects"
+              placeholder="~/.shux/projects"
               disabled={!cloneDirLoaded}
               className="border-border-medium bg-background-secondary h-9 w-80"
             />

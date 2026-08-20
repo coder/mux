@@ -90,8 +90,8 @@ export class LocalRuntime extends LocalBaseRuntime {
       params,
       runtimeType: "local",
       hookCheckPath: params.projectPath,
-      runHook: async ({ muxEnv, initLogger, abortSignal }) => {
-        await this.runInitHook(params.workspacePath, muxEnv, initLogger, abortSignal);
+      runHook: async ({ shuxEnv, initLogger, abortSignal }) => {
+        await this.runInitHook(params.workspacePath, shuxEnv, initLogger, abortSignal);
       },
     });
   }

@@ -28,13 +28,19 @@
 # Telemetry in Development:
 #   Telemetry is enabled by default in dev mode (same as production).
 #   It is automatically disabled in CI, test environments, and automation contexts.
-#   To manually disable telemetry, set MUX_DISABLE_TELEMETRY=1.
+#   To manually disable telemetry, set SHUX_DISABLE_TELEMETRY=1.
 
+# Developer env: SHUX_* is canonical. MUX_* and unprefixed VITE_*/BACKEND_* remain accepted.
 # React profiling in development:
-# Default desktop dev launches opt into Mux's lightweight component render sampler so
+# Default desktop dev launches opt into Shux's lightweight component render sampler so
 # already-running dev instances can be inspected without a restart. Override with
-# `make start MUX_PROFILE_REACT=0` when measuring an uninstrumented baseline.
-MUX_PROFILE_REACT ?= 1
+# `make start SHUX_PROFILE_REACT=0` when measuring an uninstrumented baseline.
+SHUX_PROFILE_REACT ?= $(or $(MUX_PROFILE_REACT),1)
+SHUX_VITE_HOST ?= $(or $(MUX_VITE_HOST),$(VITE_HOST),127.0.0.1)
+SHUX_VITE_PORT ?= $(or $(MUX_VITE_PORT),$(VITE_PORT),5173)
+SHUX_VITE_ALLOWED_HOSTS ?= $(or $(MUX_VITE_ALLOWED_HOSTS),$(VITE_ALLOWED_HOSTS))
+SHUX_BACKEND_HOST ?= $(or $(MUX_BACKEND_HOST),$(BACKEND_HOST),127.0.0.1)
+SHUX_BACKEND_PORT ?= $(or $(MUX_BACKEND_PORT),$(BACKEND_PORT),3000)
 
 # Use PATH-resolved bash for portability across different systems.
 # - Windows: /usr/bin/bash doesn't exist in Chocolatey's make environment or GitHub Actions
@@ -172,43 +178,43 @@ dev: node_modules/.installed build-main build-preload ## Start development serve
 endif
 
 ifeq ($(OS),Windows_NT)
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
+dev-server: node_modules/.installed build-main ## Start server mode with hot reload. Use SHUX_VITE_HOST=0.0.0.0 SHUX_VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
-	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
-	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
+	@echo "  Backend (IPC/WebSocket): http://$(SHUX_BACKEND_HOST):$(SHUX_BACKEND_PORT)"
+	@echo "  Frontend (with HMR):     http://$(SHUX_VITE_HOST):$(SHUX_VITE_PORT)"
 	@echo ""
-	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host>"
+	@echo "For remote access: make dev-server SHUX_VITE_HOST=0.0.0.0 SHUX_VITE_ALLOWED_HOSTS=<public-host>"
 	@# On Windows, use npm run because bunx doesn't correctly pass arguments
 	@npm x concurrently -k \
 		"nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json,js --ignore dist --ignore node_modules scripts/build-main-watch.js" \
 		'npx esbuild src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)" \
-		"set MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1)&& set MUX_VITE_PORT=$(or $(VITE_PORT),5173)&& set MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS)&& set MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000)&& vite"
+		"set NODE_ENV=development&& nodemon --watch dist/cli/index.js --watch dist/cli/server.js --delay 500ms dist/cli/index.js server --no-auth --host $(SHUX_BACKEND_HOST) --port $(SHUX_BACKEND_PORT)" \
+		"set SHUX_VITE_HOST=$(SHUX_VITE_HOST)&& set SHUX_VITE_PORT=$(SHUX_VITE_PORT)&& set SHUX_VITE_ALLOWED_HOSTS=$(SHUX_VITE_ALLOWED_HOSTS)&& set SHUX_BACKEND_HOST=$(SHUX_BACKEND_HOST)&& set SHUX_BACKEND_PORT=$(SHUX_BACKEND_PORT)&& vite"
 else
-dev-server: node_modules/.installed build-main ## Start server mode with hot reload (backend :3000 + frontend :5173). Use VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host> for remote access
+dev-server: node_modules/.installed build-main ## Start server mode with hot reload. Use SHUX_VITE_HOST=0.0.0.0 SHUX_VITE_ALLOWED_HOSTS=<public-host> for remote access
 	@echo "Starting dev-server..."
-	@echo "  Backend (IPC/WebSocket): http://$(or $(BACKEND_HOST),127.0.0.1):$(or $(BACKEND_PORT),3000)"
-	@echo "  Frontend (with HMR):     http://$(or $(VITE_HOST),localhost):$(or $(VITE_PORT),5173)"
+	@echo "  Backend (IPC/WebSocket): http://$(SHUX_BACKEND_HOST):$(SHUX_BACKEND_PORT)"
+	@echo "  Frontend (with HMR):     http://$(SHUX_VITE_HOST):$(SHUX_VITE_PORT)"
 	@echo ""
-	@echo "For remote access: make dev-server VITE_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=<public-host>"
+	@echo "For remote access: make dev-server SHUX_VITE_HOST=0.0.0.0 SHUX_VITE_ALLOWED_HOSTS=<public-host>"
 	@# Keep tsgo -> tsc-alias sequential to avoid transient unresolved @/ imports in dist during restarts.
 	@bun x concurrently -k \
 		"bun x nodemon --watch src --watch tsconfig.main.json --watch tsconfig.json --ext ts,tsx,json,js --ignore dist --ignore node_modules --exec 'node scripts/build-main-watch.js'" \
 		'$(ESBUILD_BIN) src/cli/api.ts $(ESBUILD_CLI_FLAGS) --watch' \
-		"bun x nodemon --watch dist/.main-build-complete --delay 300ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(or $(BACKEND_HOST),127.0.0.1) --port $(or $(BACKEND_PORT),3000)'" \
-		"MUX_VITE_HOST=$(or $(VITE_HOST),127.0.0.1) MUX_VITE_PORT=$(or $(VITE_PORT),5173) MUX_VITE_ALLOWED_HOSTS=$(VITE_ALLOWED_HOSTS) MUX_BACKEND_PORT=$(or $(BACKEND_PORT),3000) vite"
+		"bun x nodemon --watch dist/.main-build-complete --delay 300ms --exec 'NODE_ENV=development node dist/cli/index.js server --no-auth --host $(SHUX_BACKEND_HOST) --port $(SHUX_BACKEND_PORT)'" \
+		"SHUX_VITE_HOST=$(SHUX_VITE_HOST) SHUX_VITE_PORT=$(SHUX_VITE_PORT) SHUX_VITE_ALLOWED_HOSTS=$(SHUX_VITE_ALLOWED_HOSTS) SHUX_BACKEND_HOST=$(SHUX_BACKEND_HOST) SHUX_BACKEND_PORT=$(SHUX_BACKEND_PORT) vite"
 endif
 
 
 
 
-dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh MUX_ROOT + free ports)
+dev-desktop-sandbox: ## Start an isolated Electron dev instance (fresh SHUX_ROOT + free ports)
 	@bun scripts/dev-desktop-sandbox.ts $(DEV_DESKTOP_SANDBOX_ARGS)
-dev-server-sandbox: ## Start an isolated dev-server instance (fresh MUX_ROOT + free ports)
+dev-server-sandbox: ## Start an isolated dev-server instance (fresh SHUX_ROOT + free ports)
 	@bun scripts/dev-server-sandbox.ts $(DEV_SERVER_SANDBOX_ARGS)
 
 start: node_modules/.installed build-main build-preload build-static ## Build and start Electron app
-	@NODE_ENV=development MUX_PROFILE_REACT=$(MUX_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
+	@NODE_ENV=development SHUX_PROFILE_REACT=$(SHUX_PROFILE_REACT) bunx electron --remote-debugging-port=9222 .
 
 ## Build targets (can run in parallel)
 build: node_modules/.installed src/version.ts build-renderer build-main build-preload build-icons build-static ## Build all targets
@@ -426,7 +432,7 @@ test-coverage: ## Run tests with coverage
 smoke-test: build ## Run smoke test on npm package
 	@echo "Building npm package tarball..."
 	@npm pack
-	@TARBALL=$$(ls mux-*.tgz | head -1); \
+	@TARBALL=$$(ls shux-*.tgz | head -1); \
 	echo "Running smoke test on $$TARBALL..."; \
 	PACKAGE_TARBALL="$$TARBALL" ./scripts/smoke-test.sh; \
 	EXIT_CODE=$$?; \
@@ -435,11 +441,11 @@ smoke-test: build ## Run smoke test on npm package
 
 test-e2e: ## Run end-to-end tests
 	@$(MAKE) build
-	@MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron $(PLAYWRIGHT_ARGS)
+	@SHUX_E2E_LOAD_DIST=1 SHUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron $(PLAYWRIGHT_ARGS)
 
 test-e2e-perf: ## Run automated performance profiling scenarios
 	@$(MAKE) build
-	@MUX_E2E_RUN_PERF=1 MUX_PROFILE_REACT=1 MUX_E2E_LOAD_DIST=1 MUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf*.spec.ts $(PLAYWRIGHT_ARGS)
+	@SHUX_E2E_RUN_PERF=1 SHUX_PROFILE_REACT=1 SHUX_E2E_LOAD_DIST=1 SHUX_E2E_SKIP_BUILD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 bun x playwright test --project=electron tests/e2e/scenarios/perf*.spec.ts $(PLAYWRIGHT_ARGS)
 
 ## Distribution
 dist: build ## Build distributable packages
@@ -471,10 +477,11 @@ dist-mac-arm64: build ## Build macOS arm64 distributable only
 	@bun x electron-builder --mac --arm64 --publish never
 
 install-mac-arm64: dist-mac-arm64 ## Build and install macOS arm64 app to /Applications
-	@echo "Installing mux.app to /Applications..."
-	@rm -rf /Applications/mux.app
-	@cp -R release/mac-arm64/mux.app /Applications/
-	@echo "Installed mux.app to /Applications"
+	@app_bundle="$$(bun -e 'import { resolveMacPackagedAppNames } from "./src/common/compat/macPackagedApp.ts"; import pkg from "./package.json"; process.stdout.write(resolveMacPackagedAppNames(pkg.build).appBundleName)')"; \
+	echo "Installing $$app_bundle to /Applications..."; \
+	rm -rf "/Applications/$$app_bundle"; \
+	cp -R "release/mac-arm64/$$app_bundle" /Applications/; \
+	echo "Installed $$app_bundle to /Applications"
 
 dist-win: build ## Build Windows distributable
 	@bun x electron-builder --win --publish never

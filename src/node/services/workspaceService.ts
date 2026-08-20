@@ -1202,7 +1202,7 @@ async function archiveChildSessionArtifactsIntoParentSessionDir(params: {
   }
 
   // 1) Archive the child session transcript (chat.jsonl + partial.json) into the parent session dir
-  // BEFORE deleting ~/.mux/sessions/<childWorkspaceId>.
+  // BEFORE deleting ~/.shux/sessions/<childWorkspaceId>.
   try {
     const childChatPath = path.join(params.childSessionDir, CHAT_FILE_NAME);
     const childChatArchivePath = path.join(params.childSessionDir, CHAT_ARCHIVE_FILE_NAME);
@@ -2007,7 +2007,7 @@ export class WorkspaceService extends EventEmitter {
   }
 
   /**
-   * Startup recovery for bash monitors lost to a Mux restart (graceful or crash).
+   * Startup recovery for bash monitors lost to a Shux restart (graceful or crash).
    *
    * The manager's process map is always empty at startup, so any persisted armed-monitor
    * registry record found now describes a monitor that no longer exists: its process was
@@ -3707,13 +3707,13 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getMuxHome();
+    const muxHome = runtime.getShuxHome();
     const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
     // For local/SSH: expand tilde for comparison with message history paths
     // For Docker: paths are already absolute (/var/mux/...), no expansion needed
     const expandedPlanPath = muxHome.startsWith("~") ? expandTilde(planPath) : planPath;
-    // Legacy plan path (stored by workspace ID) for filtering
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    // Legacy plan path (stored by workspace ID) for filtering — same runtime home
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
     const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
 
     // Check both new and legacy plan paths, prefer new path
@@ -3912,8 +3912,8 @@ export class WorkspaceService extends EventEmitter {
     const config = this.config.loadConfigOrDefault({ throwOnError: true });
 
     const knownIds = new Set<string>(allMetadata.map((metadata) => metadata.id));
-    // The config load-time migration (removeLegacyMuxChatEntries) drops the
-    // removed Chat with Mux workspace from config, which would make its
+    // The config load-time migration (removeLegacyShuxChatEntries) drops the
+    // removed Chat with Shux workspace from config, which would make its
     // session dir look orphaned here. Preserve the transcript: a downgraded
     // build recreates the workspace and should find its history intact.
     knownIds.add("mux-chat");
@@ -5144,7 +5144,7 @@ export class WorkspaceService extends EventEmitter {
         childTaskThinkingLevel = coerceThinkingLevel(metadata.taskThinkingLevel);
 
         // If this workspace is a sub-agent/task, roll its accumulated timing into the parent BEFORE
-        // deleting ~/.mux/sessions/<workspaceId>/session-timing.json.
+        // deleting ~/.shux/sessions/<workspaceId>/session-timing.json.
         if (parentWorkspaceId && this.sessionTimingService) {
           try {
             // Flush any last timing write (e.g. from stream-abort) before reading.
@@ -5160,7 +5160,7 @@ export class WorkspaceService extends EventEmitter {
         }
 
         // If this workspace is a sub-agent/task, roll its accumulated usage into the parent BEFORE
-        // deleting ~/.mux/sessions/<workspaceId>/session-usage.json.
+        // deleting ~/.shux/sessions/<workspaceId>/session-usage.json.
         if (parentWorkspaceId && this.sessionUsageService) {
           try {
             const childUsage = await this.sessionUsageService.getSessionUsage(workspaceId);
@@ -5200,7 +5200,7 @@ export class WorkspaceService extends EventEmitter {
 
       // Avoid leaking init waiters/logs after workspace deletion.
       // Must happen before deleting the session directory so queued init-status writes don't
-      // recreate ~/.mux/sessions/<workspaceId>/ after removal.
+      // recreate ~/.shux/sessions/<workspaceId>/ after removal.
       //
       // Intentionally deferred until we're committed to removal: if runtime deletion fails with
       // force=false we return early and keep init state intact so init-end can refresh metadata.
@@ -5785,7 +5785,7 @@ export class WorkspaceService extends EventEmitter {
    * Write the per-workspace goal-defaults override.
    *
    * `null` fields mean "follow the global default" — when *every* field is
-   * null, the entire override is dropped from `~/.mux/config.json` so the
+   * null, the entire override is dropped from `~/.shux/config.json` so the
    * workspace is indistinguishable from never having had one. Modeled on
    * `setHeartbeatSettings` so consumers re-fetch via the existing workspace
    * metadata subscription.
@@ -9597,11 +9597,11 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     metadata: FrontendWorkspaceMetadata
   ): Promise<void> {
-    // Create runtime to get correct muxHome (Docker uses /var/mux, others use ~/.mux)
+    // Create runtime to get correct muxHome (local ~/.shux, SSH ~/.mux, Docker /var/mux)
     const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getMuxHome();
+    const muxHome = runtime.getShuxHome();
     const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
     const isDocker = isDockerRuntime(metadata.runtimeConfig);
     const isSSH = isSSHRuntime(metadata.runtimeConfig);
@@ -9982,7 +9982,7 @@ export class WorkspaceService extends EventEmitter {
         }
       }
 
-      // Add type: "message" for discriminated union (MuxMessage doesn't have it)
+      // Add type: "message" for discriminated union (ShuxMessage doesn't have it)
       const typedSummaryMessage = { ...messageToAppend, type: "message" as const };
       if (session) {
         session.emitChatEvent(typedSummaryMessage);

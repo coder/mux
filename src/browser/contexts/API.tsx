@@ -463,7 +463,7 @@ function ManagedAPIProvider(props: Omit<APIProviderProps, "client">) {
     if (attempt >= MAX_RECONNECT_ATTEMPTS) {
       const error = hasConnectedRef.current
         ? "Connection lost. Please refresh the page."
-        : "Failed to connect to the Mux backend after multiple attempts.";
+        : "Failed to connect to the Shux backend after multiple attempts.";
       setState({ status: "error", error });
       return;
     }

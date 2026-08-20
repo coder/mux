@@ -1,11 +1,12 @@
 {
-  "name": "mux",
+  "name": "shux",
   "version": "0.28.2",
-  "desktopName": "mux.desktop",
-  "description": "mux - coder multiplexer",
+  "desktopName": "shux.desktop",
+  "description": "shux - coding agent multiplexer",
   "author": "Coder",
   "main": "dist/cli/index.js",
   "bin": {
+    "shux": "dist/cli/index.js",
     "mux": "dist/cli/index.js"
   },
   "license": "AGPL-3.0-only",
@@ -257,11 +258,13 @@
   ],
   "build": {
     "appId": "com.mux.app",
-    "productName": "mux",
+    "productName": "Shux",
+    "executableName": "shux",
     "protocols": [
       {
-        "name": "Mux",
+        "name": "Shux",
         "schemes": [
+          "shux",
           "mux"
         ]
       }
@@ -291,7 +294,7 @@
         "zip"
       ],
       "icon": "build/icon.icns",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -302,12 +305,15 @@
       "target": "AppImage",
       "category": "Development",
       "icon": "build/icons",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "desktop": {
+        "StartupWMClass": "shux"
+      }
     },
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "artifactName": "${name}-${version}-${arch}.${ext}",
       "sign": "scripts/sign-windows.js",
       "signingHashAlgorithms": [
         "sha256"

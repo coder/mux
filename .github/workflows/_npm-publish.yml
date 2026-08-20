@@ -4,7 +4,7 @@ name: NPM Publish (Reusable)
 # Called by publish-npm.yml (the OIDC-trusted caller).
 #
 # OIDC TRUSTED PUBLISHING SETUP (on npmjs.com):
-#   For each package (mux, @coder/mux-chat-components):
+#   For each package (shux, mux, @coder/mux-chat-components):
 #   1. Go to package settings → Trusted Publisher → GitHub Actions
 #   2. Configure:
 #      - Owner: coder
@@ -91,10 +91,10 @@ jobs:
           echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
 
-          # Update package.json with the new version
-          node -e "const fs = require('fs'); const pkg = JSON.parse(fs.readFileSync('package.json')); pkg.version = '${NPM_VERSION}'; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+          # Keep the canonical shux package and legacy mux forwarding package in lockstep.
+          node ./scripts/set-package-version.js "$NPM_VERSION"
 
-          echo "Updated package.json to version ${NPM_VERSION}"
+          echo "Updated package versions to ${NPM_VERSION}"
 
       - name: Generate version file
         run: ./scripts/generate-version.sh
@@ -112,7 +112,7 @@ jobs:
         id: find-tarball
         run: |
           # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
-          TARBALL=$(ls mux-*.tgz | head -1)
+          TARBALL=$(ls shux-*.tgz | head -1)
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Found package: $TARBALL"
 
@@ -160,7 +160,7 @@ jobs:
 
       - name: Clean up tarball
         if: always()
-        run: rm -f mux-*.tgz
+        run: rm -f shux-*.tgz
 
       - name: Check if version exists
         id: check-exists
@@ -190,6 +190,32 @@ jobs:
           echo "Version ${STEPS_VERSION_OUTPUTS_VERSION} already exists on npm; skipping publish."
         env:
           STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Verify legacy mux compatibility package
+        working-directory: packages/mux-compat
+        run: npm pack --dry-run
+
+      - name: Check if legacy mux version exists
+        id: mux-compat-check-exists
+        working-directory: packages/mux-compat
+        run: |
+          VERSION="${STEPS_VERSION_OUTPUTS_VERSION}"
+          if npm view "mux@${VERSION}" version &>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Legacy mux version ${VERSION} already exists"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Legacy mux version ${VERSION} will be published"
+          fi
+        env:
+          STEPS_VERSION_OUTPUTS_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Publish legacy mux compatibility package
+        if: steps.mux-compat-check-exists.outputs.exists == 'false'
+        working-directory: packages/mux-compat
+        run: npm publish --tag "$STEPS_VERSION_OUTPUTS_TAG"
+        env:
+          STEPS_VERSION_OUTPUTS_TAG: ${{ steps.version.outputs.tag }}
 
       - name: Generate chat-components version
         id: chat-components-version

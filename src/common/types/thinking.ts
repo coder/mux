@@ -188,7 +188,7 @@ export type AnthropicEffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
  * SDK coupling note: explicit `providerOptions.anthropic.effort` values flow
  * verbatim into `output_config.effort` as of @ai-sdk/anthropic 4.0.11 (its Zod
  * schema accepts "xhigh"; its `supportsXhighEffort` model gating applies only to
- * the SDK's top-level `reasoning` CallOption mapping, which Mux does not use).
+ * the SDK's top-level `reasoning` CallOption mapping, which Shux does not use).
  * Re-verify this pass-through on major SDK upgrades.
  */
 const ANTHROPIC_EFFORT: Record<ThinkingLevel, AnthropicEffortLevel> = {

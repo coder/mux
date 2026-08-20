@@ -1,5 +1,5 @@
 ---
-name: mux-diagram
+name: shux-diagram
 description: Mermaid diagram best practices and text-based chart alternatives
 ---
 

@@ -1033,7 +1033,7 @@ describe("ACP prompt stream correlation", () => {
 
     harness.closeConnection();
 
-    await expect(promptPromise).rejects.toThrow("Mux ACP connection closed");
+    await expect(promptPromise).rejects.toThrow("Shux ACP connection closed");
     await waitForCondition(() => harness.interruptCalls.length === 1);
 
     expect(harness.interruptCalls[0]).toEqual({
@@ -1119,8 +1119,8 @@ describe("ACP prompt stream correlation", () => {
 
     const firstPromptResult = await firstPrompt;
     const secondPromptResult = await secondPrompt;
-    expect(firstPromptResult.message).toContain("Mux ACP connection closed");
-    expect(secondPromptResult.message).toContain("Mux ACP connection closed");
+    expect(firstPromptResult.message).toContain("Shux ACP connection closed");
+    expect(secondPromptResult.message).toContain("Shux ACP connection closed");
 
     await harness.connectionClosed;
   });
@@ -1158,7 +1158,7 @@ describe("ACP prompt stream correlation", () => {
     harness.closeConnection();
 
     const promptResult = await promptPromise;
-    expect(promptResult.message).toContain("Mux ACP connection closed");
+    expect(promptResult.message).toContain("Shux ACP connection closed");
     await waitForCondition(() => harness.interruptCalls.length === 1);
     await expect(harness.agent.waitForDisconnectCleanup()).resolves.toBeUndefined();
 

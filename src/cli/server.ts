@@ -1,16 +1,14 @@
 /**
- * CLI entry point for the mux oRPC server.
+ * CLI entry point for the shux oRPC server.
  * Uses ServerService for server lifecycle management.
  */
 import "source-map-support/register";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
-import {
-  cleanupObsoleteMuxBinArtifacts,
-  getMuxHome,
-  migrateLegacyMuxHome,
-} from "@/common/constants/paths";
+import { cleanupObsoleteShuxBinArtifacts, getShuxHome } from "@/common/constants/paths";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { initializeShuxHomeTransition } from "@/node/compat/shuxTransition";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { log } from "@/node/services/log";
 import type { BrowserWindow } from "electron";
@@ -64,8 +62,8 @@ const mockWindow: BrowserWindow = {
 async function main(): Promise<void> {
   const program = new Command();
   program
-    .name("mux server")
-    .description("HTTP/WebSocket ORPC server for mux")
+    .name("shux server")
+    .description("HTTP/WebSocket ORPC server for Shux")
     .option("-h, --host <host>", "bind to specific host", "localhost")
     .option("-p, --port <port>", "bind to specific port", "3000")
     .option("--auth-token <token>", "bearer token for HTTP/WS auth (default: auto-generated)")
@@ -85,7 +83,7 @@ async function main(): Promise<void> {
   const resolved = resolveServerAuthToken({
     noAuth: options.noAuth === true || options.auth === false,
     cliToken: options.authToken as string | undefined,
-    envToken: process.env.MUX_SERVER_AUTH_TOKEN,
+    envToken: resolveShuxEnvironmentValue("SERVER_AUTH_TOKEN", process.env),
   });
   const ADD_PROJECT_PATH = options.addProject as string | undefined;
   // HTTPS-terminating proxy compatibility is opt-in so local/default deployments stay strict.
@@ -106,23 +104,26 @@ async function main(): Promise<void> {
   }, 1000);
 
   try {
-    migrateLegacyMuxHome();
-    cleanupObsoleteMuxBinArtifacts();
+    const transition = await initializeShuxHomeTransition();
+    cleanupObsoleteShuxBinArtifacts(transition.activePath);
+    for (const issue of transition.issues) {
+      log.debug("[shux-transition] Server startup compatibility issue", { issue });
+    }
   } catch (error) {
-    // Server startup should remain resilient even if mux-home migrations cannot run.
-    log.debug("[mux-home] Failed server startup migrations", error);
+    // Server startup remains resilient when compatibility work is blocked by the filesystem.
+    log.debug("[shux-transition] Failed server startup transition", error);
   }
 
   // Early lockfile check: detect an existing server BEFORE initializing services.
   // serviceContainer.initialize() resumes queued/running tasks (via TaskService),
   // so we must fail fast here to avoid orphaned side effects when another server
   // already holds the lock. ServerService.startServer() re-checks as defense-in-depth.
-  const muxHome = getMuxHome();
+  const muxHome = getShuxHome();
   const earlyLockfile = new ServerLockfile(muxHome);
   const existing = await earlyLockfile.read();
   if (existing) {
-    console.error(`Error: mux API server is already running at ${existing.baseUrl}`);
-    console.error(`Use 'mux api' commands to interact with the running instance.`);
+    console.error(`Error: shux API server is already running at ${existing.baseUrl}`);
+    console.error(`Use 'shux api' commands to interact with the running instance.`);
     process.exit(1);
   }
 
@@ -141,7 +142,10 @@ async function main(): Promise<void> {
   serviceContainer.serverService.setLaunchProject(launchProjectPath);
 
   // Set SSH host for editor deep links (CLI > env > config file)
-  const sshHost = CLI_SSH_HOST ?? process.env.MUX_SSH_HOST ?? config.getServerSshHost();
+  const sshHost =
+    CLI_SSH_HOST ??
+    resolveShuxEnvironmentValue("SSH_HOST", process.env) ??
+    config.getServerSshHost();
   serviceContainer.serverService.setSshHost(sshHost);
 
   const context = serviceContainer.toORPCContext();
@@ -161,7 +165,7 @@ async function main(): Promise<void> {
   clearInterval(startupKeepalive);
 
   // --- Startup output ---
-  console.log(`\nmux server v${VERSION.git_describe}`);
+  console.log(`\nshux server v${VERSION.git_describe}`);
   console.log(`  URL:  ${serverInfo.baseUrl}`);
   if (serverInfo.networkBaseUrls.length > 0) {
     for (const url of serverInfo.networkBaseUrls) {

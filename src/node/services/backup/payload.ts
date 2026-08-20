@@ -431,7 +431,7 @@ async function assertOpenedFileContained(
 /**
  * Resolved once where an operation begins, so every open and check below it uses that result.
  * The root being a symlink is then neither refused nor traversed again: a user is free to keep
- * `~/.mux` on another volume, and swapping that link partway through cannot move an operation
+ * `~/.shux` on another volume, and swapping that link partway through cannot move an operation
  * already under way onto a different tree. Only the components below the root are held to the
  * no-symlink rule.
  */
@@ -876,7 +876,7 @@ export function mergeBackupPreferences(
 }
 
 /**
- * `MCPHeaderValue` is `string | { secret }` (src/common/types/mcp.ts), so Mux sends a plain
+ * `MCPHeaderValue` is `string | { secret }` (src/common/types/mcp.ts), so Shux sends a plain
  * string verbatim and never interpolates it: only the reference form is portable. Exactly one
  * key, because a sibling property inside the reference would be published verbatim and is a
  * place to hide a credential that `resolveHeaders` would never read.
@@ -1048,11 +1048,11 @@ function isUnsupportedServerMap(value: unknown): boolean {
 }
 
 /**
- * Fields Mux itself reads (`McpConfigService.normalizeEntry`), with the type it reads them as.
+ * Fields Shux itself reads (`McpConfigService.normalizeEntry`), with the type it reads them as.
  * Anything else in the document, at any depth, is replaced with the marker: `normalizeEntry`
  * ignores an unrecognised field such as `env` or `args`, so nobody here can say whether its
  * value is a credential, and `{ "API_KEY": "hunter2" }` is not something a scanner can catch.
- * Restore puts the local value back at that exact path, so a field only Mux ignores is not
+ * Restore puts the local value back at that exact path, so a field only Shux ignores is not
  * lost from a machine that already has it.
  */
 const PORTABLE_SERVER_FIELDS: Record<string, (value: unknown) => boolean> = {
@@ -1179,7 +1179,7 @@ function redactMcpConfig(content: Buffer): {
         }
         continue;
       }
-      // Mux ignores every other field, so its value may carry credentials under a shape this
+      // Shux ignores every other field, so its value may carry credentials under a shape this
       // projection cannot classify. Restore uses only the local value at that exact path.
       redact(fieldPath);
     }

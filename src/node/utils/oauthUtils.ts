@@ -90,7 +90,7 @@ export function renderOAuthCallbackHtml(options: RenderOAuthCallbackHtmlOptions)
     <p>${message}</p>
     ${
       options.success
-        ? '<p class="muted">Mux should now be in the foreground. You can close this tab.</p>'
+        ? '<p class="muted">Shux should now be in the foreground. You can close this tab.</p>'
         : '<p class="muted">You can close this tab.</p>'
     }
     <script>

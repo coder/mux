@@ -51,10 +51,9 @@ export class AttachmentService {
     workspaceId: string,
     runtime: Runtime
   ): Promise<PlanFileReferenceAttachment | null> {
-    const muxHome = runtime.getMuxHome();
+    const muxHome = runtime.getShuxHome();
     const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
-    // Legacy paths only used for non-Docker runtimes (Docker has no legacy files)
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
     // Try new path first
     try {
@@ -259,9 +258,9 @@ export class AttachmentService {
     excludedItems: Set<string> = new Set<string>()
   ): Promise<PostCompactionAttachment[]> {
     const attachments: PostCompactionAttachment[] = [];
-    const muxHome = runtime.getMuxHome();
+    const muxHome = runtime.getShuxHome();
     const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
     // Plan file reference (skip if excluded)
     let planRef: PlanFileReferenceAttachment | null = null;

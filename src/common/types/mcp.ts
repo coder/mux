@@ -103,7 +103,7 @@ export interface CachedMCPTestResult {
  *
  * Stored per-workspace in <workspace>/.mux/mcp.local.jsonc (workspace-local and intended to be gitignored).
  *
- * Legacy note: older mux versions stored these overrides in ~/.mux/config.json under each workspace entry.
+ * Legacy note: older Mux versions stored these overrides in ~/.mux/config.json under each workspace entry.
  * Newer versions migrate those values into the workspace-local file on first read/write.
  */
 export interface WorkspaceMCPOverrides {

@@ -23,7 +23,7 @@ export interface SessionFileWriteOptions {
  * Provides consistent file locking, error handling, and path resolution.
  *
  * Used by HistoryService partial persistence, InitStateManager, and other services that need
- * to persist state to ~/.mux/sessions/{workspaceId}/.
+ * to persist state to ~/.shux/sessions/{workspaceId}/.
  */
 export class SessionFileManager<T> {
   private readonly config: Config;

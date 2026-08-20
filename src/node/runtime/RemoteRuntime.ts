@@ -29,6 +29,7 @@ import type {
   EnsureReadyResult,
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
+import { LEGACY_REMOTE_MUX_HOME } from "@/common/compat/legacyMux";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { log } from "@/node/services/log";
 import { attachStreamErrorHandler } from "@/node/utils/streamErrors";
@@ -594,8 +595,10 @@ export abstract class RemoteRuntime implements Runtime {
     return Promise.resolve("/tmp");
   }
 
-  getMuxHome(): string {
-    return "~/.mux";
+  getShuxHome(): string {
+    // Remote hosts cannot be migrated safely from local startup. Keep their established
+    // home path centralized as a compatibility exception until remote provisioning owns it.
+    return LEGACY_REMOTE_MUX_HOME;
   }
 
   // Abstract methods that subclasses must implement

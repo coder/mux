@@ -108,21 +108,21 @@ export const EXPANDED_PROJECTS_KEY = "expandedProjects";
 export const WORKSPACE_DRAFTS_BY_PROJECT_KEY = "workspaceDraftsByProject";
 
 /**
- * LocalStorage keys for Mux Gateway routing preferences (global).
+ * LocalStorage keys for Shux Gateway routing preferences (global).
  *
  * Note: localStorage is origin-scoped (includes port), so these values are also
- * mirrored into ~/.mux/config.json for portability across server ports.
+ * mirrored into ~/.shux/config.json for portability across server ports.
  */
 export const GATEWAY_MODELS_KEY = "gateway-models"; // enabled model IDs (canonical)
 export const GATEWAY_ENABLED_KEY = "gateway-enabled"; // global on/off toggle
 
 /**
- * Storage key for runtime enablement settings (shared via ~/.mux/config.json).
+ * Storage key for runtime enablement settings (shared via ~/.shux/config.json).
  */
 export const RUNTIME_ENABLEMENT_KEY = "runtimeEnablement";
 
 /**
- * Storage key for global default runtime selection (shared via ~/.mux/config.json).
+ * Storage key for global default runtime selection (shared via ~/.shux/config.json).
  */
 export const DEFAULT_RUNTIME_KEY = "defaultRuntime";
 

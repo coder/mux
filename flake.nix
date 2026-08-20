@@ -1,5 +1,5 @@
 {
-  description = "mux - coder multiplexer";
+  description = "shux - coding agent multiplexer";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -23,8 +23,8 @@
           config.allowInsecurePredicate = attrs: builtins.match "electron.*" (attrs.pname or "") != null;
         };
 
-        mux = pkgs.stdenv.mkDerivation rec {
-          pname = "mux";
+        shux = pkgs.stdenv.mkDerivation rec {
+          pname = "shux";
           version = self.rev or self.dirtyRev or "dev";
 
           src = ./.;
@@ -50,9 +50,9 @@
           # Include Bun patch files alongside package.json and bun.lock so patched
           # dependencies install identically in local and remote Nix evaluations.
           offlineCache = pkgs.stdenvNoCC.mkDerivation {
-            name = "mux-deps-${version}";
+            name = "shux-deps-${version}";
 
-            src = pkgs.runCommand "mux-lock-files" { } ''
+            src = pkgs.runCommand "shux-lock-files" { } ''
               mkdir -p $out
               cp ${./package.json} $out/package.json
               cp -r ${./patches} $out/patches
@@ -84,7 +84,7 @@
 
             outputHashMode = "recursive";
             # Marker used by scripts/update_flake_hash.sh to update this hash in place.
-            outputHash = "sha256-Ci2q4ZCIymKhf4rinh6VKdzaGVBCRBsMUgjQOXTqotM="; # mux-offline-cache-hash
+            outputHash = "sha256-Ci2q4ZCIymKhf4rinh6VKdzaGVBCRBsMUgjQOXTqotM="; # shux-offline-cache-hash
           };
 
           configurePhase = ''
@@ -106,37 +106,36 @@
           '';
 
           buildPhase = ''
-            echo "Building mux with make..."
+            echo "Building shux with make..."
             export LD_LIBRARY_PATH="${pkgs.stdenv.cc.cc.lib}/lib:$LD_LIBRARY_PATH"
             # Nix strips .git from the build sandbox, so generate-version.sh's
             # git describe/rev-parse fall back to "unknown". Feed the revision
             # the flake already resolved so the version stamp is accurate.
             export RELEASE_TAG="${version}"
-            export MUX_GIT_COMMIT="${builtins.substring 0 12 version}"
+            export SHUX_GIT_COMMIT="${builtins.substring 0 12 version}"
             make SHELL=${pkgs.bash}/bin/bash build
           '';
 
           installPhase = ''
-                        mkdir -p $out/lib/mux
+                        mkdir -p $out/lib/shux
                         mkdir -p $out/bin
 
                         # Copy built files and runtime dependencies
-                        cp -r dist $out/lib/mux/
-                        cp -r node_modules $out/lib/mux/
-                        cp package.json $out/lib/mux/
+                        cp -r dist $out/lib/shux/
+                        cp -r node_modules $out/lib/shux/
+                        cp package.json $out/lib/shux/
 
                         # Ensure vendored binaries have execute permission.
                         # agent-browser's postinstall normally does this, but
                         # --ignore-scripts in offlineCache skips it, and the
                         # Nix store is read-only at runtime so chmod is impossible.
-                        chmod +x $out/lib/mux/node_modules/agent-browser/bin/* 2>/dev/null || true
+                        chmod +x $out/lib/shux/node_modules/agent-browser/bin/* 2>/dev/null || true
 
-                        # Create wrapper script. When running in Nix, mux doesn't know that
-                        # it's packaged. Use MUX_E2E_LOAD_DIST to force using compiled
-                        # assets instead of a dev server.
-                        makeWrapper ${pkgs.electron_40}/bin/electron $out/bin/mux \
-                          --add-flags "$out/lib/mux/dist/cli/index.js" \
-                          --set MUX_E2E_LOAD_DIST "1" \
+                        # Keep one canonical wrapper and make the old command a symlink so
+                        # nix profile upgrades/downgrades never fork the implementation.
+                        makeWrapper ${pkgs.electron_40}/bin/electron $out/bin/shux \
+                          --add-flags "$out/lib/shux/dist/cli/index.js" \
+                          --set SHUX_E2E_LOAD_DIST "1" \
                           --prefix LD_LIBRARY_PATH : "${pkgs.stdenv.cc.cc.lib}/lib" \
                           --prefix PATH : ${
                             pkgs.lib.makeBinPath [
@@ -144,42 +143,54 @@
                               pkgs.bash
                             ]
                           }
+                        ln -s shux $out/bin/mux
 
-                        # Install desktop file and icon for launcher integration
-                        install -Dm644 public/icon.png $out/share/icons/hicolor/512x512/apps/mux.png
+                        # Install canonical launcher assets and leave old filenames pointing forward.
+                        install -Dm644 public/icon.png $out/share/icons/hicolor/512x512/apps/shux.png
+                        ln -s shux.png $out/share/icons/hicolor/512x512/apps/mux.png
                         mkdir -p $out/share/applications
-                        cat > $out/share/applications/mux.desktop << EOF
+                        cat > $out/share/applications/shux.desktop << EOF
             [Desktop Entry]
-            Name=Mux
-            GenericName=Agent Multiplexer
-            Comment=Agent Multiplexer
-            Exec=$out/bin/mux %U
-            Icon=mux
+            Name=Shux
+            GenericName=Coding Agent Multiplexer
+            Comment=Coding Agent Multiplexer
+            Exec=$out/bin/shux %U
+            Icon=shux
             Terminal=false
             Type=Application
             Categories=Development;
-            StartupWMClass=mux
+            StartupWMClass=shux
             EOF
+                        ln -s shux.desktop $out/share/applications/mux.desktop
           '';
 
           meta = with pkgs.lib; {
-            description = "mux - coder multiplexer";
+            description = "shux - coding agent multiplexer";
             homepage = "https://github.com/coder/mux";
             license = licenses.agpl3Only;
             platforms = platforms.linux ++ platforms.darwin;
-            mainProgram = "mux";
+            mainProgram = "shux";
           };
         };
       in
       {
-        packages.default = mux;
-        packages.mux = mux;
+        packages.default = shux;
+        packages.shux = shux;
+        packages.mux = shux;
 
         formatter = pkgs.nixfmt-rfc-style;
 
         apps.default = {
           type = "app";
-          program = "${mux}/bin/mux";
+          program = "${shux}/bin/shux";
+        };
+        apps.shux = {
+          type = "app";
+          program = "${shux}/bin/shux";
+        };
+        apps.mux = {
+          type = "app";
+          program = "${shux}/bin/mux";
         };
 
         devShells.default = pkgs.mkShell {

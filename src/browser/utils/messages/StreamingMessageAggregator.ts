@@ -3540,7 +3540,7 @@ export class StreamingMessageAggregator {
   }
 
   /**
-   * Transform MuxMessages into DisplayedMessages for UI consumption
+   * Transform ShuxMessages into DisplayedMessages for UI consumption
    * This splits complex messages with multiple parts into separate UI blocks
    * while preserving temporal ordering through sequence numbers
    *

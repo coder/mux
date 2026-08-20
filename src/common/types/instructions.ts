@@ -44,10 +44,10 @@ export function flattenInstructionFiles(sources: InstructionSources): Instructio
 /**
  * Collect every instruction file's content from a sequence of instruction
  * sets, in prompt order. Used for scoped `Tool:` extraction, which is honored
- * in shared and Mux-dedicated files alike.
+ * in shared and Shux-dedicated files alike.
  *
  * Returned per-file (not concatenated) for the same reason as
- * `collectMuxOnlyInstructionContents`: a scoped section at the end of one file
+ * `collectShuxOnlyInstructionContents`: a scoped section at the end of one file
  * must not swallow the next file's unscoped content.
  */
 export function collectInstructionContents(sets: ReadonlyArray<InstructionSet | null>): string[] {
@@ -58,10 +58,10 @@ export function collectInstructionContents(sets: ReadonlyArray<InstructionSet | 
 }
 
 /**
- * Collect the contents of Mux-dedicated (`muxOnly`) files from a sequence of
+ * Collect the contents of Shux-dedicated (`muxOnly`) files from a sequence of
  * instruction sets, in prompt order. These are the source texts for scoped
  * `Model:`/`Mode:` directives — shared AGENTS.md content is deliberately
- * excluded so those directives never activate from files that non-Mux agents
+ * excluded so those directives never activate from files that non-Shux agents
  * also read.
  *
  * Returned per-file (not concatenated) so a scoped section at the end of one

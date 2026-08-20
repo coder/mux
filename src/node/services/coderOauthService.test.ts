@@ -163,7 +163,7 @@ function createMockConfig(
 /**
  * A shared, serializing implementation of Config's cross-process locks
  * (withCoderOauthRefreshLock / withCoderOauthLoginCommitLock) for tests that
- * simulate two Mux processes contending on the same providers file.
+ * simulate two Shux processes contending on the same providers file.
  */
 function createSharedCrossProcessLock(): <T>(fn: () => Promise<T> | T) => Promise<T> {
   let busy = false;
@@ -349,7 +349,7 @@ describe("CoderOauthService", () => {
       // config-change notification, which rides on fs.watch —
       // Config.watchProvidersFile degrades to a no-op on unsupported mounts
       // and can silently die after a watcher error. A long-lived headless
-      // process would then keep serving a token another Mux process
+      // process would then keep serving a token another Shux process
       // disconnected or replaced until it expired. The cache must verify the
       // providers file fingerprint on every read, independent of watcher
       // delivery.
@@ -585,7 +585,7 @@ describe("CoderOauthService", () => {
     });
 
     it("serializes cross-process refreshes so a losing invalid_grant cannot clear the winner's rotation", async () => {
-      // Two Mux processes refresh the same expired credential. Without
+      // Two Shux processes refresh the same expired credential. Without
       // cross-process serialization the loser's invalid_grant response can
       // arrive while the winner's rotation is still in flight; the loser's
       // compare-and-clear then deletes the (still-old) credential, the
@@ -824,7 +824,7 @@ describe("CoderOauthService", () => {
     });
 
     it("serves credentials written by another process after a config-change notification", async () => {
-      // Another Mux process sharing providers.jsonc re-logs in to the SAME
+      // Another Shux process sharing providers.jsonc re-logs in to the SAME
       // deployment: the deployment URL still matches, so only the config
       // change notification (file watcher) can tell this process its cached
       // token is stale. getValidAuth must serve the new on-disk credential,
@@ -1520,7 +1520,7 @@ describe("CoderOauthService", () => {
     });
 
     it("a disconnect in another process blocks a pending login's commit via the tombstone", async () => {
-      // cancelAll/disconnectGeneration are process-local. Simulate two Mux
+      // cancelAll/disconnectGeneration are process-local. Simulate two Shux
       // processes sharing providers.jsonc with two service instances over the
       // same deps: service A's login persist is gated mid-commit while
       // service B (a different "process": A's flow is invisible to it)
@@ -3030,7 +3030,7 @@ describe("CoderOauthService", () => {
 
     it("registers a fresh client when another process holds the stored-client lease", async () => {
       // The stored-client reservation is a cross-process filesystem lease:
-      // a concurrent login flow in ANOTHER Mux process sharing providers.jsonc
+      // a concurrent login flow in ANOTHER Shux process sharing providers.jsonc
       // would clobber the stored client's single redirect slot just like an
       // in-process one. When the lease is unavailable, the flow must fall
       // back to a fresh client and leave the stored client untouched.
@@ -4298,7 +4298,7 @@ describe("CoderOauthService", () => {
 
     it("refuses to commit when another process committed a catalog mid-flight", async () => {
       // The in-process catalogRefreshMutex cannot order refreshes from OTHER
-      // Mux processes sharing providers.jsonc. The persisted
+      // Shux processes sharing providers.jsonc. The persisted
       // coderCatalogGeneration counter must: a refresh that began before
       // another process committed (same session, same deployment) would
       // otherwise overwrite the newer catalog with stale fetches.

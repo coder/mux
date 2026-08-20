@@ -1,6 +1,7 @@
 import * as fs from "fs/promises";
 import { EventEmitter } from "events";
 
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import assert from "@/common/utils/assert";
 import { type LanguageModel, type Tool } from "ai";
 
@@ -53,7 +54,7 @@ import {
 import type { Runtime } from "@/node/runtime/Runtime";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { MultiProjectRuntime } from "@/node/runtime/multiProjectRuntime";
-import { getMuxEnv, getRuntimeType } from "@/node/runtime/initHook";
+import { getShuxEnv, getRuntimeType } from "@/node/runtime/initHook";
 import { getSrcBaseDir, isSSHRuntime } from "@/common/types/runtime";
 import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord } from "@/common/types/secrets";
@@ -320,8 +321,8 @@ export interface StreamMessageOptions {
 }
 
 /**
- * Recursively merge user-provided provider extras under Mux-built provider options.
- * Mux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
+ * Recursively merge user-provided provider extras under Shux-built provider options.
+ * Shux values win on leaf conflicts; both sides' non-conflicting nested fields are preserved.
  */
 function mergeProviderExtrasUnderMux(
   providerExtras: Record<string, unknown>,
@@ -420,8 +421,8 @@ function resolveMuxToolScope(
     projectConfig?.projectKind === "system" &&
     metadata.projectPath !== MULTI_PROJECT_CONFIG_KEY
   ) {
-    // Preserve ~/.mux-backed tool behavior for legacy system workspaces after removing
-    // Chat with Mux. Multi-project workspaces still point at a real checkout under _multi,
+    // Preserve ~/.shux-backed tool behavior for legacy system workspaces after removing
+    // Chat with Shux. Multi-project workspaces still point at a real checkout under _multi,
     // so they stay project-scoped.
     return {
       type: "global",
@@ -620,7 +621,7 @@ export class AIService extends EventEmitter {
     this.setupStreamEventForwarding();
     this.mockModeEnabled = false;
 
-    if (process.env.MUX_MOCK_AI === "1") {
+    if (resolveShuxEnvironmentValue("MOCK_AI", process.env) === "1") {
       log.info("AIService running in MUX_MOCK_AI mode");
       this.enableMockMode();
     }
@@ -1349,7 +1350,7 @@ export class AIService extends EventEmitter {
   /**
    * Host-evaluated gate for the agent-plugins experiment: when enabled, skill
    * discovery/read paths also scan Agent Plugins containers (.mux/plugins,
-   * .agents/plugins, ~/.mux/plugins, ~/.agents/plugins; read-only, lowest
+   * .agents/plugins, ~/.shux/plugins, ~/.agents/plugins; read-only, lowest
    * precedence). Public for the same reason as isClaudeSkillsCompatEnabled.
    */
   isAgentPluginsEnabled(): boolean {
@@ -1948,7 +1949,7 @@ export class AIService extends EventEmitter {
       });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
-      // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.mux/config.json).
+      // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.shux/config.json).
       let mcpOverrides: WorkspaceMCPOverrides | undefined;
       const loadWorkspaceMcpOverridesStartedAt = Date.now();
       try {
@@ -2330,7 +2331,7 @@ export class AIService extends EventEmitter {
         this.providerService.getConfig()
       );
       const runtimeType = getRuntimeType(metadata.runtimeConfig);
-      const muxEnv = getMuxEnv(metadata.projectPath, runtimeType, metadata.name, {
+      const shuxEnv = getShuxEnv(metadata.projectPath, runtimeType, metadata.name, {
         workspaceId,
         modelString,
         thinkingLevel: thinkingLevel ?? "off",
@@ -2503,7 +2504,7 @@ export class AIService extends EventEmitter {
         runtime,
         projects: getProjects(metadata),
         secrets: await secretsToRecord(projectSecrets),
-        muxEnv,
+        shuxEnv,
         runtimeTempDir,
         ...(advisorToolEligible
           ? {
@@ -3056,7 +3057,7 @@ export class AIService extends EventEmitter {
       // Build provider options based on thinking level and request-sliced message history.
       const truncationMode = openaiTruncationModeOverride;
       // Use the same boundary-sliced payload history that we send to the provider.
-      // This keeps OpenAI request state aligned with the explicit history Mux sends.
+      // This keeps OpenAI request state aligned with the explicit history Shux sends.
       // Pass workspaceId to derive stable promptCacheKey for OpenAI caching.
       const buildProviderOptionsStartedAt = Date.now();
       const promptCacheScope = derivePromptCacheScope(metadata);
@@ -3169,10 +3170,10 @@ export class AIService extends EventEmitter {
         effectiveModelString
       );
 
-      // Merge provider extras (user knobs) UNDER Mux-built options (safety-critical).
+      // Merge provider extras (user knobs) UNDER Shux-built options (safety-critical).
       // Recursive merge within the provider namespace preserves non-conflicting nested
-      // subfields (e.g., user reasoning.max_tokens alongside Mux reasoning.enabled).
-      // Mux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
+      // subfields (e.g., user reasoning.max_tokens alongside Shux reasoning.enabled).
+      // Shux-built values win on leaf conflicts for safety of thinking/reasoning/cache.
       // Shared by the initial build and mid-turn thinking-level rebuilds so both
       // produce identically-shaped options.
       // Namespace key must match what buildProviderOptions computes internally
@@ -3286,7 +3287,7 @@ export class AIService extends EventEmitter {
       };
 
       // Debug dump: Log the complete LLM request when MUX_DEBUG_LLM_REQUEST is set
-      if (process.env.MUX_DEBUG_LLM_REQUEST === "1") {
+      if (resolveShuxEnvironmentValue("DEBUG_LLM_REQUEST", process.env) === "1") {
         log.info(
           `[MUX_DEBUG_LLM_REQUEST] Full LLM request:\n${JSON.stringify(
             {

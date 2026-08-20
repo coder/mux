@@ -26,9 +26,9 @@ function runGit(cwd: string, args: string[]): string {
     encoding: "utf-8",
     env: {
       ...process.env,
-      GIT_AUTHOR_NAME: "Mux Test",
+      GIT_AUTHOR_NAME: "Shux Test",
       GIT_AUTHOR_EMAIL: "mux@example.com",
-      GIT_COMMITTER_NAME: "Mux Test",
+      GIT_COMMITTER_NAME: "Shux Test",
       GIT_COMMITTER_EMAIL: "mux@example.com",
     },
   }).trim();

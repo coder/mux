@@ -17,7 +17,7 @@ import { z } from "zod";
 
 /** Where in the instruction hierarchy a file lives. */
 export const INSTRUCTION_SCOPE = {
-  /** Global ~/.mux/AGENTS.md (+ optional AGENTS.local.md). */
+  /** Global ~/.shux/AGENTS.md (+ optional AGENTS.local.md). */
   GLOBAL: "global",
   /** Workspace-root AGENTS.md (the workspace's own checkout). */
   WORKSPACE: "workspace",
@@ -43,10 +43,10 @@ export const InstructionFileSchema = z.object({
   /** True for the .local.md variant appended to the base file. */
   isLocal: z.boolean(),
   /**
-   * True for Mux-dedicated instruction files that only Mux reads: the global
-   * `~/.mux/AGENTS.md` set and per-directory `.mux/AGENTS.md` files. Scoped
+   * True for Shux-dedicated instruction files that only Shux reads: the global
+   * `~/.shux/AGENTS.md` set and per-directory `.mux/AGENTS.md` files. Scoped
    * `Model:`/`Mode:` directives are honored ONLY in these files, so a
-   * heading like "Model: sonnet" never confuses non-Mux agents reading the
+   * heading like "Model: sonnet" never confuses non-Shux agents reading the
    * shared workspace AGENTS.md.
    */
   muxOnly: z.boolean(),
@@ -83,7 +83,7 @@ export const InstructionSetSchema = z.object({
 
 /** All instruction sets resolved for a workspace. */
 export const InstructionSourcesSchema = z.object({
-  /** ~/.mux/AGENTS.md set, if any. */
+  /** ~/.shux/AGENTS.md set, if any. */
   global: InstructionSetSchema.nullable(),
   /**
    * Workspace-level context sets in prompt order:

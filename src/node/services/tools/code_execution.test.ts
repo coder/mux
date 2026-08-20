@@ -75,6 +75,8 @@ describe("createCodeExecutionTool", () => {
 
       const desc = (tool as { description?: string }).description ?? "";
       // Description now contains TypeScript definitions instead of prose
+      expect(desc).toContain("declare namespace shux");
+      expect(desc).toContain("declare const mux: typeof shux");
       expect(desc).toContain("function file_read");
       expect(desc).toContain("function bash");
     });
@@ -319,17 +321,19 @@ describe("createCodeExecutionTool", () => {
 
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
-      const result = (await tool.execute!(
-        { code: 'return mux.file_read({ filePath: "test.txt" })' },
-        mockToolCallOptions
-      )) as PTCExecutionResult;
+      for (const ns of ["shux", "mux"] as const) {
+        const result = (await tool.execute!(
+          { code: `return ${ns}.file_read({ filePath: "test.txt" })` },
+          mockToolCallOptions
+        )) as PTCExecutionResult;
 
-      expect(result.success).toBe(true);
-      expect(result.result).toMatchObject({
-        content: "Content of test.txt",
-        success: true,
-      });
-      expect(mockExecute).toHaveBeenCalledTimes(1);
+        expect(result.success).toBe(true);
+        expect(result.result).toMatchObject({
+          content: "Content of test.txt",
+          success: true,
+        });
+      }
+      expect(mockExecute).toHaveBeenCalledTimes(2);
     });
 
     it("records tool calls in result", async () => {

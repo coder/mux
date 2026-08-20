@@ -337,7 +337,7 @@ describeIntegration("ACP built CLI integration", () => {
   }, ACP_TEST_TIMEOUT_MS);
 
   test(
-    "initialize returns mux agent info",
+    "initialize returns shux agent info",
     async () => {
       const acpClient = await createAcpClient();
       try {
@@ -348,7 +348,7 @@ describeIntegration("ACP built CLI integration", () => {
           })
         );
 
-        expect(initializeResponse.agentInfo?.name).toBe("mux");
+        expect(initializeResponse.agentInfo?.name).toBe("shux");
       } finally {
         await acpClient.close();
       }

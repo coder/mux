@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Tool } from "ai";
 import { DisposableTempDir } from "@/node/services/tempDir";
 import { findBundledTypeScriptLibDir, validateTypes } from "./typeValidator";
-import { generateMuxTypes } from "./typeGenerator";
+import { generateShuxTypes } from "./typeGenerator";
 
 /**
  * Create a mock tool with the given schema.
@@ -20,7 +20,7 @@ function createMockTool(schema: z.ZodType): Tool {
 }
 
 describe("validateTypes", () => {
-  let muxTypes: string;
+  let shuxTypes: string;
 
   // Generate types once for all tests
   beforeAll(async () => {
@@ -41,7 +41,7 @@ describe("validateTypes", () => {
         })
       ),
     };
-    muxTypes = await generateMuxTypes(tools);
+    shuxTypes = await generateShuxTypes(tools);
   });
 
   test("finds bundled TypeScript libs from Docker server bundle layout", async () => {
@@ -55,24 +55,27 @@ describe("validateTypes", () => {
     expect(findBundledTypeScriptLibDir(runtimeDir)).toBe(libDir);
   });
 
-  test("accepts valid code with correct property names", () => {
-    const result = validateTypes(
-      `
-      const content = mux.file_read({ filePath: "test.txt" });
+  test.each(["shux", "mux"] as const)(
+    "accepts valid code with correct property names via %s",
+    (ns) => {
+      const result = validateTypes(
+        `
+      const content = ${ns}.file_read({ filePath: "test.txt" });
       return content.success;
     `,
-      muxTypes
-    );
-    expect(result.valid).toBe(true);
-    expect(result.errors).toHaveLength(0);
-  });
+        shuxTypes
+      );
+      expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    }
+  );
 
   test("accepts code using optional properties", () => {
     const result = validateTypes(
       `
       mux.file_read({ filePath: "test.txt", offset: 10, limit: 50 });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -82,7 +85,7 @@ describe("validateTypes", () => {
       `
       mux.file_read({ path: "test.txt" });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     // Error should mention 'path' doesn't exist or 'filePath' is missing
@@ -96,7 +99,7 @@ describe("validateTypes", () => {
       `
       mux.bash({ script: "ls" });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     // Should error on missing required props
@@ -108,7 +111,7 @@ describe("validateTypes", () => {
       `
       mux.file_read({ filePath: 123 });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(
@@ -121,7 +124,7 @@ describe("validateTypes", () => {
       `
       mux.nonexistent_tool({ foo: "bar" });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("nonexistent_tool"))).toBe(true);
@@ -132,7 +135,7 @@ describe("validateTypes", () => {
       `const x = 1;
 const y = 2;
 mux.file_read({ path: "test.txt" });`,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     // Error should be on line 3 (the mux.file_read call)
@@ -142,7 +145,7 @@ mux.file_read({ path: "test.txt" });`,
   });
 
   test("returns line 1 for error on first line", () => {
-    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, muxTypes);
+    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, shuxTypes);
     expect(result.valid).toBe(false);
     const errorWithLine = result.errors.find((e) => e.line !== undefined);
     expect(errorWithLine).toBeDefined();
@@ -156,7 +159,7 @@ const b = 2;
 const c = 3;
 const d = 4;
 mux.file_read({ path: "wrong" });`,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     const errorWithLine = result.errors.find((e) => e.line !== undefined);
@@ -166,7 +169,7 @@ mux.file_read({ path: "wrong" });`,
 
   test("returns column number for type errors", () => {
     // Column should point to the problematic property
-    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, muxTypes);
+    const result = validateTypes(`mux.file_read({ path: "test.txt" });`, shuxTypes);
     expect(result.valid).toBe(false);
     const errorWithLine = result.errors.find((e) => e.column !== undefined);
     expect(errorWithLine).toBeDefined();
@@ -180,7 +183,7 @@ mux.file_read({ path: "wrong" });`,
       const key = "content";
       console.log(result[key]);
     `,
-      muxTypes
+      shuxTypes
     );
     // This should pass - we don't enforce strict property checking on results
     expect(result.valid).toBe(true);
@@ -193,7 +196,7 @@ mux.file_read({ path: "wrong" });`,
       console.warn("warning");
       console.error("error");
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -207,18 +210,18 @@ mux.file_read({ path: "wrong" });`,
       results.file2 = mux.file_read({ filePath: "b.txt" });
       return results;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
 
-  test("still catches mux tool typos", () => {
-    // Must not filter errors for typos on the mux namespace
+  test.each(["shux", "mux"] as const)("still catches %s tool typos", (ns) => {
+    // Must not filter errors for typos on the scripting namespace
     const result = validateTypes(
       `
-      mux.file_reade({ filePath: "test.txt" });
+      ${ns}.file_reade({ filePath: "test.txt" });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("file_reade"))).toBe(true);
@@ -232,7 +235,7 @@ mux.file_read({ path: "wrong" });`,
       results.file1 = mux.file_read({ filePath: "a.txt" });
       return results.filee1;  // typo: should be file1
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("filee1"))).toBe(true);
@@ -245,7 +248,7 @@ mux.file_read({ path: "wrong" });`,
       const config = {};
       mux.file_read({ filePath: config.path });  // config.path doesn't exist
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("path"))).toBe(true);
@@ -258,7 +261,7 @@ mux.file_read({ path: "wrong" });`,
       const obj = {};
       const x = obj.value + 1;  // obj.value doesn't exist
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("value"))).toBe(true);
@@ -270,7 +273,7 @@ mux.file_read({ path: "wrong" });`,
       const obj = {};
       if (obj.flag) { console.log("yes"); }  // obj.flag doesn't exist
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("flag"))).toBe(true);
@@ -285,7 +288,7 @@ mux.file_read({ path: "wrong" });`,
       data.c = mux.file_read({ filePath: "test.txt" });
       data.d = "string";
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -297,7 +300,7 @@ mux.file_read({ path: "wrong" });`,
       const obj = {};
       obj.count += 1;  // reads obj.count first
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
@@ -312,7 +315,7 @@ mux.file_read({ path: "wrong" });`,
       for (const f of files) { results[f.label] = mux.file_read({ filePath: f.label }); }
       return results.a.success;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -326,7 +329,7 @@ mux.file_read({ path: "wrong" });`,
       for (const f of files) { results[f.label] = mux.file_read({ filePath: f.path }); }
       return results.conn.success ? results.conn.content : results.sdk.error;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -337,7 +340,7 @@ mux.file_read({ path: "wrong" });`,
       const r = {};
       r["a"] = r.typo;
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -350,7 +353,7 @@ mux.file_read({ path: "wrong" });`,
       const r = {};
       r[r.typo] = 1;
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -363,7 +366,7 @@ mux.file_read({ path: "wrong" });`,
       r["a"] = 1;
       function f() { return r.typo; }
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -380,7 +383,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return f();
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(true);
@@ -392,7 +395,7 @@ mux.file_read({ path: "wrong" });`,
       return r.typo;
       r["a"] = 1;
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -406,7 +409,7 @@ mux.file_read({ path: "wrong" });`,
       function fill() { r["a"] = 1; }
       return r.typo;
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -422,7 +425,7 @@ mux.file_read({ path: "wrong" });`,
         return results.typo;
       }
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
@@ -437,21 +440,21 @@ mux.file_read({ path: "wrong" });`,
       results = { ok: true };
       return results.typo;
     `,
-      muxTypes
+      shuxTypes
     );
 
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("typo"))).toBe(true);
   });
 
-  test("still catches mux shadowing with {}", () => {
-    // const mux = {} must NOT be treated as a dynamic bag — shadowing mux is a real bug
+  test.each(["shux", "mux"] as const)("still catches %s shadowing with {}", (ns) => {
+    // const ns = {} must NOT be treated as a dynamic bag — shadowing the scripting namespace is a real bug
     const result = validateTypes(
       `
-      const mux = {};
-      mux.file_read({ filePath: "test.txt" });
+      const ${ns} = {};
+      ${ns}.file_read({ filePath: "test.txt" });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("file_read"))).toBe(true);
@@ -465,7 +468,7 @@ mux.file_read({ path: "wrong" });`,
       data.x = 1;
       return data.y;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("y"))).toBe(true);
@@ -479,7 +482,7 @@ mux.file_read({ path: "wrong" });`,
       results["key"] = 1;
       results.count += 1;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.some((e) => e.message.includes("count"))).toBe(true);
@@ -494,7 +497,7 @@ mux.file_read({ path: "wrong" });`,
       const hasA = Object.hasOwn({ a: 1 }, "a");
       return { str, last, hasA };
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -510,7 +513,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return { content: result.content };
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -525,7 +528,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return result.content;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -535,7 +538,7 @@ mux.file_read({ path: "wrong" });`,
       `
       mux.file_read({ filePath: "test.txt" // missing closing brace
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
@@ -554,7 +557,7 @@ mux.file_read({ path: "wrong" });`,
       results.push(mux.file_read({ filePath: "b.txt" }));
       return results;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -566,7 +569,7 @@ mux.file_read({ path: "wrong" });`,
       results.unshift(mux.file_read({ filePath: "a.txt" }));
       return results;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -581,7 +584,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return results;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -595,7 +598,7 @@ mux.file_read({ path: "wrong" });`,
       arr.push({ foo: "bar" });
       return arr;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -611,7 +614,7 @@ mux.file_read({ path: "wrong" });`,
       const r = mux.file_read({ filePath: "test.txt" });
       return process(r);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -623,7 +626,7 @@ mux.file_read({ path: "wrong" });`,
       const r = mux.file_read({ filePath: "test.txt" });
       return process(r);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -635,7 +638,7 @@ mux.file_read({ path: "wrong" });`,
       function processArgs({ a, b }) { return a + b; }
       return processArgs({ a: 1, b: 2 });
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -646,7 +649,7 @@ mux.file_read({ path: "wrong" });`,
       function all(...args) { return args.length; }
       return all(1, 2, 3);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -660,7 +663,7 @@ mux.file_read({ path: "wrong" });`,
       nums.forEach(x => console.log(x));
       return { doubled, evens };
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -679,7 +682,7 @@ mux.file_read({ path: "wrong" });`,
       results.push(mux.file_read({ filePath: "b.txt" }));
       return results.map(r => r.success);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -692,7 +695,7 @@ mux.file_read({ path: "wrong" });`,
       results.push(mux.file_read({ filePath: "b.txt" }));
       return results.filter(r => r.success);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -704,7 +707,7 @@ mux.file_read({ path: "wrong" });`,
       results.push(mux.file_read({ filePath: "a.txt" }));
       results.forEach(r => console.log(r.success));
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -717,7 +720,7 @@ mux.file_read({ path: "wrong" });`,
       const copy = [...arr];
       return copy;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -729,7 +732,7 @@ mux.file_read({ path: "wrong" });`,
       arr.push("hello");
       return arr[0];
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -741,7 +744,7 @@ mux.file_read({ path: "wrong" });`,
       obj.items.push(1);
       return obj;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -752,7 +755,7 @@ mux.file_read({ path: "wrong" });`,
       function process(arr) { return arr.length; }
       return process([]);
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -763,7 +766,7 @@ mux.file_read({ path: "wrong" });`,
       function empty() { return []; }
       return empty();
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -778,7 +781,7 @@ mux.file_read({ path: "wrong" });`,
       const mapped = [].map((x) => x);
       return mapped;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -789,7 +792,7 @@ mux.file_read({ path: "wrong" });`,
       const first = [][0];
       return first;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -800,7 +803,7 @@ mux.file_read({ path: "wrong" });`,
       const length = []?.length;
       return length;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -811,7 +814,7 @@ mux.file_read({ path: "wrong" });`,
       const length = [].length;
       return length;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -828,7 +831,7 @@ mux.file_read({ path: "wrong" });`,
       b.push("hello");
       return { a, b };
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -841,7 +844,7 @@ mux.file_read({ path: "wrong" });`,
       matrix[0].push(1);
       return matrix;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -859,7 +862,7 @@ mux.file_read({ path: "wrong" });`,
       nums.push(2);
       return nums;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -870,7 +873,7 @@ mux.file_read({ path: "wrong" });`,
       const t = typeof [];
       return t.toUpperCase();
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -881,7 +884,7 @@ mux.file_read({ path: "wrong" });`,
       const value = +[];
       return value;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -892,7 +895,7 @@ mux.file_read({ path: "wrong" });`,
       const value = void [];
       return value;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -906,7 +909,7 @@ mux.file_read({ path: "wrong" });`,
       nums.push(2);
       return nums;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -926,7 +929,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return count;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });
@@ -943,7 +946,7 @@ mux.file_read({ path: "wrong" });`,
       }
       return count;
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(false);
     expect(
@@ -962,7 +965,7 @@ mux.file_read({ path: "wrong" });`,
       ([a, b] = foo);
       return [a, b];
     `,
-      muxTypes
+      shuxTypes
     );
     expect(result.valid).toBe(true);
   });

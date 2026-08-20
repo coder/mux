@@ -15,7 +15,7 @@ import { computeAgentPluginContainers, discoverAgentPlugins } from "./discovery"
 import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
 
 /**
- * Agent Plugins 1.0.0 MCP configuration (`mcp.json`, §7.2) → Mux MCPServerInfo.
+ * Agent Plugins 1.0.0 MCP configuration (`mcp.json`, §7.2) → Shux MCPServerInfo.
  *
  * Loading rules follow §7.2.2 exactly:
  * - invalid JSON / bad top-level / `$schema` mismatch → MCP disabled for that
@@ -411,7 +411,7 @@ function normalizeRemoteEntry(
 
     if (Object.keys(entry.headers).length > 0) {
       // §7.2.1 forbids forwarding configured headers cross-origin via
-      // redirects; Mux remote transports follow redirects, so entries with
+      // redirects; Shux remote transports follow redirects, so entries with
       // configured headers are skipped rather than risk leaking them.
       return {
         skip: "configured 'headers' are not supported yet (cross-origin redirect header forwarding cannot be prevented)",
@@ -435,7 +435,7 @@ function normalizeRemoteEntry(
 }
 
 /**
- * Load and normalize a plugin's `mcp.json` into default-disabled Mux server
+ * Load and normalize a plugin's `mcp.json` into default-disabled Shux server
  * records keyed by `plugin:<instanceId>:<serverName>`. The instance ID
  * defaults to hashing the canonical plugin root; callers pass an explicit
  * `instanceId` when a more stable identity exists (project plugins).

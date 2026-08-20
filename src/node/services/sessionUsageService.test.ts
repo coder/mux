@@ -951,7 +951,7 @@ describe("SessionUsageService", () => {
         usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
       });
 
-      // Add historicalUsage - this field was removed from MuxMetadata type
+      // Add historicalUsage - this field was removed from ShuxMetadata type
       // but may still exist in persisted data from before the change
       (compactionSummary.metadata as Record<string, unknown>).historicalUsage = createUsage(
         5000,

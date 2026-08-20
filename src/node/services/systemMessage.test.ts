@@ -528,8 +528,8 @@ Respond to Sonnet tickets in two sentences max.
   });
 
   test("ignores Model sections in shared workspace AGENTS.md (breaking change)", async () => {
-    // Shared AGENTS.md is read by non-Mux agents too, so "Model:" headings
-    // there are no longer parsed as Mux directives — they stay plain markdown
+    // Shared AGENTS.md is read by non-Shux agents too, so "Model:" headings
+    // there are no longer parsed as Shux directives — they stay plain markdown
     // inside <custom-instructions>.
     await fs.writeFile(
       path.join(workspaceDir, "AGENTS.md"),
@@ -930,7 +930,7 @@ OpenAI-only instructions.
 
     for (const scenario of scopingScenarios) {
       test(scenario.name, async () => {
-        // Scoped Model: sections only activate in Mux-dedicated files.
+        // Scoped Model: sections only activate in Shux-dedicated files.
         await fs.mkdir(path.join(workspaceDir, ".mux"), { recursive: true });
         await fs.writeFile(path.join(workspaceDir, ".mux", "AGENTS.md"), scenario.mdContent);
 

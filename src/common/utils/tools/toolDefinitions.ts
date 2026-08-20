@@ -140,7 +140,7 @@ const ToolOutputUiOnlyFieldSchema = {
 export const AskUserQuestionToolArgsSchema = z
   .object({
     questions: z.array(AskUserQuestionQuestionSchema).min(1).max(4),
-    // Optional prefilled answers (Claude Code supports this, though Mux typically won't use it)
+    // Optional prefilled answers (Claude Code supports this, though Shux typically won't use it)
     answers: z.record(z.string(), z.string()).nullish(),
   })
   .strict()
@@ -1667,7 +1667,7 @@ export const TOOL_DEFINITIONS = {
             .describe(
               "Optional. Short user-facing purpose for this command, shown next to the command in collapsed chat. " +
                 "Use a present-participle phrase in plain English, under 100 characters. " +
-                "Do not repeat the command or include duration, because Mux appends those. " +
+                "Do not repeat the command or include duration, because Shux appends those. " +
                 "Examples: 'Running the unit tests', 'Checking repository state', 'Inspecting build output'."
             ),
           timeout_secs: z
@@ -1932,13 +1932,13 @@ export const TOOL_DEFINITIONS = {
   mux_agents_read: {
     description:
       "Read the AGENTS.md instructions file. In a project workspace, reads the project's AGENTS.md. " +
-      "In the system workspace, reads the global ~/.mux/AGENTS.md.",
+      "In the system workspace, reads the global ~/.shux/AGENTS.md.",
     schema: z.object({}).strict(),
   },
   mux_agents_write: {
     description:
       "Write the AGENTS.md instructions file. In a project workspace, writes the project's AGENTS.md. " +
-      "In the system workspace, writes the global ~/.mux/AGENTS.md. " +
+      "In the system workspace, writes the global ~/.shux/AGENTS.md. " +
       "Requires explicit confirmation via confirm: true.",
     schema: z
       .object({
@@ -1953,8 +1953,8 @@ export const TOOL_DEFINITIONS = {
   },
   mux_config_read: {
     description:
-      "Read the mux configuration file. Returns the current configuration with secrets redacted. " +
-      "Use 'providers' for ~/.mux/providers.jsonc (API provider settings) or 'config' for ~/.mux/config.json (app settings).",
+      "Read the Shux configuration file. Returns the current configuration with secrets redacted. " +
+      "Use 'providers' for ~/.shux/providers.jsonc (API provider settings) or 'config' for ~/.shux/config.json (app settings).",
     schema: z
       .object({
         file: MuxConfigFileSchema.describe("Which configuration file to read"),
@@ -1966,8 +1966,8 @@ export const TOOL_DEFINITIONS = {
   },
   mux_config_write: {
     description:
-      "Write to the mux configuration file. Applies one or more set/delete operations and validates the full document before writing. " +
-      "Use 'providers' for ~/.mux/providers.jsonc or 'config' for ~/.mux/config.json. " +
+      "Write to the Shux configuration file. Applies one or more set/delete operations and validates the full document before writing. " +
+      "Use 'providers' for ~/.shux/providers.jsonc or 'config' for ~/.shux/config.json. " +
       "Requires explicit confirmation via confirm: true.",
     schema: z
       .object({
@@ -1982,7 +1982,7 @@ export const TOOL_DEFINITIONS = {
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
-      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.mux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
+      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.shux/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
@@ -2020,7 +2020,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List available skills. In a project workspace, lists project skills from .mux/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.mux/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
+      "List available skills. In a project workspace, lists project skills from .mux/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.shux/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
     schema: z
       .object({
         includeUnadvertised: z
@@ -2034,7 +2034,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_write: {
     description:
-      "Create or update a file within the contextual skills directory. In a project workspace, writes under .mux/skills/<name>/. In the system workspace, writes under ~/.mux/skills/<name>/. " +
+      "Create or update a file within the contextual skills directory. In a project workspace, writes under .mux/skills/<name>/. In the system workspace, writes under ~/.shux/skills/<name>/. " +
       "When writing SKILL.md, content is validated as a skill definition and frontmatter.name is aligned to the skill name argument.",
     schema: z
       .object({
@@ -2050,7 +2050,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_delete: {
     description:
-      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .mux/skills/. In the system workspace, deletes from ~/.mux/skills/. " +
+      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .mux/skills/. In the system workspace, deletes from ~/.shux/skills/. " +
       "Requires confirm: true.",
     schema: z
       .object({
@@ -2237,7 +2237,7 @@ export const TOOL_DEFINITIONS = {
   task_apply_git_patch: {
     description:
       "Apply a completed sub-agent task's git-format-patch artifact to the current workspace using `git am`. " +
-      "This is an explicit integration step: mux will not auto-apply patches.",
+      "This is an explicit integration step: Shux will not auto-apply patches.",
     schema: TaskApplyGitPatchToolArgsSchema,
   },
   task_await: {
@@ -2311,7 +2311,7 @@ export const TOOL_DEFINITIONS = {
       "If workflow_run returns status=running or status=backgrounded, await the returned runId with task_await before using or reporting the workflow output. " +
       "After a previous workflow_run error, abort, timeout, or uncertain result, do not start a fresh run until you rediscover existing workflow runs: either omit task_list statuses first, or query pending/running/backgrounded/interrupted/failed/completed together. " +
       "Use task_await for running/backgrounded runs, workflow_resume for pending/interrupted runs, workflow_resume({ mode: 'retry_from_checkpoint' }) only for eligible failed runs, and inspect/refetch completed results instead of rerunning. " +
-      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs; a background run is non-blocking and Mux wakes this workspace with the terminal workflow result, so call task_await only when the current request depends on the output before you can answer.",
+      "Use background mode only when you intend to start another workflow/task or do independent work while the workflow runs; a background run is non-blocking and Shux wakes this workspace with the terminal workflow result, so call task_await only when the current request depends on the output before you can answer.",
     schema: WorkflowRunToolArgsSchema,
   },
   workflow_resume: {
@@ -2582,7 +2582,7 @@ export const TOOL_DEFINITIONS = {
     }),
   },
   analytics_query: {
-    description: `Execute a DuckDB SQL query against Mux analytics tables and optionally provide visualization hints.
+    description: `Execute a DuckDB SQL query against Shux analytics tables and optionally provide visualization hints.
 Use read-only SELECT queries over analytics data.
 
 DuckDB SQL guidelines:
@@ -2660,7 +2660,7 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
   web_fetch: {
     description:
       `Fetch a web page and extract its main content as clean markdown. ` +
-      `Uses the workspace's network context (requests originate from the workspace, not Mux host). ` +
+      `Uses the workspace's network context (requests originate from the workspace, not Shux host). ` +
       `Requires curl to be installed in the workspace. ` +
       `Output is truncated to ${Math.floor(WEB_FETCH_MAX_OUTPUT_BYTES / 1024)}KB.`,
     schema: z.object({
@@ -2669,7 +2669,7 @@ CREATE TABLE IF NOT EXISTS delegation_rollups (
   },
   code_execution: {
     description:
-      "Execute JavaScript code in a sandboxed environment with access to Mux tools. " +
+      "Execute JavaScript code in a sandboxed environment with access to Shux tools. " +
       "Available for multi-tool workflows when PTC experiment is enabled.",
     schema: z.object({
       code: z.string().min(1).describe("JavaScript code to execute in the PTC sandbox"),
@@ -3290,7 +3290,7 @@ export function getAvailableTools(
      * pinning code to a pane the user never sees. Defaults to true.
      */
     enableReviewPane?: boolean;
-    /** @deprecated Mux global tools are always included. */
+    /** @deprecated Shux global tools are always included. */
     enableMuxGlobalAgentsTools?: boolean;
   }
 ): string[] {

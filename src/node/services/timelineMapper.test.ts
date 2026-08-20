@@ -319,7 +319,7 @@ describe("mapChatEventToTimeline", () => {
       type: "message",
       id: "user-recovery",
       role: "user",
-      parts: [{ type: "text", text: "Mux restarted while this task was running." }],
+      parts: [{ type: "text", text: "Shux restarted while this task was running." }],
       metadata: { historySequence: 11, timestamp: 100, synthetic: true },
     });
 

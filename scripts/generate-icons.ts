@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Icon generation script for mux.
+ * Icon generation script for shux.
  *
  * Usage:
  *   bun scripts/generate-icons.ts [commands...]
@@ -85,7 +85,7 @@ const LOGO_TARGETS = {
   "vscode/icon.png": { size: 128, ...MONO_ICON },
 
   // Browser asset (Vector)
-  "src/browser/assets/icons/mux.svg": { svg: true, source: SOURCE_BLACK },
+  "src/browser/assets/icons/shux.svg": { svg: true, source: SOURCE_BLACK },
 
   // Docs (docs.json points at logo-black/logo-white directly to avoid duplicates)
   "docs/img/logo.webp": { size: 512, ...MONO_ICON, format: "webp" },

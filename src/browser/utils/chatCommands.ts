@@ -1336,7 +1336,10 @@ export function parseRuntimeString(runtime: string | undefined): RuntimeConfig |
       return {
         type: RUNTIME_MODE.SSH,
         host: parsed.host,
-        srcBaseDir: "~/mux", // Default remote base directory (tilde resolved by backend)
+        // Stable SSH remote layout is still ~/mux (same as buildRuntimeConfig /
+        // CLI parseRuntimeConfig). Local Shux home and SSH product-home compat
+        // live elsewhere; this default is a persisted remote path contract.
+        srcBaseDir: "~/mux",
       };
 
     case RUNTIME_MODE.DEVCONTAINER: {

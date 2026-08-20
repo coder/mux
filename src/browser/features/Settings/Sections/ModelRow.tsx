@@ -254,7 +254,7 @@ export function ModelRow(props: ModelRowProps) {
   const routeSelectValue =
     props.resolvedRoute && !props.resolvedRoute.isAuto ? props.resolvedRoute.route : "auto";
 
-  // Per-model minimum thinking: only models Mux explicitly recognizes as reasoning models
+  // Per-model minimum thinking: only models Shux explicitly recognizes as reasoning models
   // (with more than one level to choose from) expose a floor control. Unrecognized /
   // non-reasoning models and single-level models (e.g. gpt-5-pro) keep the legacy behavior
   // with no selector. The dropdown lists the model's full capability so users can pick any

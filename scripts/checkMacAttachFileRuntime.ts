@@ -6,8 +6,12 @@ import { Dirent } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import sharp from "sharp";
+import packageJson from "../package.json";
+import { resolveMacPackagedAppNames } from "../src/common/compat/macPackagedApp";
 
-const APP_NAME = "mux.app";
+const { productFilename: EXECUTABLE_NAME, appBundleName: APP_NAME } = resolveMacPackagedAppNames(
+  packageJson.build
+);
 const RELEASE_DIR = path.join(process.cwd(), "release");
 const APP_ASAR_UNPACKED_NODE_MODULES = [
   ["node_modules", "sharp"],
@@ -28,15 +32,20 @@ async function listDirectoryEntries(dirPath: string): Promise<Dirent[]> {
   }
 }
 
-async function findAppBundles(rootDir: string): Promise<string[]> {
-  const results: string[] = [];
+async function findAppBundles(rootDir: string): Promise<{ matches: string[]; seen: string[] }> {
+  const matches: string[] = [];
+  const seen: string[] = [];
 
   async function walk(dirPath: string): Promise<void> {
     const entries = await listDirectoryEntries(dirPath);
     for (const entry of entries) {
       const entryPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory() && entry.name === APP_NAME) {
-        results.push(entryPath);
+      if (entry.isDirectory() && entry.name.endsWith(".app")) {
+        seen.push(entryPath);
+        // Compare the stored readdir name, not a case-folded stat path.
+        if (entry.name === APP_NAME) {
+          matches.push(entryPath);
+        }
         continue;
       }
       if (entry.isDirectory()) {
@@ -46,14 +55,16 @@ async function findAppBundles(rootDir: string): Promise<string[]> {
   }
 
   await walk(rootDir);
-  return results;
+  return { matches, seen };
 }
 
 async function chooseDefaultAppBundle(): Promise<string> {
-  const appBundles = await findAppBundles(RELEASE_DIR);
+  const { matches: appBundles, seen } = await findAppBundles(RELEASE_DIR);
   assert(
     appBundles.length > 0,
-    `No ${APP_NAME} found under ${RELEASE_DIR}. Run make dist-mac first.`
+    `No ${APP_NAME} found under ${RELEASE_DIR}. Run make dist-mac first. Stored .app names: ${
+      seen.length > 0 ? seen.join(", ") : "(none)"
+    }`
   );
 
   const preferredSuffixes =
@@ -156,11 +167,25 @@ async function createFixtureImages(
   return { pngPath, jpegPath };
 }
 
-function runPackagedSmokeApp(
+async function resolvePackagedMacExecutable(appBundlePath: string): Promise<string> {
+  const macOsDir = path.join(appBundlePath, "Contents", "MacOS");
+  const entries = await listDirectoryEntries(macOsDir);
+  const names = entries.map((entry) => entry.name);
+  const match = entries.find((entry) => entry.name === EXECUTABLE_NAME);
+  assert(
+    match != null,
+    `Expected Contents/MacOS/${EXECUTABLE_NAME} in ${appBundlePath}, found: ${
+      names.length > 0 ? names.join(", ") : "(empty)"
+    }`
+  );
+  return path.join(macOsDir, match.name);
+}
+
+async function runPackagedSmokeApp(
   appBundlePath: string,
   fixturePaths: { pngPath: string; jpegPath: string }
-): void {
-  const executablePath = path.join(appBundlePath, "Contents", "MacOS", "mux");
+): Promise<void> {
+  const executablePath = await resolvePackagedMacExecutable(appBundlePath);
   const tempMuxRoot = path.join(path.dirname(fixturePaths.pngPath), "mux-root");
   const result = spawnSync(executablePath, [], {
     cwd: process.cwd(),
@@ -209,7 +234,7 @@ async function main(): Promise<void> {
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "mux-attach-file-smoke-"));
   try {
     const fixturePaths = await createFixtureImages(tempDir);
-    runPackagedSmokeApp(appBundlePath, fixturePaths);
+    await runPackagedSmokeApp(appBundlePath, fixturePaths);
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }

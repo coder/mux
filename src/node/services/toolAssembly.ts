@@ -10,6 +10,7 @@
  */
 
 import type { Tool } from "ai";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 
 import { applyToolPolicy, type ToolPolicy } from "@/common/utils/tools/toolPolicy";
 import { applyCapabilityGrants } from "@/common/utils/tools/capabilityGrants";
@@ -145,7 +146,7 @@ export interface ApplyToolPolicyAndExperimentsOptions {
 
 /** Env opt-in for persistent code_execution mounts (dogfooding/Track 2). */
 export function persistentSandboxMountsEnabled(): boolean {
-  return process.env.MUX_SANDBOX_PERSISTENT_MOUNTS === "1";
+  return resolveShuxEnvironmentValue("SANDBOX_PERSISTENT_MOUNTS", process.env) === "1";
 }
 
 /**

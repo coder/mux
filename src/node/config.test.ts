@@ -705,9 +705,10 @@ describe("Config", () => {
   });
 
   describe("legacy Chat with Mux cleanup", () => {
-    const legacyProjectPath = "/home/user/.mux/system/Mux";
+    const shippedProjectPath = "/home/user/.mux/system/Mux";
+    const shuxProjectPath = "/home/user/.shux/system/Shux";
 
-    function legacyMuxChatWorkspace(projectPath: string) {
+    function shippedMuxChatWorkspace(projectPath: string) {
       return {
         path: projectPath,
         id: "mux-chat",
@@ -717,16 +718,26 @@ describe("Config", () => {
       };
     }
 
-    it("removes the legacy system Mux project and persists the cleanup", async () => {
+    function shuxGenerationChatWorkspace(projectPath: string) {
+      return {
+        path: projectPath,
+        id: "mux-chat",
+        name: "chat-with-shux",
+        title: "Chat with Shux",
+        agentId: "shux",
+      };
+    }
+
+    it("removes the shipped system Mux project and persists the cleanup", async () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
         JSON.stringify({
           projects: [
             [
-              legacyProjectPath,
+              shippedProjectPath,
               {
-                workspaces: [legacyMuxChatWorkspace(legacyProjectPath)],
+                workspaces: [shippedMuxChatWorkspace(shippedProjectPath)],
                 projectKind: "system",
               },
             ],
@@ -736,12 +747,33 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.projects.has(legacyProjectPath)).toBe(false);
+      expect(loaded.projects.has(shippedProjectPath)).toBe(false);
       expect(loaded.projects.has("/repo")).toBe(true);
 
       await flushConfigEdits();
       const persisted = fs.readFileSync(configFile, "utf-8");
       expect(persisted).not.toContain("mux-chat");
+    });
+
+    it("removes later shux-branded leftovers as well", () => {
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              shuxProjectPath,
+              {
+                workspaces: [shuxGenerationChatWorkspace(shuxProjectPath)],
+                projectKind: "system",
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.has(shuxProjectPath)).toBe(false);
     });
 
     it("removes stale entries left under other mux roots", () => {
@@ -752,12 +784,12 @@ describe("Config", () => {
         JSON.stringify({
           projects: [
             [
-              legacyProjectPath,
-              { workspaces: [legacyMuxChatWorkspace(legacyProjectPath)], projectKind: "system" },
+              shippedProjectPath,
+              { workspaces: [shippedMuxChatWorkspace(shippedProjectPath)], projectKind: "system" },
             ],
             [
               staleProjectPath,
-              { workspaces: [legacyMuxChatWorkspace(staleProjectPath)], projectKind: "system" },
+              { workspaces: [shippedMuxChatWorkspace(staleProjectPath)], projectKind: "system" },
             ],
           ],
         })
@@ -801,14 +833,14 @@ describe("Config", () => {
               {
                 workspaces: [
                   {
-                    ...legacyMuxChatWorkspace(legacyProjectPath),
-                    subProjectPath: legacyProjectPath,
+                    ...shippedMuxChatWorkspace(shippedProjectPath),
+                    subProjectPath: shippedProjectPath,
                   },
                   { path: "/home/user/.mux/other", id: "other-ws", name: "other" },
                 ],
               },
             ],
-            [legacyProjectPath, { workspaces: [], projectKind: "system" }],
+            [shippedProjectPath, { workspaces: [], projectKind: "system" }],
           ],
         })
       );
@@ -817,7 +849,7 @@ describe("Config", () => {
       expect(loaded.projects.get(parentProjectPath)?.workspaces.map((w) => w.id)).toEqual([
         "other-ws",
       ]);
-      expect(loaded.projects.has(legacyProjectPath)).toBe(false);
+      expect(loaded.projects.has(shippedProjectPath)).toBe(false);
     });
 
     it("survives a corrupted non-string subProjectPath on a mux-chat record", () => {
@@ -849,10 +881,10 @@ describe("Config", () => {
         JSON.stringify({
           projects: [
             [
-              legacyProjectPath,
+              shippedProjectPath,
               {
                 workspaces: [
-                  legacyMuxChatWorkspace(legacyProjectPath),
+                  shippedMuxChatWorkspace(shippedProjectPath),
                   { path: "/home/user/other", id: "other-ws", name: "other" },
                 ],
                 projectKind: "system",
@@ -863,8 +895,37 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      const workspaces = loaded.projects.get(legacyProjectPath)?.workspaces;
+      const workspaces = loaded.projects.get(shippedProjectPath)?.workspaces;
       expect(workspaces?.map((w) => w.id)).toEqual(["other-ws"]);
+    });
+
+    it("keeps a Mux-named project that is not the hidden system leftover", () => {
+      const userMuxProjectPath = "/home/user/code/Mux";
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            [
+              userMuxProjectPath,
+              {
+                workspaces: [
+                  {
+                    path: userMuxProjectPath,
+                    id: "mux-chat",
+                    name: "chat-with-mux",
+                    title: "Chat with Mux",
+                    agentId: "mux",
+                  },
+                ],
+              },
+            ],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.get(userMuxProjectPath)?.workspaces).toHaveLength(1);
     });
   });
 
@@ -2695,7 +2756,7 @@ describe("Config", () => {
       expect(release).not.toBeNull();
 
       // Same file root = same lease, even from another Config instance
-      // (stands in for another Mux process sharing providers.jsonc).
+      // (stands in for another Shux process sharing providers.jsonc).
       const otherProcess = new Config(tempDir);
       expect(otherProcess.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
 
@@ -2875,7 +2936,7 @@ describe("Config", () => {
 
   describe("withCoderOauthRefreshLock", () => {
     it("serializes critical sections, including across Config instances on the same root", async () => {
-      // A second Config on the same root stands in for another Mux process
+      // A second Config on the same root stands in for another Shux process
       // sharing providers.jsonc.
       const otherProcess = new Config(tempDir);
       const events: string[] = [];

@@ -48,7 +48,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-local-description");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "local" },
+      shuxEnv: { MUX_RUNTIME: "local" },
     });
 
     expect(tool.description).toContain("share the same working directory as the parent");
@@ -59,7 +59,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-worktree-description");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
     });
 
     expect(tool.description).toContain("forked workspace based on committed state");
@@ -80,7 +80,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-local-isolation-schema");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "local" },
+      shuxEnv: { MUX_RUNTIME: "local" },
     });
 
     expect(parseWithIsolation(tool).success).toBe(false);
@@ -90,7 +90,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-worktree-isolation-schema");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
     });
 
     expect(parseWithIsolation(tool).success).toBe(true);
@@ -100,7 +100,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-workspace-fork-schema");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
     });
 
     const parsed = (
@@ -119,7 +119,7 @@ describe("task tool", () => {
     using tempDir = new TestTempDir("test-task-tool-workspace-sticky-schema");
     const tool = createTaskTool({
       ...createTestToolConfig(tempDir.path),
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
     });
 
     const parsed = (
@@ -156,7 +156,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
+      shuxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
       taskService,
     });
 
@@ -253,7 +253,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
       taskService,
     });
 
@@ -286,7 +286,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_RUNTIME: "worktree" },
+      shuxEnv: { MUX_RUNTIME: "worktree" },
       taskService,
     });
 
@@ -342,7 +342,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
+      shuxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "high" },
       taskService,
     });
 
@@ -374,7 +374,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "med" },
+      shuxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "med" },
       taskService,
     });
 
@@ -412,7 +412,7 @@ describe("task tool", () => {
 
     const tool = createTaskTool({
       ...baseConfig,
-      muxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "low" },
+      shuxEnv: { MUX_MODEL_STRING: "openai:gpt-4o-mini", MUX_THINKING_LEVEL: "low" },
       taskService,
     });
 

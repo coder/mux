@@ -604,7 +604,7 @@ export const WorkspaceInitEventSchema = z.discriminatedUnion("type", [
 ]);
 
 // Chat message wrapper with type discriminator for streaming events
-// MuxMessageSchema is used for persisted data (chat.jsonl) which doesn't have a type field.
+// ShuxMessageSchema is used for persisted data (chat.jsonl) which doesn't have a type field.
 // This wrapper adds a type discriminator for real-time streaming events.
 export const ChatMuxMessageSchema = MuxMessageSchema.extend({
   type: z.literal("message"),
@@ -653,7 +653,7 @@ export const RestoreToInputEventSchema = z.object({
 });
 
 // All streaming events now have a `type` field for O(1) discriminated union lookup.
-// MuxMessages (user/assistant chat messages) are emitted with type: "message"
+// ShuxMessages (user/assistant chat messages) are emitted with type: "message"
 // when loading from history or sending new messages.
 export const WorkspaceChatMessageSchema = z.discriminatedUnion("type", [
   // Stream lifecycle events

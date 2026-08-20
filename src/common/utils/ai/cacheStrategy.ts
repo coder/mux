@@ -274,7 +274,7 @@ export function openaiExplicitPromptCachingAvailable(
 
 /**
  * Create a structured system message carrying one explicit GPT-5.6 prompt
- * cache breakpoint at the end of Mux's stable system/developer instructions.
+ * cache breakpoint at the end of Shux's stable system/developer instructions.
  *
  * The AI SDK reads message-level providerOptions.openai.promptCacheBreakpoint
  * on system messages (string content — not a content-part array) and

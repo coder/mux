@@ -1,9 +1,9 @@
 ---
 title: Server Access
-description: Configure authentication and session controls for mux server/browser mode
+description: Configure authentication and session controls for shux server/browser mode
 ---
 
-`mux server` can be accessed from browsers, mobile devices, and other machines on your network. This page covers how access control works, including the GitHub owner login allowlist.
+`shux server` can be accessed from browsers, mobile devices, and other machines on your network. This page covers how access control works, including the GitHub owner login allowlist.
 
 ## Authentication modes
 
@@ -13,7 +13,7 @@ Token resolution order:
 
 1. `--no-auth` (disables auth entirely)
 2. `--auth-token <token>`
-3. `MUX_SERVER_AUTH_TOKEN`
+3. `SHUX_SERVER_AUTH_TOKEN`
 4. Auto-generated token at startup
 
 <Warning>
@@ -23,12 +23,12 @@ Token resolution order:
 
 ## Configure GitHub owner login
 
-Mux can optionally allow GitHub Device Flow login for exactly one GitHub account.
+Shux can optionally allow GitHub Device Flow login for exactly one GitHub account.
 
 Set the allowed account with either:
 
-- Environment variable: `MUX_SERVER_AUTH_GITHUB_OWNER`
-- Config file key: `serverAuthGithubOwner` in `~/.mux/config.json`
+- Environment variable: `SHUX_SERVER_AUTH_GITHUB_OWNER`
+- Config file key: `serverAuthGithubOwner` in `~/.shux/config.json`
 
 There is currently no UI control for this setting; configure it via env/config.
 
@@ -40,9 +40,9 @@ Example:
 }
 ```
 
-If both are set, `MUX_SERVER_AUTH_GITHUB_OWNER` takes precedence.
+If both are set, `SHUX_SERVER_AUTH_GITHUB_OWNER` takes precedence.
 
-When enabled, the auth modal shows **Login with GitHub**. Mux verifies the GitHub `login` value against the configured owner (case-insensitive). Non-matching users are rejected.
+When enabled, the auth modal shows **Login with GitHub**. Shux verifies the GitHub `login` value against the configured owner (case-insensitive). Non-matching users are rejected.
 
 <Note>
   This allowlist currently supports a single GitHub username. It does not support multiple users or
@@ -64,11 +64,11 @@ This page manages cookie-backed browser sessions. Token-based access remains val
 
 ## Network exposure and bind settings
 
-To expose Mux beyond localhost and configure bind host/port in the UI:
+To expose Shux beyond localhost and configure bind host/port in the UI:
 
 1. Open **Settings → Experiments**
 2. Enable **Expose API server on LAN/VPN**
-3. Configure bind host, port, and **Serve mux web UI**
+3. Configure bind host, port, and **Serve shux web UI**
 4. Click **Apply**
 
 Equivalent CLI options:

@@ -1,13 +1,13 @@
 ---
 title: Models
-description: Select and configure AI models in Mux
+description: Select and configure AI models in Shux
 ---
 
-Mux supports multiple AI providers. Configure provider API keys in **Settings → Providers** — see [Providers](/config/providers) for setup.
+Shux supports multiple AI providers. Configure provider API keys in **Settings → Providers** — see [Providers](/config/providers) for setup.
 
 ## First-class Models
 
-Mux ships with curated models kept up to date with the frontier. Use any custom model with `/model <provider:model_id>`.
+Shux ships with curated models kept up to date with the frontier. Use any custom model with `/model <provider:model_id>`.
 
 {/* BEGIN KNOWN_MODELS_TABLE */}
 
@@ -87,11 +87,11 @@ Use `/+level` (no model) to override thinking on the current model: `/+0 quick a
 
 ### CLI
 
-The `mux run` CLI accepts the same thinking levels via `--thinking`:
+The `shux run` CLI accepts the same thinking levels via `--thinking`:
 
 ```bash
-mux run -t 0 "Quick fix"          # Lowest thinking for the model
-mux run -t high "Deep analysis"   # Named level
+shux run -t 0 "Quick fix"          # Lowest thinking for the model
+shux run -t high "Deep analysis"   # Named level
 ```
 
 ## Next Steps

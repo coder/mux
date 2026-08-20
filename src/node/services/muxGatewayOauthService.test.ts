@@ -221,13 +221,13 @@ describe("MuxGatewayOauthService", () => {
 
       expect(waitResult.success).toBe(false);
       if (!waitResult.success) {
-        expect(waitResult.error).toContain("Mux Gateway exchange failed (500)");
+        expect(waitResult.error).toContain("Shux Gateway exchange failed (500)");
       }
 
       expect(callbackResponse.status).toBe(400);
       expect(callbackResponse.body).toContain("Login failed");
       expect(callbackResponse.body).toContain(
-        "Mux Gateway exchange failed (500): upstream exploded"
+        "Shux Gateway exchange failed (500): upstream exploded"
       );
 
       expect(deps.setConfigCalls).toHaveLength(0);

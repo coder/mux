@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 /**
- * `mux run` - First-class CLI for running agent sessions
+ * `shux run` - First-class CLI for running agent sessions
  *
  * Usage:
- *   mux run "Fix the failing tests"
- *   mux run --dir /path/to/project "Add authentication"
- *   mux run --runtime "ssh user@host" "Deploy changes"
+ *   shux run "Fix the failing tests"
+ *   shux run --dir /path/to/project "Add authentication"
+ *   shux run --runtime "ssh user@host" "Deploy changes"
  */
 
 import { Command } from "commander";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import { tool } from "ai";
 import { z } from "zod";
 import * as path from "path";
@@ -101,7 +102,7 @@ type CLIMode = "plan" | "exec";
 
 function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): RuntimeConfig {
   if (!value) {
-    // Default to local for `mux run` (no worktree isolation needed for one-off)
+    // Default to local for `shux run` (no worktree isolation needed for one-off)
     return { type: "local" };
   }
 
@@ -131,7 +132,7 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
       // worktree-add ~2.2s).
       //
       // Anchoring `srcBaseDir` to the stable `~/mux` location lets the second
-      // and subsequent `mux run` invocations reuse the existing shared base
+      // and subsequent `shux run` invocations reuse the existing shared base
       // repo on the remote, hitting the warm path
       // (`Reusing existing remote project snapshot`) — a single bounded SSH
       // round-trip instead of a full create + sync + push.
@@ -144,7 +145,7 @@ function parseRuntimeConfig(value: string | undefined, srcBaseDir: string): Runt
 }
 
 function parseThinkingLevel(value: string | undefined): ParsedThinkingInput {
-  if (!value) return DEFAULT_THINKING_LEVEL; // Default for mux run
+  if (!value) return DEFAULT_THINKING_LEVEL; // Default for shux run
 
   // Accepts named levels (off, low, med, high, max, xhigh) and numeric (0–N)
   const level = parseThinkingInput(value);
@@ -191,7 +192,7 @@ function generateWorkspaceId(): string {
 }
 
 /**
- * Init logger that prepends elapsed/delta timestamps to each step so `mux run`
+ * Init logger that prepends elapsed/delta timestamps to each step so `shux run`
  * can double as a startup-timing harness (especially useful for SSH workspaces
  * where the slowest phases are hidden inside multi-second remote operations).
  *
@@ -315,7 +316,7 @@ function collectMcpServers(value: string, previous: MCPServerEntry[]): MCPServer
 const program = new Command();
 
 program
-  .name("mux run")
+  .name("shux run")
   .description("Run an agent session in the current directory")
   .argument("[message...]", "instruction for the agent (can also be piped via stdin)")
   .option("-d, --dir <path>", "project directory", process.cwd())
@@ -353,17 +354,17 @@ program
     "after",
     `
 Examples:
-  $ mux run "Fix the failing tests"
-  $ mux run --dir /path/to/project "Add authentication"
-  $ mux run --runtime "ssh user@host" "Deploy changes"
-  $ mux run --goal "Fix tests and verify they pass"
-  $ mux run --goal "Ship the refactor" --goal-budget 5.00 --goal-turns 10
-  $ mux run --mode plan "Refactor the auth module"
-  $ mux run --budget 1.50 "Quick code review"
-  $ echo "Add logging" | mux run
-  $ mux run --json "List all files" | jq '.type'
-  $ mux run --mcp "memory=npx -y @modelcontextprotocol/server-memory" "Remember this"
-  $ mux run --mcp "chrome=npx chrome-devtools-mcp" --mcp "fs=npx @anthropic/mcp-fs" "Take a screenshot"
+  $ shux run "Fix the failing tests"
+  $ shux run --dir /path/to/project "Add authentication"
+  $ shux run --runtime "ssh user@host" "Deploy changes"
+  $ shux run --goal "Fix tests and verify they pass"
+  $ shux run --goal "Ship the refactor" --goal-budget 5.00 --goal-turns 10
+  $ shux run --mode plan "Refactor the auth module"
+  $ shux run --budget 1.50 "Quick code review"
+  $ echo "Add logging" | shux run
+  $ shux run --json "List all files" | jq '.type'
+  $ shux run --mcp "memory=npx -y @modelcontextprotocol/server-memory" "Remember this"
+  $ shux run --mcp "chrome=npx chrome-devtools-mcp" --mcp "fs=npx @anthropic/mcp-fs" "Take a screenshot"
 `
   );
 
@@ -394,7 +395,8 @@ interface CLIOptions {
 
 const opts = program.opts<CLIOptions>();
 const keepBackgroundProcesses =
-  opts.keepBackgroundProcesses === true || process.env.MUX_KEEP_BACKGROUND_PROCESSES === "1";
+  opts.keepBackgroundProcesses === true ||
+  resolveShuxEnvironmentValue("KEEP_BACKGROUND_PROCESSES", process.env) === "1";
 const messageArg = program.args.join(" ");
 
 async function main(): Promise<number> {
@@ -425,7 +427,7 @@ async function main(): Promise<number> {
 
   if (!message) {
     console.error("Error: No message provided. Pass as argument, pipe via stdin, or use --goal.");
-    console.error('Usage: mux run "Your instruction here"');
+    console.error('Usage: shux run "Your instruction here"');
     process.exit(1);
   }
 
@@ -519,7 +521,7 @@ async function main(): Promise<number> {
   };
   const writeThinking = (text: string) => {
     if (suppressHumanOutput) return;
-    // Purple color matching Mux UI thinking blocks (hsl(271, 76%, 53%) = #A855F7)
+    // Purple color matching Shux UI thinking blocks (hsl(271, 76%, 53%) = #A855F7)
     const colored = stderrIsTTY ? chalk.hex("#A855F7")(text) : text;
     process.stderr.write(colored);
   };
@@ -547,8 +549,8 @@ async function main(): Promise<number> {
     }
   }
 
-  // Enforce managed policy (MUX_POLICY_FILE / Mux Governor) in headless runs
-  // too, matching the desktop wiring: without this, `mux run` would keep using
+  // Enforce managed policy (MUX_POLICY_FILE / Shux Governor) in headless runs
+  // too, matching the desktop wiring: without this, `shux run` would keep using
   // providers/models/credentials that providerAccess now denies. Bind to the
   // REAL config so governor enrollment settings (muxGovernorUrl/Token) are
   // honored — the ephemeral tempDir config only receives project trust flags.
@@ -592,7 +594,7 @@ async function main(): Promise<number> {
       : undefined,
   });
 
-  // `mux run` uses createCoreServices directly (without ServiceContainer), so wire
+  // `shux run` uses createCoreServices directly (without ServiceContainer), so wire
   // Codex OAuth explicitly to ensure Codex-routed OpenAI requests can load/refresh
   // OAuth tokens from providers.jsonc.
   const codexOauthService = new CodexOauthService(config, providerService);
@@ -600,7 +602,7 @@ async function main(): Promise<number> {
   // Same for Coder OAuth: coder:* models need per-request token loading/refresh.
   // Bind it to the REAL config (not the ephemeral tempDir copy): Coder rotates
   // the refresh token on every use, so persisting rotations only to tempDir
-  // would strand ~/.mux/providers.jsonc with a consumed (dead) refresh token
+  // would strand ~/.shux/providers.jsonc with a consumed (dead) refresh token
   // once this CLI session exits.
   const realProviderService = new ProviderService(realConfig, policyService);
   const coderOauthService = new CoderOauthService(
@@ -629,7 +631,7 @@ async function main(): Promise<number> {
       "Set the process exit code for this CLI session. " +
       "Use this in CI/automation to signal success (0) or failure (non-zero). " +
       "For example, exit 1 to block a PR merge when issues are found. " +
-      "Only available in `mux run` CLI mode.",
+      "Only available in `shux run` CLI mode.",
     inputSchema: setExitCodeSchema,
     execute: ({ exit_code }: z.infer<typeof setExitCodeSchema>) => {
       agentExitCode = exit_code;
@@ -657,7 +659,7 @@ async function main(): Promise<number> {
   // can run (Docker container, SSH remote checkout), create + init it now so
   // the agent's first tool call doesn't fail with "runtime not ready".
   //
-  // The init logger is timed (`makeTimedCliInitLogger`) so `mux run --verbose`
+  // The init logger is timed (`makeTimedCliInitLogger`) so `shux run --verbose`
   // doubles as a startup-timing harness: each step is annotated with elapsed
   // total + delta-since-last-step, making it easy to see which remote phase
   // (sync / fetch / worktree add / hook) dominates startup latency.
@@ -671,7 +673,7 @@ async function main(): Promise<number> {
     // expands tildes against the local cwd, producing nonsense like
     // `/Users/.../~/mux/...` that subsequently fails SSH path validation.
     // Resolving first makes the runtime config self-consistent and lets
-    // subsequent `mux run` invocations reuse the same stable shared base
+    // subsequent `shux run` invocations reuse the same stable shared base
     // repo on the remote (warm fast-path).
     if (runtimeConfig.type === "ssh" && runtimeConfig.srcBaseDir.startsWith("~")) {
       const probeRuntime = createRuntime(runtimeConfig, {
@@ -778,7 +780,7 @@ async function main(): Promise<number> {
   });
 
   // Note: taskService.initialize() is intentionally NOT called. It resumes tasks from a
-  // previous session, but mux run uses an ephemeral Config (temp dir) with no prior state.
+  // previous session, but shux run uses an ephemeral Config (temp dir) with no prior state.
   // Calling initialize() on a fresh config is a no-op, but skipping it makes the intent
   // clear and avoids any risk of cross-workspace side effects if config were ever shared.
 
@@ -794,7 +796,7 @@ async function main(): Promise<number> {
       ...(opts.serviceTier != null && { openai: { serviceTier: opts.serviceTier } }),
     },
     // Disable UI-only tools that either no-op or require UI interaction in CLI mode:
-    // - ask_user_question: waits for a desktop/mobile answer UI; headless `mux run` cannot answer it
+    // - ask_user_question: waits for a desktop/mobile answer UI; headless `shux run` cannot answer it
     // - status_set: backend no-op, status indicator only visible in desktop UI
     // - todo_write/todo_read: TODO list only visible in desktop UI
     // - notify: sends OS notifications via Electron, silently swallowed in CLI

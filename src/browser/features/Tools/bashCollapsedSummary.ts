@@ -58,7 +58,7 @@ export function buildBashCollapsedSummary(
   return { kind: "intent-command", intent: displayIntent, command, durationLabel };
 }
 
-/** Models may echo `using <command>` and `for <duration>` despite schema guidance, so strip those since Mux appends them. */
+/** Models may echo `using <command>` and `for <duration>` despite schema guidance, so strip those since Shux appends them. */
 export function sanitizeModelIntent(rawIntent: unknown, command: string): string | undefined {
   if (typeof rawIntent !== "string") {
     return undefined;

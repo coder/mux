@@ -46,7 +46,7 @@ export class MuxGatewayOauthService {
           renderOAuthCallbackHtml({
             title: r.success ? "Login complete" : "Login failed",
             message: r.success
-              ? "You can return to Mux. You may now close this tab."
+              ? "You can return to Shux. You may now close this tab."
               : (r.error ?? "Unknown error"),
             success: r.success,
             extraHead:
@@ -82,7 +82,7 @@ export class MuxGatewayOauthService {
       // Flow was already finished externally (timeout or cancel).
       if (callbackOrDone === null) return;
 
-      log.debug(`Mux Gateway OAuth callback received (flowId=${flowId})`);
+      log.debug(`Shux Gateway OAuth callback received (flowId=${flowId})`);
 
       let result: Result<void, string>;
       if (callbackOrDone.success) {
@@ -98,13 +98,13 @@ export class MuxGatewayOauthService {
           loopback.sendFailureResponse(result.error);
         }
       } else {
-        result = Err(`Mux Gateway OAuth error: ${callbackOrDone.error}`);
+        result = Err(`Shux Gateway OAuth error: ${callbackOrDone.error}`);
       }
 
       await this.desktopFlows.finish(flowId, result);
     })();
 
-    log.debug(`Mux Gateway OAuth desktop flow started (flowId=${flowId})`);
+    log.debug(`Shux Gateway OAuth desktop flow started (flowId=${flowId})`);
 
     return Ok({ flowId, authorizeUrl, redirectUri: loopback.redirectUri });
   }
@@ -118,7 +118,7 @@ export class MuxGatewayOauthService {
 
   async cancelDesktopFlow(flowId: string): Promise<void> {
     if (!this.desktopFlows.has(flowId)) return;
-    log.debug(`Mux Gateway OAuth desktop flow cancelled (flowId=${flowId})`);
+    log.debug(`Shux Gateway OAuth desktop flow cancelled (flowId=${flowId})`);
     await this.desktopFlows.cancel(flowId);
   }
 
@@ -139,7 +139,7 @@ export class MuxGatewayOauthService {
       expiresAtMs: Date.now() + DEFAULT_SERVER_TIMEOUT_MS,
     });
 
-    log.debug(`Mux Gateway OAuth server flow started (state=${state})`);
+    log.debug(`Shux Gateway OAuth server flow started (state=${state})`);
 
     return { authorizeUrl, state };
   }
@@ -191,7 +191,7 @@ export class MuxGatewayOauthService {
       const message = input.errorDescription
         ? `${input.error}: ${input.errorDescription}`
         : input.error;
-      return Err(`Mux Gateway OAuth error: ${message}`);
+      return Err(`Shux Gateway OAuth error: ${message}`);
     }
 
     if (!input.code) {
@@ -212,7 +212,7 @@ export class MuxGatewayOauthService {
       return Err(persistResult.error);
     }
 
-    log.debug(`Mux Gateway OAuth exchange completed (state=${input.state})`);
+    log.debug(`Shux Gateway OAuth exchange completed (state=${input.state})`);
 
     this.windowService?.focusMainWindow();
 
@@ -231,20 +231,20 @@ export class MuxGatewayOauthService {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => "");
-        const prefix = `Mux Gateway exchange failed (${response.status})`;
+        const prefix = `Shux Gateway exchange failed (${response.status})`;
         return Err(errorText ? `${prefix}: ${errorText}` : prefix);
       }
 
       const json = (await response.json()) as { access_token?: unknown };
       const token = typeof json.access_token === "string" ? json.access_token : null;
       if (!token) {
-        return Err("Mux Gateway exchange response missing access_token");
+        return Err("Shux Gateway exchange response missing access_token");
       }
 
       return Ok(token);
     } catch (error) {
       const message = getErrorMessage(error);
-      return Err(`Mux Gateway exchange failed: ${message}`);
+      return Err(`Shux Gateway exchange failed: ${message}`);
     }
   }
 }

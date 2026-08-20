@@ -22,6 +22,7 @@ import { extractCookieValues, extractWsHeaders, safeEq } from "@/node/orpc/authM
 import { VERSION } from "@/version";
 import { formatOrpcError } from "@/node/orpc/formatOrpcError";
 import { BROWSER_BRIDGE_WS_PATH, DESKTOP_WS_PATH, ORPC_WS_PATH } from "@/node/orpc/wsPaths";
+import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
 import { log } from "@/node/services/log";
 import {
   SERVER_AUTH_SESSION_COOKIE_NAME,
@@ -156,7 +157,7 @@ function escapeJsonForHtmlScript(value: unknown): string {
 }
 
 function getBrowserProxyUriTemplate(): string | null {
-  const muxProxyUri = process.env.MUX_PROXY_URI?.trim();
+  const muxProxyUri = resolveShuxEnvironmentValue("PROXY_URI", process.env)?.trim();
   if (muxProxyUri) {
     return muxProxyUri;
   }
@@ -1042,7 +1043,7 @@ export async function createOrpcServer({
     }
   });
 
-  // --- Mux Gateway OAuth (unauthenticated bootstrap routes) ---
+  // --- Shux Gateway OAuth (unauthenticated bootstrap routes) ---
   // These are raw Express routes (not oRPC) because the OAuth provider cannot
   // send a mux Bearer token during the redirect callback.
   app.get("/auth/mux-gateway/start", async (req, res) => {
@@ -1090,7 +1091,7 @@ export async function createOrpcServer({
 
     const title = result.success ? "Login complete" : "Login failed";
     const description = result.success
-      ? "You can return to Mux. You may now close this tab."
+      ? "You can return to Shux. You may now close this tab."
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
@@ -1112,7 +1113,7 @@ export async function createOrpcServer({
     <div class="page">
       <header class="site-header">
         <div class="container">
-          <div class="header-title">mux</div>
+          <div class="header-title">shux</div>
         </div>
       </header>
 
@@ -1122,7 +1123,7 @@ export async function createOrpcServer({
             <h1>${title}</h1>
             <p>${description}</p>
             ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="${returnPathHref}">Return to Mux</a></p>
+            <p><a class="btn primary" href="${returnPathHref}">Return to Shux</a></p>
           </div>
         </div>
       </main>
@@ -1184,8 +1185,8 @@ export async function createOrpcServer({
     res.send(html);
   });
 
-  // --- Mux Governor OAuth (unauthenticated bootstrap routes) ---
-  // Similar to Mux Gateway OAuth but accepts user-provided governorUrl.
+  // --- Shux Governor OAuth (unauthenticated bootstrap routes) ---
+  // Similar to Shux Gateway OAuth but accepts user-provided governorUrl.
   app.get("/auth/mux-governor/start", async (req, res) => {
     if (!(await isHttpRequestAuthenticated(req))) {
       res.status(401).json({ error: "Invalid or missing auth token/session" });
@@ -1253,7 +1254,7 @@ export async function createOrpcServer({
 
     const title = result.success ? "Enrollment complete" : "Enrollment failed";
     const description = result.success
-      ? "You can return to Mux. You may now close this tab."
+      ? "You can return to Shux. You may now close this tab."
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
@@ -1279,7 +1280,7 @@ export async function createOrpcServer({
     <h1>${title}</h1>
     <p>${description}</p>
     ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-    <p><a class="btn" href="${returnPathHref}">Return to Mux</a></p>
+    <p><a class="btn" href="${returnPathHref}">Return to Shux</a></p>
 
     <script>
       (() => {
@@ -1369,7 +1370,7 @@ export async function createOrpcServer({
 
     const title = result.success ? "Login complete" : "Login failed";
     const description = result.success
-      ? "You can return to Mux. You may now close this tab."
+      ? "You can return to Shux. You may now close this tab."
       : payload.error
         ? escapeHtml(payload.error)
         : "An unknown error occurred.";
@@ -1391,7 +1392,7 @@ export async function createOrpcServer({
     <div class="page">
       <header class="site-header">
         <div class="container">
-          <div class="header-title">mux</div>
+          <div class="header-title">shux</div>
         </div>
       </header>
 
@@ -1401,7 +1402,7 @@ export async function createOrpcServer({
             <h1>${title}</h1>
             <p>${description}</p>
             ${result.success ? '<p class="muted">This tab should close automatically.</p>' : ""}
-            <p><a class="btn primary" href="${returnPathHref}">Return to Mux</a></p>
+            <p><a class="btn primary" href="${returnPathHref}">Return to Shux</a></p>
           </div>
         </div>
       </main>
@@ -1482,9 +1483,9 @@ export async function createOrpcServer({
 
     const spec = await openAPIGenerator.generate(orpcRouter, {
       info: {
-        title: "Mux API",
+        title: "Shux API",
         version: gitDescribe,
-        description: "API for Mux",
+        description: "API for Shux",
       },
       servers: [{ url: publicApiPath }],
       security: authToken ? [{ bearerAuth: [] }] : undefined,
@@ -1513,7 +1514,7 @@ export async function createOrpcServer({
     const html = `<!doctype html>
 <html>
   <head>
-    <title>mux API Reference</title>
+    <title>shux API Reference</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>
