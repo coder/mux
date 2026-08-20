@@ -27,14 +27,14 @@ The CLI is available via npm and can be run directly with `npx`:
 
 ```bash
 # Run without installing
-npx shux run "Fix the failing tests"
+npx @coder/shux run "Fix the failing tests"
 
 # Or install globally
-npm install -g shux
+npm install -g @coder/shux
 shux run "Fix the failing tests"
 ```
 
-Using `npx shux` is especially convenient for CI/CD pipelines where you don't want to manage a global installation.
+Using `npx @coder/shux` is especially convenient for CI/CD pipelines where you don't want to manage a global installation.
 
 ## `shux run`
 
@@ -42,7 +42,7 @@ Execute a one-off agent task:
 
 ```bash
 # Basic usage - run in current directory
-npx shux run "Fix the failing tests"
+npx @coder/shux run "Fix the failing tests"
 
 # Specify a directory
 shux run --dir /path/to/project "Add authentication"

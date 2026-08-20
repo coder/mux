@@ -1,5 +1,5 @@
 {
-  "name": "shux",
+  "name": "@coder/shux",
   "version": "0.28.2",
   "desktopName": "shux.desktop",
   "description": "shux - coding agent multiplexer",
@@ -294,7 +294,7 @@
         "zip"
       ],
       "icon": "build/icon.icns",
-      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "artifactName": "shux-${version}-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -305,7 +305,7 @@
       "target": "AppImage",
       "category": "Development",
       "icon": "build/icons",
-      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "artifactName": "shux-${version}-${arch}.${ext}",
       "desktop": {
         "StartupWMClass": "shux"
       }
@@ -313,7 +313,7 @@
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "artifactName": "shux-${version}-${arch}.${ext}",
       "sign": "scripts/sign-windows.js",
       "signingHashAlgorithms": [
         "sha256"

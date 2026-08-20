@@ -70,7 +70,7 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.AUTO_CLEANUP_ANTHROPIC_API_KEY }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          bunx shux@next run \
+          bunx @coder/shux@next run \
             --model anthropic:claude-opus-5 \
             --thinking xhigh \
             < .github/prompts/auto-cleanup.md

@@ -8,7 +8,7 @@ name: Publish to NPM
 #
 # IMPORTANT: This workflow's filename (publish-npm.yml) must match the OIDC
 # trusted publisher configured on npmjs.com. Do not rename without updating
-# the npm trusted publisher settings for 'shux', 'mux', and
+# the npm trusted publisher settings for '@coder/shux', 'mux', and
 # '@coder/mux-chat-components'. Publisher setup remains external.
 
 on:

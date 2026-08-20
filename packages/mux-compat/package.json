@@ -1,7 +1,7 @@
 {
   "name": "mux",
   "version": "0.28.2",
-  "description": "Compatibility package forwarding the legacy mux command to shux",
+  "description": "Compatibility package forwarding the legacy mux command to @coder/shux",
   "bin": {
     "mux": "bin/mux.js"
   },
@@ -10,7 +10,7 @@
     "README.md"
   ],
   "dependencies": {
-    "shux": "0.28.2"
+    "@coder/shux": "0.28.2"
   },
   "repository": {
     "type": "git",

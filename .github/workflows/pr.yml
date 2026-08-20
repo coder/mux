@@ -57,6 +57,8 @@ jobs:
               - 'tests/ui/**'
             config:
               - '.github/**'
+              - 'scripts/**'
+              - 'packages/mux-compat/**'
               - 'jest.config.cjs'
               - 'babel.config.cjs'
               - 'package.json'
@@ -424,15 +426,19 @@ jobs:
       - uses: ./.github/actions/setup-mux
       - run: ./scripts/generate-npm-shrinkwrap.sh
       - run: make build
-      - run: npm pack
+      - name: Pack npm package
+        id: pack
+        run: echo "tarball=$(./scripts/pack-npm-package.sh)" >> "$GITHUB_OUTPUT"
       - env:
+          PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
           SERVER_PORT: 3001
           SERVER_HOST: localhost
           STARTUP_TIMEOUT: 30
-        run: |
-          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
-          TARBALL=$(ls shux-*.tgz | head -1)
-          PACKAGE_TARBALL="$TARBALL" ./scripts/smoke-test.sh
+        run: ./scripts/smoke-test.sh
+      - name: Test legacy mux forwarding package
+        env:
+          CANONICAL_TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: ./scripts/smoke-test-mux-compat.sh
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: failure()
         with:

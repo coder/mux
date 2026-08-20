@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test for the canonical shux npm package and legacy mux binary alias.
+# Smoke test for the canonical @coder/shux npm package and legacy mux binary alias.
 # Tests that the package can be installed and the server starts correctly.
 
 set -euo pipefail
@@ -104,7 +104,7 @@ cat >package.json <<EOF
 EOF
 
 # Optionally strip shrinkwrap to simulate `bun x` / lockfile-free resolution.
-# When a user runs `bun x shux@latest`, bun ignores npm-shrinkwrap.json and resolves
+# When a user runs `bun x @coder/shux@latest`, bun ignores npm-shrinkwrap.json and resolves
 # dependencies from scratch. This can resolve to different (potentially broken) versions
 # than what the shrinkwrap locks to. Testing without shrinkwrap catches these mismatches.
 if [[ "$SKIP_SHRINKWRAP" == "1" ]]; then

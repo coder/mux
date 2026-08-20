@@ -22,7 +22,7 @@ packageJson.version = version;
 const legacyCompatPackageJsonPath = "packages/mux-compat/package.json";
 const legacyCompatPackageJson = JSON.parse(fs.readFileSync(legacyCompatPackageJsonPath, "utf8"));
 legacyCompatPackageJson.version = version;
-legacyCompatPackageJson.dependencies.shux = version;
+legacyCompatPackageJson.dependencies = { [packageJson.name]: version };
 
 // When version includes a prerelease suffix like "-nightly.N", tell
 // electron-builder to generate channel-specific manifests (e.g. nightly.yml,

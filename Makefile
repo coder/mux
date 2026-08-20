@@ -431,10 +431,10 @@ test-coverage: ## Run tests with coverage
 
 smoke-test: build ## Run smoke test on npm package
 	@echo "Building npm package tarball..."
-	@npm pack
-	@TARBALL=$$(ls shux-*.tgz | head -1); \
+	@TARBALL=$$(./scripts/pack-npm-package.sh) || exit $$?; \
 	echo "Running smoke test on $$TARBALL..."; \
-	PACKAGE_TARBALL="$$TARBALL" ./scripts/smoke-test.sh; \
+	PACKAGE_TARBALL="$$TARBALL" ./scripts/smoke-test.sh && \
+	CANONICAL_TARBALL="$$TARBALL" ./scripts/smoke-test-mux-compat.sh; \
 	EXIT_CODE=$$?; \
 	rm -f "$$TARBALL"; \
 	exit $$EXIT_CODE

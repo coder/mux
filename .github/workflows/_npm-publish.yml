@@ -4,12 +4,14 @@ name: NPM Publish (Reusable)
 # Called by publish-npm.yml (the OIDC-trusted caller).
 #
 # OIDC TRUSTED PUBLISHING SETUP (on npmjs.com):
-#   For each package (shux, mux, @coder/mux-chat-components):
+#   New packages must be published manually once before npm allows trusted publisher setup.
+#   For each package (@coder/shux, mux, @coder/mux-chat-components):
 #   1. Go to package settings → Trusted Publisher → GitHub Actions
 #   2. Configure:
 #      - Owner: coder
 #      - Repository: mux
 #      - Workflow filename: publish-npm.yml  (the caller, NOT this reusable)
+#      - Allowed action: npm publish
 #      - Environment: (leave blank)
 
 on:
@@ -91,7 +93,7 @@ jobs:
           echo "version=${NPM_VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=${NPM_TAG}" >> "$GITHUB_OUTPUT"
 
-          # Keep the canonical shux package and legacy mux forwarding package in lockstep.
+          # Keep the canonical @coder/shux package and legacy mux forwarding package in lockstep.
           node ./scripts/set-package-version.js "$NPM_VERSION"
 
           echo "Updated package versions to ${NPM_VERSION}"
@@ -106,24 +108,25 @@ jobs:
         run: make build
 
       - name: Pack npm package for smoke test
-        run: npm pack
-
-      - name: Find package tarball
-        id: find-tarball
+        id: pack
         run: |
-          # shellcheck disable=SC2012 # ls is fine here - known filename pattern in controlled directory
-          TARBALL=$(ls shux-*.tgz | head -1)
+          TARBALL=$(./scripts/pack-npm-package.sh)
           echo "tarball=$TARBALL" >> "$GITHUB_OUTPUT"
           echo "Found package: $TARBALL"
 
       - name: Run smoke test
         env:
-          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
+          PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
           SERVER_PORT: 3000
           SERVER_HOST: localhost
           STARTUP_TIMEOUT: 30
         run: |
           ./scripts/smoke-test.sh
+
+      - name: Run legacy mux forwarding package smoke test
+        env:
+          CANONICAL_TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: ./scripts/smoke-test-mux-compat.sh
 
       - name: Upload server logs on smoke test failure
         if: failure()
@@ -140,7 +143,7 @@ jobs:
       # don't respect shrinkwrap. Uses a different port to avoid conflicts.
       - name: Run smoke test (without shrinkwrap)
         env:
-          PACKAGE_TARBALL: ${{ steps.find-tarball.outputs.tarball }}
+          PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
           SERVER_PORT: 3001
           SERVER_HOST: localhost
           STARTUP_TIMEOUT: 30
@@ -160,7 +163,12 @@ jobs:
 
       - name: Clean up tarball
         if: always()
-        run: rm -f shux-*.tgz
+        env:
+          PACKAGE_TARBALL: ${{ steps.pack.outputs.tarball }}
+        run: |
+          if [ -n "$PACKAGE_TARBALL" ]; then
+            rm -f "$PACKAGE_TARBALL"
+          fi
 
       - name: Check if version exists
         id: check-exists

@@ -13,13 +13,12 @@
 [![Discord](https://img.shields.io/discord/1446553342699507907?logo=discord&label=Discord)](https://cdr.co/mux-discord)
 [![X (formerly Twitter)](https://img.shields.io/badge/Follow-%40codermux-black?logo=x)](https://x.com/codermux)
 
-
 </div>
 
 > [!IMPORTANT]
 > This project was renamed from Mux to Shux after Mux.com raised a trademark concern. “Mux” is a common technical abbreviation of “multiplexer” and we do not expect confusion between the projects, but chose to rename ours rather than spend more time on the dispute. “Shux” captures our reaction to the process and bears no other significance.
-> 
-Shux is a desktop & browser application for parallel agentic development. It enables developers to plan and execute tasks with multiple AI agents on local or remote compute.
+>
+> Shux is a desktop & browser application for parallel agentic development. It enables developers to plan and execute tasks with multiple AI agents on local or remote compute.
 
 <p><img src="./docs/img/mux-demo.gif" alt="Shux product demo" width="100%" /></p>
 

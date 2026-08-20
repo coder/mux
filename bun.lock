@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "shux",
+      "name": "@coder/shux",
       "dependencies": {
         "@agentclientprotocol/sdk": "^0.25.0",
         "@ai-sdk/amazon-bedrock": "^5.0.15",
