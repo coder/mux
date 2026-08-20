@@ -13,6 +13,7 @@ import { WorkspaceProvider } from "@/browser/contexts/WorkspaceContext";
 import { selectWorkspace } from "@/browser/stories/helpers/uiState";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
+import { getAppConfigStore } from "@/browser/stores/AppConfigStore";
 import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 import {
   getExperimentKey,
@@ -97,6 +98,8 @@ export function SettingsSectionStory(props: SettingsSectionStoryProps) {
   if (wiredProvidersClientRef.current !== clientRef.current) {
     wiredProvidersClientRef.current = clientRef.current;
     getProvidersConfigStore().setClient(clientRef.current);
+    // useRouting/useMinThinkingLevels consumers read the shared AppConfigStore.
+    getAppConfigStore().setClient(clientRef.current);
   }
 
   return (

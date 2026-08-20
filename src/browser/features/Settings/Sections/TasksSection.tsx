@@ -812,25 +812,34 @@ export function TasksSection() {
     );
   };
 
-  // Mirrors resolveAgentAiSettings' base-chain walk (ACP resolution): agents
-  // without their own default inherit reasoningMode from the closest ancestor.
-  const baseChainInheritsPro = (agentId: string): boolean => {
+  // Mirrors resolveAgentAiSettings' field-wise base-chain walk (ACP
+  // resolution): agents without their own default inherit each field from the
+  // closest ancestor that sets it, so the card must display and gate against
+  // the same inherited model/mode the backend resolves.
+  const resolveBaseChainDefaults = (
+    agentId: string
+  ): { modelString?: string; reasoningMode?: OpenAIReasoningMode } => {
     const agentsById = new Map(listedAgents.map((agent) => [agent.id, agent]));
     const visited = new Set<string>([agentId]);
     let cursor = agentId;
-    while (true) {
+    let modelString: string | undefined;
+    let reasoningMode: OpenAIReasoningMode | undefined;
+    while (modelString === undefined || reasoningMode === undefined) {
       const base = agentsById.get(cursor)?.base ?? (cursor === "plan" ? "plan" : "exec");
       if (base === cursor || visited.has(base)) {
-        return false;
+        break;
       }
-      const inherited = agentAiDefaults[base]?.reasoningMode;
-      if (inherited != null) {
-        return inherited === "pro";
-      }
+      const inherited = agentAiDefaults[base];
+      modelString ??= inherited?.modelString;
+      reasoningMode ??= inherited?.reasoningMode;
       visited.add(base);
       cursor = base;
     }
+    return { modelString, reasoningMode };
   };
+
+  const baseChainInheritsPro = (agentId: string): boolean =>
+    resolveBaseChainDefaults(agentId).reasoningMode === "pro";
 
   const setAgentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
     // "standard" is the wire default; keep entries sparse by only persisting
@@ -994,8 +1003,15 @@ export function TasksSection() {
         ? "Disabled by default"
         : null;
     // When model is "Inherit", resolve the effective model so the dropdown
-    // shows the correct thinking levels (e.g. "max" for Opus 4.6, not "xhigh").
-    const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
+    // shows the correct thinking levels (e.g. "max" for Opus 4.6, not "xhigh")
+    // and Pro gating matches ACP resolution: a base-chain model wins over the
+    // ambient default (otherwise an agent inheriting GPT-5.6+pro from its base
+    // would hide the Pro toggle whenever the ambient model isn't pro-capable).
+    const inheritedDefaults = resolveBaseChainDefaults(agent.id);
+    const effectiveModel =
+      modelValue !== INHERIT
+        ? modelValue
+        : (inheritedDefaults.modelString ?? inheritedEffectiveModel);
 
     const agentDefinitionPath = getAgentDefinitionPath(agent);
     const scopeNode = agentDefinitionPath ? (
@@ -1120,9 +1136,7 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
-          reasoningModeValue={
-            entry?.reasoningMode ?? (baseChainInheritsPro(agent.id) ? "pro" : "standard")
-          }
+          reasoningModeValue={entry?.reasoningMode ?? inheritedDefaults.reasoningMode ?? "standard"}
           // Dream runs outside the send path (raw streamText in
           // memoryConsolidation) and never applies reasoningMode, so don't
           // offer a Pro toggle that cannot affect its requests.
@@ -1209,7 +1223,12 @@ export function TasksSection() {
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const advisorEnabledOverride = entry?.advisorEnabled;
     const advisorSwitchState = getAdvisorSwitchState(agentId, advisorEnabledOverride);
-    const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedEffectiveModel;
+    // Base-chain model wins over the ambient default (see renderAgentDefaults).
+    const inheritedDefaults = resolveBaseChainDefaults(agentId);
+    const effectiveModel =
+      modelValue !== INHERIT
+        ? modelValue
+        : (inheritedDefaults.modelString ?? inheritedEffectiveModel);
 
     return (
       <div
@@ -1254,9 +1273,7 @@ export function TasksSection() {
         <AiDefaultsControls
           modelValue={modelValue}
           thinkingValue={thinkingValue}
-          reasoningModeValue={
-            entry?.reasoningMode ?? (baseChainInheritsPro(agentId) ? "pro" : "standard")
-          }
+          reasoningModeValue={entry?.reasoningMode ?? inheritedDefaults.reasoningMode ?? "standard"}
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}

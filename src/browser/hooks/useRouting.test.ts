@@ -6,6 +6,7 @@ import React from "react";
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { getAppConfigStore } from "@/browser/stores/AppConfigStore";
 import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 
 import { useRouting } from "./useRouting";
@@ -68,6 +69,7 @@ describe("useRouting", () => {
   afterEach(() => {
     cleanup();
     getProvidersConfigStore().setClient(null);
+    getAppConfigStore().setClient(null);
     testWindow?.close();
     testWindow = null;
     globalThis.window = previousWindow;
@@ -85,11 +87,12 @@ describe("useRouting", () => {
       },
     };
 
-    // useProvidersConfig reads the shared ProvidersConfigStore (wired by
+    // useProvidersConfig/useRouting read the shared stores (wired by
     // AppLoader in the real app); this hook test bypasses AppLoader, so wire
-    // it manually AFTER the stubbed config is in place so the store's fetch
+    // them manually AFTER the stubbed config is in place so the stores' fetch
     // observes it.
     getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 
@@ -106,5 +109,29 @@ describe("useRouting", () => {
       isAuto: true,
       displayName: "Direct",
     });
+  });
+
+  test("hook instances share one config fetch via the AppConfigStore", async () => {
+    routeOverrides = { "openai:gpt-5.4": "mux-gateway" };
+    let configFetchCount = 0;
+    const baseGetConfig = configGetConfig;
+    configGetConfig = () => {
+      configFetchCount++;
+      return baseGetConfig();
+    };
+    getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
+
+    // Regression: each useRouting instance used to issue its own
+    // config.getConfig fetch + onConfigChanged subscription, so surfaces with
+    // one picker per row fanned out O(rows) backend reads.
+    const first = renderHook(() => useRouting(), { wrapper });
+    const second = renderHook(() => useRouting(), { wrapper });
+
+    await waitFor(() => {
+      expect(first.result.current.routeOverrides).toEqual(routeOverrides);
+      expect(second.result.current.routeOverrides).toEqual(routeOverrides);
+    });
+    expect(configFetchCount).toBe(1);
   });
 });

@@ -546,6 +546,25 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(payload.agentAiDefaults.explore?.reasoningMode).toBe("standard");
   });
 
+  test("gates Pro on the base-chain-inherited model, not the ambient default", async () => {
+    // Explore inherits exec's GPT-5.6 (pro-capable) with no direct model
+    // override; the ambient default (anthropic:workspace-default) is not.
+    // The toggle must appear (and show inherited pro) so it can be disabled
+    // without first overriding the model.
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    const proToggle = card.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    expect(proToggle.getAttribute("aria-pressed")).toBe("true");
+  });
+
   test("hides the Pro mode toggle on the Dream card even for pro-capable models", async () => {
     // Dream's headless requests (raw streamText) never apply reasoningMode,
     // so the card must not offer a toggle that cannot affect them.
