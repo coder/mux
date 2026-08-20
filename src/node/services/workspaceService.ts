@@ -10790,9 +10790,8 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     agentId: string
   ): Promise<readonly string[]> {
-    if (agentId === WORKSPACE_DEFAULTS.agentId) {
-      return [];
-    }
+    // Exec included: a project-scoped exec.md may declare base: plan, so the
+    // built-in default only applies when the declaration cannot be read.
     try {
       const metadata = await this.getInfo(workspaceId);
       if (metadata) {
@@ -10810,7 +10809,7 @@ export class WorkspaceService extends EventEmitter {
     } catch {
       // Fall through to the approximation.
     }
-    return [WORKSPACE_DEFAULTS.agentId];
+    return agentId === WORKSPACE_DEFAULTS.agentId ? [] : [WORKSPACE_DEFAULTS.agentId];
   }
 
   async getGoalContinuationKickoffSendOptions(

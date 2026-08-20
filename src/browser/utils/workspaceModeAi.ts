@@ -19,27 +19,59 @@ function normalizeAgentId(agentId: string): string {
 }
 
 /**
- * Resolves the configured reasoning-mode default for an agent, walking the
- * base chain like the backend's resolveAgentAiSettings so custom agents
- * (base: exec) inherit an ancestor's pro default. Unknown agents fall back to
- * the same default base (plan -> plan, otherwise exec).
+ * Field-wise configured defaults for an agent, walking the base chain like
+ * the backend's resolveAgentAiSettings so custom agents (base: exec) inherit
+ * an ancestor's model/thinking/pro defaults together (persisting an inherited
+ * pro without its pro-capable model would let request gating drop it).
+ *
+ * Model/thinking inherit only through DECLARED bases: the implicit fallback
+ * for unknown agents (plan -> plan, otherwise exec) contributes reasoningMode
+ * alone, so desktop mode switches to unconfigured agents keep the workspace's
+ * current model instead of yanking it to exec's configured default.
  */
+export function resolveConfiguredAiDefaults(
+  agentId: string,
+  agentAiDefaults: AgentAiDefaults,
+  agentBaseById?: ReadonlyMap<string, string | undefined>
+): { modelString?: string; thinkingLevel?: ThinkingLevel; reasoningMode?: OpenAIReasoningMode } {
+  const visited = new Set<string>();
+  let cursor = agentId;
+  let declaredChain = true;
+  let modelString: string | undefined;
+  let thinkingLevel: ThinkingLevel | undefined;
+  let reasoningMode: OpenAIReasoningMode | undefined;
+  while (!visited.has(cursor)) {
+    visited.add(cursor);
+    const entry = agentAiDefaults[cursor];
+    if (declaredChain) {
+      if (modelString === undefined) {
+        const candidate = typeof entry?.modelString === "string" ? entry.modelString.trim() : "";
+        if (candidate.length > 0) {
+          modelString = candidate;
+        }
+      }
+      thinkingLevel ??= coerceThinkingLevel(entry?.thinkingLevel) ?? undefined;
+    }
+    reasoningMode ??= coerceOpenAIReasoningMode(entry?.reasoningMode) ?? undefined;
+    if (modelString !== undefined && thinkingLevel !== undefined && reasoningMode !== undefined) {
+      break;
+    }
+    const declaredBase = agentBaseById?.get(cursor);
+    if (declaredBase == null) {
+      declaredChain = false;
+    }
+    cursor = declaredBase ?? (cursor === "plan" ? "plan" : "exec");
+  }
+  return { modelString, thinkingLevel, reasoningMode };
+}
+
+/** Reasoning-mode-only view of resolveConfiguredAiDefaults. */
 export function resolveConfiguredReasoningModeDefault(
   agentId: string,
   agentAiDefaults: AgentAiDefaults,
   agentBaseById?: ReadonlyMap<string, string | undefined>
 ): OpenAIReasoningMode | undefined {
-  const visited = new Set<string>();
-  let cursor = agentId;
-  while (!visited.has(cursor)) {
-    visited.add(cursor);
-    const configured = coerceOpenAIReasoningMode(agentAiDefaults[cursor]?.reasoningMode);
-    if (configured != null) {
-      return configured;
-    }
-    cursor = agentBaseById?.get(cursor) ?? (cursor === "plan" ? "plan" : "exec");
-  }
-  return undefined;
+  return resolveConfiguredAiDefaults(agentId, agentAiDefaults, agentBaseById).reasoningMode;
 }
 
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately
@@ -61,12 +93,17 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   resolvedReasoningMode: OpenAIReasoningMode;
 } {
   const normalizedAgentId = normalizeAgentId(args.agentId);
-  const globalDefault = args.agentAiDefaults[normalizedAgentId];
   const workspaceOverride = args.workspaceByAgent?.[normalizedAgentId];
 
-  const configuredModelCandidate = globalDefault?.modelString;
-  const configuredModel =
-    typeof configuredModelCandidate === "string" ? configuredModelCandidate.trim() : undefined;
+  // Field-wise across the agent's own entry then its base chain: an agent
+  // inheriting GPT-5.6 + pro from its base must resolve both together even
+  // when the active workspace runs a different provider's model.
+  const configuredDefaults = resolveConfiguredAiDefaults(
+    normalizedAgentId,
+    args.agentAiDefaults,
+    args.agentBaseById
+  );
+  const configuredModel = configuredDefaults.modelString;
   const workspaceOverrideModel =
     args.useWorkspaceByAgentFallback && typeof workspaceOverride?.model === "string"
       ? workspaceOverride.model
@@ -89,8 +126,7 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
     ? coerceThinkingLevel(workspaceOverride?.thinkingLevel)
     : undefined;
   const inheritedThinking = workspaceOverrideThinking ?? coerceThinkingLevel(args.existingThinking);
-  const resolvedThinking =
-    coerceThinkingLevel(globalDefault?.thinkingLevel) ?? inheritedThinking ?? "off";
+  const resolvedThinking = configuredDefaults.thinkingLevel ?? inheritedThinking ?? "off";
 
   // Configured agent defaults win, mirroring model/thinking precedence (only
   // explicit "pro"/"standard" are persisted there, so absent falls through);
@@ -103,11 +139,7 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   // WorkspaceContext seeding semantics — instead of inheriting a possibly-pro
   // workspace mode from the previously active agent.
   const resolvedReasoningMode =
-    resolveConfiguredReasoningModeDefault(
-      normalizedAgentId,
-      args.agentAiDefaults,
-      args.agentBaseById
-    ) ??
+    configuredDefaults.reasoningMode ??
     (args.useWorkspaceByAgentFallback && workspaceOverride != null
       ? (coerceOpenAIReasoningMode(workspaceOverride.reasoningMode) ?? "standard")
       : (coerceOpenAIReasoningMode(args.existingReasoningMode) ?? "standard"));

@@ -13757,6 +13757,48 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
       }
     });
 
+    test("a project-scoped exec override with base: plan inherits Plan's defaults", async () => {
+      // Every agent's declaration must be inspected, including one named
+      // "exec": a project exec.md with base: plan must resolve Plan's pro
+      // default, matching ACP/task/desktop resolution.
+      const projectPath = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-exec-chain-"));
+      try {
+        const agentsDir = path.join(projectPath, ".mux", "agents");
+        await fsPromises.mkdir(agentsDir, { recursive: true });
+        await fsPromises.writeFile(
+          path.join(agentsDir, "exec.md"),
+          `---\nname: Exec\ndescription: Project exec override for tests\nbase: plan\n---\n\nTest agent body.\n`,
+          "utf-8"
+        );
+
+        const workspaceId = "ws-1";
+        const projects = new Map([
+          [projectPath, { workspaces: [{ id: workspaceId, path: projectPath, agentId: "exec" }] }],
+        ]);
+        const service = await makeServiceWithConfig({
+          findWorkspace: mock(() => ({ projectPath, workspacePath: projectPath })),
+          loadConfigOrDefault: mock(() => ({
+            projects,
+            agentAiDefaults: {
+              plan: { reasoningMode: "pro" as const },
+            },
+          })),
+        });
+        spyOn(service, "getInfo").mockResolvedValue({
+          id: workspaceId,
+          name: projectPath,
+          projectPath,
+          projectName: "exec-chain",
+          runtimeConfig: { type: "local" },
+        } as FrontendWorkspaceMetadata);
+
+        const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
+        expect(result?.reasoningMode).toBe("pro");
+      } finally {
+        await fsPromises.rm(projectPath, { recursive: true, force: true });
+      }
+    });
+
     test("heartbeat reasoning resolves through the selected agent's declared base chain", async () => {
       // Same parity requirement as goal kickoffs: a base: plan custom agent
       // must inherit Plan's configured Pro default, not the Exec fallback.

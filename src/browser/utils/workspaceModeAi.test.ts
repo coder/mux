@@ -166,6 +166,27 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result.resolvedReasoningMode).toBe("pro");
   });
 
+  test("inherits the base agent's model and thinking alongside its pro default", () => {
+    // The base supplies GPT-5.6 + pro while the workspace runs Anthropic;
+    // persisting pro alongside the Anthropic model would let request gating
+    // silently drop it, diverging from Settings/ACP which show GPT-5.6 Pro.
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "researcher",
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "pro" },
+      },
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "anthropic:claude-sonnet-4-6",
+      existingThinking: "off",
+      existingReasoningMode: "standard",
+      agentBaseById: new Map([["researcher", "exec"]]),
+    });
+
+    expect(result.resolvedModel).toBe("openai:gpt-5.6-sol");
+    expect(result.resolvedThinking).toBe("high");
+    expect(result.resolvedReasoningMode).toBe("pro");
+  });
+
   test("an explicit standard override beats a base agent's pro default", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "researcher",
