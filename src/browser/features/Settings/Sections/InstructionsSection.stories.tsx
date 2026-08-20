@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { userEvent, within } from "@storybook/test";
+import { expect, userEvent, waitFor, within } from "@storybook/test";
 import { lightweightMeta } from "@/browser/stories/meta.js";
 import { createMockORPCClient } from "@/browser/stories/mocks/orpc";
 import { createWorkspace, groupWorkspacesByProject } from "@/browser/stories/mocks/workspaces";
@@ -88,11 +88,12 @@ export const DirtyDraftEnablesSave: Story = {
     const textarea = await canvas.findByRole("textbox", {
       name: /Project custom instructions/i,
     });
+    // Projects load asynchronously; until one is selected the textarea is
+    // disabled and userEvent.type would silently no-op (flaked in Pixel).
+    await waitFor(() => expect(textarea).toBeEnabled());
     await userEvent.type(textarea, "Never commit directly to main.");
 
     const saveButton = await canvas.findByRole("button", { name: /^Save$/i });
-    if (saveButton.hasAttribute("disabled")) {
-      throw new Error("Save should be enabled after editing the draft");
-    }
+    await waitFor(() => expect(saveButton).toBeEnabled());
   },
 };
