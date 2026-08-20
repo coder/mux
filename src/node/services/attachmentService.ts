@@ -51,7 +51,7 @@ export class AttachmentService {
     workspaceId: string,
     runtime: Runtime
   ): Promise<PlanFileReferenceAttachment | null> {
-    const muxHome = runtime.getShuxHome();
+    const muxHome = runtime.getXumHome();
     const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
@@ -258,7 +258,7 @@ export class AttachmentService {
     excludedItems: Set<string> = new Set<string>()
   ): Promise<PostCompactionAttachment[]> {
     const attachments: PostCompactionAttachment[] = [];
-    const muxHome = runtime.getShuxHome();
+    const muxHome = runtime.getXumHome();
     const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
     const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
 

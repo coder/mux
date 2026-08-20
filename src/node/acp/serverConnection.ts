@@ -4,7 +4,7 @@ import { createORPCClient, type ClientContext } from "@orpc/client";
 import { RPCLink as WebSocketRPCLink } from "@orpc/client/websocket";
 import type { RouterClient } from "@orpc/server";
 import WebSocket from "ws";
-import { getShuxHome } from "@/common/constants/paths";
+import { getXumHome } from "@/common/constants/paths";
 import { Config } from "@/node/config";
 import type { AppRouter } from "@/node/orpc/router";
 import { createOrpcServer } from "@/node/orpc/server";
@@ -49,7 +49,7 @@ export async function connectToServer(options: {
     });
   }
 
-  const lockfile = new ServerLockfile(getShuxHome());
+  const lockfile = new ServerLockfile(getXumHome());
   const lockData = await lockfile.read();
 
   if (lockData?.baseUrl) {

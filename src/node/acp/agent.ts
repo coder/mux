@@ -27,8 +27,8 @@ import type {
   Usage,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
-import { SHUX_PRODUCT_SLUG } from "@/common/constants/product";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
+import { XUM_PRODUCT_SLUG } from "@/common/constants/product";
 import {
   DEFAULT_COMPACTION_WORD_TARGET,
   WORDS_TO_TOKENS_RATIO,
@@ -87,7 +87,7 @@ const ACP_DELEGATION_CANDIDATE_TOOLS = [
 ] as const;
 const DEFAULT_DISCONNECT_CLEANUP_MAX_WAIT_MS = 10_000;
 /**
- * Shux does not implement the session/close RPC yet. Keep idle sessions bounded so
+ * Xum does not implement the session/close RPC yet. Keep idle sessions bounded so
  * long-lived editor connections cannot leak subscriptions and per-session caches forever.
  */
 const DEFAULT_SESSION_IDLE_TTL_MS = 30 * 60 * 1000;
@@ -263,7 +263,7 @@ export class MuxAgent implements Agent {
     this.connection.signal.addEventListener(
       "abort",
       () => {
-        const disconnectError = new Error("Shux ACP connection closed");
+        const disconnectError = new Error("Xum ACP connection closed");
         const activeTurnSessionIds = [...this.turnCompletions.keys()];
         for (const sessionId of activeTurnSessionIds) {
           this.rejectTurn(sessionId, disconnectError);
@@ -295,8 +295,8 @@ export class MuxAgent implements Agent {
     return Promise.resolve({
       protocolVersion: params.protocolVersion,
       agentInfo: {
-        name: SHUX_PRODUCT_SLUG,
-        version: resolveShuxEnvironmentValue("VERSION", process.env) ?? "dev",
+        name: XUM_PRODUCT_SLUG,
+        version: resolveXumEnvironmentValue("VERSION", process.env) ?? "dev",
       },
       agentCapabilities: {
         loadSession: true,

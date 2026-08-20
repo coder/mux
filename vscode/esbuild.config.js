@@ -7,7 +7,7 @@ const { Scanner } = require("@tailwindcss/oxide");
 
 const isWatch = process.argv.includes("--watch");
 
-function resolveShuxImport(subpath) {
+function resolveXumImport(subpath) {
   const base = path.resolve(__dirname, "..", "src", subpath);
 
   // Prefer explicit source extensions.
@@ -43,13 +43,13 @@ function resolveShuxImport(subpath) {
   return null;
 }
 
-// Resolve canonical shux/* imports and the legacy mux/* alias from the parent source tree.
-const shuxResolverPlugin = {
-  name: "shux-resolver",
+// Resolve canonical xum/* imports and the legacy mux/* alias from the parent source tree.
+const xumResolverPlugin = {
+  name: "xum-resolver",
   setup(build) {
-    build.onResolve({ filter: /^(?:shux|mux)\// }, (args) => {
-      const subpath = args.path.replace(/^(?:shux|mux)\//, "");
-      const resolved = resolveShuxImport(subpath);
+    build.onResolve({ filter: /^(?:xum|mux)\// }, (args) => {
+      const subpath = args.path.replace(/^(?:xum|mux)\//, "");
+      const resolved = resolveXumImport(subpath);
       if (!resolved) {
         return null;
       }
@@ -115,7 +115,7 @@ function buildWebviewCss() {
     ensureOutDir();
 
     const inputPath = path.resolve(__dirname, "src", "webview", "webview.css");
-    const outputPath = path.resolve(__dirname, "out", "shuxChatView.css");
+    const outputPath = path.resolve(__dirname, "out", "xumChatView.css");
     const input = fs.readFileSync(inputPath, "utf8");
 
     const compiled = await tailwind.compile(input, {
@@ -223,7 +223,7 @@ const stubKatexCssPlugin = {
 };
 
 const sharedConfig = {
-  plugins: [shuxResolverPlugin],
+  plugins: [xumResolverPlugin],
   alias: {
     "@": path.resolve(__dirname, "../src"),
   },
@@ -246,7 +246,7 @@ const extensionBuild = {
 
 const webviewBuild = {
   entryPoints: {
-    shuxChatView: "src/webview/index.tsx",
+    xumChatView: "src/webview/index.tsx",
   },
   bundle: true,
   outdir: "out",

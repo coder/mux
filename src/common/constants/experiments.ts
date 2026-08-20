@@ -69,14 +69,14 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.CONFIGURABLE_BIND_URL,
     name: "Expose API server on LAN/VPN",
     description:
-      "Allow Shux to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your Shux API. HTTP only; use only on trusted networks (Tailscale recommended).",
+      "Allow Xum to listen on a non-localhost address so other devices on your LAN/VPN can connect. Anyone on your network with the auth token can access your Xum API. HTTP only; use only on trusted networks (Tailscale recommended).",
     enabledByDefault: false,
     showInSettings: true,
   },
   [EXPERIMENT_IDS.MUX_GOVERNOR]: {
     id: EXPERIMENT_IDS.MUX_GOVERNOR,
-    name: "Shux Governor",
-    description: "Remote policy delivery for enterprise Shux Governor service",
+    name: "Xum Governor",
+    description: "Remote policy delivery for enterprise Xum Governor service",
     enabledByDefault: false,
     showInSettings: true,
   },
@@ -174,7 +174,7 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.AGENT_PLUGINS,
     name: "Agent Plugins",
     description:
-      "Discover Agent Plugins (agent-plugins.org 1.0.0) from .mux/plugins, .agents/plugins, ~/.shux/plugins, and ~/.agents/plugins: plugin skills join skill discovery and plugin MCP servers appear disabled by default",
+      "Discover Agent Plugins (agent-plugins.org 1.0.0) from .mux/plugins, .agents/plugins, ~/.xum/plugins, and ~/.agents/plugins: plugin skills join skill discovery and plugin MCP servers appear disabled by default",
     enabledByDefault: false,
     showInSettings: true,
   },

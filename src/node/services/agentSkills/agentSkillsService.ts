@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalShuxHome";
+import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalXumHome";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
 import { normalizeForDescendantComparison } from "@/common/utils/subProjects";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -64,7 +64,7 @@ export interface AgentSkillsRoots {
   globalClaudeRoot?: string;
   /** Agent Plugins container dirs, e.g. <projectRoot>/.mux/plugins (agent-plugins experiment; read-only). */
   projectPluginRoots?: string[];
-  /** Agent Plugins container dirs, e.g. ~/.shux/plugins (agent-plugins experiment; read-only). */
+  /** Agent Plugins container dirs, e.g. ~/.xum/plugins (agent-plugins experiment; read-only). */
   globalPluginRoots?: string[];
 }
 
@@ -146,7 +146,7 @@ export function getDefaultAgentSkillsRoots(
           }),
         }
       : {}),
-    globalRoot: `${runtime.getShuxHome()}/skills`,
+    globalRoot: `${runtime.getXumHome()}/skills`,
     universalRoot: UNIVERSAL_SKILLS_ROOT,
     // Claude roots are added only when the experiment is enabled so the default
     // (off) behavior stays byte-identical to the pre-experiment scan order.
@@ -164,7 +164,7 @@ export function getDefaultAgentSkillsRoots(
             runtime.normalizePath(".mux/plugins", options.projectSearchRoot ?? workspacePath),
             runtime.normalizePath(".agents/plugins", options.projectSearchRoot ?? workspacePath),
           ],
-          globalPluginRoots: [`${runtime.getShuxHome()}/plugins`, UNIVERSAL_PLUGINS_ROOT],
+          globalPluginRoots: [`${runtime.getXumHome()}/plugins`, UNIVERSAL_PLUGINS_ROOT],
         }
       : {}),
   };
@@ -182,7 +182,7 @@ export function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
 }
 
 function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
-  // Precedence within global scope: ~/.shux > ~/.agents > ~/.claude.
+  // Precedence within global scope: ~/.xum > ~/.agents > ~/.claude.
   const orderedRoots = [roots.globalRoot, roots.universalRoot, roots.globalClaudeRoot].filter(
     (root): root is string => root != null && root.length > 0
   );

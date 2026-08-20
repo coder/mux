@@ -233,7 +233,7 @@ function mapMessage(
   const epoch = event.metadata?.compactionEpoch;
 
   if (event.role === "user") {
-    // A /compact request is persisted as a user message, but it is Shux asking for a summary, not a
+    // A /compact request is persisted as a user message, but it is Xum asking for a summary, not a
     // prompt the human wrote, so it must not appear among their prompts.
     if (readMuxMetadataField(event.metadata, "type") === "compaction-request") {
       const compactionSource = readMuxMetadataField(event.metadata, "source");

@@ -1,12 +1,12 @@
 import * as path from "node:path";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
-import { getShuxHome } from "@/common/constants/paths";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
+import { getXumHome } from "@/common/constants/paths";
 
 const CHILD_ENV_KEYS_TO_STRIP = [
   "AGENT_BROWSER_SESSION",
   "AGENT_BROWSER_STREAM_PORT",
   // Strip both generations so a child cannot re-inherit either vendored-bin pointer.
-  "SHUX_VENDORED_BIN_DIR",
+  "XUM_VENDORED_BIN_DIR",
   "MUX_VENDORED_BIN_DIR",
   // Linux desktop identity (app_id source). Electron sets it in our process env
   // (from package.json desktopName, or main.ts for launch modes without a
@@ -20,17 +20,17 @@ function normalizePathEntry(entry: string): string {
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
-function getShuxVendoredBinDirs(env: NodeJS.ProcessEnv): string[] {
+function getXumVendoredBinDirs(env: NodeJS.ProcessEnv): string[] {
   const candidates = [
-    resolveShuxEnvironmentValue("VENDORED_BIN_DIR", env),
-    path.join(getShuxHome(), "bin"),
+    resolveXumEnvironmentValue("VENDORED_BIN_DIR", env),
+    path.join(getXumHome(), "bin"),
   ];
   return candidates
     .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
     .map((value) => normalizePathEntry(value.trim()));
 }
 
-export function sanitizeShuxChildPath(
+export function sanitizeXumChildPath(
   pathValue: string | undefined,
   env: NodeJS.ProcessEnv
 ): string | undefined {
@@ -38,7 +38,7 @@ export function sanitizeShuxChildPath(
     return pathValue;
   }
 
-  const vendoredBinDirs = getShuxVendoredBinDirs(env);
+  const vendoredBinDirs = getXumVendoredBinDirs(env);
   if (vendoredBinDirs.length === 0) {
     return pathValue;
   }
@@ -52,9 +52,9 @@ export function sanitizeShuxChildPath(
   return sanitizedEntries.join(path.delimiter);
 }
 
-export function sanitizeShuxChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function sanitizeXumChildEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const sanitizedEnv: NodeJS.ProcessEnv = { ...env };
-  const sanitizedPath = sanitizeShuxChildPath(env.PATH ?? env.Path, env);
+  const sanitizedPath = sanitizeXumChildPath(env.PATH ?? env.Path, env);
 
   for (const key of CHILD_ENV_KEYS_TO_STRIP) {
     delete sanitizedEnv[key];

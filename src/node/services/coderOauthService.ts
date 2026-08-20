@@ -259,7 +259,7 @@ export class CoderOauthService {
     private readonly windowService?: WindowService,
     private readonly policyService?: PolicyService
   ) {
-    // Another Shux process sharing providers.jsonc (desktop vs `mux run`) can
+    // Another Xum process sharing providers.jsonc (desktop vs `mux run`) can
     // disconnect or re-login to the SAME deployment; the deployment URL then
     // still matches, so without invalidation getValidAuth would keep serving
     // the stale cached token until it expires. onConfigChanged fires for both
@@ -324,7 +324,7 @@ export class CoderOauthService {
     // connected state or the fully disconnected state, never a mix.
     //
     // The clear runs under the cross-process login-commit lock: a commit in
-    // another Shux process persists its login and announces success as one
+    // another Xum process persists its login and announces success as one
     // critical section under that lock, so an unserialized disconnect could
     // land between the foreign write and its announcement — clearing and
     // revoking the just-persisted credential while the other process still
@@ -353,7 +353,7 @@ export class CoderOauthService {
           const next = { ...(section ?? {}) };
           delete next.coderOauth;
           // Cross-process tombstone: cancelAll/disconnectGeneration above only
-          // reach flows in THIS process. A login flow in another Shux process
+          // reach flows in THIS process. A login flow in another Xum process
           // sharing this file snapshots this counter at start and refuses to
           // commit under the commit lock once it changed, so it cannot
           // silently reconnect the account (see
@@ -561,7 +561,7 @@ export class CoderOauthService {
     // Reserve the stored client's single redirect slot for this flow, or —
     // when another active flow already owns it — fall back to registering a
     // fresh client so the flows' redirect URIs cannot clobber each other. The
-    // lease is a filesystem lock shared by every Shux process using this
+    // lease is a filesystem lock shared by every Xum process using this
     // providers file (desktop + CLI), because a concurrent flow in ANOTHER
     // process would clobber the redirect just the same. A crashed holder's
     // lease goes stale after the flow timeout.
@@ -604,7 +604,7 @@ export class CoderOauthService {
           // elapsed time settles nothing). Quarantine that client generation
           // in the persisted blob FIRST — after it, no flow in any process
           // reuses or redirect-updates the client, so the lease is safe to
-          // release; without releasing, every re-login until Shux exits would
+          // release; without releasing, every re-login until Xum exits would
           // register a fresh client (the stale-break path rightly refuses
           // live-owner markers). If the quarantine cannot be persisted, keep
           // the lease held as the fallback guard.
@@ -1125,7 +1125,7 @@ export class CoderOauthService {
    * then cancelled, A's rollback would skip (B's auth is current) and revoke
    * A's tokens, after which B's rollback would restore that already-revoked
    * auth over the original login. Flows are process-local, but the persisted
-   * section is shared across every Shux process using this providers file, so
+   * section is shared across every Xum process using this providers file, so
    * the critical section is guarded by BOTH the process-local mutex (fair,
    * spin-free queueing within a process) and the cross-process
    * withCoderOauthLoginCommitLock (a flow in another process could compose
@@ -1275,7 +1275,7 @@ export class CoderOauthService {
           return null;
         }
         // Cross-process disconnect check: cancelAll/disconnectGeneration only
-        // reach flows in THIS process, but a disconnect in another Shux
+        // reach flows in THIS process, but a disconnect in another Xum
         // process increments coderDisconnectGeneration in the shared section.
         // A flow whose start-time snapshot no longer matches must not commit
         // — it would silently reconnect the account the user just
@@ -1812,7 +1812,7 @@ export class CoderOauthService {
 
   private async refreshBridgeModelsSerialized(auth: CoderOauthAuth): Promise<Result<void, string>> {
     // Cross-process refresh ordering: catalogRefreshMutex serializes only
-    // THIS process's refreshes, but multiple Shux processes share
+    // THIS process's refreshes, but multiple Xum processes share
     // providers.jsonc (Config.withProvidersFileLock exists for exactly that).
     // Snapshot the persisted catalog generation BEFORE any fetch; the locked
     // commit below refuses when it moved, so a refresh that captured an
@@ -2134,7 +2134,7 @@ export class CoderOauthService {
     // explicitly degrades to a no-op on unsupported mounts (NFS/SMB, watch
     // limit exhaustion) and can silently die after an error. A long-lived
     // headless process trusting watcher delivery alone would keep serving a
-    // token another Shux process disconnected or replaced until it expired —
+    // token another Xum process disconnected or replaced until it expired —
     // failing every request against a revoked token, or keeping an
     // un-revoked credential in use after the user disconnected it. The
     // fingerprint is captured BEFORE the read, so a write racing this load

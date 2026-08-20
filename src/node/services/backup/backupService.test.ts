@@ -339,7 +339,7 @@ describe("BackupService", () => {
     expect((await active).success).toBe(true);
   });
 
-  test("holds a push out of a Shux root a restore is still writing", async () => {
+  test("holds a push out of a Xum root a restore is still writing", async () => {
     const events: string[] = [];
     let releaseRestore: (() => void) | undefined;
     const restoreHeld = new Promise<void>((resolve) => {

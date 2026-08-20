@@ -95,7 +95,7 @@ export class VoiceService {
       return {
         success: false,
         error:
-          "Voice input requires a Shux Gateway login or an OpenAI API key. Configure in Settings → Providers.",
+          "Voice input requires a Xum Gateway login or an OpenAI API key. Configure in Settings → Providers.",
       };
     } catch (error) {
       const message = getErrorMessage(error);
@@ -110,7 +110,7 @@ export class VoiceService {
     openaiAvailable: boolean;
   }): "mux-gateway" | "openai" | null {
     // User rationale: when Settings routes OpenAI directly, voice transcription should use
-    // the same direct path instead of silently detouring through Shux Gateway.
+    // the same direct path instead of silently detouring through Xum Gateway.
     const route = resolveRoute(
       OPENAI_TRANSCRIPTION_MODEL,
       options.routePriority ?? DEFAULT_TRANSCRIPTION_ROUTE_PRIORITY,
@@ -160,7 +160,7 @@ export class VoiceService {
       await this.clearMuxGatewayCredentials();
       return {
         success: false,
-        error: "You've been logged out of Shux Gateway. Please login again to use voice input.",
+        error: "You've been logged out of Xum Gateway. Please login again to use voice input.",
       };
     }
 

@@ -3,8 +3,8 @@ import { Download, Loader2, RefreshCw } from "lucide-react";
 import { VERSION } from "@/version";
 import type { UpdateStatus } from "@/common/orpc/types";
 import type { UpdateChannel } from "@/common/types/project";
-import ShuxLogoDark from "@/browser/assets/logos/shux-logo-dark.svg?react";
-import ShuxLogoLight from "@/browser/assets/logos/shux-logo-light.svg?react";
+import XumLogoDark from "@/browser/assets/logos/xum-logo-dark.svg?react";
+import XumLogoLight from "@/browser/assets/logos/xum-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import { useAPI } from "@/browser/contexts/API";
 import { useAboutDialog } from "@/browser/contexts/AboutDialogContext";
@@ -67,7 +67,7 @@ export function AboutDialog() {
   const { isOpen, close } = useAboutDialog();
   const { api } = useAPI();
   const { theme } = useTheme();
-  const ShuxLogo = theme === "dark" || theme.endsWith("-dark") ? ShuxLogoDark : ShuxLogoLight;
+  const XumLogo = theme === "dark" || theme.endsWith("-dark") ? XumLogoDark : XumLogoLight;
   const { gitDescribe, buildTime } = parseVersionInfo(VERSION satisfies unknown);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ type: "idle" });
   const [channel, setChannel] = useState<UpdateChannel | null>(null);
@@ -199,7 +199,7 @@ export function AboutDialog() {
         <DialogTitle>About</DialogTitle>
 
         <div className="border-border-medium bg-modal-bg flex justify-center rounded-md border py-6">
-          <ShuxLogo className="h-14 w-auto" aria-hidden="true" />
+          <XumLogo className="h-14 w-auto" aria-hidden="true" />
         </div>
 
         <div className="space-y-1 text-sm">
@@ -313,7 +313,7 @@ export function AboutDialog() {
               )}
 
               {updateStatus.type === "up-to-date" && (
-                <div className="text-muted text-xs">Shux is up to date.</div>
+                <div className="text-muted text-xs">Xum is up to date.</div>
               )}
 
               {updateStatus.type === "idle" && (

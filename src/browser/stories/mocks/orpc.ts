@@ -147,7 +147,7 @@ export interface MockORPCClientOptions {
   subagentAiDefaults?: SubagentAiDefaults;
   /** Coder lifecycle preferences for config.getConfig (e.g., Settings → Coder section) */
   coderWorkspaceArchiveBehavior?: CoderWorkspaceArchiveBehavior;
-  /** What to do with shux-managed worktrees when archiving a chat. */
+  /** What to do with xum-managed worktrees when archiving a chat. */
   worktreeArchiveBehavior?: WorktreeArchiveBehavior;
   /** Initial full-width transcript toggle for config.getConfig */
   chatTranscriptFullWidth?: boolean;
@@ -289,9 +289,9 @@ export interface MockORPCClientOptions {
   agentSkills?: AgentSkillDescriptor[];
   /** Agent skills that were discovered but couldn't be loaded (SKILL.md parse errors, etc.) */
   invalidAgentSkills?: AgentSkillIssue[];
-  /** Shux Governor URL (null = not enrolled) */
+  /** Xum Governor URL (null = not enrolled) */
   muxGovernorUrl?: string | null;
-  /** Whether enrolled with Shux Governor */
+  /** Whether enrolled with Xum Governor */
   muxGovernorEnrolled?: boolean;
   /** Policy response for policy.get */
   policyResponse?: {
@@ -1325,7 +1325,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
           data: { projectConfig: { workspaces: [] }, normalizedPath: "/mock/project" },
         }),
       pickDirectory: () => Promise.resolve(null),
-      getDefaultProjectDir: () => Promise.resolve("~/.shux/projects"),
+      getDefaultProjectDir: () => Promise.resolve("~/.xum/projects"),
       setDefaultProjectDir: () => Promise.resolve(),
       clone: () =>
         Promise.resolve(

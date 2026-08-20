@@ -56,7 +56,7 @@ export function MuxGatewaySessionExpiredDialog() {
       if (isDesktop) {
         const client = window.__ORPC_CLIENT__;
         if (!client) {
-          throw new Error("Shux API not connected.");
+          throw new Error("Xum API not connected.");
         }
 
         const startResult = await client.muxGatewayOauth.startDesktopFlow();
@@ -129,11 +129,11 @@ export function MuxGatewaySessionExpiredDialog() {
 
   return (
     <SplashScreen
-      title="Shux Gateway session expired"
+      title="Xum Gateway session expired"
       onDismiss={dismiss}
       dismissOnPrimaryAction={false}
       primaryAction={{
-        label: isStartingLogin ? "Starting login..." : "Login to Shux Gateway",
+        label: isStartingLogin ? "Starting login..." : "Login to Xum Gateway",
         disabled: isStartingLogin,
         onClick: () => {
           void startMuxGatewayLogin();

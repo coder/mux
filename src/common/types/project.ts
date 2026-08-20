@@ -72,25 +72,25 @@ export interface ProjectsConfig {
   /**
    * Default parent directory for new projects (cloning and bare-name creation).
    *
-   * When unset, falls back to getShuxProjectsDir() (~/.shux/projects).
+   * When unset, falls back to getXumProjectsDir() (~/.xum/projects).
    */
   defaultProjectDir?: string;
   /** IDs of splash screens that have been viewed */
   viewedSplashScreens?: string[];
-  /** User preferences shared across local browser origins through ~/.shux/config.json. */
+  /** User preferences shared across local browser origins through ~/.xum/config.json. */
   userPreferences?: UserPreferences;
   /** Global task settings (agent sub-workspaces, queue limits, nesting depth) */
   taskSettings?: TaskSettings;
-  /** UI layout presets + hotkeys (shared via ~/.shux/config.json). */
+  /** UI layout presets + hotkeys (shared via ~/.xum/config.json). */
   layoutPresets?: LayoutPresetsConfig;
   /** Let chat transcripts use the full chat pane width instead of the default readable column. */
   chatTranscriptFullWidth?: boolean;
   /**
-   * Shux Gateway routing preferences (shared via ~/.shux/config.json).
+   * Xum Gateway routing preferences (shared via ~/.xum/config.json).
    * Mirrors browser localStorage so switching server ports doesn't reset the UI.
    */
   muxGatewayEnabled?: boolean;
-  /** Enable recording AI SDK devtools logs to ~/.shux/sessions/<workspace>/devtools.jsonl */
+  /** Enable recording AI SDK devtools logs to ~/.xum/sessions/<workspace>/devtools.jsonl */
   llmDebugLogs?: boolean;
   /** Default heartbeat prompt used when a workspace heartbeat does not set its own message. */
   heartbeatDefaultPrompt?: string;
@@ -115,7 +115,7 @@ export interface ProjectsConfig {
   modelFallbacks?: ModelFallbacks;
 
   /**
-   * Default model used for new workspaces (shared via ~/.shux/config.json).
+   * Default model used for new workspaces (shared via ~/.xum/config.json).
    * Mirrors the browser localStorage cache (DEFAULT_MODEL_KEY).
    */
   defaultModel?: string;
@@ -128,7 +128,7 @@ export interface ProjectsConfig {
   /** Positive max-output-tokens cap for advisor responses; null/undefined means unlimited. */
   advisorMaxOutputTokens?: number | null;
   /**
-   * Hidden model IDs (shared via ~/.shux/config.json).
+   * Hidden model IDs (shared via ~/.xum/config.json).
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).
    */
   hiddenModels?: string[];
@@ -146,9 +146,9 @@ export interface ProjectsConfig {
   /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */
   useSSH2Transport?: boolean;
 
-  /** Shux Governor server URL (normalized origin, no trailing slash) */
+  /** Xum Governor server URL (normalized origin, no trailing slash) */
   muxGovernorUrl?: string;
-  /** Shux Governor OAuth access token (secret - never return to UI) */
+  /** Xum Governor OAuth access token (secret - never return to UI) */
   muxGovernorToken?: string;
 
   /**
@@ -197,7 +197,7 @@ export interface ProjectsConfig {
   terminalDefaultShell?: string;
 
   /**
-   * Runtime enablement overrides (shared via ~/.shux/config.json).
+   * Runtime enablement overrides (shared via ~/.xum/config.json).
    * Defaults to enabled; store `false` only to keep config.json minimal.
    */
   runtimeEnablement?: Partial<Record<RuntimeEnablementId, false>>;

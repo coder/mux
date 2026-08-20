@@ -595,7 +595,7 @@ export abstract class RemoteRuntime implements Runtime {
     return Promise.resolve("/tmp");
   }
 
-  getShuxHome(): string {
+  getXumHome(): string {
     // Remote hosts cannot be migrated safely from local startup. Keep their established
     // home path centralized as a compatibility exception until remote provisioning owns it.
     return LEGACY_REMOTE_MUX_HOME;

@@ -2,7 +2,7 @@
  * Code Execution Tool for Programmatic Tool Calling (PTC)
  *
  * Executes JavaScript code in a sandboxed QuickJS environment with access to all
- * Shux tools via the `shux.*` namespace (`mux.*` remains a compatibility alias).
+ * Xum tools via the `xum.*` namespace (`mux.*` remains a compatibility alias).
  * Enables multi-tool workflows in a single inference instead of multiple round-trips.
  */
 
@@ -16,7 +16,7 @@ import type { SandboxMount } from "@/node/services/sandbox/sandboxHostService";
 
 import { analyzeCode } from "@/node/services/ptc/staticAnalysis";
 import { log } from "@/node/services/log";
-import { getCachedShuxTypes, clearTypeCache } from "@/node/services/ptc/typeGenerator";
+import { getCachedXumTypes, clearTypeCache } from "@/node/services/ptc/typeGenerator";
 
 // Default limits
 const DEFAULT_MEMORY_BYTES = 64 * 1024 * 1024; // 64MB
@@ -96,8 +96,8 @@ export async function createCodeExecutionTool(
   const bridgeableTools = toolBridge.getBridgeableTools();
   const state: RetargetableState = { toolBridge, withMount };
 
-  // Generate shux types for type validation and documentation (cached by tool set hash)
-  const shuxTypes = await getCachedShuxTypes(bridgeableTools);
+  // Generate xum types for type validation and documentation (cached by tool set hash)
+  const xumTypes = await getCachedXumTypes(bridgeableTools);
 
   const codeExecutionTool = tool({
     description: `Execute sandboxed JavaScript to batch tools and transform outputs.
@@ -106,24 +106,24 @@ export async function createCodeExecutionTool(
 
 **Available tools (TypeScript definitions):**
 \`\`\`typescript
-${shuxTypes}
+${xumTypes}
 \`\`\`
 
 **Usage notes:**
-- \`shux.*\` functions are synchronous—do not use \`await\`. \`mux.*\` is a compatibility alias.
+- \`xum.*\` functions are synchronous—do not use \`await\`. \`mux.*\` is a compatibility alias.
 - Use \`return\` to provide a final result to the model
 - Use \`console.log/warn/error\` for debugging - output is captured
 - Results are JSON-serialized; non-serializable values return \`{ error: "..." }\`
 - On failure, partial results (completed tool calls) are returned for debugging
 
-**Security:** The sandbox has no access to \`require\`, \`import\`, \`process\`, \`fetch\`, or filesystem outside of \`shux.*\` tools.`,
+**Security:** The sandbox has no access to \`require\`, \`import\`, \`process\`, \`fetch\`, or filesystem outside of \`xum.*\` tools.`,
 
     inputSchema: z.object({
       code: z
         .string()
         .min(1)
         .describe(
-          "JavaScript code to execute. shux.* calls are synchronous—do not use await. mux.* is a compatibility alias. Use 'return' for final result."
+          "JavaScript code to execute. xum.* calls are synchronous—do not use await. mux.* is a compatibility alias. Use 'return' for final result."
         ),
       timeout_secs: z
         .number()
@@ -194,7 +194,7 @@ ${shuxTypes}
           // Always re-register, even on reused persistent mounts: each request
           // builds a fresh ToolBridge from the CURRENT policy + grants, and a
           // stale bridge would keep exposing tools after permissions narrowed.
-          // Registration just overwrites the guest's `shux`/`mux` globals, so this is
+          // Registration just overwrites the guest's `xum`/`mux` globals, so this is
           // cheap and idempotent.
           activeBridge.register(runtime);
 

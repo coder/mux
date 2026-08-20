@@ -95,8 +95,8 @@ class RemotePathMappedRuntime extends RemoteRuntime {
     });
   }
 
-  override getShuxHome(): string {
-    return this.muxHomeOverride ?? super.getShuxHome();
+  override getXumHome(): string {
+    return this.muxHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {

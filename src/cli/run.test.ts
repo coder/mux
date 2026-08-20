@@ -1,5 +1,5 @@
 /**
- * Integration tests for `shux run` CLI command.
+ * Integration tests for `xum run` CLI command.
  *
  * These tests verify the CLI interface without actually running agent sessions.
  * They test argument parsing, help output, and error handling.
@@ -119,7 +119,7 @@ async function runRunDirect(
   });
 }
 
-describe("shux CLI", () => {
+describe("xum CLI", () => {
   beforeAll(() => {
     // Verify CLI files exist
     expect(Bun.file(CLI_PATH).size).toBeGreaterThan(0);
@@ -130,8 +130,8 @@ describe("shux CLI", () => {
     test("--help shows usage", async () => {
       const result = await runCli(["--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Usage: shux");
-      expect(result.stdout).toContain("Shux - AI agent orchestration");
+      expect(result.stdout).toContain("Usage: xum");
+      expect(result.stdout).toContain("Xum - AI agent orchestration");
       expect(result.stdout).toContain("run");
       expect(result.stdout).toContain("server");
     });
@@ -150,11 +150,11 @@ describe("shux CLI", () => {
     });
   });
 
-  describe("shux run", () => {
+  describe("xum run", () => {
     test("--help shows all options", async () => {
       const result = await runCli(["run", "--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Usage: shux run");
+      expect(result.stdout).toContain("Usage: xum run");
       expect(result.stdout).toContain("--dir");
       expect(result.stdout).toContain("--model");
       expect(result.stdout).toContain("--runtime");
@@ -317,9 +317,9 @@ describe("shux CLI", () => {
       expect(result.exitCode).toBe(1);
     });
 
-    // Regression: headless `shux run` must initialize PolicyService and thread it
+    // Regression: headless `xum run` must initialize PolicyService and thread it
     // through the core service graph like the desktop wiring. Without it, a
-    // stored credential for a provider that MUX_POLICY_FILE / Shux Governor now
+    // stored credential for a provider that MUX_POLICY_FILE / Xum Governor now
     // denies would remain usable from the CLI. The request must fail closed
     // before any provider network call (the configured API key is fake).
     test("enforces MUX_POLICY_FILE provider denials", async () => {
@@ -353,11 +353,11 @@ describe("shux CLI", () => {
     });
   });
 
-  describe("shux server", () => {
+  describe("xum server", () => {
     test("--help shows all options", async () => {
       const result = await runCli(["server", "--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Usage: shux server");
+      expect(result.stdout).toContain("Usage: xum server");
       expect(result.stdout).toContain("--host");
       expect(result.stdout).toContain("--port");
       expect(result.stdout).toContain("--auth-token");
@@ -368,11 +368,11 @@ describe("shux CLI", () => {
     });
   });
 
-  describe("shux acp", () => {
+  describe("xum acp", () => {
     test("--help shows ACP options", async () => {
       const result = await runCli(["acp", "--help"]);
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain("Usage: shux acp");
+      expect(result.stdout).toContain("Usage: xum acp");
       expect(result.stdout).toContain("--server-url");
       expect(result.stdout).toContain("--auth-token");
       expect(result.stdout).toContain("--log-file");

@@ -296,7 +296,7 @@ async function run(
  * reuse the CLI's stored login and nothing else; stripping the probe too keeps the rung
  * from being offered on the strength of a token alone. The ambient rung inherits the
  * host environment untouched on purpose: there git runs exactly as the user's own git
- * would, with credential wiring Shux neither adds nor removes.
+ * would, with credential wiring Xum neither adds nor removes.
  */
 const GH_TOKEN_ENV_UNSET = {
   GH_TOKEN: undefined,
@@ -307,7 +307,7 @@ const GH_TOKEN_ENV_UNSET = {
 
 /**
  * Two families git trusts ahead of everything the config rebuild controls, both exported
- * into hook and alias subprocesses, which is where Shux inherits them from. The repository
+ * into hook and alias subprocesses, which is where Xum inherits them from. The repository
  * selectors are read ahead of `-C` and discovery (git(1), "The Git Repository"): with
  * `GIT_WORK_TREE` set, `git -C <cache> clean -fdx -- mux` deletes `mux/` under that tree
  * instead of the cache. The config carriers add command-scope runtime configuration
@@ -345,7 +345,7 @@ async function hasAuthenticatedGh(host: string, options: ExecFileAsyncOptions): 
 }
 
 /**
- * Every controlled rung worth trying, in order. There is deliberately no token rung: Shux
+ * Every controlled rung worth trying, in order. There is deliberately no token rung: Xum
  * must never store or accept an OAuth token or PAT for backups, so authentication is only
  * ever delegated to credentials that already live on the host (an SSH agent or key, the
  * GitHub CLI's own login, or whatever ambient helper git falls back to).

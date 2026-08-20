@@ -91,7 +91,7 @@ export function createIncompatibleWorkspace(
     ...createWorkspace(opts),
     incompatibleRuntime:
       opts.incompatibleReason ??
-      "This workspace was created with a newer version of shux.\nPlease upgrade shux to use this workspace.",
+      "This workspace was created with a newer version of xum.\nPlease upgrade xum to use this workspace.",
   };
 }
 

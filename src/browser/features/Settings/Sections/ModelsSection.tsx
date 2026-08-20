@@ -185,7 +185,7 @@ export function ModelsSection() {
 
     // mux-gateway is a routing layer, not a provider users should add models under.
     if (HIDDEN_PROVIDERS.has(lastProvider)) {
-      setError("Shux Gateway models can't be added directly. Enable Gateway per-model instead.");
+      setError("Xum Gateway models can't be added directly. Enable Gateway per-model instead.");
       return;
     }
     const trimmedModelId = newModelId.trim();

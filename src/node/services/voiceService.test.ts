@@ -268,7 +268,7 @@ describe("VoiceService.transcribe", () => {
         expect(result).toEqual({
           success: false,
           error:
-            "Voice input requires a Shux Gateway login or an OpenAI API key. Configure in Settings → Providers.",
+            "Voice input requires a Xum Gateway login or an OpenAI API key. Configure in Settings → Providers.",
         });
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {
@@ -366,7 +366,7 @@ describe("VoiceService.transcribe", () => {
 
         expect(result).toEqual({
           success: false,
-          error: "You've been logged out of Shux Gateway. Please login again to use voice input.",
+          error: "You've been logged out of Xum Gateway. Please login again to use voice input.",
         });
         expect(setConfigSpy).toHaveBeenCalledWith("mux-gateway", ["couponCode"], "");
         expect(setConfigSpy).toHaveBeenCalledWith("mux-gateway", ["voucher"], "");
@@ -388,7 +388,7 @@ describe("VoiceService.transcribe", () => {
         expect(result).toEqual({
           success: false,
           error:
-            "Voice input requires a Shux Gateway login or an OpenAI API key. Configure in Settings → Providers.",
+            "Voice input requires a Xum Gateway login or an OpenAI API key. Configure in Settings → Providers.",
         });
         expect(fetchSpy).not.toHaveBeenCalled();
       } finally {

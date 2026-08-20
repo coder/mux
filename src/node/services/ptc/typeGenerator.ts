@@ -73,16 +73,16 @@ function hashToolDefinitions(tools: Record<string, Tool>): string {
 }
 
 /**
- * Get cached shux types or generate new ones if tool definitions changed.
+ * Get cached xum types or generate new ones if tool definitions changed.
  */
-export async function getCachedShuxTypes(tools: Record<string, Tool>): Promise<string> {
+export async function getCachedXumTypes(tools: Record<string, Tool>): Promise<string> {
   const hash = hashToolDefinitions(tools);
   const cached = cache.fullTypes.get(hash);
   if (cached) {
     return cached;
   }
 
-  const types = await generateShuxTypes(tools);
+  const types = await generateXumTypes(tools);
   cache.fullTypes.set(hash, types);
   return types;
 }
@@ -222,8 +222,8 @@ async function getResultTypeString(toolName: string): Promise<string | null> {
  * @param tools Record of tool name to Tool, already filtered to bridgeable tools only
  * @returns `.d.ts` content as a string
  */
-export async function generateShuxTypes(tools: Record<string, Tool>): Promise<string> {
-  const lines: string[] = ["declare namespace shux {"];
+export async function generateXumTypes(tools: Record<string, Tool>): Promise<string> {
+  const lines: string[] = ["declare namespace xum {"];
   let mcpToolsPresent = false;
 
   // Sort tool names for deterministic output
@@ -295,7 +295,7 @@ export async function generateShuxTypes(tools: Record<string, Tool>): Promise<st
   lines.push("");
 
   // Keep the old scripting namespace as a type-compatible alias for saved snippets.
-  lines.push("declare const mux: typeof shux;");
+  lines.push("declare const mux: typeof xum;");
   lines.push("");
 
   // Add console global declaration

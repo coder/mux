@@ -6,19 +6,19 @@
  *
  * Telemetry is enabled by default, including in development mode.
  * It is automatically disabled in CI, test environments, and automation contexts
- * (NODE_ENV=test, CI, SHUX_E2E=1, JEST_WORKER_ID, etc.).
- * Users can manually disable telemetry by setting SHUX_DISABLE_TELEMETRY=1.
+ * (NODE_ENV=test, CI, XUM_E2E=1, JEST_WORKER_ID, etc.).
+ * Users can manually disable telemetry by setting XUM_DISABLE_TELEMETRY=1.
  *
  * Uses posthog-node which batches events and flushes asynchronously.
  */
 
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
 import assert from "@/common/utils/assert";
 import { PostHog } from "posthog-node";
 import { randomUUID } from "crypto";
 import * as fs from "fs/promises";
 import * as path from "path";
-import { getShuxHome } from "@/common/constants/paths";
+import { getXumHome } from "@/common/constants/paths";
 import { VERSION } from "@/version";
 import type { TelemetryEventPayload, BaseTelemetryProperties } from "@/common/telemetry/payload";
 
@@ -74,8 +74,8 @@ function isCIEnvironment(env: NodeJS.ProcessEnv): boolean {
  */
 function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv): boolean {
   return (
-    resolveShuxEnvironmentValue("DISABLE_TELEMETRY", env) === "1" ||
-    resolveShuxEnvironmentValue("E2E", env) === "1" ||
+    resolveXumEnvironmentValue("DISABLE_TELEMETRY", env) === "1" ||
+    resolveXumEnvironmentValue("E2E", env) === "1" ||
     env.NODE_ENV === "test" ||
     env.JEST_WORKER_ID !== undefined ||
     env.VITEST !== undefined ||
@@ -106,7 +106,7 @@ async function getElectronIsPackaged(isElectron: boolean): Promise<boolean | nul
   }
 
   try {
-    // eslint-disable-next-line no-restricted-syntax -- Electron is unavailable in `shux server`; avoid top-level import
+    // eslint-disable-next-line no-restricted-syntax -- Electron is unavailable in `xum server`; avoid top-level import
     const { app } = await import("electron");
     return app.isPackaged;
   } catch {
@@ -144,13 +144,13 @@ export class TelemetryService {
   }
 
   /**
-   * Check if telemetry was explicitly disabled by the user via SHUX_DISABLE_TELEMETRY=1.
+   * Check if telemetry was explicitly disabled by the user via XUM_DISABLE_TELEMETRY=1.
    * This is different from isEnabled() which also returns false in dev mode.
    * Used to gate features like link sharing that should only be hidden when
-   * the user explicitly opts out of shux services.
+   * the user explicitly opts out of xum services.
    */
   isExplicitlyDisabled(): boolean {
-    return resolveShuxEnvironmentValue("DISABLE_TELEMETRY", process.env) === "1";
+    return resolveXumEnvironmentValue("DISABLE_TELEMETRY", process.env) === "1";
   }
 
   /**
@@ -181,7 +181,7 @@ export class TelemetryService {
     this.featureFlagVariants[key] = variant;
   }
   constructor(muxHome?: string) {
-    this.muxHome = muxHome ?? getShuxHome();
+    this.muxHome = muxHome ?? getXumHome();
   }
 
   /**
@@ -212,7 +212,7 @@ export class TelemetryService {
 
     this.client = new PostHog(DEFAULT_POSTHOG_KEY, {
       host: DEFAULT_POSTHOG_HOST,
-      // Avoid geo-IP enrichment (we don't need coarse location for shux telemetry)
+      // Avoid geo-IP enrichment (we don't need coarse location for xum telemetry)
       disableGeoip: true,
     });
 
@@ -221,7 +221,7 @@ export class TelemetryService {
 
   /**
    * Load existing distinct ID or create a new one.
-   * Persisted in ~/.shux/telemetry_id for cross-session identity.
+   * Persisted in ~/.xum/telemetry_id for cross-session identity.
    */
   private async loadOrCreateDistinctId(): Promise<string> {
     const idPath = path.join(this.muxHome, TELEMETRY_ID_FILE);

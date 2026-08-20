@@ -18,7 +18,7 @@ import {
  * - detects tool outputs shaped like { type: "content", value: [{ type: "media", data, mediaType }, ...] }
  * - replaces supported media items in the tool output with small text placeholders
  * - emits a synthetic *user* message immediately after the assistant message, attaching the files
- *   as proper multimodal file parts (ShuxFilePart)
+ *   as proper multimodal file parts (XumFilePart)
  *
  * NOTE: This is request-only: it should be applied to the in-memory message list right before
  * convertToModelMessages(...). Persisted history and UI still keep the original tool output.

@@ -102,7 +102,7 @@ describe("subProjects", () => {
   test("orders sub-projects by display name and labels them with parent context", () => {
     const projects = deriveProjectHierarchy(
       new Map<string, ProjectConfig>([
-        ["/repo", project({ displayName: "Shux" })],
+        ["/repo", project({ displayName: "Xum" })],
         ["/repo/packages/web", project({ displayName: "Web" })],
         ["/repo/packages/api", project({ displayName: "API" })],
       ])
@@ -112,6 +112,6 @@ describe("subProjects", () => {
       "/repo/packages/api",
       "/repo/packages/web",
     ]);
-    expect(formatProjectHierarchyLabel("/repo/packages/api", projects)).toBe("Shux / API");
+    expect(formatProjectHierarchyLabel("/repo/packages/api", projects)).toBe("Xum / API");
   });
 });

@@ -89,10 +89,10 @@ Fit check before codifying: the conductor cannot run host operations directly, s
 
 ### Attention policy (internal, not author-settable)
 
-Shux persists an internal attention policy for background work and uses it to decide whether your workspace must await the work before ending its turn. You do not set this field in v1 — it is derived from `run_in_background`:
+Xum persists an internal attention policy for background work and uses it to decide whether your workspace must await the work before ending its turn. You do not set this field in v1 — it is derived from `run_in_background`:
 
 - Foreground/default runs are **blocking**: their result is needed before you can continue.
-- `run_in_background: true` runs are **notify-on-terminal**: non-blocking, and Shux wakes the owning workspace with the terminal workflow result when the run finishes. `workflow_resume({ run_in_background: true })` also makes the run notify-on-terminal.
+- `run_in_background: true` runs are **notify-on-terminal**: non-blocking, and Xum wakes the owning workspace with the terminal workflow result when the run finishes. `workflow_resume({ run_in_background: true })` also makes the run notify-on-terminal.
 - Workflow-owned `agent()`, `parallel()`, `pipeline()`, and nested `workflow()` steps are blocking from the conductor's perspective because their outputs are durable step results delivered through the journal — there is no generic parent wake-up for them.
 
 There is no public `attentionPolicy`/`attention_policy` argument and no "silent background" mode in v1.
@@ -136,7 +136,7 @@ workflow_run({
 });
 ```
 
-If the workflow declares `meta.argsSchema`, Shux coerces and validates structured args against that schema before `args` reaches the workflow. Prefer domain-specific fields such as `topic`, `brief`, or `target`; reserve `input` for workflows that intentionally accept a single opaque text blob:
+If the workflow declares `meta.argsSchema`, Xum coerces and validates structured args against that schema before `args` reaches the workflow. Prefer domain-specific fields such as `topic`, `brief`, or `target`; reserve `input` for workflows that intentionally accept a single opaque text blob:
 
 ```js
 const s = mux.schema;
@@ -257,7 +257,7 @@ const reviews = parallel(
 );
 ```
 
-Timeouts are optional and explicit. Shux does not provide default workflow-agent timeout durations. When `timeout` is present, both `softMs` and `graceMs` are required positive integer millisecond values:
+Timeouts are optional and explicit. Xum does not provide default workflow-agent timeout durations. When `timeout` is present, both `softMs` and `graceMs` are required positive integer millisecond values:
 
 ```js
 const report = agent("Investigate and report useful partial findings if time expires", {
@@ -278,7 +278,7 @@ const report = agent("Investigate and report useful partial findings if time exp
 });
 ```
 
-The soft budget starts when the child task begins running; queued/starting time does not count. If the soft timeout expires, Shux soft-interrupts the child turn, asks for a final assistant response (or requires `propose_plan` for Plan agents), and waits for the explicit grace period. Schema-backed agents must send valid structured output through `agent_report` before that final response. A valid response during grace completes the step normally; otherwise Shux hard-times-out the child and fails the step. Design schemas so partial-but-useful results can still be represented.
+The soft budget starts when the child task begins running; queued/starting time does not count. If the soft timeout expires, Xum soft-interrupts the child turn, asks for a final assistant response (or requires `propose_plan` for Plan agents), and waits for the explicit grace period. Schema-backed agents must send valid structured output through `agent_report` before that final response. A valid response during grace completes the step normally; otherwise Xum hard-times-out the child and fails the step. Design schemas so partial-but-useful results can still be represented.
 
 ### `parallel(thunks, options?)`
 

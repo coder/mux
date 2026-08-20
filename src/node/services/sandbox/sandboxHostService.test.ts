@@ -230,7 +230,7 @@ describe("SandboxHostService", () => {
     expect(result.success).toBe(true);
     expect(result.result).toEqual({
       granted: { content: "granted!" },
-      denied: "Capability denied: shux.bash is not granted for this sandbox",
+      denied: "Capability denied: xum.bash is not granted for this sandbox",
       sandboxStillWorks: 2,
     });
     mount.release();
@@ -493,7 +493,7 @@ describe("SandboxHostService", () => {
       }
     `);
     expect(denied.success).toBe(true);
-    expect(denied.result).toBe("Capability denied: shux.bash is not granted for this sandbox");
+    expect(denied.result).toBe("Capability denied: xum.bash is not granted for this sandbox");
     await host.disposeScope("ws-rebridge");
   });
 

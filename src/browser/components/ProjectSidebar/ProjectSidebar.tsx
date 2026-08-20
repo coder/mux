@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { cn } from "@/common/lib/utils";
 import { isDesktopMode } from "@/browser/hooks/useDesktopTitlebar";
-import ShuxLogoDark from "@/browser/assets/logos/shux-logo-dark.svg?react";
-import ShuxLogoLight from "@/browser/assets/logos/shux-logo-light.svg?react";
+import XumLogoDark from "@/browser/assets/logos/xum-logo-dark.svg?react";
+import XumLogoLight from "@/browser/assets/logos/xum-logo-light.svg?react";
 import { useTheme } from "@/browser/contexts/ThemeContext";
 import type { FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import {
@@ -724,7 +724,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
 
   // Theme for logo variant
   const { theme } = useTheme();
-  const ShuxLogo = theme === "dark" || theme.endsWith("-dark") ? ShuxLogoDark : ShuxLogoLight;
+  const XumLogo = theme === "dark" || theme.endsWith("-dark") ? XumLogoDark : XumLogoLight;
   const multiProjectWorkspacesEnabled = useExperimentValue(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES);
 
   // Mobile breakpoint for auto-closing sidebar
@@ -1968,7 +1968,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     className="shrink-0 cursor-pointer border-none bg-transparent p-0"
                     aria-label="Home"
                   >
-                    <ShuxLogo className="h-5 w-auto" aria-hidden="true" />
+                    <XumLogo className="h-5 w-auto" aria-hidden="true" />
                   </button>
                 </div>
                 <button

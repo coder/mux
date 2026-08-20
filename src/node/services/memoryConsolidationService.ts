@@ -120,8 +120,8 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
 /**
  * Resolve the dream agent prompt body: a user override at <muxRoot>/agents/dream.md
  * (global agent scope) shadows the built-in definition, like any other agent.
- * `muxRoot` is Config.rootDir — NOT a hardcoded ~/.shux — so dev builds
- * (~/.shux-dev), MUX_ROOT sandboxes, and tests all stay isolated.
+ * `muxRoot` is Config.rootDir — NOT a hardcoded ~/.xum — so dev builds
+ * (~/.xum-dev), MUX_ROOT sandboxes, and tests all stay isolated.
  * Host-side read only — dream runs are runtime-independent, so project-scope
  * agent overrides (which need a live checkout) are intentionally not resolved.
  * Shared with the debug CLI.

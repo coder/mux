@@ -127,7 +127,7 @@ const TranscriptAnchorSchema = z.object({
   partIndex: z.number().int().nonnegative(),
 });
 
-// ShuxMessage (simplified)
+// XumMessage (simplified)
 export const MuxMessageSchema = z.object({
   id: z.string(),
   role: z.enum(["system", "user", "assistant"]),

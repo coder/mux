@@ -20,7 +20,7 @@ Create a `.muxignore` file in your project root (alongside `.gitignore`):
 
 Only lines prefixed with `!` (negation) are actionable — they identify gitignored files to copy. Comments (`#`) and blank lines are ignored.
 
-> Shux only copies files that are already gitignored in your project and currently exist on disk.
+> Xum only copies files that are already gitignored in your project and currently exist on disk.
 
 ## Behavior
 
@@ -28,7 +28,7 @@ Only lines prefixed with `!` (negation) are actionable — they identify gitigno
 - **Source:** Your project root directory (the main checkout).
 - **Copy mode:** Physical file copy, not symlink. Each workspace gets its own independent copy.
 - **No overwrite:** Files that already exist in the worktree are not overwritten.
-- **Best-effort:** If a file can't be copied, Shux logs debug information and continues — it won't block workspace creation.
+- **Best-effort:** If a file can't be copied, Xum logs debug information and continues — it won't block workspace creation.
 
 ## Where to place it
 

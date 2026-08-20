@@ -7,7 +7,7 @@ interface GatewayIconProps extends React.SVGProps<SVGSVGElement> {
 }
 
 /**
- * Gateway icon - represents routing through Shux Gateway.
+ * Gateway icon - represents routing through Xum Gateway.
  * Circle with M logo. Active state adds outer ring.
  */
 export const GatewayIcon = React.forwardRef<SVGSVGElement, GatewayIconProps>(

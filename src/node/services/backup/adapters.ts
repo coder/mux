@@ -273,7 +273,7 @@ export function createBackupPayloadStore(options: { config: Config }): BackupPay
       if (!(await backupPayloadExists(sourceDir))) {
         throw new BackupServiceError(
           "INVALID_BACKUP",
-          `No Shux backup found in '${validateOptions.managedPath}' on this branch`
+          `No Xum backup found in '${validateOptions.managedPath}' on this branch`
         );
       }
       const payload = await readBackupPayload(sourceDir);

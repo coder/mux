@@ -36,7 +36,7 @@ interface MemoryFixture extends Disposable {
 
 /**
  * The fixture's projectPath deliberately differs from the physical checkout
- * path: logical keys must be derived from the stable project identity in Shux
+ * path: logical keys must be derived from the stable project identity in Xum
  * config, never the per-workspace worktree path.
  */
 const FIXTURE_PROJECT_PATH = "/stable/project-id";

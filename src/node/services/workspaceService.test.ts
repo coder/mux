@@ -869,7 +869,7 @@ describe("WorkspaceService bash monitor wakes", () => {
       });
 
       // Seed a stale registry record on disk before the service boots — as if a previous
-      // Shux run armed a monitor and was then shut down/killed.
+      // Xum run armed a monitor and was then shut down/killed.
       const registryStore = new BashMonitorRegistryStore(config);
       await registryStore.upsert({
         processId: "proc-stale",
@@ -5035,7 +5035,7 @@ describe("WorkspaceService initialize", () => {
     const knownDir = sessionDirFor("known-ws");
     const legacyDir = sessionDirFor("proj-legacy-branch");
     // Unreferenced in config (the load-time migration removed the legacy Chat
-    // with Shux entry) but exempt from reaping so downgrades keep the history.
+    // with Xum entry) but exempt from reaping so downgrades keep the history.
     const muxChatDir = sessionDirFor("mux-chat");
     const staleOrphanDir = sessionDirFor("stale-orphan-ws");
     const freshOrphanDir = sessionDirFor("fresh-orphan-ws");

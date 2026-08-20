@@ -706,7 +706,7 @@ describe("Config", () => {
 
   describe("legacy Chat with Mux cleanup", () => {
     const shippedProjectPath = "/home/user/.mux/system/Mux";
-    const shuxProjectPath = "/home/user/.shux/system/Shux";
+    const xumProjectPath = "/home/user/.xum/system/Xum";
 
     function shippedMuxChatWorkspace(projectPath: string) {
       return {
@@ -718,13 +718,13 @@ describe("Config", () => {
       };
     }
 
-    function shuxGenerationChatWorkspace(projectPath: string) {
+    function xumGenerationChatWorkspace(projectPath: string) {
       return {
         path: projectPath,
         id: "mux-chat",
-        name: "chat-with-shux",
-        title: "Chat with Shux",
-        agentId: "shux",
+        name: "chat-with-xum",
+        title: "Chat with Xum",
+        agentId: "xum",
       };
     }
 
@@ -755,16 +755,16 @@ describe("Config", () => {
       expect(persisted).not.toContain("mux-chat");
     });
 
-    it("removes later shux-branded leftovers as well", () => {
+    it("removes later xum-branded leftovers as well", () => {
       const configFile = path.join(tempDir, "config.json");
       fs.writeFileSync(
         configFile,
         JSON.stringify({
           projects: [
             [
-              shuxProjectPath,
+              xumProjectPath,
               {
-                workspaces: [shuxGenerationChatWorkspace(shuxProjectPath)],
+                workspaces: [xumGenerationChatWorkspace(xumProjectPath)],
                 projectKind: "system",
               },
             ],
@@ -773,7 +773,7 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.projects.has(shuxProjectPath)).toBe(false);
+      expect(loaded.projects.has(xumProjectPath)).toBe(false);
     });
 
     it("removes stale entries left under other mux roots", () => {
@@ -2756,7 +2756,7 @@ describe("Config", () => {
       expect(release).not.toBeNull();
 
       // Same file root = same lease, even from another Config instance
-      // (stands in for another Shux process sharing providers.jsonc).
+      // (stands in for another Xum process sharing providers.jsonc).
       const otherProcess = new Config(tempDir);
       expect(otherProcess.tryAcquireCoderOauthClientLease(TTL_MS)).toBeNull();
 
@@ -2936,7 +2936,7 @@ describe("Config", () => {
 
   describe("withCoderOauthRefreshLock", () => {
     it("serializes critical sections, including across Config instances on the same root", async () => {
-      // A second Config on the same root stands in for another Shux process
+      // A second Config on the same root stands in for another Xum process
       // sharing providers.jsonc.
       const otherProcess = new Config(tempDir);
       const events: string[] = [];

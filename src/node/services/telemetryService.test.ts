@@ -14,7 +14,7 @@ describe("TelemetryService enablement", () => {
   test("disables telemetry when explicitly disabled", () => {
     const enabled = shouldEnableTelemetry(
       createContext({
-        env: { SHUX_DISABLE_TELEMETRY: "1" },
+        env: { XUM_DISABLE_TELEMETRY: "1" },
         isElectron: true,
         isPackaged: true,
       })
@@ -35,10 +35,10 @@ describe("TelemetryService enablement", () => {
     expect(enabled).toBe(false);
   });
 
-  test("canonical SHUX_DISABLE_TELEMETRY wins over a leftover MUX value", () => {
+  test("canonical XUM_DISABLE_TELEMETRY wins over a leftover MUX value", () => {
     const enabled = shouldEnableTelemetry(
       createContext({
-        env: { SHUX_DISABLE_TELEMETRY: "0", MUX_DISABLE_TELEMETRY: "1" },
+        env: { XUM_DISABLE_TELEMETRY: "0", MUX_DISABLE_TELEMETRY: "1" },
         isElectron: true,
         isPackaged: true,
       })
@@ -50,7 +50,7 @@ describe("TelemetryService enablement", () => {
   test("disables telemetry in E2E runs", () => {
     const enabled = shouldEnableTelemetry(
       createContext({
-        env: { SHUX_E2E: "1" },
+        env: { XUM_E2E: "1" },
         isElectron: true,
         isPackaged: true,
       })

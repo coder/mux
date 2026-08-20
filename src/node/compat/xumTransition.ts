@@ -6,33 +6,33 @@ import {
   LEGACY_MUX_HOME_DIR_NAME,
   LEGACY_MUX_PRODUCT_NAME,
   LEGACY_MUX_PRODUCT_SLUG,
-  assignShuxEnvironmentValue,
-  getShuxHomeLegacyFallbackMarkerPath,
+  assignXumEnvironmentValue,
+  getXumHomeLegacyFallbackMarkerPath,
   installLegacyMuxEnvironmentAliases,
-  parseShuxHomeLegacyFallbackDirName,
-  resolveShuxEnvironmentValue,
-  type ShuxEnvironment,
+  parseXumHomeLegacyFallbackDirName,
+  resolveXumEnvironmentValue,
+  type XumEnvironment,
 } from "@/common/compat/legacyMux";
 import { getElectronAppIdentity } from "@/common/compat/electronAppIdentity";
-import { SHUX_HOME_DIR_NAME } from "@/common/constants/product";
+import { XUM_HOME_DIR_NAME } from "@/common/constants/product";
 
-export type ShuxTransitionStatus = "canonical" | "migrated" | "legacy-fallback" | "conflict";
+export type XumTransitionStatus = "canonical" | "migrated" | "legacy-fallback" | "conflict";
 
-export interface ShuxDirectoryTransitionResult {
+export interface XumDirectoryTransitionResult {
   canonicalPath: string;
   activePath: string;
-  status: ShuxTransitionStatus;
+  status: XumTransitionStatus;
   issues: string[];
 }
 
-interface ShuxDirectoryTransitionOptions {
+interface XumDirectoryTransitionOptions {
   canonicalPath: string;
   legacyPaths: string[];
   platform?: NodeJS.Platform;
 }
 
-interface ShuxHomeTransitionOptions {
-  env?: ShuxEnvironment;
+interface XumHomeTransitionOptions {
+  env?: XumEnvironment;
   homeDir?: string;
   nodeEnv?: string;
   platform?: NodeJS.Platform;
@@ -240,7 +240,7 @@ async function requireHealthyDirectory(path: string, issues: string[]): Promise<
     return path;
   }
   const detail = issues.length > 0 ? `: ${issues.join("; ")}` : "";
-  throw new Error(`No usable shux directory is available at ${path}${detail}`);
+  throw new Error(`No usable xum directory is available at ${path}${detail}`);
 }
 
 /**
@@ -297,7 +297,7 @@ interface CompatibilityAliasOptions {
 
 async function applyCompatibilityAliases(
   options: CompatibilityAliasOptions
-): Promise<ShuxDirectoryTransitionResult | undefined> {
+): Promise<XumDirectoryTransitionResult | undefined> {
   const canonicalUsableForAliases = await isHealthyDirectory(options.canonicalPath);
 
   for (const legacyPath of options.legacyPaths) {
@@ -349,16 +349,16 @@ async function applyCompatibilityAliases(
 }
 
 /**
- * Move a legacy directory to its canonical shux path and leave old-name directory
+ * Move a legacy directory to its canonical xum path and leave old-name directory
  * aliases pointing forward. Older mux builds therefore keep reading and writing the
  * same files after an upgrade and subsequent downgrade.
  *
  * This function is deliberately non-destructive: independent populated paths are
  * reported as conflicts rather than merged, replaced, or deleted.
  */
-export async function ensureShuxDirectoryTransition(
-  options: ShuxDirectoryTransitionOptions
-): Promise<ShuxDirectoryTransitionResult> {
+export async function ensureXumDirectoryTransition(
+  options: XumDirectoryTransitionOptions
+): Promise<XumDirectoryTransitionResult> {
   const platform = options.platform ?? process.platform;
   const issues: string[] = [];
   const canonicalPath = options.canonicalPath;
@@ -520,17 +520,17 @@ export async function ensureShuxDirectoryTransition(
   };
 }
 
-export async function initializeShuxUserDataTransition(options: {
+export async function initializeXumUserDataTransition(options: {
   appDataDir: string;
   platform?: NodeJS.Platform;
-}): Promise<ShuxDirectoryTransitionResult> {
+}): Promise<XumDirectoryTransitionResult> {
   // Linux Chromium userData used the case-sensitive product name `Mux` while
   // other platforms stored `mux`. Include both and let same-entry dedupe keep
   // case-insensitive volumes from treating them as two trees.
   // Canonical userData is always the lowercase slug, even when app.setName() is
   // display-cased on macOS/Windows.
   const { userDataDirName } = getElectronAppIdentity(options.platform ?? process.platform);
-  return await ensureShuxDirectoryTransition({
+  return await ensureXumDirectoryTransition({
     canonicalPath: join(options.appDataDir, userDataDirName),
     legacyPaths: [
       join(options.appDataDir, LEGACY_MUX_PRODUCT_SLUG),
@@ -545,7 +545,7 @@ function isNotFoundError(error: unknown): boolean {
 }
 
 /**
- * Record the selected leftover name beside ~/.shux so independent processes
+ * Record the selected leftover name beside ~/.xum so independent processes
  * (VS Code) can follow the fallback without running this mutating transition.
  * Contents are only a known leftover directory name, never an arbitrary path.
  */
@@ -555,13 +555,13 @@ async function persistDefaultHomeLegacyFallbackMarker(
   activePath: string,
   issues: string[]
 ): Promise<void> {
-  const dirName = parseShuxHomeLegacyFallbackDirName(basename(activePath), suffix);
+  const dirName = parseXumHomeLegacyFallbackDirName(basename(activePath), suffix);
   if (dirName == null) {
     issues.push(`Refusing to persist an unknown leftover home name for ${activePath}`);
     return;
   }
 
-  const markerPath = getShuxHomeLegacyFallbackMarkerPath(homeDir, suffix);
+  const markerPath = getXumHomeLegacyFallbackMarkerPath(homeDir, suffix);
   const tempPath = `${markerPath}.${process.pid}-${Date.now()}.tmp`;
   try {
     await fs.writeFile(tempPath, `${dirName}\n`, "utf8");
@@ -581,7 +581,7 @@ async function clearDefaultHomeLegacyFallbackMarker(
   suffix: string,
   issues: string[]
 ): Promise<void> {
-  const markerPath = getShuxHomeLegacyFallbackMarkerPath(homeDir, suffix);
+  const markerPath = getXumHomeLegacyFallbackMarkerPath(homeDir, suffix);
   try {
     await fs.unlink(markerPath);
   } catch (error) {
@@ -593,16 +593,16 @@ async function clearDefaultHomeLegacyFallbackMarker(
 }
 
 /**
- * Initialize the default ~/.shux storage transition.
- * Explicit SHUX_ROOT / MUX_ROOT locations are never moved, created, or aliased.
+ * Initialize the default ~/.xum storage transition.
+ * Explicit XUM_ROOT / MUX_ROOT locations are never moved, created, or aliased.
  */
-export async function initializeShuxHomeTransition(
-  options: ShuxHomeTransitionOptions = {}
-): Promise<ShuxDirectoryTransitionResult> {
+export async function initializeXumHomeTransition(
+  options: XumHomeTransitionOptions = {}
+): Promise<XumDirectoryTransitionResult> {
   const env = options.env ?? process.env;
   installLegacyMuxEnvironmentAliases(env);
 
-  const explicitRoot = resolveShuxEnvironmentValue("ROOT", env);
+  const explicitRoot = resolveXumEnvironmentValue("ROOT", env);
   if (explicitRoot) {
     return {
       canonicalPath: explicitRoot,
@@ -614,13 +614,13 @@ export async function initializeShuxHomeTransition(
 
   const homeDir = options.homeDir ?? homedir();
   const suffix = (options.nodeEnv ?? env.NODE_ENV) === "development" ? "-dev" : "";
-  const canonicalPath = join(homeDir, SHUX_HOME_DIR_NAME + suffix);
+  const canonicalPath = join(homeDir, XUM_HOME_DIR_NAME + suffix);
   const legacyPaths = [join(homeDir, LEGACY_MUX_HOME_DIR_NAME + suffix)];
   if (!suffix) {
     legacyPaths.push(join(homeDir, LEGACY_CMUX_HOME_DIR_NAME));
   }
 
-  const result = await ensureShuxDirectoryTransition({
+  const result = await ensureXumDirectoryTransition({
     canonicalPath,
     legacyPaths,
     platform: options.platform,
@@ -628,8 +628,8 @@ export async function initializeShuxHomeTransition(
 
   if (result.status === "legacy-fallback") {
     // Session-scoped ROOT aliases keep this process and its children on the leftover.
-    // The sibling marker is for independent processes that only call getShuxHome().
-    assignShuxEnvironmentValue(env, "ROOT", result.activePath);
+    // The sibling marker is for independent processes that only call getXumHome().
+    assignXumEnvironmentValue(env, "ROOT", result.activePath);
     await persistDefaultHomeLegacyFallbackMarker(homeDir, suffix, result.activePath, result.issues);
   } else {
     await clearDefaultHomeLegacyFallbackMarker(homeDir, suffix, result.issues);

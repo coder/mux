@@ -1,5 +1,5 @@
 /**
- * E2E tests for the CLI layer (shux api commands).
+ * E2E tests for the CLI layer (xum api commands).
  *
  * These tests verify that:
  * 1. CLI commands work correctly via HTTP to a real server

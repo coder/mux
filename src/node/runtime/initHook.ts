@@ -72,10 +72,10 @@ export function getInitHookPath(projectPath: string): string {
 }
 
 /**
- * Get canonical SHUX_ environment variables for bash execution, plus MUX_ aliases
+ * Get canonical XUM_ environment variables for bash execution, plus MUX_ aliases
  * so existing repository hooks continue to work after upgrade and downgrade.
  */
-export function getShuxEnv(
+export function getXumEnv(
   projectPath: string,
   runtime: RuntimeMode,
   workspaceName: string,
@@ -88,33 +88,33 @@ export function getShuxEnv(
   }
 ): Record<string, string> {
   if (!projectPath) {
-    throw new Error("getShuxEnv: projectPath is required");
+    throw new Error("getXumEnv: projectPath is required");
   }
   if (!workspaceName) {
-    throw new Error("getShuxEnv: workspaceName is required");
+    throw new Error("getXumEnv: workspaceName is required");
   }
 
   const env: Record<string, string> = {
-    SHUX_PROJECT_PATH: projectPath,
-    SHUX_RUNTIME: runtime,
-    SHUX_WORKSPACE_NAME: workspaceName,
+    XUM_PROJECT_PATH: projectPath,
+    XUM_RUNTIME: runtime,
+    XUM_WORKSPACE_NAME: workspaceName,
   };
 
   if (options?.workspaceId != null) {
     assert(options.workspaceId.trim().length > 0, "workspaceId must not be empty");
-    env.SHUX_WORKSPACE_ID = options.workspaceId;
+    env.XUM_WORKSPACE_ID = options.workspaceId;
   }
 
   if (options?.modelString) {
-    env.SHUX_MODEL_STRING = options.modelString;
+    env.XUM_MODEL_STRING = options.modelString;
   }
 
   if (options?.thinkingLevel !== undefined) {
-    env.SHUX_THINKING_LEVEL = options.thinkingLevel;
+    env.XUM_THINKING_LEVEL = options.thinkingLevel;
   }
 
   if (options?.costsUsd !== undefined) {
-    env.SHUX_COSTS_USD = options.costsUsd.toFixed(2);
+    env.XUM_COSTS_USD = options.costsUsd.toFixed(2);
   }
 
   return withLegacyMuxEnvironmentAliases(env);
@@ -202,7 +202,7 @@ export interface WorkspaceInitHookOptions {
   hookCheckPath: string;
   beforeHook?: () => Promise<void>;
   runHook: (args: {
-    shuxEnv: Record<string, string>;
+    xumEnv: Record<string, string>;
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
   }) => Promise<void>;
@@ -235,8 +235,8 @@ export async function runWorkspaceInitHook(
     }
 
     initLogger.enterHookPhase?.();
-    const shuxEnv = { ...env, ...getShuxEnv(projectPath, runtimeType, branchName) };
-    await runHook({ shuxEnv, initLogger, abortSignal });
+    const xumEnv = { ...env, ...getXumEnv(projectPath, runtimeType, branchName) };
+    await runHook({ xumEnv, initLogger, abortSignal });
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -256,7 +256,7 @@ export async function runWorkspaceInitHook(
  * @param runtime - Runtime instance with exec capability
  * @param hookPath - Full path to the init hook (e.g., "/src/.mux/init" or "~/mux/project/workspace/.mux/init")
  * @param workspacePath - Working directory for the hook
- * @param shuxEnv - Canonical SHUX_ variables plus legacy MUX_ aliases
+ * @param xumEnv - Canonical XUM_ variables plus legacy MUX_ aliases
  * @param initLogger - Logger for streaming output
  * @param abortSignal - Optional abort signal
  */
@@ -264,7 +264,7 @@ export async function runInitHookOnRuntime(
   runtime: InitHookRuntime,
   hookPath: string,
   workspacePath: string,
-  shuxEnv: Record<string, string>,
+  xumEnv: Record<string, string>,
   initLogger: InitLogger,
   abortSignal?: AbortSignal
 ): Promise<void> {
@@ -278,7 +278,7 @@ export async function runInitHookOnRuntime(
     // With OpenSSH, allocating a PTY ensures the remote process is tied to the session and
     // receives a hangup when the client disconnects.
     forcePTY: abortSignal !== undefined,
-    env: shuxEnv,
+    env: xumEnv,
   });
 
   // Create line-buffered loggers for proper output handling

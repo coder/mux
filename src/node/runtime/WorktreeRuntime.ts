@@ -112,8 +112,8 @@ export class WorktreeRuntime extends LocalBaseRuntime {
       params,
       runtimeType: "worktree",
       hookCheckPath: params.projectPath,
-      runHook: async ({ shuxEnv, initLogger, abortSignal }) => {
-        await this.runInitHook(params.workspacePath, shuxEnv, initLogger, abortSignal);
+      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
+        await this.runInitHook(params.workspacePath, xumEnv, initLogger, abortSignal);
       },
     });
   }

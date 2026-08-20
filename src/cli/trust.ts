@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
- * `shux trust` - Headless project trust management.
+ * `xum trust` - Headless project trust management.
  *
  * Trust gates all repo-controlled automation (project workflows, hooks, and
  * .mux configuration), so it lives at the top level of the CLI rather than
  * under any single feature's subcommand. The desktop app records trust in
- * ~/.shux/config.json via Settings → Security; this command writes the same
+ * ~/.xum/config.json via Settings → Security; this command writes the same
  * entry directly so headless environments (no desktop app or server running,
  * project possibly never added to mux) can grant or revoke trust. A running
  * desktop instance picks the change up through its config-file watcher.
@@ -101,7 +101,7 @@ export async function findMainRepoDir(projectDir: string): Promise<string | null
 /**
  * Resolve project trust for repo-controlled automation. Trust is keyed in
  * config.json by the registered project path, so linked git worktrees (e.g. mux
- * workspaces under ~/.shux/src/<project>/<branch>) miss a direct lookup of their own
+ * workspaces under ~/.xum/src/<project>/<branch>) miss a direct lookup of their own
  * checkout path. Mirror the desktop app, which scans the workspace checkout but
  * resolves trust against the registered project path (resolveWorkflowContext in
  * src/node/orpc/router.ts), by also accepting trust granted to the main repository.
@@ -205,7 +205,7 @@ async function runTrust(options: TrustCLIOptions): Promise<number> {
 export async function main(): Promise<number> {
   const program = new Command();
   program
-    .name("shux trust")
+    .name("xum trust")
     .description(
       "Trust the project in the current directory (or --dir) so repo-controlled automation (project workflows, hooks, .mux configuration) can run"
     )

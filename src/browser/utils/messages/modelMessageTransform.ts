@@ -924,7 +924,7 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
         // Preserve signature from later parts - during streaming, the signature
         // arrives at the end and is attached to the last reasoning part.
         // Cast needed because AI SDK's ReasoningPart doesn't have signature,
-        // but our ShuxReasoningPart (which flows through convertToModelMessages) does.
+        // but our XumReasoningPart (which flows through convertToModelMessages) does.
         const partWithSig = part as typeof part & {
           signature?: string;
           providerOptions?: { anthropic?: { signature?: string } };

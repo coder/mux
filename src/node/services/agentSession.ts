@@ -2499,7 +2499,7 @@ export class AgentSession {
     let derivedProjectName: string;
 
     if (isUnderSrcBaseDir) {
-      // Standard worktree mode: workspace is under ~/.shux/src/project/branch
+      // Standard worktree mode: workspace is under ~/.xum/src/project/branch
       derivedProjectPath = path.dirname(normalizedWorkspacePath);
       workspaceName = PlatformPaths.basename(normalizedWorkspacePath);
       derivedProjectName =

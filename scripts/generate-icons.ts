@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Icon generation script for shux.
+ * Icon generation script for xum.
  *
  * Usage:
  *   bun scripts/generate-icons.ts [commands...]
@@ -36,10 +36,10 @@ const SOURCE_BLACK = path.join(ROOT, "docs", "img", "logo-black.svg");
 const SOURCE_WHITE = path.join(ROOT, "docs", "img", "logo-white.svg");
 
 const WORDMARK_TARGETS = {
-  "docs/img/black-shux.svg": renderDocsWordmark("black"),
-  "docs/img/white-shux.svg": renderDocsWordmark("white"),
-  "src/browser/assets/logos/shux-logo-dark.svg": renderAppWordmark("white"),
-  "src/browser/assets/logos/shux-logo-light.svg": renderAppWordmark("black"),
+  "docs/img/black-xum.svg": renderDocsWordmark("black"),
+  "docs/img/white-xum.svg": renderDocsWordmark("white"),
+  "src/browser/assets/logos/xum-logo-dark.svg": renderAppWordmark("white"),
+  "src/browser/assets/logos/xum-logo-light.svg": renderAppWordmark("black"),
 } as const;
 
 const INLINE_WORDMARK_TARGETS = {
@@ -101,7 +101,7 @@ const LOGO_TARGETS = {
   "vscode/icon.png": { size: 128, ...MONO_ICON },
 
   // Browser asset (Vector)
-  "src/browser/assets/icons/shux.svg": { svg: true, source: SOURCE_BLACK },
+  "src/browser/assets/icons/xum.svg": { svg: true, source: SOURCE_BLACK },
 
   // Docs (docs.json points at logo-black/logo-white directly to avoid duplicates)
   "docs/img/logo.webp": { size: 512, ...MONO_ICON, format: "webp" },
@@ -114,7 +114,7 @@ const LOGO_TARGETS = {
   // iOS Safari uses apple-touch-icon for home screen installs.
   "public/apple-touch-icon.png": { size: 180, ...APP_ICON },
 
-  // Electron Tray Icons – Wide Shux Mark (Monochrome on Transparent)
+  // Electron Tray Icons – Wide Xum Mark (Monochrome on Transparent)
   //
   // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
   // We crop to TRAY_MARK_CROP before rendering so the mark fills the output.

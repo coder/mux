@@ -65,7 +65,7 @@ export function isBuiltInTaskTool(tool: Tool | undefined): boolean {
 
 /** Resolve the parent workspace's runtime mode from the injected MUX_RUNTIME env. */
 function resolveRuntimeMode(config: ToolConfiguration): RuntimeMode | undefined {
-  const runtimeValue = config.shuxEnv?.MUX_RUNTIME;
+  const runtimeValue = config.xumEnv?.MUX_RUNTIME;
   return runtimeValue != null && Object.values(RUNTIME_MODE).includes(runtimeValue as RuntimeMode)
     ? (runtimeValue as RuntimeMode)
     : undefined;
@@ -95,8 +95,8 @@ function buildTaskDescription(config: ToolConfiguration): string {
 function buildParentRuntimeAiSettings(
   config: ToolConfiguration
 ): { modelString?: string; thinkingLevel?: ThinkingLevel } | undefined {
-  const modelString = coerceNonEmptyString(config.shuxEnv?.MUX_MODEL_STRING);
-  const thinkingLevel = coerceThinkingLevel(config.shuxEnv?.MUX_THINKING_LEVEL);
+  const modelString = coerceNonEmptyString(config.xumEnv?.MUX_MODEL_STRING);
+  const thinkingLevel = coerceThinkingLevel(config.xumEnv?.MUX_THINKING_LEVEL);
 
   if (modelString == null && thinkingLevel == null) {
     return undefined;
@@ -492,7 +492,7 @@ export const createTaskTool: ToolFactory = (config: ToolConfiguration) => {
           const errorMessage = getErrorMessage(error);
           if (errorMessage === "Timed out waiting for workspace turn") {
             // The foreground wait exceeded its budget but the workspace turn keeps running. Make it
-            // non-blocking so the owner's stream-end does not re-force a task_await; Shux wakes the
+            // non-blocking so the owner's stream-end does not re-force a task_await; Xum wakes the
             // owner with the terminal output instead.
             await taskService.markBackgroundWorkNotifyOnTerminal?.(
               created.data.taskId,

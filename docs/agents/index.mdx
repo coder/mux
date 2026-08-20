@@ -5,7 +5,7 @@ description: Define custom agents (modes + subagents) as Markdown files
 
 ## Overview
 
-An **agent** in Shux owns two things for a given turn:
+An **agent** in Xum owns two things for a given turn:
 
 - **System prompt** — what the assistant is and how it should behave
 - **Tool policy** — which tools it can call (and which it must call)
@@ -19,7 +19,7 @@ An agent definition is a Markdown file: YAML frontmatter declares metadata, poli
 
 ## Quick Start
 
-Drop a Markdown file in `.mux/agents/` (project) or `~/.shux/agents/` (global):
+Drop a Markdown file in `.mux/agents/` (project) or `~/.xum/agents/` (global):
 
 ```md
 ---
@@ -45,13 +45,13 @@ The filename (without `.md`) is the **agent id**, used by `base:` and `task({ ag
 
 ## Discovery and Precedence
 
-Shux scans three roots, **non-recursive** (only direct `.md` children):
+Xum scans three roots, **non-recursive** (only direct `.md` children):
 
-| Location              | Scope   | Priority |
-| --------------------- | ------- | -------- |
-| `.mux/agents/*.md`    | Project | Highest  |
-| `~/.shux/agents/*.md` | Global  | Medium   |
-| Built-in              | System  | Lowest   |
+| Location             | Scope   | Priority |
+| -------------------- | ------- | -------- |
+| `.mux/agents/*.md`   | Project | Highest  |
+| `~/.xum/agents/*.md` | Global  | Medium   |
+| Built-in             | System  | Lowest   |
 
 Higher-priority definitions **override** lower-priority ones with the same id.
 
@@ -112,7 +112,7 @@ tools:
 
 ### Markdown body
 
-The body becomes the agent's instruction prompt, layered with Shux's base prelude, the workspace environment context, and `AGENTS.md`.
+The body becomes the agent's instruction prompt, layered with Xum's base prelude, the workspace environment context, and `AGENTS.md`.
 
 - With `prompt.append: true` (default), a child's body is **appended** to its base's body, separated by a blank line.
 - With `prompt.append: false`, the child's body **replaces** the base's body. Tool policy, AI defaults, and other frontmatter still inherit normally.
@@ -123,8 +123,8 @@ The body becomes the agent's instruction prompt, layered with Shux's base prelud
 
 `base: <id>` walks the same discovery roots, with two non-obvious rules:
 
-- **Same name as the current file** — Shux skips the current file's scope, so a project `exec.md` with `base: exec` resolves to the global or built-in `exec` (not itself).
-- **Different name** — Shux anchors the lookup at the current scope or lower. A built-in's `base: foo` cannot pull in a project-level `foo.md`.
+- **Same name as the current file** — Xum skips the current file's scope, so a project `exec.md` with `base: exec` resolves to the global or built-in `exec` (not itself).
+- **Different name** — Xum anchors the lookup at the current scope or lower. A built-in's `base: foo` cannot pull in a project-level `foo.md`.
 
 The chain is followed up to 10 levels deep. Cycles are detected and logged.
 

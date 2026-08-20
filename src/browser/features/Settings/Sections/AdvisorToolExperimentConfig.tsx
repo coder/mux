@@ -488,7 +488,7 @@ export function AdvisorToolExperimentConfig() {
   if (!api) {
     return (
       <div className="bg-background-secondary px-4 py-3">
-        <div className="text-muted text-xs">Connect to shux to configure this setting.</div>
+        <div className="text-muted text-xs">Connect to xum to configure this setting.</div>
       </div>
     );
   }

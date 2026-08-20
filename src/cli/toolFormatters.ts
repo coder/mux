@@ -1,5 +1,5 @@
 /**
- * CLI tool output formatters for `shux run`
+ * CLI tool output formatters for `xum run`
  *
  * Provides clean, readable formatting for recognized tool calls,
  * with emoji prefixes and structured output similar to the frontend UI.

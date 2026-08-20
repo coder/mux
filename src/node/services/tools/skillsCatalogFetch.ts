@@ -11,7 +11,7 @@ import { resolveContainedSkillFilePath } from "./skillFileUtils";
 
 const SEARCH_TIMEOUT_MS = 10_000;
 // Display/product attribution for skills.sh; no server-side mux contract.
-const SEARCH_USER_AGENT = "shux-desktop";
+const SEARCH_USER_AGENT = "xum-desktop";
 
 export const SKILLS_API_BASE = process.env.SKILLS_API_URL ?? "https://skills.sh";
 

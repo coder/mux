@@ -131,7 +131,7 @@ export default defineConfig(({ mode }) => {
       plugins: () => [topLevelAwait()],
     },
     server: {
-      host: devServerHost, // Configurable via SHUX_VITE_HOST (loopback by default)
+      host: devServerHost, // Configurable via XUM_VITE_HOST (loopback by default)
       port: devServerPort,
       strictPort: true,
       allowedHosts: devServerAllowedHosts,

@@ -16,7 +16,7 @@ import { EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import * as runtimeHelpers from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 
-const USER_AGENT = "Shux/1.0 (https://github.com/coder/mux; web-fetch tool)";
+const USER_AGENT = "Xum/1.0 (https://github.com/coder/mux; web-fetch tool)";
 const WEB_FETCH_MAX_REDIRECTS = 10;
 const WEB_FETCH_RESOLVE_TIMEOUT_SECS = 5;
 const WEB_FETCH_RUNTIME_TIMEOUT_GRACE_SECS = 1;
@@ -397,7 +397,7 @@ async function resolveHostnameInRuntime(
   );
 
   // Resolve hostnames inside the target runtime so DNS checks match the curl path,
-  // including redirected hosts that may resolve differently from local Shux.
+  // including redirected hosts that may resolve differently from local Xum.
   const result = await runtimeHelpers.execBuffered(
     config.runtime,
     buildResolveHostnameCommand(hostname),
@@ -718,7 +718,7 @@ export const createWebFetchTool: ToolFactory = (config: ToolConfiguration) => {
           };
         }
 
-        // Parse HTML with happy-dom locally in Shux, not over SSH. Strip heavy
+        // Parse HTML with happy-dom locally in Xum, not over SSH. Strip heavy
         // tags first because Readability does not need them for extraction.
         const document = parseHtmlDocument(stripHeavyTags(body), finalUrl);
 

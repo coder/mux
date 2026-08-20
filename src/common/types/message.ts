@@ -577,7 +577,7 @@ export type MuxMessageMetadata = MuxMessageMetadataBase &
       }
     | {
         // Synthetic wake-up appended when background bash monitors match output or
-        // are lost to a Shux restart. The full prompt stays in the message text for
+        // are lost to a Xum restart. The full prompt stays in the message text for
         // the model; this metadata lets the transcript render the compact card.
         type: "bash-monitor-wake";
         /** One entry per wake record in the prompt, in prompt order. */
@@ -865,7 +865,7 @@ export interface MuxFilePart {
   filename?: string; // Optional filename
 }
 
-// ShuxMessage extends UIMessage with our metadata and custom parts
+// XumMessage extends UIMessage with our metadata and custom parts
 // Supports text, reasoning, file, and tool parts (including interrupted tool calls)
 export type MuxMessage = Omit<UIMessage<MuxMetadata, never, never>, "parts"> & {
   parts: Array<MuxTextPart | MuxReasoningPart | MuxFilePart | MuxToolPart>;
@@ -877,7 +877,7 @@ export type DisplayedMessage =
   | {
       type: "user";
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID for history operations
+      historyId: string; // Original XumMessage ID for history operations
       content: string;
       /**
        * Command prefix to highlight in the UI (e.g. "/compact -m sonnet" or "/react-effects").
@@ -934,7 +934,7 @@ export type DisplayedMessage =
   | {
       type: "assistant";
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID for history operations
+      historyId: string; // Original XumMessage ID for history operations
       content: string;
       historySequence: number; // Global ordering across all messages
       isStreaming: boolean;
@@ -962,7 +962,7 @@ export type DisplayedMessage =
   | {
       type: "tool";
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID for history operations
+      historyId: string; // Original XumMessage ID for history operations
       toolCallId: string;
       toolName: string;
       args: unknown;
@@ -994,7 +994,7 @@ export type DisplayedMessage =
   | {
       type: "reasoning";
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID for history operations
+      historyId: string; // Original XumMessage ID for history operations
       content: string;
       historySequence: number; // Global ordering across all messages
       isStreaming: boolean;
@@ -1015,7 +1015,7 @@ export type DisplayedMessage =
   | {
       type: "stream-error";
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID for history operations
+      historyId: string; // Original XumMessage ID for history operations
       error: string; // Error message
       errorType: StreamErrorType; // Error type/category
       historySequence: number; // Global ordering across all messages
@@ -1058,7 +1058,7 @@ export type DisplayedMessage =
   | {
       type: "plan-display"; // Ephemeral plan display from /plan command
       id: string; // Display ID for UI/React keys
-      historyId: string; // Original ShuxMessage ID (same as id for ephemeral messages)
+      historyId: string; // Original XumMessage ID (same as id for ephemeral messages)
       content: string; // Plan markdown content
       path: string; // Path to the plan file
       historySequence: number; // Global ordering across all messages

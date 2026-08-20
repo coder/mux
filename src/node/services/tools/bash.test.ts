@@ -1611,12 +1611,12 @@ describe("zombie process cleanup", () => {
   });
 });
 
-describe("shuxEnv environment variables", () => {
-  it("should inject MUX_ environment variables when shuxEnv is provided", async () => {
+describe("xumEnv environment variables", () => {
+  it("should inject MUX_ environment variables when xumEnv is provided", async () => {
     using tempDir = new TestTempDir("test-mux-env");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
-    config.shuxEnv = {
+    config.xumEnv = {
       MUX_PROJECT_PATH: "/test/project/path",
       MUX_RUNTIME: "worktree",
       MUX_WORKSPACE_NAME: "feature-branch",
@@ -1640,11 +1640,11 @@ describe("shuxEnv environment variables", () => {
     }
   });
 
-  it("should allow secrets to override shuxEnv", async () => {
+  it("should allow secrets to override xumEnv", async () => {
     using tempDir = new TestTempDir("test-mux-env-override");
     const config = createTestToolConfig(process.cwd());
     config.runtimeTempDir = tempDir.path;
-    config.shuxEnv = {
+    config.xumEnv = {
       MUX_PROJECT_PATH: "/mux/path",
       CUSTOM_VAR: "from-mux",
     };
@@ -1664,9 +1664,9 @@ describe("shuxEnv environment variables", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      // MUX_PROJECT_PATH from shuxEnv should be present
+      // MUX_PROJECT_PATH from xumEnv should be present
       expect(result.output).toContain("MUX:/mux/path");
-      // Secrets should override shuxEnv when there's a conflict
+      // Secrets should override xumEnv when there's a conflict
       expect(result.output).toContain("CUSTOM:from-secrets");
     }
   });
@@ -2033,13 +2033,13 @@ describe("bash tool - background execution", () => {
     tempDir[Symbol.dispose]();
   });
 
-  it("should inject shuxEnv environment variables in background mode", async () => {
+  it("should inject xumEnv environment variables in background mode", async () => {
     const manager = new BackgroundProcessManager("/tmp/mux-test-bg");
 
     const tempDir = new TestTempDir("test-bash-bg-mux-env");
     const config = createTestToolConfig(tempDir.path);
     config.backgroundProcessManager = manager;
-    config.shuxEnv = {
+    config.xumEnv = {
       MUX_MODEL_STRING: "openai:gpt-5.2",
       MUX_THINKING_LEVEL: "medium",
     };

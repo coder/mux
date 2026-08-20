@@ -77,7 +77,7 @@ function buildGlobalLocalRoots(input: {
   includeClaudeSkills?: boolean;
   includeAgentPlugins?: boolean;
 }): AgentSkillsRoots {
-  const muxHome = input.muxScope?.muxHome ?? input.runtime.getShuxHome();
+  const muxHome = input.muxScope?.muxHome ?? input.runtime.getXumHome();
 
   return {
     projectRoot: "",
@@ -124,7 +124,7 @@ export function resolveSkillStorageContext(input: {
       runtime: input.runtime,
       workspacePath: input.workspacePath,
       // Keep global-scope discovery global-only so downstream readers do not
-      // fall back to workspace-local roots when the caller targets ~/.shux.
+      // fall back to workspace-local roots when the caller targets ~/.xum.
       roots: buildGlobalLocalRoots({
         runtime: input.runtime,
         muxScope: input.muxScope,

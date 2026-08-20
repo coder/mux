@@ -63,7 +63,7 @@ function toFileStat(content: string): FileStat {
 
 function createMockRuntime(state: MockRuntimeState): Runtime {
   return {
-    getShuxHome: () => state.muxHome,
+    getXumHome: () => state.muxHome,
     readFile: (path: string) => {
       state.readAttempts.push(path);
       const content = state.files.get(path);
@@ -114,12 +114,12 @@ describe("copyPlanFileAcrossRuntimes", () => {
   const targetWorkspaceName = "target-workspace";
   const projectName = "demo-project";
   const sourceMuxHome = "/source-mux";
-  const targetShuxHome = "/target-mux";
+  const targetXumHome = "/target-mux";
 
   it("reads from source runtime and writes to target runtime", async () => {
     const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, sourceMuxHome);
     const legacyPath = getLegacyPlanFilePath(sourceWorkspaceId, sourceMuxHome);
-    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetShuxHome);
+    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetXumHome);
     const sourceContent = "# source plan\n";
 
     const sourceState = createRuntimeState(sourceMuxHome, {
@@ -127,7 +127,7 @@ describe("copyPlanFileAcrossRuntimes", () => {
       // If this is read instead of sourcePath, this assertion would fail.
       [legacyPath]: "# legacy plan\n",
     });
-    const targetState = createRuntimeState(targetShuxHome);
+    const targetState = createRuntimeState(targetXumHome);
 
     await copyPlanFileAcrossRuntimes(
       createMockRuntime(sourceState),
@@ -148,13 +148,13 @@ describe("copyPlanFileAcrossRuntimes", () => {
   it("falls back to legacy source path when the new source path is missing", async () => {
     const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, sourceMuxHome);
     const legacyPath = getLegacyPlanFilePath(sourceWorkspaceId, sourceMuxHome);
-    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetShuxHome);
+    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetXumHome);
     const legacyContent = "# legacy plan\n";
 
     const sourceState = createRuntimeState(sourceMuxHome, {
       [legacyPath]: legacyContent,
     });
-    const targetState = createRuntimeState(targetShuxHome);
+    const targetState = createRuntimeState(targetXumHome);
 
     await copyPlanFileAcrossRuntimes(
       createMockRuntime(sourceState),
@@ -173,10 +173,10 @@ describe("copyPlanFileAcrossRuntimes", () => {
   it("silently no-ops when source plan is missing at both new and legacy paths", async () => {
     const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, sourceMuxHome);
     const legacyPath = getLegacyPlanFilePath(sourceWorkspaceId, sourceMuxHome);
-    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetShuxHome);
+    const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetXumHome);
 
     const sourceState = createRuntimeState(sourceMuxHome);
-    const targetState = createRuntimeState(targetShuxHome);
+    const targetState = createRuntimeState(targetXumHome);
 
     await copyPlanFileAcrossRuntimes(
       createMockRuntime(sourceState),
@@ -239,16 +239,16 @@ describe("readPlanFile", () => {
   });
 
   it.each([
-    { label: "local canonical", muxHome: "~/.shux" },
+    { label: "local canonical", muxHome: "~/.xum" },
     { label: "SSH legacy", muxHome: "~/.mux" },
     { label: "Docker", muxHome: "/var/mux" },
   ])(
-    "falls back to $label runtime-home legacy path, not a hardcoded ~/.shux root",
+    "falls back to $label runtime-home legacy path, not a hardcoded ~/.xum root",
     async ({ muxHome }) => {
       const workspaceName = "workspace-a1b2";
       const projectName = "demo-project";
       const workspaceId = "legacy-workspace-id";
-      const localCanonicalLegacyPath = getLegacyPlanFilePath(workspaceId, "~/.shux");
+      const localCanonicalLegacyPath = getLegacyPlanFilePath(workspaceId, "~/.xum");
       const runtimeLegacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
       const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
       const legacyContent = "# runtime-home legacy plan\n";
@@ -269,7 +269,7 @@ describe("readPlanFile", () => {
 
       expect(result.content).toBe(legacyContent);
       expect(state.readAttempts).toEqual([planPath, runtimeLegacyPath]);
-      if (muxHome !== "~/.shux") {
+      if (muxHome !== "~/.xum") {
         expect(state.readAttempts).not.toContain(localCanonicalLegacyPath);
       }
     }

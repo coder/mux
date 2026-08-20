@@ -652,8 +652,8 @@ export class SSHRuntime extends RemoteRuntime {
    *   early-return path in `unpack()`. The same lesson was never applied
    *   to the promisor path added three years later.
    *
-   *   Shux never deliberately turns the shared base repo into a partial
-   *   clone, but legacy bare repos populated by earlier Shux versions, or
+   *   Xum never deliberately turns the shared base repo into a partial
+   *   clone, but legacy bare repos populated by earlier Xum versions, or
    *   by user-initiated `git fetch --filter` runs on the remote, can
    *   carry these keys. Stripping them makes `repo_has_promisor_remote()`
    *   return false, routing `check_connected()` through the slow rev-list
@@ -1943,7 +1943,7 @@ export class SSHRuntime extends RemoteRuntime {
     abortSignal?: AbortSignal
   ): Promise<void> {
     // Snapshot markers stay deterministic, but the uploaded bundle itself must use
-    // a per-attempt temp path so concurrent Shux processes do not stream into the same file.
+    // a per-attempt temp path so concurrent Xum processes do not stream into the same file.
     const remoteBundlePath = path.posix.join(
       "~/.mux-bundles",
       layout.projectId,
@@ -2509,14 +2509,14 @@ export class SSHRuntime extends RemoteRuntime {
       beforeHook: async () => {
         await this.prepareWorkspaceCheckout(params, nhp);
       },
-      runHook: async ({ shuxEnv, initLogger, abortSignal }) => {
+      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
         // Expand tilde in hook path (quoted paths don't auto-expand on remote).
         const hookPath = expandTildeForSSH(`${params.workspacePath}/.mux/init`);
         await runInitHookOnRuntime(
           this,
           hookPath,
           params.workspacePath,
-          shuxEnv,
+          xumEnv,
           initLogger,
           abortSignal
         );
@@ -3368,7 +3368,7 @@ export class SSHRuntime extends RemoteRuntime {
         // Skip protected trunk branch names to avoid accidental deletion.
         const PROTECTED_BRANCHES = ["main", "master", "trunk", "develop", "default"];
         if (branchToDelete && !PROTECTED_BRANCHES.includes(branchToDelete)) {
-          // HEAD neutralization migrates legacy *Shux-owned* base repos whose
+          // HEAD neutralization migrates legacy *Xum-owned* base repos whose
           // HEAD still points at a user branch (the Graphite-poisoning state)
           // so `branch -D` keeps Git's native checked-out-branch guard instead
           // of refusing because the bare repo "has the branch checked out".

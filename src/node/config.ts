@@ -4,7 +4,7 @@ import * as crypto from "crypto";
 import * as jsonc from "jsonc-parser";
 import { EventEmitter } from "events";
 import writeFileAtomic from "write-file-atomic";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
 import { log } from "@/node/services/log";
 import type { WorkspaceMetadata, FrontendWorkspaceMetadata } from "@/common/types/workspace";
 import { isSecretReferenceValue, type Secret, type SecretsConfig } from "@/common/types/secrets";
@@ -42,8 +42,8 @@ import { SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
 import { LEGACY_MUX_PRODUCT_NAME, LEGACY_MUX_PRODUCT_SLUG } from "@/common/compat/legacyMux";
-import { getShuxHome } from "@/common/constants/paths";
-import { SHUX_PRODUCT_NAME, SHUX_PRODUCT_SLUG } from "@/common/constants/product";
+import { getXumHome } from "@/common/constants/paths";
+import { XUM_PRODUCT_NAME, XUM_PRODUCT_SLUG } from "@/common/constants/product";
 import { GATEWAY_PROVIDERS } from "@/common/constants/providers";
 import {
   DEFAULT_CODER_ARCHIVE_BEHAVIOR,
@@ -785,8 +785,8 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
 /**
  * The built-in Chat with Mux workspace (removed in #3123) lived in a hidden
  * `<muxHome>/system/Mux` project. Real upgraded installs still carry that
- * shipped path/title; later shux-branded leftovers use system/Shux and
- * "Chat with Shux". The removal shipped no config migration, so upgraded
+ * shipped path/title; later xum-branded leftovers use system/Xum and
+ * "Chat with Xum". The removal shipped no config migration, so upgraded
  * installs kept the entry: invisible in the UI (system projects are filtered
  * out) but still swept by config-driven background jobs like
  * AgentStatusService, which sent its stale transcript to the LLM on every
@@ -797,22 +797,22 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
  */
 const LEGACY_SYSTEM_CHAT_PROJECT_NAMES = new Set<string>([
   LEGACY_MUX_PRODUCT_NAME,
-  SHUX_PRODUCT_NAME,
+  XUM_PRODUCT_NAME,
 ]);
 const LEGACY_SYSTEM_CHAT_TITLES = new Set<string>([
   `Chat with ${LEGACY_MUX_PRODUCT_NAME}`,
-  `Chat with ${SHUX_PRODUCT_NAME}`,
+  `Chat with ${XUM_PRODUCT_NAME}`,
 ]);
 const LEGACY_SYSTEM_CHAT_NAMES = new Set<string>([
   `chat-with-${LEGACY_MUX_PRODUCT_SLUG}`,
-  `chat-with-${SHUX_PRODUCT_SLUG}`,
+  `chat-with-${XUM_PRODUCT_SLUG}`,
 ]);
-const LEGACY_SYSTEM_CHAT_AGENT_IDS = new Set<string>([LEGACY_MUX_PRODUCT_SLUG, SHUX_PRODUCT_SLUG]);
+const LEGACY_SYSTEM_CHAT_AGENT_IDS = new Set<string>([LEGACY_MUX_PRODUCT_SLUG, XUM_PRODUCT_SLUG]);
 
 function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boolean {
-  // Match by path shape (basename Mux or Shux under "system") rather than the
-  // current root dir so stale entries from other roots (e.g. a ~/.shux entry
-  // seen by a ~/.shux-dev build) are cleaned too.
+  // Match by path shape (basename Mux or Xum under "system") rather than the
+  // current root dir so stale entries from other roots (e.g. a ~/.xum entry
+  // seen by a ~/.xum-dev build) are cleaned too.
   const isSystemMuxPath = (candidate: string): boolean =>
     LEGACY_SYSTEM_CHAT_PROJECT_NAMES.has(path.basename(candidate)) &&
     path.basename(path.dirname(candidate)) === "system";
@@ -826,9 +826,9 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
         return true;
       }
       // The subproject merge below may have already relocated the entry into
-      // an ancestor project (e.g. ~/.shux registered as a project) on an
+      // an ancestor project (e.g. ~/.xum registered as a project) on an
       // earlier load, stamping subProjectPath with the original system/Mux
-      // (or later system/Shux) path. Match the entry in either location.
+      // (or later system/Xum) path. Match the entry in either location.
       // typeof guard: config JSON is unvalidated at runtime, and a corrupted
       // non-string subProjectPath would make path.basename throw, collapsing
       // the whole config load to empty defaults.
@@ -856,7 +856,7 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
       modified = true;
     }
 
-    // Delete the system Mux/Shux project once empty. The already-empty +
+    // Delete the system Mux/Xum project once empty. The already-empty +
     // projectKind check covers the shell left behind when the subproject
     // merge relocated its only workspace into a parent project.
     if (
@@ -875,7 +875,7 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
  * Config - Centralized configuration management
  *
  * Encapsulates all config paths and operations, making them dependency-injectable
- * and testable. Pass a custom rootDir for tests to avoid polluting ~/.shux
+ * and testable. Pass a custom rootDir for tests to avoid polluting ~/.xum
  */
 export class Config {
   readonly rootDir: string;
@@ -897,7 +897,7 @@ export class Config {
   private migrationPersist: Promise<void> | null = null;
 
   constructor(rootDir?: string) {
-    this.rootDir = rootDir ?? getShuxHome();
+    this.rootDir = rootDir ?? getXumHome();
     this.sessionsDir = path.join(this.rootDir, "sessions");
     this.srcDir = path.join(this.rootDir, "src");
     this.configFile = path.join(this.rootDir, "config.json");
@@ -1852,7 +1852,7 @@ export class Config {
    */
   getMdnsAdvertisementEnabled(): boolean | undefined {
     const envOverride = parseOptionalEnvBoolean(
-      resolveShuxEnvironmentValue("MDNS_ADVERTISE", process.env)
+      resolveXumEnvironmentValue("MDNS_ADVERTISE", process.env)
     );
     if (envOverride !== undefined) {
       return envOverride;
@@ -1865,7 +1865,7 @@ export class Config {
   /** Optional DNS-SD service instance name override. */
   getMdnsServiceName(): string | undefined {
     const envName = parseOptionalNonEmptyString(
-      resolveShuxEnvironmentValue("MDNS_SERVICE_NAME", process.env)
+      resolveXumEnvironmentValue("MDNS_SERVICE_NAME", process.env)
     );
     if (envName) {
       return envName;
@@ -1888,7 +1888,7 @@ export class Config {
    */
   getServerAuthGithubOwner(): string | undefined {
     const envOwner = parseOptionalNonEmptyString(
-      resolveShuxEnvironmentValue("SERVER_AUTH_GITHUB_OWNER", process.env)
+      resolveXumEnvironmentValue("SERVER_AUTH_GITHUB_OWNER", process.env)
     );
     if (envOwner) {
       return envOwner;
@@ -1945,11 +1945,11 @@ export class Config {
       namedWorkspacePath: workspacePath,
     };
 
-    // Check for incompatible runtime configs (from newer shux versions)
+    // Check for incompatible runtime configs (from newer xum versions)
     if (isIncompatibleRuntimeConfig(metadata.runtimeConfig)) {
       result.incompatibleRuntime =
-        `This workspace was created with a newer version of ${SHUX_PRODUCT_NAME}. ` +
-        `Please upgrade ${SHUX_PRODUCT_NAME} to use this workspace.`;
+        `This workspace was created with a newer version of ${XUM_PRODUCT_NAME}. ` +
+        `Please upgrade ${XUM_PRODUCT_NAME} to use this workspace.`;
     }
 
     // Mark worktree workspaces with missing checkout directories as transcript-only.
@@ -2722,7 +2722,7 @@ export class Config {
     // as the pre-PR behaviour).
     let watcher: fs.FSWatcher;
     try {
-      // The shux home directory may not exist on a fresh install. Create it
+      // The xum home directory may not exist on a fresh install. Create it
       // so fs.watch doesn't throw ENOENT; the directory being empty is fine.
       if (!fs.existsSync(this.rootDir)) {
         ensurePrivateDirSync(this.rootDir);
@@ -2742,7 +2742,7 @@ export class Config {
 
       // Without an 'error' listener, FSWatcher errors emit on the global
       // 'uncaughtException' path and can terminate the process (e.g. if the
-      // shux home directory is removed or unmounted after startup). Handle
+      // xum home directory is removed or unmounted after startup). Handle
       // it locally: degrade to "no live refresh" the same way we do when
       // setup itself fails. The watcher is dead after an error, so we
       // close it defensively and clear any pending debounce so the
@@ -2782,7 +2782,7 @@ export class Config {
   /**
    * Advisory cross-process lock for providers.jsonc read-modify-write cycles.
    *
-   * Multiple shux processes (desktop app, `shux run`, `shux workflow`) share
+   * Multiple xum processes (desktop app, `xum run`, `xum workflow`) share
    * providers.jsonc, and OAuth credential rotation requires compare-and-set
    * semantics across them. Exclusive directory creation is atomic on all
    * platforms, so `<providersFile>.lock/` serves as the mutex. Locks orphaned
@@ -2984,7 +2984,7 @@ export class Config {
   /**
    * Try to take an exclusive cross-process lease on the stored Coder OAuth
    * dynamic client. The client's registration has a single redirect_uris
-   * slot, so only one login flow — across every Shux process sharing this
+   * slot, so only one login flow — across every Xum process sharing this
    * providers file — may reuse (and RFC 7592-update) it at a time; callers
    * that fail to acquire the lease must register a fresh client instead.
    *
@@ -3166,7 +3166,7 @@ export class Config {
       const jsonString = JSON.stringify(config, null, 2);
 
       // Add a comment header to the file
-      const contentWithComments = `// Providers configuration for shux
+      const contentWithComments = `// Providers configuration for xum
 // Configure your AI providers here
 // Example:
 // {

@@ -4,7 +4,7 @@ import {
   isExperimentSupportedOnPlatform,
   type ExperimentId,
 } from "@/common/constants/experiments";
-import { getShuxHome } from "@/common/constants/paths";
+import { getXumHome } from "@/common/constants/paths";
 import type { TelemetryService } from "@/node/services/telemetryService";
 
 import * as fs from "fs/promises";
@@ -73,7 +73,7 @@ export async function readPersistedExperimentEnabled(
     return false;
   }
 
-  const muxHome = options?.muxHome ?? getShuxHome();
+  const muxHome = options?.muxHome ?? getXumHome();
   const overrides = await readOverridesFile(path.join(muxHome, OVERRIDES_FILE_NAME));
   return overrides.get(experimentId) === true;
 }
@@ -101,7 +101,7 @@ export class ExperimentsService {
     platform?: NodeJS.Platform;
   }) {
     this.telemetryService = options.telemetryService;
-    this.muxHome = options.muxHome ?? getShuxHome();
+    this.muxHome = options.muxHome ?? getXumHome();
     this.overridesFilePath = path.join(this.muxHome, OVERRIDES_FILE_NAME);
     this.platform = options.platform ?? process.platform;
   }

@@ -1621,7 +1621,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           showCommandFeedbackToast({
             type: "error",
             title: "Coder Disconnect Failed",
-            message: "Shux API not connected.",
+            message: "Xum API not connected.",
           });
           return;
         }
@@ -1662,7 +1662,7 @@ export function buildCoreSources(p: BuildSourcesParams): Array<() => CommandActi
           showCommandFeedbackToast({
             type: "error",
             title: "Coder Model Refresh Failed",
-            message: "Shux API not connected.",
+            message: "Xum API not connected.",
           });
           return;
         }

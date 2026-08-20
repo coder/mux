@@ -7,7 +7,7 @@ CANONICAL_TARBALL="${CANONICAL_TARBALL:-}"
 MUX_COMPAT_DIR="${MUX_COMPAT_DIR:-packages/mux-compat}"
 
 if [[ -z "$CANONICAL_TARBALL" ]] || [[ ! -f "$CANONICAL_TARBALL" ]]; then
-  echo "CANONICAL_TARBALL must point to the packed @coder/shux tarball" >&2
+  echo "CANONICAL_TARBALL must point to the packed @coder/xum tarball" >&2
   exit 1
 fi
 
@@ -24,7 +24,7 @@ node - "$TEMP_MUX_DIR/package.json" "$CANONICAL_TARBALL" <<'NODE'
 const fs = require("node:fs");
 const [packageJsonPath, canonicalTarball] = process.argv.slice(2);
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
-packageJson.dependencies["@coder/shux"] = `file:${canonicalTarball}`;
+packageJson.dependencies["@coder/xum"] = `file:${canonicalTarball}`;
 fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`);
 NODE
 

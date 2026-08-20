@@ -2,34 +2,34 @@ import React, { useMemo, useState } from "react";
 
 import { SendHorizontal } from "lucide-react";
 
-import type { StreamingMessageAggregator } from "shux/browser/utils/messages/StreamingMessageAggregator";
-import { getSendOptionsFromStorage } from "shux/browser/utils/messages/sendOptions";
+import type { StreamingMessageAggregator } from "xum/browser/utils/messages/StreamingMessageAggregator";
+import { getSendOptionsFromStorage } from "xum/browser/utils/messages/sendOptions";
 
-import { matchesKeybind, formatKeybind, KEYBINDS } from "shux/browser/utils/ui/keybinds";
-import { useAPI } from "shux/browser/contexts/API";
-import { AgentProvider, useAgent } from "shux/browser/contexts/AgentContext";
-import { ThinkingProvider } from "shux/browser/contexts/ThinkingContext";
-import { useThinkingLevel } from "shux/browser/hooks/useThinkingLevel";
-import { usePersistedState } from "shux/browser/hooks/usePersistedState";
-import { useModelsFromSettings } from "shux/browser/hooks/useModelsFromSettings";
-import { normalizeToCanonical } from "shux/common/utils/ai/models";
-import { useProviderOptions } from "shux/browser/hooks/useProviderOptions";
-import { useAutoCompactionSettings } from "shux/browser/hooks/useAutoCompactionSettings";
+import { matchesKeybind, formatKeybind, KEYBINDS } from "xum/browser/utils/ui/keybinds";
+import { useAPI } from "xum/browser/contexts/API";
+import { AgentProvider, useAgent } from "xum/browser/contexts/AgentContext";
+import { ThinkingProvider } from "xum/browser/contexts/ThinkingContext";
+import { useThinkingLevel } from "xum/browser/hooks/useThinkingLevel";
+import { usePersistedState } from "xum/browser/hooks/usePersistedState";
+import { useModelsFromSettings } from "xum/browser/hooks/useModelsFromSettings";
+import { normalizeToCanonical } from "xum/common/utils/ai/models";
+import { useProviderOptions } from "xum/browser/hooks/useProviderOptions";
+import { useAutoCompactionSettings } from "xum/browser/hooks/useAutoCompactionSettings";
 
-import { VimTextArea } from "shux/browser/components/VimTextArea/VimTextArea";
-import { ModelSelector } from "shux/browser/components/ModelSelector/ModelSelector";
-import { ThinkingSelector } from "shux/browser/components/ThinkingSelector/ThinkingSelector";
-import { ContextUsageIndicatorButton } from "shux/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
-import { Tooltip, TooltipTrigger, TooltipContent } from "shux/browser/components/Tooltip/Tooltip";
+import { VimTextArea } from "xum/browser/components/VimTextArea/VimTextArea";
+import { ModelSelector } from "xum/browser/components/ModelSelector/ModelSelector";
+import { ThinkingSelector } from "xum/browser/components/ThinkingSelector/ThinkingSelector";
+import { ContextUsageIndicatorButton } from "xum/browser/components/ContextUsageIndicatorButton/ContextUsageIndicatorButton";
+import { Tooltip, TooltipTrigger, TooltipContent } from "xum/browser/components/Tooltip/Tooltip";
 
-import type { AgentId } from "shux/common/orpc/schemas";
+import type { AgentId } from "xum/common/orpc/schemas";
 
-import { calculateTokenMeterData } from "shux/common/utils/tokens/tokenMeterUtils";
-import { createDisplayUsage } from "shux/common/utils/tokens/displayUsage";
-import type { ChatUsageDisplay } from "shux/common/utils/tokens/usageAggregator";
-import { enforceThinkingPolicy } from "shux/common/utils/thinking/policy";
-import { cn } from "shux/common/lib/utils";
-import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "shux/common/constants/storage";
+import { calculateTokenMeterData } from "xum/common/utils/tokens/tokenMeterUtils";
+import { createDisplayUsage } from "xum/common/utils/tokens/displayUsage";
+import type { ChatUsageDisplay } from "xum/common/utils/tokens/usageAggregator";
+import { enforceThinkingPolicy } from "xum/common/utils/thinking/policy";
+import { cn } from "xum/common/lib/utils";
+import { VIM_ENABLED_KEY, getInputKey, getModelKey } from "xum/common/constants/storage";
 
 const SEND_MESSAGE_TIMEOUT_MS = 30_000;
 
@@ -239,7 +239,7 @@ function ChatComposerInner(props: {
     }
 
     if (!api) {
-      props.onNotice({ level: "error", message: "Not connected to Shux server." });
+      props.onNotice({ level: "error", message: "Not connected to Xum server." });
       return;
     }
 

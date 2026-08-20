@@ -431,7 +431,7 @@ export class PortableDesktopSession {
     assert(this.height != null, "PortableDesktop screenshot height is unavailable before startup");
 
     const screenshotDir = await fs.mkdtemp(
-      path.join(os.tmpdir(), "shux-portable-desktop-screenshot-")
+      path.join(os.tmpdir(), "xum-portable-desktop-screenshot-")
     );
     const outputPath = path.join(screenshotDir, "screenshot.png");
 
