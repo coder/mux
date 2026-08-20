@@ -3831,9 +3831,11 @@ export class StreamManager extends EventEmitter {
       errorMessage = MUX_GATEWAY_SESSION_EXPIRED_MESSAGE;
     }
 
+    const openAIConfig = this.getProvidersConfig()?.openai;
     const openAIResponsesBaseUrlHint = getOpenAIResponsesBaseUrlHint({
-      model: streamInfo.model,
-      providersConfig: this.getProvidersConfig(),
+      providerId: canonicalModel.split(":", 1)[0] ?? "",
+      baseUrlConfigured: openAIConfig?.baseUrl,
+      wireFormat: openAIConfig?.wireFormat === "chatCompletions" ? "chatCompletions" : "responses",
       error: actualError,
     });
     if (openAIResponsesBaseUrlHint) {

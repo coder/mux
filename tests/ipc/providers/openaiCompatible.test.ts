@@ -35,6 +35,7 @@ type MockHandler = (request: {
 }) => void;
 
 interface MockServer {
+  origin: string;
   baseUrl: string;
   requests: Array<{ path: string; body: ChatRequestBody }>;
   errors: Error[];
@@ -109,8 +110,10 @@ async function createMockServer(handlers: MockHandler[]): Promise<MockServer> {
   });
 
   const address = server.address() as AddressInfo;
+  const origin = `http://127.0.0.1:${address.port}`;
   return {
-    baseUrl: `http://127.0.0.1:${address.port}/v1`,
+    origin,
+    baseUrl: `${origin}/v1`,
     requests,
     errors,
     close: () =>
@@ -172,7 +175,7 @@ describeOpenAICompatible("custom OpenAI-compatible providers", () => {
     const workspace = await createConfiguredWorkspace({
       "local-mock": {
         providerType: "openai-compatible",
-        baseUrl: mock.baseUrl,
+        baseUrl: mock.origin,
         models: [MOCK_MODEL],
       },
     });
@@ -193,6 +196,82 @@ describeOpenAICompatible("custom OpenAI-compatible providers", () => {
       assertStreamSuccess(collector);
       expect(extractTextFromEvents(collector.getDeltas())).toContain("Hello from local");
       expect(mock.requests).toHaveLength(1);
+      expect(mock.requests[0]?.path).toBe("/v1/chat/completions");
+      expect(mock.errors).toEqual([]);
+    } finally {
+      collector.stop();
+      await workspace.cleanup();
+      await mock.close();
+    }
+  }, 45000);
+
+  test("guides built-in OpenAI users when a custom endpoint rejects Responses requests", async () => {
+    const mock = await createMockServer([]);
+    const workspace = await createConfiguredWorkspace({
+      openai: {
+        apiKey: "test-key",
+        baseUrl: mock.baseUrl,
+      },
+    });
+    const collector = createStreamCollector(workspace.env.orpc, workspace.workspaceId);
+    collector.start();
+
+    try {
+      await collector.waitForSubscription();
+      const result = await sendMessageWithModel(
+        workspace.env,
+        workspace.workspaceId,
+        "Say hello",
+        `openai:${MOCK_MODEL}`
+      );
+      expect(result.success).toBe(true);
+
+      const errorEvent = await collector.waitForEvent("stream-error", 30000);
+      if (!errorEvent || errorEvent.type !== "stream-error") {
+        throw new Error("Expected a stream-error event");
+      }
+      expect(errorEvent.error).toContain("Wire format to 'chat completions'");
+      expect(mock.requests[0]?.path).toBe("/v1/responses");
+      expect(mock.errors).toEqual([]);
+    } finally {
+      collector.stop();
+      await workspace.cleanup();
+      await mock.close();
+    }
+  }, 45000);
+
+  test("streams through the built-in OpenAI provider in chat completions mode", async () => {
+    const mock = await createMockServer([
+      ({ response }) => {
+        writeCompletion(response, [
+          completionChunk({ role: "assistant", content: "Built-in chat works" }),
+          completionChunk({}, "stop"),
+        ]);
+      },
+    ]);
+    const workspace = await createConfiguredWorkspace({
+      openai: {
+        apiKey: "test-key",
+        baseUrl: mock.baseUrl,
+        wireFormat: "chatCompletions",
+      },
+    });
+    const collector = createStreamCollector(workspace.env.orpc, workspace.workspaceId);
+    collector.start();
+
+    try {
+      await collector.waitForSubscription();
+      const result = await sendMessageWithModel(
+        workspace.env,
+        workspace.workspaceId,
+        "Say hello",
+        `openai:${MOCK_MODEL}`
+      );
+      expect(result.success).toBe(true);
+
+      expect(await collector.waitForEvent("stream-end", 30000)).toBeDefined();
+      assertStreamSuccess(collector);
+      expect(extractTextFromEvents(collector.getDeltas())).toContain("Built-in chat works");
       expect(mock.requests[0]?.path).toBe("/v1/chat/completions");
       expect(mock.errors).toEqual([]);
     } finally {
@@ -338,6 +417,9 @@ describeOpenAICompatible("custom OpenAI-compatible providers", () => {
       expect(await workspace.env.orpc.providers.list()).toEqual(
         expect.arrayContaining(["first-local", "second-local"])
       );
+      const providersConfig = await workspace.env.orpc.providers.getConfig();
+      expect(providersConfig["first-local"]?.models).toEqual([MOCK_MODEL]);
+      expect(providersConfig["second-local"]?.models).toEqual([MOCK_MODEL]);
       await Promise.all([
         firstCollector.waitForSubscription(),
         secondCollector.waitForSubscription(),

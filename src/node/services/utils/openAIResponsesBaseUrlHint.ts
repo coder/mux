@@ -1,8 +1,7 @@
-import type { ProvidersConfigMap } from "@/common/orpc/types";
 import { APICallError, RetryError } from "ai";
 
 const OPENAI_RESPONSES_BASE_URL_HINT =
-  "Your custom base URL may not support the OpenAI Responses API. In Settings -> Providers -> OpenAI set Wire format to Chat completions, or add the endpoint as a custom OpenAI-compatible provider.";
+  "Your custom OpenAI base URL may not support the Responses API. In Settings -> Providers -> OpenAI set Wire format to 'chat completions', or add the endpoint as a custom OpenAI-compatible provider instead.";
 
 function getApiCallError(error: unknown): APICallError | undefined {
   if (APICallError.isInstance(error)) {
@@ -17,16 +16,25 @@ function getApiCallError(error: unknown): APICallError | undefined {
 }
 
 export function getOpenAIResponsesBaseUrlHint(options: {
-  model: string;
-  providersConfig: ProvidersConfigMap | null;
+  providerId: string;
+  baseUrlConfigured: string | undefined;
+  wireFormat: "responses" | "chatCompletions";
   error: unknown;
 }): string | undefined {
-  if (!options.model.startsWith("openai:")) {
+  if (options.providerId !== "openai" || options.wireFormat !== "responses") {
     return undefined;
   }
 
-  const openAIConfig = options.providersConfig?.openai;
-  if (!openAIConfig?.baseUrl?.trim() || openAIConfig.wireFormat === "chatCompletions") {
+  const baseUrl = options.baseUrlConfigured?.trim();
+  if (!baseUrl) {
+    return undefined;
+  }
+
+  try {
+    if (new URL(baseUrl).hostname.toLowerCase() === "api.openai.com") {
+      return undefined;
+    }
+  } catch {
     return undefined;
   }
 

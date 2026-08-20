@@ -2166,6 +2166,12 @@ export function ProvidersSection() {
                         const fieldValue = getFieldValue(provider, fieldConfig.key);
                         const fieldDisplayValue = getFieldDisplayValue(provider, fieldConfig.key);
                         const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
+                        const showOpenAIBaseUrlHint =
+                          fieldConfig.key === "baseUrl" &&
+                          provider === "openai" &&
+                          !isCustomOpenAICompatible &&
+                          ((fieldDisplayValue?.trim().length ?? 0) > 0 ||
+                            (isEditing && editValue.trim().length > 0));
 
                         return (
                           <div key={fieldConfig.key}>
@@ -2269,17 +2275,14 @@ export function ProvidersSection() {
                                   )}
                               </>
                             )}
-                            {fieldConfig.key === "baseUrl" &&
-                              provider === "openai" &&
-                              !isCustomOpenAICompatible &&
-                              fieldDisplayValue?.trim() && (
-                                <p className="text-muted mt-1 text-xs">
-                                  The OpenAI provider uses the Responses API by default. For
-                                  llama.cpp, vLLM, and LM Studio endpoints, set Wire format to Chat
-                                  completions below or use Add provider to create a custom
-                                  OpenAI-compatible provider.
-                                </p>
-                              )}
+                            {showOpenAIBaseUrlHint && (
+                              <p className="text-muted mt-1 text-xs">
+                                The OpenAI provider uses the Responses API by default. For
+                                llama.cpp, vLLM, and LM Studio endpoints, set Wire format to Chat
+                                completions below or use Add provider to create a custom
+                                OpenAI-compatible provider.
+                              </p>
+                            )}
                           </div>
                         );
                       })}

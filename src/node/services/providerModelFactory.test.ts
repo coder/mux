@@ -20,6 +20,7 @@ import {
   modelCostsIncluded,
   XUM_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
+  normalizeOpenAICompatibleBaseURL,
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
@@ -173,6 +174,17 @@ describe("resolveOpenAIWebSocketResponsesUrl", () => {
     expect(resolveOpenAIWebSocketResponsesUrl("http://localhost:8080/openai/v1/")).toBe(
       "ws://localhost:8080/openai/v1/responses"
     );
+  });
+});
+
+describe("normalizeOpenAICompatibleBaseURL", () => {
+  it.each([
+    ["http://localhost:8080", "http://localhost:8080/v1"],
+    ["http://localhost:8080/", "http://localhost:8080/v1"],
+    ["http://localhost:8080/v1", "http://localhost:8080/v1"],
+    ["http://localhost:8080/custom/prefix", "http://localhost:8080/custom/prefix"],
+  ])("normalizes %s", (baseURL, expected) => {
+    expect(normalizeOpenAICompatibleBaseURL(baseURL)).toBe(expected);
   });
 });
 

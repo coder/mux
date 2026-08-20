@@ -570,6 +570,21 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
   return `${trimmed}/v1`;
 }
 
+export function normalizeOpenAICompatibleBaseURL(baseURL: string): string {
+  try {
+    const url = new URL(baseURL);
+    if (url.pathname !== "/") {
+      return baseURL;
+    }
+
+    // Most compatible servers mount their API under /v1, but explicit proxy paths must remain intact.
+    url.pathname = "/v1";
+    return url.toString();
+  } catch {
+    return baseURL;
+  }
+}
+
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -1238,7 +1253,7 @@ export class ProviderModelFactory {
         // fields such as models, enabled, and providerType never reach the SDK.
         const provider = createOpenAICompatible({
           name: providerName,
-          baseURL: credentials.baseURL,
+          baseURL: normalizeOpenAICompatibleBaseURL(credentials.baseURL),
           ...(credentials.apiKey != null ? { apiKey: credentials.apiKey } : {}),
           headers: { ...muxAttributionHeaders },
           fetch: providerFetch,
