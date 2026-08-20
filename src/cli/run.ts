@@ -895,6 +895,17 @@ async function main(): Promise<number> {
   // Budget tracking state
   let budgetExceeded = false;
 
+  // Three separate budget checks (stream-end, sub-agent usage roll-up, and usage-delta) all
+  // report an exceeded budget the same way; only whether the stream still needs interrupting
+  // differs. Share the reporting so the JSON event and the human-readable line cannot drift.
+  const reportBudgetExceeded = (cost: number, budgetLimit: number): void => {
+    budgetExceeded = true;
+    emitJsonLine({ type: "budget-exceeded", spent: cost, budget: budgetLimit });
+    writeHumanLineClosed(
+      `\n${chalk.yellow(`Budget exceeded ($${cost.toFixed(2)} of $${budgetLimit.toFixed(2)}) - stopping`)}`
+    );
+  };
+
   // Centralized output type tracking for spacing
   type OutputType = "none" | "text" | "thinking" | "tool";
   let lastOutputType: OutputType = "none";
@@ -1214,10 +1225,7 @@ async function main(): Promise<number> {
           }
 
           if (cost !== undefined && cost > budget) {
-            budgetExceeded = true;
-            const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
-            emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
-            writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+            reportBudgetExceeded(cost, budget);
             // Don't interrupt - stream is already ending
           }
         }
@@ -1251,10 +1259,7 @@ async function main(): Promise<number> {
         }
 
         if (cost !== undefined && cost > budget) {
-          budgetExceeded = true;
-          const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
-          emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
-          writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+          reportBudgetExceeded(cost, budget);
           void session.interruptStream({ abandonPartial: false });
         }
       }
@@ -1292,10 +1297,7 @@ async function main(): Promise<number> {
         }
 
         if (cost !== undefined && cost > budget) {
-          budgetExceeded = true;
-          const msg = `Budget exceeded ($${cost.toFixed(2)} of $${budget.toFixed(2)}) - stopping`;
-          emitJsonLine({ type: "budget-exceeded", spent: cost, budget });
-          writeHumanLineClosed(`\n${chalk.yellow(msg)}`);
+          reportBudgetExceeded(cost, budget);
           void session.interruptStream({ abandonPartial: false });
         }
       }
