@@ -10159,13 +10159,15 @@ export class TaskService {
   }
 
   private buildWorkspaceTurnReportMarkdown(event: StreamEndEvent): string {
+    // Text parts are provider stream deltas, so inserting separators here turns token boundaries
+    // into arbitrary Markdown line breaks and can split headings, links, and code spans.
     const text = event.parts
       .filter(
         (part): part is Extract<(typeof event.parts)[number], { type: "text" }> =>
           part.type === "text"
       )
       .map((part) => part.text)
-      .join("\n")
+      .join("")
       .trim();
     return text.length > 0 ? text : "Workspace turn completed without final text output.";
   }

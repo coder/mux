@@ -2806,7 +2806,14 @@ describe("TaskService", () => {
           turnId: "turn",
         },
       },
-      parts: [{ type: "text", text: "Done" }],
+      // StreamManager stores provider text deltas as adjacent parts; report assembly must
+      // concatenate them exactly instead of turning token boundaries into Markdown newlines.
+      parts: [
+        { type: "text", text: "## Verified" },
+        { type: "text", text: " root" },
+        { type: "text", text: " cause\n\n" },
+        { type: "text", text: "- Fixed" },
+      ],
     });
 
     const snapshot = await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle");
@@ -2814,8 +2821,8 @@ describe("TaskService", () => {
       status: "completed",
       workspaceId: "childworkspace",
       messageId: "msg_1",
-      reportMarkdown: "Done",
-      finalMessageRef: { messageId: "msg_1", agentId: "exec", textCharCount: 4 },
+      reportMarkdown: "## Verified root cause\n\n- Fixed",
+      finalMessageRef: { messageId: "msg_1", agentId: "exec", textCharCount: 31 },
     });
     const childConfig = findWorkspaceInConfig(config, "childworkspace");
     expect(childConfig?.parentWorkspaceId).toBeUndefined();
