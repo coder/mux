@@ -3,6 +3,10 @@ import * as path from "node:path";
 
 import { tool } from "ai";
 
+import {
+  SUBAGENT_REUSABLE_BENCH_EXCLUSIVE_LIMIT,
+  SUBAGENT_REUSABLE_BENCH_TARGET,
+} from "@/common/constants/subagentLifecycle";
 import type { TaskListToolSuccessResult } from "@/common/types/tools";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { WorkflowRunRecordSchema } from "@/common/orpc/schemas";
@@ -64,8 +68,9 @@ function taskListStatusFromExecution(status: WorkspaceTurnTaskStatus): TaskListS
   }
 }
 
-const INACTIVE_CHILD_CLEANUP_NOTE =
-  "Inactive persistent children remain available under stable task IDs. After consuming a terminal result, keep reusable roles, retitle stale role names with task_retitle, and remove clearly one-shot or obsolete children with task_remove (deepest-first). Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.";
+// Discovery should keep a useful reusable bench without letting inactive children accumulate
+// indefinitely or turning every task boundary into a blanket cleanup.
+const INACTIVE_CHILD_RETENTION_NOTE = `Inactive persistent children remain available under stable task IDs. Rows with bestOf metadata are temporary grouped candidates rather than standalone bench members; after their results and artifacts are consumed and no same-candidate follow-up is expected, remove them with task_remove. Keep each parent's direct standalone bench role-based: aim for at most ${SUBAGENT_REUSABLE_BENCH_TARGET} and keep it below ${SUBAGENT_REUSABLE_BENCH_EXCLUSIVE_LIMIT}. Prefer reawakening relevant context and use task_retitle when responsibility changes; prune substantially overlapping, obsolete, or least-useful inactive roles with task_remove when the bench exceeds those bounds. Do not sweep a small bench merely because a turn, task, or PR ended. A reawakened child keeps its checkout, so for repository-dependent work verify the retained snapshot or tell it to synchronize. Interrupted children were stopped before a terminal report; reawaken and ask them to finalize if their work should count as completed.`;
 
 const MAX_ARCHIVE_ANCESTOR_DEPTH = 32;
 
@@ -380,7 +385,7 @@ export const createTaskListTool: ToolFactory = (config: ToolConfiguration) => {
         TaskListToolResultSchema,
         {
           tasks,
-          ...(listedInactiveChild ? { note: INACTIVE_CHILD_CLEANUP_NOTE } : {}),
+          ...(listedInactiveChild ? { note: INACTIVE_CHILD_RETENTION_NOTE } : {}),
         },
         "task_list"
       );

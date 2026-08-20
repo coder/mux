@@ -141,6 +141,7 @@ describe("task_list tool", () => {
         createdAt: "2025-01-01T00:00:00.000Z",
         modelString: "anthropic:claude-haiku-4-5",
         thinkingLevel: "low",
+        bestOf: { groupId: "task-group:root-workspace:test-call", index: 0, total: 2 },
         depth: 1,
       },
     ]);
@@ -162,14 +163,15 @@ describe("task_list tool", () => {
           createdAt: "2025-01-01T00:00:00.000Z",
           modelString: "anthropic:claude-haiku-4-5",
           thinkingLevel: "low",
+          bestOf: { groupId: "task-group:root-workspace:test-call", index: 0, total: 2 },
           depth: 1,
         },
       ],
     });
   });
 
-  it("guides cleanup when listed user-owned children are inactive", async () => {
-    using tempDir = new TestTempDir("test-task-list-inactive-cleanup-note");
+  it("guides bounded retention when listed user-owned children are inactive", async () => {
+    using tempDir = new TestTempDir("test-task-list-inactive-retention-note");
     const baseConfig = createTestToolConfig(tempDir.path, { workspaceId: "root-workspace" });
     const listDescendantAgentTasks = mock(() => [
       buildAgentTask("reviewer", "reported"),

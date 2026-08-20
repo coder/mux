@@ -616,6 +616,7 @@ export interface DescendantAgentTaskInfo {
   executionStatus?: WorkspaceTurnTaskStatus;
   modelString?: string;
   thinkingLevel?: ThinkingLevel;
+  bestOf?: WorkspaceMetadata["bestOf"];
   depth: number;
 }
 
@@ -8725,6 +8726,7 @@ export class TaskService {
           executionStatus: entry.taskExecutionStatus,
           modelString: entry.aiSettings?.model,
           thinkingLevel: entry.aiSettings?.thinkingLevel,
+          ...(entry.bestOf != null ? { bestOf: { ...entry.bestOf } } : {}),
           depth: next.depth,
         });
       }

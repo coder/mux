@@ -14458,6 +14458,43 @@ describe("TaskService", () => {
     ).toBe(false);
   });
 
+  test("listDescendantAgentTasks exposes current grouped-task metadata", async () => {
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const rootWorkspaceId = "root-111";
+    const groupedTaskId = "task-grouped";
+    const standaloneTaskId = "task-standalone";
+    const bestOf = { groupId: "task-group:root-111:call-1", index: 0, total: 2 } as const;
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "root", rootWorkspaceId),
+        projectWorkspace(projectPath, "grouped-task", groupedTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "exec",
+          taskStatus: "reported",
+          bestOf,
+        }),
+        projectWorkspace(projectPath, "standalone-task", standaloneTaskId, {
+          parentWorkspaceId: rootWorkspaceId,
+          agentType: "explore",
+          taskStatus: "reported",
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { aiService } = createAIServiceMocks(config);
+    const { workspaceService } = createWorkspaceServiceMocks();
+    const { taskService } = createTaskServiceHarness(config, { aiService, workspaceService });
+    const listedTasks = taskService.listDescendantAgentTasks(rootWorkspaceId);
+
+    expect(listedTasks.find((task) => task.taskId === groupedTaskId)?.bestOf).toEqual(bestOf);
+    expect(listedTasks.find((task) => task.taskId === standaloneTaskId)?.bestOf).toBeUndefined();
+  });
+
   test("isWorkflowOwnedDescendantAgentTask consults persisted report metadata", async () => {
     const config = await createTestConfig(rootDir);
     const projectPath = path.join(rootDir, "repo");

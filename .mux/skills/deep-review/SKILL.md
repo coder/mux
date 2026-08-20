@@ -77,10 +77,6 @@ Use this rubric to avoid blind spots:
 - **Safety**: secrets, path traversal, injection risks, filesystem safety
 - **DX**: logs, error messages, debuggability
 
-## Clean up delegated review work
-
-After consolidating the findings, remember that completed review sub-agents remain as inactive child workspaces. Keep any child that still needs follow-up; otherwise remove completed review children in one deepest-first `task_remove` batch. Use `task_stop` only for review work that is still active but no longer needed.
-
 ## Anti-patterns
 
 - **Single-threaded review** of a large change (spawn sub-agents).

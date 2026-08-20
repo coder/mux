@@ -42,6 +42,7 @@ export {
 // Workspace schemas
 export { WorkspaceAISettingsSchema } from "./schemas/workspaceAiSettings";
 export {
+  BestOfGroupSchema,
   FrontendWorkspaceMetadataSchema,
   GitStatusSchema,
   ProjectRefSchema,

@@ -7,10 +7,10 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { tmpdir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
-import { afterEach, describe, expect, test } from "bun:test";
-import { cleanupObsoleteMuxBinArtifacts } from "./paths";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { cleanupObsoleteMuxBinArtifacts, getMuxHome } from "./paths";
 
 const tempDirs: string[] = [];
 
@@ -24,6 +24,58 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+const ENV_KEYS = ["MUX_ROOT", "MUX_HOME", "NODE_ENV"] as const;
+type EnvKey = (typeof ENV_KEYS)[number];
+
+describe("getMuxHome", () => {
+  let originalEnv: Record<EnvKey, string | undefined>;
+
+  beforeEach(() => {
+    originalEnv = {
+      MUX_ROOT: process.env.MUX_ROOT,
+      MUX_HOME: process.env.MUX_HOME,
+      NODE_ENV: process.env.NODE_ENV,
+    };
+
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      const value = originalEnv[key];
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  });
+
+  test("uses MUX_ROOT exactly when set", () => {
+    process.env.MUX_ROOT = "/custom/mux-root";
+    process.env.MUX_HOME = "/ignored/mux-home";
+    process.env.NODE_ENV = "production";
+
+    expect(getMuxHome()).toBe("/custom/mux-root");
+  });
+
+  test("ignores MUX_HOME and uses the homedir default", () => {
+    process.env.MUX_HOME = "/ignored/mux-home";
+    process.env.NODE_ENV = "production";
+
+    expect(getMuxHome()).toBe(join(homedir(), ".mux"));
+  });
+
+  test("uses the development suffix without MUX_ROOT", () => {
+    process.env.MUX_HOME = "/ignored/mux-home";
+    process.env.NODE_ENV = "development";
+
+    expect(getMuxHome()).toBe(join(homedir(), ".mux-dev"));
+  });
 });
 
 describe("cleanupObsoleteMuxBinArtifacts", () => {
