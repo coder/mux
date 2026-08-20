@@ -153,6 +153,34 @@ describe("Config", () => {
     });
   });
 
+  describe("loadConfigOrDefault customInstructions sanitizing", () => {
+    it("discards malformed non-string customInstructions and keeps valid ones", () => {
+      // A malformed value must not survive load: it would fail the
+      // projects.list z.string() output schema and brick the project list.
+      const configFile = path.join(tempDir, "config.json");
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({
+          projects: [
+            ["/home/user/number", { workspaces: [], customInstructions: 42 }],
+            ["/home/user/object", { workspaces: [], customInstructions: { nested: true } }],
+            ["/home/user/blank", { workspaces: [], customInstructions: "   " }],
+            ["/home/user/valid", { workspaces: [], customInstructions: "Keep this guidance." }],
+          ],
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.get("/home/user/number")?.customInstructions).toBeUndefined();
+      expect(loaded.projects.get("/home/user/object")?.customInstructions).toBeUndefined();
+      expect(loaded.projects.get("/home/user/blank")?.customInstructions).toBeUndefined();
+      expect(loaded.projects.get("/home/user/valid")?.customInstructions).toBe(
+        "Keep this guidance."
+      );
+    });
+  });
+
   describe("legacy workflow schedule cleanup", () => {
     it("drops named workflow schedule config while loading", () => {
       const configFile = path.join(tempDir, "config.json");

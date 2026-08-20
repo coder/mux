@@ -728,6 +728,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     defaultRuntime?: unknown;
     runtimeOverridesEnabled?: unknown;
     projectKind?: unknown;
+    customInstructions?: unknown;
   };
   const runtimeEnablement = normalizeRuntimeEnablementOverrides(record.runtimeEnablement);
   const defaultRuntime = normalizeRuntimeEnablementId(record.defaultRuntime);
@@ -761,6 +762,15 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
     next.projectKind = projectKind;
   } else {
     delete next.projectKind;
+  }
+
+  // config.json is hand-editable: a non-string customInstructions would fail
+  // the projects.list output schema (z.string()) and brick the whole project
+  // list, so discard malformed values here where both load and save pass.
+  if (typeof record.customInstructions === "string" && record.customInstructions.trim()) {
+    next.customInstructions = record.customInstructions;
+  } else {
+    delete next.customInstructions;
   }
 
   // Legacy named workflow schedules are intentionally dropped while workflow
