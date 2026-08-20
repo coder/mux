@@ -32,6 +32,13 @@ export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl
 // text surfaces like web_fetch output before results enter history.
 export const MCP_TOOL_RESULT_MAX_TEXT_BYTES = 64 * 1024;
 
+// Backstop for MCP result surfaces the per-text caps cannot reach (result- and
+// part-level _meta, unknown fields, resource URIs): results whose total
+// serialized size still exceeds this after text capping are flattened to
+// bounded text parts. Sized so capped legitimate results (64KB text + 64KB
+// structuredContent + notices) never trip it.
+export const MCP_TOOL_RESULT_MAX_TOTAL_BYTES = 256 * 1024;
+
 // MCP prompt expansions are server-controlled; bound them like web_fetch output.
 export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
 export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";

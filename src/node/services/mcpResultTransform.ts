@@ -1,4 +1,7 @@
-import { MCP_TOOL_RESULT_MAX_TEXT_BYTES } from "@/common/constants/toolLimits";
+import {
+  MCP_TOOL_RESULT_MAX_TEXT_BYTES,
+  MCP_TOOL_RESULT_MAX_TOTAL_BYTES,
+} from "@/common/constants/toolLimits";
 import { log } from "@/node/services/log";
 
 /**
@@ -118,6 +121,10 @@ function omittedPartsNotice(count: number): string {
 
 function omittedValueNotice(kind: string, byteLength: number): string {
   return `[MCP ${kind} omitted: ${formatBytesSI(byteLength)} exceeds the ${formatBytesSI(MCP_TOOL_RESULT_MAX_TEXT_BYTES)} cap. Narrow the query to reduce output size.]`;
+}
+
+function metadataOmittedNotice(byteLength: number): string {
+  return `[MCP result metadata omitted: result serialized to ${formatBytesSI(byteLength)}, exceeding the ${formatBytesSI(MCP_TOOL_RESULT_MAX_TOTAL_BYTES)} total cap. Narrow the query to reduce output size.]`;
 }
 
 function jsonByteLength(value: unknown): number {
@@ -347,19 +354,66 @@ function capTextOnlyResult(typed: MCPCallToolResult): unknown {
     });
   }
 
-  if (!changed) {
-    return typed;
+  if (changed) {
+    log.warn("[MCP] tool result text exceeded cap, truncated", {
+      cap: MCP_TOOL_RESULT_MAX_TEXT_BYTES,
+      omittedParts: omitted,
+      structuredContentDropped: dropStructured,
+    });
   }
 
-  log.warn("[MCP] tool result text exceeded cap, truncated", {
-    cap: MCP_TOOL_RESULT_MAX_TEXT_BYTES,
-    omittedParts: omitted,
-    structuredContentDropped: dropStructured,
+  const candidate: MCPCallToolResult = changed ? { ...typed, content: cappedContent } : typed;
+  if (changed && dropStructured) {
+    delete candidate.structuredContent;
+  }
+
+  // The per-surface caps above cannot reach server-controlled metadata
+  // (result- and part-level _meta, unknown fields, resource URIs), so a total
+  // serialized budget backstops them: anything still oversized is flattened to
+  // bounded text parts so no unbounded bytes reach history.
+  const totalSize = jsonByteLength(candidate);
+  if (totalSize <= MCP_TOOL_RESULT_MAX_TOTAL_BYTES) {
+    return candidate;
+  }
+
+  log.warn("[MCP] tool result metadata exceeded total cap, flattening", {
+    totalSize,
+    cap: MCP_TOOL_RESULT_MAX_TOTAL_BYTES,
   });
 
-  const capped: MCPCallToolResult = { ...typed, content: cappedContent };
-  if (dropStructured) {
-    delete capped.structuredContent;
+  const rebuildBudget: TextBudget = { remaining: MCP_TOOL_RESULT_MAX_TEXT_BYTES };
+  let dropped = 0;
+  const boundedContent: MCPContent[] = [];
+  for (const item of cappedContent) {
+    let text: string;
+    if (item.type === "text") {
+      text = item.text;
+    } else {
+      try {
+        text = JSON.stringify(item);
+      } catch {
+        text = "[unserializable content part omitted]";
+      }
+    }
+    const capped = capText(text, rebuildBudget);
+    if (capped === null) {
+      dropped += 1;
+      continue;
+    }
+    boundedContent.push({ type: "text", text: capped.text });
   }
-  return capped;
+  if (dropped > 0) {
+    boundedContent.push({ type: "text", text: omittedPartsNotice(dropped) });
+  }
+  boundedContent.push({ type: "text", text: metadataOmittedNotice(totalSize) });
+
+  return {
+    // Strictly-true check: hostile servers can put unbounded junk in isError.
+    ...(typed.isError === true ? { isError: true } : {}),
+    content: boundedContent,
+    // Kept structuredContent is already bounded by its own cap above.
+    ...(typed.structuredContent !== undefined && !dropStructured
+      ? { structuredContent: typed.structuredContent }
+      : {}),
+  };
 }

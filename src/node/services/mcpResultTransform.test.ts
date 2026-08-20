@@ -1,5 +1,8 @@
 import { describe, it, expect } from "bun:test";
-import { MCP_TOOL_RESULT_MAX_TEXT_BYTES } from "@/common/constants/toolLimits";
+import {
+  MCP_TOOL_RESULT_MAX_TEXT_BYTES,
+  MCP_TOOL_RESULT_MAX_TOTAL_BYTES,
+} from "@/common/constants/toolLimits";
 import { transformMCPResult, MAX_IMAGE_DATA_BYTES } from "./mcpResultTransform";
 
 describe("transformMCPResult", () => {
@@ -234,6 +237,67 @@ describe("transformMCPResult", () => {
 
       expect(result.content[0].type).toBe("text");
       expect(result.content[0].text).toContain("[MCP tool result omitted:");
+    });
+
+    it("passes small results with modest metadata through unchanged", () => {
+      const withMeta = {
+        content: [{ type: "text" as const, text: "ok" }],
+        _meta: { traceId: "abc123" },
+      };
+      expect(transformMCPResult(withMeta)).toBe(withMeta);
+    });
+
+    it("flattens results whose result-level metadata exceeds the total serialized cap", () => {
+      const result = transformMCPResult({
+        content: [{ type: "text" as const, text: "small useful text" }],
+        _meta: { blob: "m".repeat(MCP_TOOL_RESULT_MAX_TOTAL_BYTES + 10_000) },
+      }) as TextContentResult & { _meta?: unknown };
+
+      expect(result._meta).toBeUndefined();
+      expect(result.content[0].text).toBe("small useful text");
+      expect(result.content.at(-1)!.text).toContain("[MCP result metadata omitted:");
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(
+        MCP_TOOL_RESULT_MAX_TOTAL_BYTES
+      );
+    });
+
+    it("bounds oversized metadata riding on individual content parts", () => {
+      const result = transformMCPResult({
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: "hello",
+            _meta: { blob: "m".repeat(MCP_TOOL_RESULT_MAX_TOTAL_BYTES + 10_000) },
+          },
+        ],
+      }) as TextContentResult;
+
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toBe("hello");
+      expect(result.content.at(-1)!.text).toContain("[MCP result metadata omitted:");
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(
+        MCP_TOOL_RESULT_MAX_TOTAL_BYTES
+      );
+    });
+
+    it("bounds resource parts with oversized URIs and no text", () => {
+      const result = transformMCPResult({
+        content: [
+          {
+            type: "resource" as const,
+            resource: { uri: "data:x," + "u".repeat(MCP_TOOL_RESULT_MAX_TOTAL_BYTES + 10_000) },
+          },
+        ],
+      }) as TextContentResult;
+
+      // Flattened to a truncated stringified text part plus the metadata notice.
+      expect(result.content[0].type).toBe("text");
+      expect(result.content[0].text).toContain("[MCP tool result text truncated:");
+      expect(result.content.at(-1)!.text).toContain("[MCP result metadata omitted:");
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(
+        MCP_TOOL_RESULT_MAX_TOTAL_BYTES
+      );
     });
 
     it("truncates oversized primitive string results", () => {
