@@ -238,7 +238,9 @@ dist/cli/index.js: src/cli/index.ts src/desktop/main.ts src/cli/server.ts src/ve
 	@touch dist/.main-build-complete
 
 # Build API CLI as ESM bundle (trpc-cli requires ESM with top-level await)
-dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES)
+# node_modules/.installed is required here: unlike `bun x`, $(ESBUILD_BIN) cannot
+# self-bootstrap, and parallel make would otherwise race this recipe against bun install.
+dist/cli/api.mjs: src/cli/api.ts src/cli/proxifyOrpc.ts $(TS_SOURCES) node_modules/.installed
 	@echo "Building API CLI (ESM)..."
 	@$(ESBUILD_BIN) src/cli/api.ts $(ESBUILD_CLI_FLAGS)
 
