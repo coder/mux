@@ -90,10 +90,11 @@ type LogoTargetConfig = RasterTargetConfig | SvgTargetConfig;
 const MONO_ICON = { source: SOURCE_BLACK, bg: false } as const;
 const APP_ICON = { source: SOURCE_WHITE, bg: true } as const;
 
-// Crop the centered square source to the outlined "s" + cursor bounds so the
-// mark fills small tray images without clipping the glyph's natural overshoot.
-// Content bounds: x 14.37…57.63, y 24.5…47.99 → 43.26×23.49 units.
-const TRAY_MARK_CROP = "13.5 24 45 24.5";
+// Crop the centered square source to the outlined "x" + cursor bounds so the
+// mark fills small tray images without clipping the glyph or cursor.
+// Content bounds: x 13.13…58.88, y 24.5…47.5 → 45.75×23 units. Keep
+// roughly one output pixel of horizontal breathing room at the 24px tray size.
+const TRAY_MARK_CROP = "11 24 50 24.5";
 
 // Targets to update (path -> config)
 const LOGO_TARGETS = {
