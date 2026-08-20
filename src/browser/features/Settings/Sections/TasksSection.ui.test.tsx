@@ -478,6 +478,49 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(payload.agentAiDefaults.exec?.reasoningMode).toBe("pro");
   });
 
+  test("disabling Pro mode inherited from a base agent persists an explicit standard override", async () => {
+    // Explore's base is exec (FALLBACK_AGENTS), so ACP resolution inherits
+    // exec's pro; deleting explore's override would silently fall back to pro.
+    const view = renderTasksSection({
+      agentAiDefaults: {
+        exec: { reasoningMode: "pro" },
+        explore: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+    });
+
+    await view.findByText("Explore");
+    const card = getAgentCardByName(view, "Explore");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    const proToggle = card.querySelector('[data-component="ProModeToggle"]');
+    if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
+    fireEvent.click(proToggle);
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    expect(payload.agentAiDefaults.explore?.reasoningMode).toBe("standard");
+    expect(payload.agentAiDefaults.exec?.reasoningMode).toBe("pro");
+  });
+
+  test("selecting Inherit clears the reasoning override along with the thinking level", async () => {
+    const view = renderTasksSection({
+      subagentAiDefaults: {
+        exec: { thinkingLevel: "high", reasoningMode: "standard" },
+      },
+    });
+
+    const row = await view.findByRole("group", { name: "Exec defaults" });
+    fireEvent.click(within(row).getByRole("button", { name: /Reasoning/ }));
+    const listbox = within(row).getByRole("listbox", { name: "Reasoning effort" });
+    fireEvent.click(within(listbox).getByRole("option", { name: "Inherit from UI Exec" }));
+
+    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
+    const payload = getLatestSavePayload(view.saveConfig);
+
+    // Both fields cleared empties the entry entirely.
+    expect(payload.subagentAiDefaults).toEqual({});
+  });
+
   test("hides the Pro mode toggle for models without pro support", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {

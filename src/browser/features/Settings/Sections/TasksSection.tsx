@@ -796,7 +796,11 @@ export function TasksSection() {
     setAgentAiDefaults((prev) =>
       updateAgentDefaultEntry(prev, agentId, (updated) => {
         if (value === INHERIT) {
+          // The Inherit row resets the whole reasoning config: a retained
+          // reasoning override would be invisible (explicit "standard" renders
+          // identically to absent) with no other way to remove it.
           delete updated.thinkingLevel;
+          delete updated.reasoningMode;
           return;
         }
 
@@ -805,12 +809,37 @@ export function TasksSection() {
     );
   };
 
+  // Mirrors resolveAgentAiSettings' base-chain walk (ACP resolution): agents
+  // without their own default inherit reasoningMode from the closest ancestor.
+  const baseChainInheritsPro = (agentId: string): boolean => {
+    const agentsById = new Map(listedAgents.map((agent) => [agent.id, agent]));
+    const visited = new Set<string>([agentId]);
+    let cursor = agentId;
+    while (true) {
+      const base = agentsById.get(cursor)?.base ?? (cursor === "plan" ? "plan" : "exec");
+      if (base === cursor || visited.has(base)) {
+        return false;
+      }
+      const inherited = agentAiDefaults[base]?.reasoningMode;
+      if (inherited != null) {
+        return inherited === "pro";
+      }
+      visited.add(base);
+      cursor = base;
+    }
+  };
+
   const setAgentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
+    // "standard" is the wire default; keep entries sparse by only persisting
+    // "pro", unless a base agent supplies pro, where deleting the override
+    // would silently fall back to pro (see baseChainInheritsPro).
+    const inheritsPro = baseChainInheritsPro(agentId);
     setAgentAiDefaults((prev) =>
       updateAgentDefaultEntry(prev, agentId, (updated) => {
-        // "standard" is the wire default; keep entries sparse by only persisting "pro".
         if (mode === "pro") {
           updated.reasoningMode = "pro";
+        } else if (inheritsPro) {
+          updated.reasoningMode = "standard";
         } else {
           delete updated.reasoningMode;
         }
@@ -834,7 +863,9 @@ export function TasksSection() {
     setSubagentAiDefaults((prev) =>
       updateSubagentDefaultEntry(prev, agentId, (updated) => {
         if (value === INHERIT) {
+          // Clear the reasoning override too (same rationale as setAgentThinking).
           delete updated.thinkingLevel;
+          delete updated.reasoningMode;
           return;
         }
 
