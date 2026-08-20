@@ -311,7 +311,8 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(),
-      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+      getKickoffSendOptions: () =>
+        Promise.resolve({ model: "custom:unpriced-model", agentId: "exec" }),
     });
 
     const created = await setGoalOk(service, {
@@ -355,7 +356,7 @@ describe("WorkspaceGoalService", () => {
         executed.push({ message: input.message, kind: input.kind });
         return Promise.resolve(true);
       },
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await setGoalOk(service, { workspaceId, objective: "Kick off without a prior stream" });
@@ -375,7 +376,7 @@ describe("WorkspaceGoalService", () => {
         executed.push({ message: input.message });
         return Promise.resolve(true);
       },
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await setGoalOk(service, { workspaceId, objective: "Resume after pause", status: "paused" });
@@ -450,7 +451,7 @@ describe("WorkspaceGoalService", () => {
         });
         return true;
       },
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const resumed = await setGoalOk(service, { workspaceId, status: "active" });
@@ -468,7 +469,7 @@ describe("WorkspaceGoalService", () => {
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(execute),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await setGoalOk(service, { workspaceId, status: "active" });
@@ -492,7 +493,7 @@ describe("WorkspaceGoalService", () => {
         executed.push({ message: input.message });
         return Promise.resolve(true);
       },
-      getKickoffSendOptions: () => null,
+      getKickoffSendOptions: () => Promise.resolve(null),
     });
 
     // Negative assertion: the kickoff arm short-circuits synchronously when
@@ -515,7 +516,7 @@ describe("WorkspaceGoalService", () => {
         seenModels.push(input.options.model);
         return Promise.resolve(true);
       }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await service.requestContinuationAfterStreamEnd({
@@ -729,7 +730,7 @@ describe("WorkspaceGoalService", () => {
         expect(continuationAppend.success).toBe(true);
         return true;
       }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const goal = await setGoalOk(service, {
@@ -774,7 +775,7 @@ describe("WorkspaceGoalService", () => {
         return true;
       }),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await extensionMetadata.setStreaming(workspaceId, true);
@@ -818,7 +819,7 @@ describe("WorkspaceGoalService", () => {
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(execute),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const goal = await setGoalOk(service, {
@@ -861,7 +862,7 @@ describe("WorkspaceGoalService", () => {
         return true;
       }),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const goal = await setGoalOk(service, {
@@ -922,7 +923,7 @@ describe("WorkspaceGoalService", () => {
         return true;
       }),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     // Explicit pause appends a goal-pause-boundary row and clears candidates;
@@ -985,7 +986,7 @@ describe("WorkspaceGoalService", () => {
         return Promise.resolve(true);
       }),
       getRuntimeState: () => ({ isRuntimeCompatible: true, isBusy: busy }),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const first = await setGoalOk(service, { workspaceId, objective: "First goal" });
@@ -1009,7 +1010,8 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(),
-      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+      getKickoffSendOptions: () =>
+        Promise.resolve({ model: "custom:unpriced-model", agentId: "exec" }),
     });
     const created = await setGoalOk(service, {
       workspaceId,
@@ -1084,7 +1086,7 @@ describe("WorkspaceGoalService", () => {
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(execute),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await service.recordUserStoppedStream(workspaceId, created.createdAtMs + 5_000);
@@ -1120,7 +1122,7 @@ describe("WorkspaceGoalService", () => {
     const execute = mock(() => Promise.resolve(true));
     restartedService.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(execute),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
@@ -1282,7 +1284,7 @@ describe("WorkspaceGoalService", () => {
       },
       // Recovery synthesizes a candidate from scratch, which requires a
       // kickoff send-options provider to know how to dispatch the wrap-up.
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
@@ -1377,7 +1379,7 @@ describe("WorkspaceGoalService", () => {
       hasActiveDescendantTasks: () => false,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await restartedService.recoverPendingDispatchAfterRestart(workspaceId);
@@ -2055,7 +2057,8 @@ describe("WorkspaceGoalService", () => {
     const dispatcher = new IdleDispatcher();
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(),
-      getKickoffSendOptions: () => ({ model: "custom:unpriced-model", agentId: "exec" }),
+      getKickoffSendOptions: () =>
+        Promise.resolve({ model: "custom:unpriced-model", agentId: "exec" }),
     });
     await extensionMetadata.setStreaming(workspaceId, true);
 
@@ -2373,7 +2376,7 @@ describe("WorkspaceGoalService", () => {
       hasActiveDescendantTasks: () => hasActiveDescendantTasks,
       getRuntimeState: () => ({ isRuntimeCompatible: true }),
       executeGoalContinuation: execute,
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     await service.requestContinuationAfterStreamEnd({
@@ -2416,7 +2419,7 @@ describe("WorkspaceGoalService", () => {
       },
       // Recovery / attribution paths synthesize a candidate from scratch and
       // need a kickoff send-options provider to know how to dispatch.
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const result = await service.attributeChildReport({
@@ -2454,7 +2457,7 @@ describe("WorkspaceGoalService", () => {
         executed.push({ kind: input.kind });
         return Promise.resolve(true);
       },
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const result = await service.attributeChildReport({
@@ -2833,7 +2836,7 @@ describe("WorkspaceGoalService", () => {
     const execute = mock(() => Promise.resolve(true));
     service.registerGoalContinuationConsumer(dispatcher, {
       ...continuationBridge(execute),
-      getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+      getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
     });
 
     const updated = await setGoalOk(service, { workspaceId, budgetCents: 200 });
@@ -3351,7 +3354,7 @@ describe("WorkspaceGoalService", () => {
           executed.push(input.message);
           return Promise.resolve(true);
         },
-        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+        getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
       });
 
       // Mark the active goal complete. The board's invariant is: the
@@ -3533,7 +3536,7 @@ describe("WorkspaceGoalService", () => {
           executed.push(input.message);
           return Promise.resolve(true);
         },
-        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+        getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
       });
 
       const promoted = await service.promoteUpcomingGoal(workspaceId, queued.goalId);

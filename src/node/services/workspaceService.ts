@@ -54,6 +54,7 @@ import {
   resolveWorkspaceExecutionPath,
   resolveWorkspaceRootPath,
 } from "@/node/runtime/runtimeHelpers";
+import { resolveDeclaredBaseChainIds } from "@/node/services/agentDefinitions/resolveDeclaredBaseChainIds";
 import { getWorkspacePathHintForProject } from "@/node/services/workspaceProjectRepos";
 import { validateWorkspaceName } from "@/common/utils/validation/workspaceValidation";
 import { ensurePrivateDir, isErrnoWithCode } from "@/node/utils/fs";
@@ -2367,7 +2368,7 @@ export class WorkspaceService extends EventEmitter {
       return;
     }
 
-    const sendOptions = this.getWorkflowContinuationSendOptions(ownerWorkspaceId);
+    const sendOptions = await this.getWorkflowContinuationSendOptions(ownerWorkspaceId);
     if (sendOptions == null) {
       log.debug("Bash monitor wake has no send options; leaving pending", { ownerWorkspaceId });
       return;
@@ -10776,11 +10777,13 @@ export class WorkspaceService extends EventEmitter {
     };
   }
 
-  getWorkflowContinuationSendOptions(workspaceId: string): SendMessageOptions | null {
+  getWorkflowContinuationSendOptions(workspaceId: string): Promise<SendMessageOptions | null> {
     return this.getGoalContinuationKickoffSendOptions(workspaceId);
   }
 
-  getGoalContinuationKickoffSendOptions(workspaceId: string): SendMessageOptions | null {
+  async getGoalContinuationKickoffSendOptions(
+    workspaceId: string
+  ): Promise<SendMessageOptions | null> {
     assert(
       workspaceId.trim().length > 0,
       "getGoalContinuationKickoffSendOptions requires workspaceId"
@@ -10805,10 +10808,32 @@ export class WorkspaceService extends EventEmitter {
         ? WORKSPACE_DEFAULTS.agentId
         : persistedAgentId;
     const selectedAgentSettings = workspaceEntry?.aiSettingsByAgent?.[agentId];
-    const execAgentSettings =
-      agentId !== WORKSPACE_DEFAULTS.agentId
-        ? workspaceEntry?.aiSettingsByAgent?.[WORKSPACE_DEFAULTS.agentId]
-        : undefined;
+
+    // Custom agents inherit through their DECLARED base chain (a base: plan
+    // agent must fall back to Plan's defaults, not Exec's), mirroring
+    // Settings/ACP/task-spawn resolution. When the definition cannot be read,
+    // keep the legacy Exec approximation.
+    let chainAgentIds: readonly string[] =
+      agentId === WORKSPACE_DEFAULTS.agentId ? [] : [WORKSPACE_DEFAULTS.agentId];
+    if (agentId !== WORKSPACE_DEFAULTS.agentId) {
+      try {
+        const metadata = await this.getInfo(workspaceId);
+        if (metadata) {
+          const runtime = createRuntimeForWorkspace(metadata);
+          const declared = await resolveDeclaredBaseChainIds({
+            runtime,
+            workspacePath: resolveWorkspaceRootPath(metadata, runtime),
+            agentId,
+            workspaceId,
+          });
+          if (declared) {
+            chainAgentIds = declared;
+          }
+        }
+      } catch {
+        // Approximation above stays in effect.
+      }
+    }
 
     // Each candidate pairs the model with the thinking level persisted alongside
     // it. Dropping the thinking level here caused goal continuations to stream
@@ -10835,18 +10860,18 @@ export class WorkspaceService extends EventEmitter {
         thinkingLevel: config.agentAiDefaults?.[agentId]?.thinkingLevel,
         reasoningMode: config.agentAiDefaults?.[agentId]?.reasoningMode,
       },
-      {
-        model: execAgentSettings?.model,
-        thinkingLevel: execAgentSettings?.thinkingLevel,
-        reasoningMode: execAgentSettings?.reasoningMode,
-      },
-      agentId !== WORKSPACE_DEFAULTS.agentId
-        ? {
-            model: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.modelString,
-            thinkingLevel: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.thinkingLevel,
-            reasoningMode: config.agentAiDefaults?.[WORKSPACE_DEFAULTS.agentId]?.reasoningMode,
-          }
-        : {},
+      ...chainAgentIds.flatMap((ancestorId) => [
+        {
+          model: workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.model,
+          thinkingLevel: workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.thinkingLevel,
+          reasoningMode: workspaceEntry?.aiSettingsByAgent?.[ancestorId]?.reasoningMode,
+        },
+        {
+          model: config.agentAiDefaults?.[ancestorId]?.modelString,
+          thinkingLevel: config.agentAiDefaults?.[ancestorId]?.thinkingLevel,
+          reasoningMode: config.agentAiDefaults?.[ancestorId]?.reasoningMode,
+        },
+      ]),
       { model: DEFAULT_MODEL },
     ];
 

@@ -207,7 +207,7 @@ export async function sendWorkflowRunTerminalContinuation(input: {
     }
 
     continuationOptions ??=
-      context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
+      await context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
     if (continuationOptions == null) {
       log.warn("Skipping workflow continuation without send options", { workspaceId, runId });
       return;

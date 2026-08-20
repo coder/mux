@@ -50,6 +50,7 @@ import {
   type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { getErrorMessage } from "@/common/utils/errors";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 import { normalizeAgentId } from "@/common/utils/agentIds";
@@ -848,6 +849,12 @@ export function TasksSection() {
   const baseChainInheritsPro = (agentId: string): boolean =>
     resolveBaseChainDefaults(agentId).reasoningMode === "pro";
 
+  // Definitions may pin ai.model (possibly an alias like "sonnet"); ACP/task
+  // resolution slots it below Settings overrides and above the ambient
+  // fallback (resolveAgentAiSettings), so display gating must match.
+  const resolveDefinitionModel = (agent: AgentDefinitionDescriptor): string | undefined =>
+    normalizeModelInput(agent.aiDefaults?.model).model ?? undefined;
+
   const setAgentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
     // "standard" is the wire default; keep entries sparse by only persisting
     // "pro", unless a base agent supplies pro, where deleting the override
@@ -1018,7 +1025,9 @@ export function TasksSection() {
     const effectiveModel =
       modelValue !== INHERIT
         ? modelValue
-        : (inheritedDefaults.modelString ?? inheritedEffectiveModel);
+        : (inheritedDefaults.modelString ??
+          resolveDefinitionModel(agent) ??
+          inheritedEffectiveModel);
 
     const agentDefinitionPath = getAgentDefinitionPath(agent);
     const scopeNode = agentDefinitionPath ? (
@@ -1176,7 +1185,8 @@ export function TasksSection() {
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const uiExecEntry = agentAiDefaults.exec;
-    const inheritedExecModel = uiExecEntry?.modelString ?? inheritedEffectiveModel;
+    const inheritedExecModel =
+      uiExecEntry?.modelString ?? resolveDefinitionModel(agent) ?? inheritedEffectiveModel;
     const effectiveModel = modelValue !== INHERIT ? modelValue : inheritedExecModel;
     const rawInheritedThinking = uiExecEntry?.thinkingLevel ?? THINKING_LEVEL_OFF;
     const clampedInheritedThinking = enforceThinkingPolicy(effectiveModel, rawInheritedThinking);

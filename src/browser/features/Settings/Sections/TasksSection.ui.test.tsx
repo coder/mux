@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, waitFor, within } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
 import {
   shouldMirrorAgentDefaultToLegacySubagent,
   type SubagentAiDefaults,
@@ -17,7 +18,12 @@ let apiMock: {
     getConfig: ReturnType<typeof mock>;
     saveConfig: ReturnType<typeof mock>;
   };
+  agents?: {
+    list: ReturnType<typeof mock>;
+  };
 } | null = null;
+
+let selectedWorkspaceMock: { projectPath: string; workspaceId: string } | null = null;
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({ api: apiMock }),
@@ -26,7 +32,7 @@ void mock.module("@/browser/contexts/API", () => ({
 }));
 
 void mock.module("@/browser/contexts/WorkspaceContext", () => ({
-  useWorkspaceContext: () => ({ selectedWorkspace: null }),
+  useWorkspaceContext: () => ({ selectedWorkspace: selectedWorkspaceMock }),
 }));
 
 void mock.module("@/browser/hooks/useExperiments", () => ({
@@ -103,6 +109,8 @@ import { TasksSection } from "./TasksSection";
 interface RenderTasksSectionOptions {
   agentAiDefaults?: AgentAiDefaults;
   subagentAiDefaults?: SubagentAiDefaults;
+  /** When set, serves this discovered-agent list instead of FALLBACK_AGENTS. */
+  agents?: AgentDefinitionDescriptor[];
 }
 
 function renderTasksSection(options: RenderTasksSectionOptions = {}) {
@@ -120,7 +128,10 @@ function renderTasksSection(options: RenderTasksSectionOptions = {}) {
       getConfig,
       saveConfig,
     },
+    ...(options.agents ? { agents: { list: mock(() => Promise.resolve(options.agents)) } } : {}),
   };
+  // Discovery only runs for a selected workspace's project.
+  selectedWorkspaceMock = options.agents ? { projectPath: "/proj", workspaceId: "ws-1" } : null;
 
   const view = render(<TasksSection />);
   return { ...view, getConfig, saveConfig };
@@ -166,6 +177,7 @@ describe("TasksSection Exec subagent defaults", () => {
     restoreDom = installDom();
     advisorExperimentEnabled = false;
     apiMock = null;
+    selectedWorkspaceMock = null;
   });
 
   afterEach(() => {
@@ -563,6 +575,30 @@ describe("TasksSection Exec subagent defaults", () => {
     const proToggle = card.querySelector('[data-component="ProModeToggle"]');
     if (!(proToggle instanceof HTMLElement)) throw new Error("Pro mode toggle not rendered");
     expect(proToggle.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("gates Pro on the agent definition's pinned model when Settings has no override", async () => {
+    // The definition pins ai.model to GPT-5.6 (pro-capable) while Settings has
+    // no model override anywhere in the chain and the ambient default is
+    // Anthropic. ACP/task resolution runs the definition model, so the card
+    // must gate Pro against it, not the ambient fallback.
+    const view = renderTasksSection({
+      agents: [
+        {
+          id: "researcher",
+          scope: "project",
+          name: "Researcher",
+          uiSelectable: false,
+          subagentRunnable: true,
+          aiDefaults: { model: "openai:gpt-5.6-sol" },
+        },
+      ],
+    });
+
+    await view.findByText("Researcher");
+    const card = getAgentCardByName(view, "Researcher");
+    fireEvent.click(within(card).getByRole("button", { name: "Reasoning" }));
+    expect(card.querySelector('[data-component="ProModeToggle"]')).not.toBeNull();
   });
 
   test("hides the Pro mode toggle on the Name Workspace card even for pro-capable models", async () => {
