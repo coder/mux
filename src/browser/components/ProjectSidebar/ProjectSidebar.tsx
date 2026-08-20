@@ -1968,7 +1968,7 @@ const ProjectSidebarInner: React.FC<ProjectSidebarProps> = ({
                     className="shrink-0 cursor-pointer border-none bg-transparent p-0"
                     aria-label="Home"
                   >
-                    <ShuxLogo className="h-5 w-[44px]" aria-hidden="true" />
+                    <ShuxLogo className="h-5 w-auto" aria-hidden="true" />
                   </button>
                 </div>
                 <button

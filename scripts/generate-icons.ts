@@ -6,7 +6,7 @@
  *   bun scripts/generate-icons.ts [commands...]
  *
  * Commands:
- *   update           - Regenerate all derived icons from docs/img/logo-*.svg
+ *   update           - Regenerate all logo sources and derived assets
  *   png              - Generate build/icon.png (512x512)
  *   icns             - Generate build/icon.icns (macOS app icon)
  *   linux-icons      - Generate build/icons/{16x16..512x512}.png (Linux icon set)
@@ -17,6 +17,12 @@ import { mkdir, rm, copyFile, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import sharp from "sharp";
+import {
+  renderAppWordmark,
+  renderDocsWordmark,
+  renderInlineAppWordmark,
+  renderSquareLogo,
+} from "./logoAssets";
 
 const ICONSET_SIZES = [16, 32, 64, 128, 256, 512];
 const FAVICON_SIZES = [16, 32, 48, 64, 128, 256];
@@ -28,6 +34,18 @@ const ROOT = path.resolve(__dirname, "..");
 // Source logos
 const SOURCE_BLACK = path.join(ROOT, "docs", "img", "logo-black.svg");
 const SOURCE_WHITE = path.join(ROOT, "docs", "img", "logo-white.svg");
+
+const WORDMARK_TARGETS = {
+  "docs/img/black-shux.svg": renderDocsWordmark("black"),
+  "docs/img/white-shux.svg": renderDocsWordmark("white"),
+  "src/browser/assets/logos/shux-logo-dark.svg": renderAppWordmark("white"),
+  "src/browser/assets/logos/shux-logo-light.svg": renderAppWordmark("black"),
+} as const;
+
+const INLINE_WORDMARK_TARGETS = {
+  "index.html": "boot-loader__logo",
+  "static/splash.html": "logo",
+} as const;
 
 // Build outputs
 const BUILD_DIR = path.join(ROOT, "build");
@@ -72,12 +90,10 @@ type LogoTargetConfig = RasterTargetConfig | SvgTargetConfig;
 const MONO_ICON = { source: SOURCE_BLACK, bg: false } as const;
 const APP_ICON = { source: SOURCE_WHITE, bg: true } as const;
 
-// The source SVGs use viewBox="0 0 72 72" with a translate transform, leaving
-// ~68% internal padding around the actual "m" + cursor mark.  This cropped
-// viewBox eliminates that padding so the mark fills the rendered image.
-// Content bounds (after transform): x 8.85…63.15, y 24.5…47.5 → 54.3×23 units.
-// Tight crop with ~0.5u breathing room: "8 24 56 24" → aspect ratio ≈ 2.33:1.
-const TRAY_MARK_CROP = "8 24 56 24";
+// Crop the centered square source to the outlined "s" + cursor bounds so the
+// mark fills small tray images without clipping the glyph's natural overshoot.
+// Content bounds: x 14.37…57.63, y 24.5…47.99 → 43.26×23.49 units.
+const TRAY_MARK_CROP = "13.5 24 45 24.5";
 
 // Targets to update (path -> config)
 const LOGO_TARGETS = {
@@ -98,13 +114,13 @@ const LOGO_TARGETS = {
   // iOS Safari uses apple-touch-icon for home screen installs.
   "public/apple-touch-icon.png": { size: 180, ...APP_ICON },
 
-  // Electron Tray Icons – Wide Canvas with "m" Mark (Monochrome on Transparent)
+  // Electron Tray Icons – Wide Shux Mark (Monochrome on Transparent)
   //
   // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
   // We crop to TRAY_MARK_CROP before rendering so the mark fills the output.
   //
   // Pixel dimensions: 24×24 @1x → 48×48 @2x → 72×72 @3x.
-  // Square canvas; the mark (aspect ≈ 2.33:1) is height-constrained and
+  // Square canvas; the mark (aspect ≈ 1.84:1) is height-constrained and
   // centered horizontally with transparent side padding.
   //
   // macOS treats the black variant as a template image (adapts to light/dark
@@ -225,8 +241,47 @@ async function generateThemeFaviconSvg(output: string) {
   await writeFile(output, themedSvg);
 }
 
+async function replaceInlineWordmark(relativePath: string, className: string) {
+  const outputPath = path.join(ROOT, relativePath);
+  const html = await readFile(outputPath, "utf8");
+  const pattern = new RegExp(
+    String.raw`^([ \t]*)<svg class="${className}"[\s\S]*?^[ \t]*</svg>`,
+    "m"
+  );
+  const match = html.match(pattern);
+  if (!match) {
+    throw new Error(`Could not find ${className} logo in ${relativePath}`);
+  }
+
+  const indent = match[1];
+  const svg = renderInlineAppWordmark(className)
+    .split("\n")
+    .map((line) => `${indent}${line}`)
+    .join("\n");
+  await writeFile(outputPath, html.replace(pattern, svg));
+}
+
+async function generateSourceLogos() {
+  await writeFile(SOURCE_BLACK, renderSquareLogo("black"));
+  console.log("✓ docs/img/logo-black.svg");
+  await writeFile(SOURCE_WHITE, renderSquareLogo("white"));
+  console.log("✓ docs/img/logo-white.svg");
+
+  for (const [relativePath, svg] of Object.entries(WORDMARK_TARGETS)) {
+    await writeFile(path.join(ROOT, relativePath), svg);
+    console.log(`✓ ${relativePath}`);
+  }
+
+  for (const [relativePath, className] of Object.entries(INLINE_WORDMARK_TARGETS)) {
+    await replaceInlineWordmark(relativePath, className);
+    console.log(`✓ ${relativePath}`);
+  }
+}
+
 async function updateAllLogos() {
   console.log(`Updating all logos...\n`);
+
+  await generateSourceLogos();
 
   for (const [relativePath, config] of Object.entries(LOGO_TARGETS)) {
     const outputPath = path.join(ROOT, relativePath);
