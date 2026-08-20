@@ -36,7 +36,11 @@ import {
   type McpOauthService,
 } from "@/node/services/mcpOauthService";
 import { createRuntime } from "@/node/runtime/runtimeFactory";
-import { transformMCPResult, type MCPCallToolResult } from "@/node/services/mcpResultTransform";
+import {
+  transformMCPResult,
+  truncateUtf8Bytes,
+  type MCPCallToolResult,
+} from "@/node/services/mcpResultTransform";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import {
   buildMcpPromptBaseKey,
@@ -796,24 +800,6 @@ function flattenPromptContent(content: MCPPromptContent): string {
     default:
       return "[Unsupported content omitted]";
   }
-}
-
-// Enforce the expansion budget on UTF-8 bytes; non-ASCII text can use up to
-// three bytes per UTF-16 code unit. Backs up to a UTF-8 sequence boundary
-// before decoding.
-function truncateUtf8Bytes(text: string, maxBytes: number, marker: string): string {
-  // Encoding at most maxBytes UTF-16 code units bounds the temporary buffer
-  // while still covering maxBytes UTF-8 bytes.
-  const prefix = text.length > maxBytes ? text.slice(0, maxBytes) : text;
-  const bytes = Buffer.from(prefix, "utf8");
-  if (prefix === text && bytes.length <= maxBytes) {
-    return text;
-  }
-  let end = maxBytes;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) {
-    end--;
-  }
-  return bytes.subarray(0, end).toString("utf8") + marker;
 }
 
 // Accumulates at most the cap plus one body code unit and fixed

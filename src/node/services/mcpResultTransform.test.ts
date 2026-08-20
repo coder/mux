@@ -1,4 +1,5 @@
 import { describe, it, expect } from "bun:test";
+import { MCP_TOOL_RESULT_MAX_TEXT_BYTES } from "@/common/constants/toolLimits";
 import { transformMCPResult, MAX_IMAGE_DATA_BYTES } from "./mcpResultTransform";
 
 describe("transformMCPResult", () => {
@@ -93,6 +94,155 @@ describe("transformMCPResult", () => {
       expect(transformed.value[0].text).toMatch(/Image omitted/);
       expect(transformed.value[0].text).toMatch(/per-image guard/i);
       expect(transformed.value[0].text).toMatch(/MB|KB/);
+    });
+  });
+
+  describe("text output cap", () => {
+    interface TextContentResult {
+      content: Array<{ type: string; text?: string; resource?: { uri: string; text?: string } }>;
+      isError?: boolean;
+      structuredContent?: unknown;
+    }
+
+    it("truncates an oversized text-only result with a notice, preserving MCP shape", () => {
+      const bigText = "x".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 10_000);
+      const original = {
+        isError: true,
+        content: [{ type: "text" as const, text: bigText }],
+      };
+
+      const result = transformMCPResult(original) as TextContentResult;
+
+      // MCP wire shape (and the isError flag) must survive so toModelOutput
+      // still surfaces errors to the model.
+      expect(result.isError).toBe(true);
+      expect(result.content).toHaveLength(1);
+      const text = result.content[0].text!;
+      expect(Buffer.byteLength(text, "utf8")).toBeLessThan(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 300);
+      expect(text.startsWith("xxx")).toBe(true);
+      expect(text).toContain("[MCP tool result text truncated:");
+      // Original object must not be mutated.
+      expect(original.content[0].text).toHaveLength(bigText.length);
+    });
+
+    it("returns text-only results at the cap unchanged (same reference)", () => {
+      const atCap = {
+        content: [{ type: "text" as const, text: "a".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) }],
+      };
+      expect(transformMCPResult(atCap)).toBe(atCap);
+    });
+
+    it("shares one budget across parts and appends an omission notice", () => {
+      const result = transformMCPResult({
+        content: [
+          { type: "text" as const, text: "b".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) },
+          { type: "text" as const, text: "dropped entirely" },
+          { type: "text" as const, text: "also dropped" },
+        ],
+      }) as TextContentResult;
+
+      expect(result.content).toHaveLength(2);
+      expect(result.content[0].text).toBe("b".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES));
+      expect(result.content[1].text).toContain("[2 content part(s) omitted:");
+    });
+
+    it("caps oversized text resources in text-only results", () => {
+      const result = transformMCPResult({
+        content: [
+          {
+            type: "resource" as const,
+            resource: {
+              uri: "file:///big.json",
+              text: "r".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000),
+            },
+          },
+        ],
+      }) as TextContentResult;
+
+      const text = result.content[0].resource!.text!;
+      expect(Buffer.byteLength(text, "utf8")).toBeLessThan(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 300);
+      expect(text).toContain("[MCP tool result text truncated:");
+      expect(result.content[0].resource!.uri).toBe("file:///big.json");
+    });
+
+    it("caps text parts in results that also carry binary content", () => {
+      const smallImageData = "img".repeat(100);
+      const result = transformMCPResult({
+        content: [
+          { type: "text" as const, text: "t".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000) },
+          { type: "image" as const, data: smallImageData, mimeType: "image/png" },
+        ],
+      }) as {
+        type: string;
+        value: Array<{ type: string; text?: string; data?: string; mediaType?: string }>;
+      };
+
+      expect(result.type).toBe("content");
+      expect(result.value[0].type).toBe("text");
+      expect(result.value[0].text).toContain("[MCP tool result text truncated:");
+      // Media parts are exempt from the text budget (guarded separately).
+      expect(result.value[1]).toEqual({
+        type: "media",
+        data: smallImageData,
+        mediaType: "image/png",
+      });
+    });
+
+    it("does not cut truncated text mid-way through a multi-byte character", () => {
+      const result = transformMCPResult({
+        content: [{ type: "text" as const, text: "€".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) }],
+      }) as TextContentResult;
+
+      const text = result.content[0].text!;
+      expect(text).toContain("[MCP tool result text truncated:");
+      expect(text).not.toContain("\uFFFD");
+    });
+
+    it("passes small structuredContent through unchanged", () => {
+      const withStructured = {
+        content: [{ type: "text" as const, text: "ok" }],
+        structuredContent: { rows: [1, 2, 3] },
+      };
+      expect(transformMCPResult(withStructured)).toBe(withStructured);
+    });
+
+    it("drops oversized structuredContent with a notice", () => {
+      const result = transformMCPResult({
+        content: [{ type: "text" as const, text: "summary" }],
+        structuredContent: { blob: "s".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000) },
+      }) as TextContentResult;
+
+      expect(result.structuredContent).toBeUndefined();
+      expect("structuredContent" in result).toBe(false);
+      expect(result.content[0].text).toBe("summary");
+      expect(result.content[1].text).toContain("[MCP structuredContent omitted:");
+    });
+
+    it("replaces an oversized toolResult with a bounded notice", () => {
+      const result = transformMCPResult({
+        toolResult: { data: "t".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000) },
+      }) as { toolResult: string };
+
+      expect(result.toolResult).toContain("[MCP toolResult omitted:");
+      expect(result.toolResult.length).toBeLessThan(300);
+    });
+
+    it("replaces an oversized result without a content array with a bounded notice", () => {
+      const result = transformMCPResult({
+        something: "e".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000),
+      }) as TextContentResult;
+
+      expect(result.content[0].type).toBe("text");
+      expect(result.content[0].text).toContain("[MCP tool result omitted:");
+    });
+
+    it("truncates oversized primitive string results", () => {
+      const result = transformMCPResult(
+        "p".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 5_000)
+      ) as string;
+
+      expect(Buffer.byteLength(result, "utf8")).toBeLessThan(MCP_TOOL_RESULT_MAX_TEXT_BYTES + 300);
+      expect(result).toContain("[MCP tool result text truncated:");
     });
   });
 

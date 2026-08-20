@@ -26,6 +26,12 @@ export const WEB_FETCH_TIMEOUT_SECS = 15; // curl timeout
 export const WEB_FETCH_MAX_OUTPUT_BYTES = 64 * 1024; // 64KB markdown output
 export const WEB_FETCH_MAX_HTML_BYTES = 5 * 1024 * 1024; // 5MB HTML input (curl --max-filesize)
 
+// MCP tool results are server-controlled and previously unbounded: a 62MB
+// Grafana trace result persisted into chat.jsonl froze the renderer and made
+// every later provider request exceed API payload limits (#3138). Bound the
+// text surfaces like web_fetch output before results enter history.
+export const MCP_TOOL_RESULT_MAX_TEXT_BYTES = 64 * 1024;
+
 // MCP prompt expansions are server-controlled; bound them like web_fetch output.
 export const MCP_PROMPT_MAX_TEXT_BYTES = 64 * 1024;
 export const MCP_PROMPT_TRUNCATION_MARKER = "\n\n[Prompt text truncated]";
