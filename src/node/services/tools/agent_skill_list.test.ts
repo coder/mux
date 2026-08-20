@@ -1432,7 +1432,7 @@ describe("agent_skill_list", () => {
     });
   });
 
-  it("skips symlinked project skill directories inside contained skills root", async () => {
+  it("skips symlinked project skill directories that resolve outside the project root", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-project-entry-symlink");
 
     await withHomeDir(tempDir.path, async () => {
@@ -1483,6 +1483,56 @@ describe("agent_skill_list", () => {
         expect(result.skills.map((s) => s.name)).toEqual(["global-skill", "real-skill"]);
         expect(result.skills.find((s) => s.name === "real-skill")?.scope).toBe("project");
         expect(result.skills.find((s) => s.name === "sneaky-skill")).toBeUndefined();
+      }
+    });
+  });
+
+  it("lists symlinked project skill directories whose target stays inside the project root", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-list-project-entry-symlink-contained");
+
+    await withHomeDir(tempDir.path, async () => {
+      const workspaceSessionDir = await createWorkspaceSessionDir(
+        tempDir.path,
+        GLOBAL_WORKSPACE_ID
+      );
+
+      const projectRoot = path.join(tempDir.path, "project");
+      const skillsDir = path.join(projectRoot, ".mux", "skills");
+      await fs.mkdir(skillsDir, { recursive: true });
+
+      // Real skill stored elsewhere inside the project (not itself a skills root),
+      // symlinked into .mux/skills: the layout skill package managers install.
+      const storeSkillDir = path.join(projectRoot, "skill-store", "linked-skill");
+      await fs.mkdir(storeSkillDir, { recursive: true });
+      await fs.writeFile(
+        path.join(storeSkillDir, "SKILL.md"),
+        "---\nname: linked-skill\ndescription: contained symlinked skill\n---\nBody\n",
+        "utf-8"
+      );
+      await fs.symlink(storeSkillDir, path.join(skillsDir, "linked-skill"));
+
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      };
+
+      const config = createTestToolConfig(tempDir.path, {
+        workspaceId: GLOBAL_WORKSPACE_ID,
+        sessionsDir: workspaceSessionDir,
+        muxScope: projectScope,
+      });
+
+      const tool = createAgentSkillListTool(config);
+      const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        const linked = result.skills.find((s) => s.name === "linked-skill");
+        expect(linked).toBeDefined();
+        expect(linked?.scope).toBe("project");
+        expect(linked?.description).toBe("contained symlinked skill");
       }
     });
   });
