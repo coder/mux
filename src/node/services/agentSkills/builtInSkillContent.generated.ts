@@ -6139,7 +6139,7 @@ export const BUILTIN_SKILL_FILES: Record<string, Record<string, string>> = {
       '    "Shux": {',
       '      "type": "custom",',
       '      "command": "npx",',
-      '      "args": ["-y", "shux", "acp"]',
+      '      "args": ["-y", "@coder/shux", "acp"]',
       "    }",
       "  }",
       "}",
