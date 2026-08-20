@@ -373,6 +373,26 @@ Include the secondary project context too.
       expect(systemMessage).not.toContain("<custom-instructions>");
     });
 
+    test("survives malformed non-string customInstructions in config.json", async () => {
+      // config.json is hand-editable and loaded without schema validation; a
+      // malformed value must be skipped, not brick every send from the project.
+      const projectConfigs = new Map<string, ProjectConfig>([
+        [projectDir, { workspaces: [], customInstructions: 42 } as unknown as ProjectConfig],
+      ]);
+
+      const systemMessage = await buildSystemMessage(
+        singleProjectMetadata(projectDir),
+        runtime,
+        workspaceDir,
+        undefined,
+        undefined,
+        undefined,
+        { projectConfigs }
+      );
+
+      expect(systemMessage).not.toContain("<custom-instructions>");
+    });
+
     test("includes customInstructions from every project in a multi-project workspace", async () => {
       const { metadata } = await createMultiProjectFixture();
       const projectConfigs = new Map<string, ProjectConfig>(

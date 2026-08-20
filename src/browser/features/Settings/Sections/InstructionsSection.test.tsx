@@ -94,6 +94,56 @@ describe("InstructionsSection", () => {
     });
   });
 
+  test("Cmd/Ctrl+Enter in the textarea saves, but only when dirty", async () => {
+    const updateCustomInstructions = mock(
+      (_projectPath: string, _customInstructions: string | null) => resolveVoidResult()
+    );
+    mockProjectContext(new Map([[PROJECT_PATH, { workspaces: [] }]]), updateCustomInstructions);
+    mockSettingsContext();
+
+    const view = render(<InstructionsSection />);
+    const textarea = view.getByRole("textbox", { name: "Project custom instructions" });
+
+    // happy-dom does not deliver React's synthetic keyDown either, so invoke
+    // the element's React onKeyDown prop directly (same workaround as
+    // typeIntoTextarea above).
+    const pressModEnter = (modifier: "metaKey" | "ctrlKey") => {
+      const reactPropsKey = Object.keys(textarea).find((key) => key.startsWith("__reactProps"));
+      if (!reactPropsKey) throw new Error("Expected textarea to expose React props");
+      const reactProps = (textarea as unknown as Record<string, unknown>)[reactPropsKey] as {
+        onKeyDown?: (event: {
+          key: string;
+          metaKey: boolean;
+          ctrlKey: boolean;
+          preventDefault: () => void;
+        }) => void;
+      };
+      if (!reactProps.onKeyDown) throw new Error("Expected textarea to expose onKeyDown handler");
+      act(() => {
+        reactProps.onKeyDown!({
+          key: "Enter",
+          metaKey: modifier === "metaKey",
+          ctrlKey: modifier === "ctrlKey",
+          preventDefault: () => undefined,
+        });
+      });
+    };
+
+    // Not dirty: the shortcut must not save.
+    pressModEnter("metaKey");
+    expect(updateCustomInstructions).not.toHaveBeenCalled();
+
+    typeIntoTextarea(textarea as HTMLTextAreaElement, "Shortcut-saved guidance.");
+    pressModEnter("ctrlKey");
+
+    await waitFor(() => {
+      expect(updateCustomInstructions).toHaveBeenCalledWith(
+        PROJECT_PATH,
+        "Shortcut-saved guidance."
+      );
+    });
+  });
+
   test("clearing saved instructions saves null so config stays minimal", async () => {
     const updateCustomInstructions = mock(
       (_projectPath: string, _customInstructions: string | null) => resolveVoidResult()

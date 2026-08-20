@@ -509,7 +509,11 @@ function buildProjectSettingsInstructionSets(
   const sets: InstructionSet[] = [];
   for (const project of getProjects(metadata)) {
     const normalizedPath = stripTrailingSlashes(project.projectPath);
-    const content = projectConfigs.get(normalizedPath)?.customInstructions?.trim();
+    // config.json is hand-editable and loaded without schema validation, so a
+    // malformed customInstructions (number, object, ...) can survive load.
+    // Guard instead of throwing, or every send from the project fails.
+    const raw: unknown = projectConfigs.get(normalizedPath)?.customInstructions;
+    const content = typeof raw === "string" ? raw.trim() : undefined;
     if (!content) continue;
     sets.push({
       scope: INSTRUCTION_SCOPE.PROJECT,

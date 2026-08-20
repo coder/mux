@@ -136,6 +136,16 @@ export const InstructionsSection: React.FC = () => {
             onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => {
               setDraft(event.target.value);
             }}
+            onKeyDown={(event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+              // Enter intentionally inserts a newline; Cmd/Ctrl+Enter saves,
+              // matching the multi-line textarea convention (see GoalTab).
+              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                event.preventDefault();
+                if (isDirty && selectedProject && !saving) {
+                  void handleSave();
+                }
+              }
+            }}
             disabled={!selectedProject || saving}
             className="border-border-medium bg-background-secondary text-foreground focus:border-accent focus:ring-accent mt-3 min-h-[200px] w-full resize-y rounded-md border p-3 font-mono text-sm leading-relaxed focus:ring-1 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             placeholder="e.g. Always run the test suite before committing. Prefer functional patterns."
