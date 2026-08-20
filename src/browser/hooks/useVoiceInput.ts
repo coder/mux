@@ -240,11 +240,6 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
         const data = new Uint8Array(analyser.frequencyBinCount);
 
         meterIntervalRef.current = window.setInterval(() => {
-          if (data.length === 0) {
-            stopMetering();
-            return;
-          }
-
           try {
             analyser.getByteTimeDomainData(data);
 
@@ -310,7 +305,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
           durationMs: recordingDurationMs,
         });
 
-        const blob = new Blob(chunksRef.current, { type: mimeType });
+        const chunks = chunksRef.current;
         chunksRef.current = [];
         releaseStream();
         stopMetering();
@@ -321,7 +316,7 @@ export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResul
           shouldSendRef.current = false;
           setState("idle");
         } else {
-          void transcribe(blob);
+          void transcribe(new Blob(chunks, { type: mimeType }));
         }
       };
 
