@@ -9,6 +9,7 @@ import {
   appendEvents,
   CHAT_FILE_NAME,
   clearWorkspaceAnalyticsState,
+  deleteCorruptAnalyticsRows,
   getCurrentPricingFingerprint,
   ingestWorkspace,
   parseWorkspaceFromDisk,
@@ -1632,5 +1633,85 @@ describe("pricing fingerprint", () => {
     // Idempotent upsert: storing again keeps a single row with the same value.
     await storePricingFingerprint(conn);
     expect(await readStoredPricingFingerprint(conn)).toBe(getCurrentPricingFingerprint());
+  });
+});
+
+describe("deleteCorruptAnalyticsRows", () => {
+  async function seedWatermark(conn: DuckDBConnection, workspaceId: string): Promise<void> {
+    await conn.run(
+      "INSERT INTO ingest_watermarks (workspace_id, last_sequence, last_modified) VALUES (?, ?, ?)",
+      [workspaceId, 1, 1]
+    );
+  }
+
+  test("deletes corrupt rows while keeping healthy rows", async () => {
+    const conn = await createTestConn();
+
+    // Migrated legacy IDs are `${projectBasename}-${workspaceBasename}` with
+    // no length limit (up to 2x NAME_MAX + 1 = 511 chars) and must survive.
+    const legacyId = `${"p".repeat(255)}-${"w".repeat(255)}`;
+    // Custom-provider model IDs have no schema max length; an extremely long
+    // model on an otherwise-healthy row must never be deletion evidence.
+    const longModel = `custom:${"m".repeat(2000)}`;
+
+    for (const workspaceId of ["ws-healthy", legacyId, "ws-long-model", "parent-healthy"]) {
+      await seedWatermark(conn, workspaceId);
+    }
+
+    for (const [workspaceId, model, cost] of [
+      ["ws-healthy", "anthropic:claude-haiku-4-5", 1.0],
+      [legacyId, "anthropic:claude-haiku-4-5", 2.0],
+      ["ws-long-model", longModel, 3.0],
+      // Large-batch phantom: concatenated identifiers exceed the length caps.
+      ["x".repeat(2000), "anthropic:claude-haiku-4-5".repeat(100), 0.05],
+      // Small-batch phantom: two concatenated 10-char workspace IDs stay far
+      // under the length caps but can never match a real watermark.
+      ["aaaaabbbbbcccccddddd", "openai:gpt-5.6-solopenai:gpt-5.6-sol", 0.05],
+    ] as const) {
+      await conn.run("INSERT INTO events (workspace_id, model, total_cost_usd) VALUES (?, ?, ?)", [
+        workspaceId,
+        model,
+        cost,
+      ]);
+    }
+
+    for (const [parent, child] of [
+      ["parent-healthy", "child-healthy"],
+      // A rollup may outlive its removed child workspace; only the parent
+      // must be a known workspace.
+      ["parent-healthy", "child-removed"],
+      ["p".repeat(2000), "child-corrupt"],
+      // Small-batch phantom parent: unknown to watermarks.
+      ["par-aaaaapar-bbbbb", "child-x"],
+    ] as const) {
+      await conn.run(
+        `INSERT INTO delegation_rollups (parent_workspace_id, child_workspace_id, model)
+         VALUES (?, ?, ?)`,
+        [parent, child, "openai:gpt-5.6-sol"]
+      );
+    }
+
+    expect(await deleteCorruptAnalyticsRows(conn)).toBe(4);
+
+    const eventRows = await queryRows(
+      conn,
+      "SELECT workspace_id FROM events ORDER BY LENGTH(workspace_id)"
+    );
+    expect(eventRows).toEqual([
+      { workspace_id: "ws-healthy" },
+      { workspace_id: "ws-long-model" },
+      { workspace_id: legacyId },
+    ]);
+    const rollupRows = await queryRows(
+      conn,
+      "SELECT child_workspace_id FROM delegation_rollups ORDER BY child_workspace_id"
+    );
+    expect(rollupRows).toEqual([
+      { child_workspace_id: "child-healthy" },
+      { child_workspace_id: "child-removed" },
+    ]);
+
+    // Idempotent: nothing left to delete.
+    expect(await deleteCorruptAnalyticsRows(conn)).toBe(0);
   });
 });
