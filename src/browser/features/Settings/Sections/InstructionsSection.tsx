@@ -38,24 +38,27 @@ export const InstructionsSection: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Consume the one-shot project hint from the sidebar menu. Projects load
-  // asynchronously, so keep the hint alive until the project appears.
+  // Consume the one-shot project hint from the sidebar menu, falling back to
+  // the first project. Projects load asynchronously, so the hint stays alive
+  // until its project appears. One effect, hint first: as separate effects
+  // both fired on mount against an empty selection and the later default
+  // update won the batch, opening the editor on the wrong project.
   useEffect(() => {
-    if (!instructionsProjectPath) return;
-    if (!isProjectInstructionsTarget(userProjects, instructionsProjectPath)) return;
-    setSelectedProject(instructionsProjectPath);
-    setDraft(null);
-    setError(null);
-    setInstructionsProjectPath(null);
-  }, [instructionsProjectPath, userProjects, setInstructionsProjectPath]);
-
-  // Default to the first project once projects are available.
-  useEffect(() => {
+    if (
+      instructionsProjectPath &&
+      isProjectInstructionsTarget(userProjects, instructionsProjectPath)
+    ) {
+      setSelectedProject(instructionsProjectPath);
+      setDraft(null);
+      setError(null);
+      setInstructionsProjectPath(null);
+      return;
+    }
     if (selectedProject && isProjectInstructionsTarget(userProjects, selectedProject)) {
       return;
     }
     setSelectedProject(getFirstTopLevelProjectPath(userProjects) ?? "");
-  }, [selectedProject, userProjects]);
+  }, [instructionsProjectPath, selectedProject, userProjects, setInstructionsProjectPath]);
 
   const savedInstructions = selectedProject
     ? (userProjects.get(selectedProject)?.customInstructions ?? "")

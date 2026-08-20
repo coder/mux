@@ -26,11 +26,19 @@ function mockProjectContext(
 }
 
 function mockSettingsContext(instructionsProjectPath: string | null = null) {
+  // Stateful, stable-identity mock mirroring production: the setter really
+  // clears the hint and keeps its identity across renders. A fresh no-op
+  // setter per render re-fires the hint effect forever, masking ordering
+  // races between the hint and the default selection.
+  let hint = instructionsProjectPath;
+  const setInstructionsProjectPath = (value: string | null) => {
+    hint = value;
+  };
   spyOn(SettingsContextModule, "useSettings").mockImplementation(
     () =>
       ({
-        instructionsProjectPath,
-        setInstructionsProjectPath: () => undefined,
+        instructionsProjectPath: hint,
+        setInstructionsProjectPath,
       }) as unknown as ReturnType<typeof SettingsContextModule.useSettings>
   );
 }
