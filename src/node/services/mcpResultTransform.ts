@@ -87,32 +87,76 @@ export function truncateUtf8Bytes(text: string, maxBytes: number, marker: string
 
 /**
  * Shared text budget threaded through one result so many text parts cannot
- * multiply the cap.
+ * multiply the cap. Charged in serialized JSON bytes (escape expansion plus
+ * per-part wrapper overhead), so neither part count nor escape-heavy content
+ * (control characters serialize 6x) can multiply the persisted size.
  */
 interface TextBudget {
   remaining: number;
 }
 
+// Serialized wrapper cost of one {"type":"text","text":"..."} part plus its
+// array comma; kept parts may carry small extra fields, which the total
+// serialized backstop still bounds.
+const PART_SERIALIZATION_OVERHEAD_BYTES = 32;
+// Below this many payload bytes a truncated fragment carries no signal; drop
+// the part instead.
+const MIN_KEPT_TEXT_BYTES = 16;
+
 function textTruncationNotice(byteLength: number): string {
   return `[MCP tool result text truncated: ${formatBytesSI(byteLength)} exceeds the ${formatBytesSI(MCP_TOOL_RESULT_MAX_TEXT_BYTES)} cap. Narrow the query to reduce output size.]`;
 }
 
+/** Serialized byte length of `text` as a JSON string, minus the outer quotes. */
+function escapedTextBytes(text: string): number {
+  return Buffer.byteLength(JSON.stringify(text), "utf8") - 2;
+}
+
 /**
- * Charge `text` against the budget. Returns the (possibly truncated) text, or
- * null when the budget is already exhausted and the part should be dropped.
+ * Charge `text` against the budget in serialized bytes. Returns the (possibly
+ * truncated) text, or null when the remaining budget is too small to carry a
+ * useful fragment and the part should be dropped.
  */
 function capText(text: string, budget: TextBudget): { text: string; truncated: boolean } | null {
-  const size = Buffer.byteLength(text, "utf8");
-  if (size <= budget.remaining) {
-    budget.remaining -= size;
-    return { text, truncated: false };
+  const rawBytes = Buffer.byteLength(text, "utf8");
+  // JSON escaping only expands (multi-byte characters serialize as-is), so raw
+  // bytes lower-bound the serialized cost; only measure exactly when the raw
+  // size already fits, keeping stringify off pathologically large inputs.
+  if (rawBytes + PART_SERIALIZATION_OVERHEAD_BYTES <= budget.remaining) {
+    const cost = escapedTextBytes(text) + PART_SERIALIZATION_OVERHEAD_BYTES;
+    if (cost <= budget.remaining) {
+      budget.remaining -= cost;
+      return { text, truncated: false };
+    }
   }
-  if (budget.remaining <= 0) {
+  const allowed = budget.remaining - PART_SERIALIZATION_OVERHEAD_BYTES;
+  if (allowed < MIN_KEPT_TEXT_BYTES) {
     return null;
   }
-  const kept = truncateUtf8Bytes(text, budget.remaining, "");
+  // Escaped size is monotonic in the kept prefix but not linear, so shrink
+  // proportionally until the serialized fragment fits. Raw bytes strictly
+  // decrease each pass and one escape-dense pass reduces size by at least the
+  // overshoot ratio, so this converges in a few iterations.
+  let candidate = truncateUtf8Bytes(text, allowed, "");
+  let fits = false;
+  for (let i = 0; i < 32; i += 1) {
+    const escaped = escapedTextBytes(candidate);
+    if (escaped <= allowed) {
+      fits = true;
+      break;
+    }
+    const candidateRaw = Buffer.byteLength(candidate, "utf8");
+    const shrunk = Math.min(candidateRaw - 1, Math.floor((candidateRaw * allowed) / escaped));
+    if (shrunk < MIN_KEPT_TEXT_BYTES) {
+      return null;
+    }
+    candidate = truncateUtf8Bytes(candidate, shrunk, "");
+  }
+  if (!fits) {
+    return null;
+  }
   budget.remaining = 0;
-  return { text: `${kept}\n\n${textTruncationNotice(size)}`, truncated: true };
+  return { text: `${candidate}\n\n${textTruncationNotice(rawBytes)}`, truncated: true };
 }
 
 function omittedPartsNotice(count: number): string {
@@ -168,21 +212,17 @@ function toGuardedMediaPart(
  */
 export function transformMCPResult(result: unknown): unknown {
   // Primitive string results skip the content-array capping below, so bound
-  // them directly.
+  // them directly. A full budget always yields a non-null capText result.
   if (typeof result === "string") {
-    const size = Buffer.byteLength(result, "utf8");
-    if (size <= MCP_TOOL_RESULT_MAX_TEXT_BYTES) {
+    const capped = capText(result, { remaining: MCP_TOOL_RESULT_MAX_TEXT_BYTES });
+    if (!capped?.truncated) {
       return result;
     }
     log.warn("[MCP] string tool result too large, truncating", {
-      size,
+      size: Buffer.byteLength(result, "utf8"),
       cap: MCP_TOOL_RESULT_MAX_TEXT_BYTES,
     });
-    return truncateUtf8Bytes(
-      result,
-      MCP_TOOL_RESULT_MAX_TEXT_BYTES,
-      `\n\n${textTruncationNotice(size)}`
-    );
+    return capped.text;
   }
 
   if (!result || typeof result !== "object") {
@@ -407,13 +447,29 @@ function capTextOnlyResult(typed: MCPCallToolResult): unknown {
   }
   boundedContent.push({ type: "text", text: metadataOmittedNotice(totalSize) });
 
-  return {
+  const rebuilt: MCPCallToolResult = {
     // Strictly-true check: hostile servers can put unbounded junk in isError.
     ...(typed.isError === true ? { isError: true } : {}),
     content: boundedContent,
-    // Kept structuredContent is already bounded by its own cap above.
+    // Kept structuredContent is already bounded by its own serialized cap above.
     ...(typed.structuredContent !== undefined && !dropStructured
       ? { structuredContent: typed.structuredContent }
       : {}),
   };
+
+  // Remeasure the rebuilt output. Unreachable while every component above is
+  // budgeted in serialized bytes, but a bounded collapse beats trusting that
+  // invariant with history durability at stake.
+  const rebuiltSize = jsonByteLength(rebuilt);
+  if (rebuiltSize > MCP_TOOL_RESULT_MAX_TOTAL_BYTES) {
+    log.error("[MCP] rebuilt tool result still exceeds total cap, collapsing", {
+      rebuiltSize,
+      cap: MCP_TOOL_RESULT_MAX_TOTAL_BYTES,
+    });
+    return {
+      ...(typed.isError === true ? { isError: true } : {}),
+      content: [{ type: "text", text: metadataOmittedNotice(totalSize) }],
+    };
+  }
+  return rebuilt;
 }

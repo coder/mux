@@ -128,25 +128,54 @@ describe("transformMCPResult", () => {
       expect(original.content[0].text).toHaveLength(bigText.length);
     });
 
-    it("returns text-only results at the cap unchanged (same reference)", () => {
-      const atCap = {
-        content: [{ type: "text" as const, text: "a".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) }],
+    it("returns text-only results under the cap unchanged (same reference)", () => {
+      // 100 bytes of headroom covers the serialized part-wrapper overhead.
+      const underCap = {
+        content: [
+          { type: "text" as const, text: "a".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES - 100) },
+        ],
       };
-      expect(transformMCPResult(atCap)).toBe(atCap);
+      expect(transformMCPResult(underCap)).toBe(underCap);
     });
 
     it("shares one budget across parts and appends an omission notice", () => {
+      const nearCapText = "b".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES - 40);
       const result = transformMCPResult({
         content: [
-          { type: "text" as const, text: "b".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) },
+          { type: "text" as const, text: nearCapText },
           { type: "text" as const, text: "dropped entirely" },
           { type: "text" as const, text: "also dropped" },
         ],
       }) as TextContentResult;
 
       expect(result.content).toHaveLength(2);
-      expect(result.content[0].text).toBe("b".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES));
+      expect(result.content[0].text).toBe(nearCapText);
       expect(result.content[1].text).toContain("[2 content part(s) omitted:");
+    });
+
+    it("bounds serialized size when a result carries very many tiny parts", () => {
+      // Per Codex review: budgeting only raw text bytes lets 40k one-byte
+      // parts serialize to >1MB of JSON wrapper overhead.
+      const result = transformMCPResult({
+        content: Array.from({ length: 40_000 }, () => ({ type: "text" as const, text: "x" })),
+      }) as TextContentResult;
+
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(
+        MCP_TOOL_RESULT_MAX_TOTAL_BYTES
+      );
+      expect(result.content.at(-1)!.text).toContain("content part(s) omitted:");
+    });
+
+    it("bounds serialized size of escape-heavy text (JSON escapes expand 6x)", () => {
+      // Raw-byte budgeting lets 64KB of control characters serialize to ~384KB.
+      const result = transformMCPResult({
+        content: [{ type: "text" as const, text: "\u0001".repeat(MCP_TOOL_RESULT_MAX_TEXT_BYTES) }],
+      }) as TextContentResult;
+
+      expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(
+        MCP_TOOL_RESULT_MAX_TOTAL_BYTES
+      );
+      expect(result.content[0].text).toContain("[MCP tool result text truncated:");
     });
 
     it("caps oversized text resources in text-only results", () => {
