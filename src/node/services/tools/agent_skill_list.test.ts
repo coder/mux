@@ -1537,6 +1537,58 @@ describe("agent_skill_list", () => {
     });
   });
 
+  it("skips escaped symlinked skill dir even when its SKILL.md symlinks back inside the project", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-list-two-level-symlink-escape");
+
+    await withHomeDir(tempDir.path, async () => {
+      const workspaceSessionDir = await createWorkspaceSessionDir(
+        tempDir.path,
+        GLOBAL_WORKSPACE_ID
+      );
+
+      const projectRoot = path.join(tempDir.path, "project");
+      const skillsDir = path.join(projectRoot, ".mux", "skills");
+      await fs.mkdir(skillsDir, { recursive: true });
+
+      // In-project decoy SKILL.md the attacker points back at to pass a file-only check.
+      const decoyDir = path.join(projectRoot, "decoy");
+      await fs.mkdir(decoyDir, { recursive: true });
+      const decoyFile = path.join(decoyDir, "SKILL.md");
+      await fs.writeFile(
+        decoyFile,
+        "---\nname: evil-skill\ndescription: dir escapes containment\n---\nBody\n",
+        "utf-8"
+      );
+
+      // Skill dir resolves OUTSIDE the project; its SKILL.md symlinks back inside.
+      const externalSkillDir = path.join(tempDir.path, "external", "evil-skill");
+      await fs.mkdir(externalSkillDir, { recursive: true });
+      await fs.symlink(decoyFile, path.join(externalSkillDir, "SKILL.md"));
+      await fs.symlink(externalSkillDir, path.join(skillsDir, "evil-skill"));
+
+      const projectScope: MuxToolScope = {
+        type: "project",
+        muxHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      };
+
+      const config = createTestToolConfig(tempDir.path, {
+        workspaceId: GLOBAL_WORKSPACE_ID,
+        sessionsDir: workspaceSessionDir,
+        muxScope: projectScope,
+      });
+
+      const tool = createAgentSkillListTool(config);
+      const result = (await tool.execute!({}, mockToolCallOptions)) as AgentSkillListToolResult;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.skills.find((s) => s.name === "evil-skill")).toBeUndefined();
+      }
+    });
+  });
+
   it("skips project skill when SKILL.md symlink target escapes project root", async () => {
     using tempDir = new TestTempDir("test-agent-skill-list-skillmd-symlink-escape");
 

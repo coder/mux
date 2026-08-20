@@ -331,19 +331,33 @@ function resolveProjectSkillContainment(options?: {
 async function assertProjectSkillContained(args: {
   runtime: Runtime;
   containment: ProjectSkillContainment;
+  skillDir: string;
   skillFilePath: string;
 }): Promise<void> {
   if (args.containment.kind === "none") {
     return;
   }
 
+  // SECURITY: validate the skill DIRECTORY as well as SKILL.md. Checking only
+  // the file lets a skill-dir symlink resolve outside containment while its
+  // SKILL.md symlinks back inside; the skill would then be accepted and
+  // sibling files would be read from the external location.
   if (args.containment.kind === "local") {
+    await ensurePathContained(args.containment.root, args.skillDir, {
+      allowMissing: true,
+    });
     await ensurePathContained(args.containment.root, args.skillFilePath, {
       allowMissing: true,
     });
     return;
   }
 
+  await ensureRuntimePathWithinWorkspace(
+    args.runtime,
+    args.containment.root,
+    args.skillDir,
+    "Project skill directory"
+  );
   await ensureRuntimePathWithinWorkspace(
     args.runtime,
     args.containment.root,
@@ -360,11 +374,16 @@ async function assertProjectSkillContained(args: {
  */
 async function isPluginSkillContained(args: {
   pluginRoot: string;
+  skillDir: string;
   skillFilePath: string;
   directoryName: string;
   onEscape?: (message: string) => void;
 }): Promise<boolean> {
   try {
+    // SECURITY: validate the skill directory as well as SKILL.md so a dir
+    // symlink escaping the plugin root cannot hide behind a SKILL.md that
+    // symlinks back inside (see assertProjectSkillContained).
+    await ensurePathContained(args.pluginRoot, args.skillDir);
     await ensurePathContained(args.pluginRoot, args.skillFilePath);
     return true;
   } catch (error) {
@@ -590,6 +609,7 @@ export async function discoverAgentSkills(
         // was already validated against the project containment root.
         const contained = await isPluginSkillContained({
           pluginRoot: scan.pluginRoot,
+          skillDir,
           skillFilePath,
           directoryName,
         });
@@ -599,6 +619,7 @@ export async function discoverAgentSkills(
           await assertProjectSkillContained({
             runtime: scan.runtime,
             containment,
+            skillDir,
             skillFilePath,
           });
         } catch (error) {
@@ -729,6 +750,7 @@ export async function discoverAgentSkillsDiagnostics(
         // was already validated against the project containment root.
         const contained = await isPluginSkillContained({
           pluginRoot: scan.pluginRoot,
+          skillDir,
           skillFilePath,
           directoryName,
           onEscape: (message) => {
@@ -747,6 +769,7 @@ export async function discoverAgentSkillsDiagnostics(
           await assertProjectSkillContained({
             runtime: scan.runtime,
             containment,
+            skillDir,
             skillFilePath,
           });
         } catch (error) {
@@ -910,6 +933,7 @@ export async function readAgentSkill(
       // was already validated against the project containment root.
       const contained = await isPluginSkillContained({
         pluginRoot: candidate.pluginRoot,
+        skillDir,
         skillFilePath,
         directoryName: name,
       });
@@ -919,6 +943,7 @@ export async function readAgentSkill(
         await assertProjectSkillContained({
           runtime: candidate.runtime,
           containment,
+          skillDir,
           skillFilePath,
         });
       } catch (error) {

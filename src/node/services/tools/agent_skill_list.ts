@@ -63,12 +63,17 @@ async function readSkillDescriptor(
   }
 
   const directoryName = parsedDirectoryName.data;
-  const skillFilePath = path.join(skillsRoot, directoryName, "SKILL.md");
+  const skillDir = path.join(skillsRoot, directoryName);
+  const skillFilePath = path.join(skillDir, "SKILL.md");
 
-  // Validate SKILL.md canonical path stays within the containment root before any read.
-  // This prevents repo-controlled symlinks from escaping the project boundary.
+  // SECURITY: validate that BOTH the skill directory and SKILL.md canonical
+  // paths stay within the containment root before any read. Checking only the
+  // file would let a skill-dir symlink resolve outside containment while its
+  // SKILL.md symlinks back inside, advertising a skill whose sibling files
+  // agent_skill_read_file would then read from the external location.
   let containedPath: string;
   try {
+    await ensurePathContained(containmentRoot, skillDir);
     containedPath = await ensurePathContained(containmentRoot, skillFilePath);
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) {

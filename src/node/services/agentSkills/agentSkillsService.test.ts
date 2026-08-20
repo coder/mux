@@ -1129,6 +1129,46 @@ describe("agentSkillsService", () => {
     expect(result.package.frontmatter.description).toBe("Kalshi API documentation");
   });
 
+  test("local containment rejects escaped skill dir whose SKILL.md symlinks back inside", async () => {
+    using project = new DisposableTempDir("agent-skills-two-level-symlink");
+    using escapedSource = new DisposableTempDir("agent-skills-two-level-symlink-escape");
+
+    const projectRoot = project.path;
+    const projectSkillsRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(projectSkillsRoot, { recursive: true });
+
+    // In-project decoy SKILL.md the attacker points back at to pass a file-only check.
+    const skillName = "evil-skill";
+    const decoyParent = path.join(projectRoot, "decoy");
+    await writeSkill(decoyParent, skillName, "dir escapes containment");
+
+    // Skill dir resolves OUTSIDE the project; its SKILL.md symlinks back inside.
+    const externalSkillDir = path.join(escapedSource.path, skillName);
+    await fs.mkdir(externalSkillDir, { recursive: true });
+    await fs.symlink(
+      path.join(decoyParent, skillName, "SKILL.md"),
+      path.join(externalSkillDir, "SKILL.md"),
+      "file"
+    );
+    await fs.symlink(
+      externalSkillDir,
+      path.join(projectSkillsRoot, skillName),
+      process.platform === "win32" ? "junction" : "dir"
+    );
+
+    const roots = { projectRoot: projectSkillsRoot, globalRoot: "/nonexistent" };
+    const runtime = new LocalRuntime(projectRoot);
+    const containment = { kind: "local" as const, root: projectRoot };
+
+    const discovered = await discoverAgentSkills(runtime, projectRoot, { roots, containment });
+    expect(discovered.find((skill) => skill.name === skillName)).toBeUndefined();
+
+    const parsed = SkillNameSchema.parse(skillName);
+    expect(readAgentSkill(runtime, projectRoot, parsed, { roots, containment })).rejects.toThrow(
+      /not found/i
+    );
+  });
+
   test("runtime containment filters escaped project skills for discovery, diagnostics, and read", async () => {
     using project = new DisposableTempDir("agent-skills-runtime-containment");
     using escapedSource = new DisposableTempDir("agent-skills-runtime-containment-escape");
