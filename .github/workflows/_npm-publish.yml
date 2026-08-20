@@ -60,6 +60,32 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Verify npm provenance repository metadata
+        env:
+          EXPECTED_REPOSITORY_URL: git+${{ github.server_url }}/${{ github.repository }}.git
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const manifests = [
+            "package.json",
+            "packages/mux-compat/package.json",
+            "packages/chat-components/package.json",
+          ];
+          const expected = process.env.EXPECTED_REPOSITORY_URL;
+          let valid = true;
+
+          // npm validates repository.url against the OIDC repository claim, so fail before building.
+          for (const manifest of manifests) {
+            const packageJson = JSON.parse(fs.readFileSync(manifest, "utf8"));
+            if (packageJson.repository?.url !== expected) {
+              console.error(`${manifest}: repository.url is ${JSON.stringify(packageJson.repository?.url)}, expected ${JSON.stringify(expected)}`);
+              valid = false;
+            }
+          }
+
+          if (!valid) process.exit(1);
+          NODE
+
       - name: Generate unique version from git
         id: version
         env:
