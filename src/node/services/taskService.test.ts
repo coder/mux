@@ -4593,9 +4593,8 @@ describe("TaskService", () => {
     expect(JSON.stringify(history)).toContain("Nested work completed.");
   });
 
-  test("terminal nested agent report resumes a workspace turn with correlation", async () => {
-    const { config, parentId, taskService, workspaceMocks, historyService } =
-      await startWorkspaceTurnForTest();
+  test("terminal nested agent report queues a correlated workspace turn continuation", async () => {
+    const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest();
     await config.editConfig((cfg) => {
       const project = cfg.projects.get(path.join(rootDir, "repo"));
       assert(project, "test project must exist");
@@ -4634,31 +4633,9 @@ describe("TaskService", () => {
       ],
     });
 
-    const childHistory = await historyService.getHistoryFromLatestBoundary("childworkspace");
-    expect(childHistory.success).toBe(true);
-    if (!childHistory.success) throw new Error("child history read failed");
-    const reportMessage = childHistory.data.find(
-      (message) =>
-        message.role === "user" &&
-        message.parts.some(
-          (part) =>
-            part.type === "text" && part.text.includes("The nested terminal report is complete.")
-        )
-    );
-    expect(reportMessage?.metadata?.muxMetadata).toEqual({
-      type: "workspace-turn-task",
-      taskHandleId: "wst_handle",
-      ownerWorkspaceId: parentId,
-      turnId: "turn",
-    });
-
-    await Promise.all([
-      ...(taskService as unknown as { pendingTerminalAttentionDrains: Set<Promise<void>> })
-        .pendingTerminalAttentionDrains,
-    ]);
-
-    expect(workspaceMocks.resumeStream).toHaveBeenCalledWith(
+    expect(workspaceMocks.sendMessage).toHaveBeenCalledWith(
       "childworkspace",
+      expect.stringContaining("The nested terminal report is complete."),
       expect.objectContaining({
         muxMetadata: {
           type: "workspace-turn-task",
@@ -4667,7 +4644,10 @@ describe("TaskService", () => {
           turnId: "turn",
         },
       }),
-      { agentInitiated: true }
+      expect.objectContaining({
+        queueDedupeKey: "agent-terminal-report:nested-terminal-agent",
+        workspaceTurnContinuation: true,
+      })
     );
   });
 
