@@ -1450,7 +1450,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const handleCopyFile = async () => {
     const filePath = activeFilePath;
     const contentVersion = activeFileContentVersion;
-    if (!api || !filePath || isActiveFileDeleted) {
+    if (!filePath || isActiveFileDeleted) {
+      return;
+    }
+    // The API union supplies api: null while connecting/reconnecting/errored; the
+    // already-rendered view keeps its copy affordance, so fail visibly, not silently.
+    if (!api) {
+      showCopyFileFeedback("failed", filePath, contentVersion, {
+        message: "Copy failed: backend connection unavailable",
+      });
       return;
     }
     // Serialize same-file copies so key repeat or double-clicks cannot fan out

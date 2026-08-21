@@ -1456,6 +1456,29 @@ describe("ImmersiveReviewView", () => {
     expect(view.container.textContent ?? "").toContain("file is larger than 750 KB");
   });
 
+  test("shows a visible failure when the API is unavailable", async () => {
+    // APIContext supplies api: null while connecting/reconnecting/errored.
+    mockApi = null as unknown as MockApiClient;
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('button[aria-label="Copy file contents"]')
+          ?.getAttribute("data-copy-file-feedback")
+      ).toBe("failed")
+    );
+    expect(view.container.textContent ?? "").toContain("backend connection unavailable");
+    expect(clipboardWrites).toHaveLength(0);
+  });
+
   test("rejects partial payloads from unsuccessful script exits", async () => {
     // Simulates base64 dying after stat emitted the size: the script exits nonzero
     // but leaves parseable output that would decode to empty text.
