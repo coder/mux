@@ -60,9 +60,14 @@ import { Ok, Err } from "@/common/types/result";
 import {
   coerceOpenAIReasoningMode,
   coerceThinkingLevel,
-  type OpenAIReasoningMode,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import {
+  targetWorkspaceBucketToLayer,
+  type AgentAiSettingsLayerValues,
+} from "@/common/types/agentAiSettings";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
 import {
   enforceThinkingPolicy,
   lookupMinThinkingLevelOverride,
@@ -1558,6 +1563,14 @@ export class AgentSession {
     return true;
   }
 
+  /**
+   * Startup crash recovery replays the ORIGINAL interrupted request from
+   * persisted retry options / history metadata / workspace buckets. This is
+   * request replay, not preference resolution, so it intentionally does not go
+   * through resolveAgentAiSettings: its layers (and the child-task-workspace
+   * inversion below) reconstruct a specific prior request rather than deriving
+   * a fresh choice, and nothing here is promoted into new defaults.
+   */
   private async deriveStartupAutoRetryRequest(params: {
     partial: MuxMessage | null;
     historyTail: MuxMessage[];
@@ -1665,12 +1678,9 @@ export class AgentSession {
       const compactionRequest: StartupRetrySendOptions = {
         model: compactionModel,
         agentId: "compact",
-        thinkingLevel: enforceThinkingPolicy(
-          compactionModel,
-          requestedThinkingLevel,
-          undefined,
-          this.getProvidersConfigSafe()
-        ),
+        // No clamp here: the stream setup enforces the thinking policy (with
+        // the per-model floor) at request time.
+        thinkingLevel: requestedThinkingLevel,
         ...(requestedReasoningMode != null ? { reasoningMode: requestedReasoningMode } : {}),
         maxOutputTokens:
           typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
@@ -3737,44 +3747,41 @@ export class AgentSession {
     return followUp;
   }
 
-  private getPreferredCompactionSettings(): {
-    model: string | null;
-    thinkingLevel: ThinkingLevel | null;
-    reasoningMode: OpenAIReasoningMode | null;
+  /**
+   * Layers for auto-compaction resolution. Defensive reads: tests construct
+   * sessions with partial Config mocks, so missing methods degrade to empty
+   * layers instead of throwing.
+   */
+  private getCompactionResolverInputs(): {
+    agentAiDefaults?: AgentAiDefaults;
+    minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+    compactBucket?: AgentAiSettingsLayerValues;
   } {
     try {
       const maybeConfig = this.config as Config & {
-        loadConfigOrDefault?: () => {
-          agentAiDefaults?: Record<
-            string,
-            { modelString?: string; thinkingLevel?: string; reasoningMode?: string }
-          >;
-        } | null;
+        loadConfigOrDefault?: () => ReturnType<Config["loadConfigOrDefault"]> | null;
+        findWorkspace?: Config["findWorkspace"];
       };
       if (typeof maybeConfig.loadConfigOrDefault !== "function") {
-        return { model: null, thinkingLevel: null, reasoningMode: null };
+        return {};
       }
-
-      const compactDefaults = maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact;
-      const thinkingLevel = coerceThinkingLevel(compactDefaults?.thinkingLevel) ?? null;
-      const reasoningMode = coerceOpenAIReasoningMode(compactDefaults?.reasoningMode) ?? null;
-
-      const compactModelString = compactDefaults?.modelString;
-      if (typeof compactModelString !== "string") {
-        return { model: null, thinkingLevel, reasoningMode };
-      }
-
-      // Gateway-preserving: a cross-typed Coder compaction default
-      // (coder:openai/<claude>, type anthropic) must not persist as direct
-      // openai:<claude>, which would bypass the explicitly selected route.
-      const normalized = normalizeSelectedModel(compactModelString.trim());
-      if (!isValidModelFormat(normalized)) {
-        return { model: null, thinkingLevel, reasoningMode };
-      }
-
-      return { model: normalized, thinkingLevel, reasoningMode };
+      const cfg = maybeConfig.loadConfigOrDefault();
+      const workspaceMatch =
+        typeof maybeConfig.findWorkspace === "function"
+          ? maybeConfig.findWorkspace(this.workspaceId)
+          : null;
+      const project = workspaceMatch ? cfg?.projects.get(workspaceMatch.projectPath) : undefined;
+      const workspaceEntry = project?.workspaces.find(
+        (workspace) => workspace.id === this.workspaceId
+      );
+      const compactBucket = workspaceEntry?.aiSettingsByAgent?.compact;
+      return {
+        agentAiDefaults: cfg?.agentAiDefaults,
+        minThinkingLevelByModel: cfg?.minThinkingLevelByModel,
+        compactBucket: compactBucket ? targetWorkspaceBucketToLayer(compactBucket) : undefined,
+      };
     } catch {
-      return { model: null, thinkingLevel: null, reasoningMode: null };
+      return {};
     }
   }
 
@@ -3788,33 +3795,38 @@ export class AgentSession {
     sendOptions: SendMessageOptions;
     agentInitiated: boolean;
   } {
-    // Callers pass the stream model in baseOptions.model; avoid ambient session state
-    // here because the current stream is cleared before compaction and could go stale.
-    const compactSettings = this.getPreferredCompactionSettings();
-    const compactionModel = compactSettings.model ?? params.baseOptions.model;
-    assert(
-      typeof compactionModel === "string" && compactionModel.trim().length > 0,
-      "auto-compaction requires a non-empty model"
-    );
+    // Unified resolution for agent "compact": the workspace's compact bucket
+    // and configured compact defaults win over the active stream's settings
+    // (parent runtime) — the stream's level was chosen for its model, not the
+    // compaction model. Callers pass the stream settings in baseOptions; avoid
+    // ambient session state here because the current stream is cleared before
+    // compaction and could go stale.
+    const inputs = this.getCompactionResolverInputs();
+    const resolved = resolveAgentAiSettings({
+      targetAgentId: "compact",
+      profile: "interactive",
+      agentAiDefaults: inputs.agentAiDefaults,
+      targetWorkspaceSettings: inputs.compactBucket,
+      parentRuntime: {
+        model: params.baseOptions.model,
+        thinkingLevel: coerceThinkingLevel(params.baseOptions.thinkingLevel),
+        reasoningMode: coerceOpenAIReasoningMode(params.baseOptions.reasoningMode),
+      },
+      providersConfig: this.getProvidersConfigSafe(),
+      minThinkingLevelByModel: inputs.minThinkingLevelByModel,
+    });
 
     const sendOptions: SendMessageOptions = {
       ...params.baseOptions,
       agentId: "compact",
       skipAiSettingsPersistence: true,
-      model: compactionModel,
-      // Prefer the compact agent's configured thinking level over the active
-      // stream's, matching desktop /compact (applyCompactionOverrides) — the
-      // stream's level was chosen for its model, not the compaction model.
-      thinkingLevel: enforceThinkingPolicy(
-        compactionModel,
-        compactSettings.thinkingLevel ?? params.baseOptions.thinkingLevel ?? "off",
-        undefined,
-        this.getProvidersConfigSafe()
-      ),
-      // Compact-agent default wins over the stream's mode (same order as
-      // thinkingLevel); the send path re-gates per model/route.
-      ...(compactSettings.reasoningMode != null
-        ? { reasoningMode: compactSettings.reasoningMode }
+      model: resolved.selected.model,
+      // Effective (clamped) thinking: this internal request skips persistence,
+      // so there is no user preference to preserve.
+      thinkingLevel: resolved.effective.thinkingLevel,
+      // Selected reasoning; the send path re-gates per model/route.
+      ...(resolved.selected.reasoningMode != null
+        ? { reasoningMode: resolved.selected.reasoningMode }
         : {}),
       maxOutputTokens: undefined,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],

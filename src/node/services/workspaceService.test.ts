@@ -13569,6 +13569,8 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         model: "anthropic:claude-sonnet-4-6",
         agentId: "review",
         thinkingLevel: "off",
+        // The bucket owns the reasoning choice; absent resolves to explicit standard.
+        reasoningMode: "standard",
       });
     });
 
@@ -13605,6 +13607,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         model: "anthropic:claude-fable-5",
         agentId: "exec",
         thinkingLevel: "medium",
+        reasoningMode: "standard",
       });
     });
 
@@ -13640,6 +13643,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         model: "openai:gpt-4o",
         agentId: "exec",
         thinkingLevel: "off",
+        reasoningMode: "standard",
       });
     });
 
