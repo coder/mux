@@ -11556,6 +11556,44 @@ describe("WorkspaceService init cancellation", () => {
     expect(generateStableIdMock).not.toHaveBeenCalled();
   });
 
+  test("create() rejects slash branches whose sanitized workspace name already exists", async () => {
+    const projectPath = "/tmp/proj";
+    const generateStableIdMock = mock(() => "ws-conflict");
+    const mockConfig: Partial<Config> = {
+      rootDir: "/tmp/mux-root",
+      srcDir: "/tmp/src",
+      getSessionDir: mock(() => "/tmp/test/sessions"),
+      generateStableId: generateStableIdMock,
+      findWorkspace: mock(() => null),
+      loadConfigOrDefault: mock(() => ({
+        projects: new Map([
+          [
+            projectPath,
+            {
+              workspaces: [{ id: "existing", name: "feature-foo", path: "/tmp/proj/feature-foo" }],
+              trusted: true,
+            },
+          ],
+        ]),
+      })),
+    };
+    const workspaceService = createWorkspaceServiceForTest({
+      config: mockConfig,
+      historyService,
+    });
+
+    const result = await workspaceService.create(projectPath, "feature/foo", undefined, "title", {
+      type: "local",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error).toContain('Branch "feature/foo"');
+      expect(result.error).toContain('workspace name "feature-foo"');
+    }
+    expect(generateStableIdMock).not.toHaveBeenCalled();
+  });
+
   test("archive() aborts init and still archives when init is running", async () => {
     const workspaceId = "ws-init-running";
 
