@@ -133,6 +133,50 @@ describe("resolveWorkspaceAiSettingsForAgent", () => {
     expect(result.resolvedReasoningMode).toBe("pro");
   });
 
+  test("a workspace bucket toggled to standard beats a configured pro default on reload", () => {
+    // UAT regression: Settings exec default = Pro, user toggles the workspace
+    // to Standard (bucket entry records it), then reloads. Background sync
+    // must keep the workspace's explicit Standard instead of re-applying the
+    // configured Pro.
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "standard" },
+      },
+      useWorkspaceByAgentFallback: false,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "high",
+      existingReasoningMode: "standard",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("standard");
+  });
+
+  test("a workspace bucket toggled to standard beats a configured pro default on explicit switches", () => {
+    // Same regression via the switch-away-and-back path: the bucket's saved
+    // Standard must survive an explicit switch back to the agent.
+    const result = resolveWorkspaceAiSettingsForAgent({
+      agentId: "exec",
+      agentAiDefaults: {
+        exec: { modelString: "openai:gpt-5.6-sol", reasoningMode: "pro" },
+      },
+      workspaceByAgent: {
+        exec: { model: "openai:gpt-5.6-sol", thinkingLevel: "high", reasoningMode: "standard" },
+      },
+      useWorkspaceByAgentFallback: true,
+      fallbackModel: "openai:gpt-5.2-mini",
+      existingModel: "openai:gpt-5.6-sol",
+      existingThinking: "high",
+      existingReasoningMode: "pro",
+    });
+
+    expect(result.resolvedReasoningMode).toBe("standard");
+  });
+
   test("applies a configured agent-default pro mode over the workspace's current mode", () => {
     const result = resolveWorkspaceAiSettingsForAgent({
       agentId: "exec",

@@ -121,21 +121,27 @@ export function resolveWorkspaceAiSettingsForAgent(args: {
   const inheritedThinking = workspaceOverrideThinking ?? coerceThinkingLevel(args.existingThinking);
   const resolvedThinking = configuredDefaults.thinkingLevel ?? inheritedThinking ?? "off";
 
-  // Configured agent defaults win, mirroring model/thinking precedence (only
-  // explicit "pro"/"standard" are persisted there, so absent falls through);
-  // the base chain contributes when the agent has no own entry, matching ACP
-  // resolution and the Settings card display. Otherwise restore the agent's
-  // saved pro-mode choice alongside model/thinking on explicit switches, else
-  // inherit the workspace's current mode.
-  // When a per-agent entry exists but lacks reasoningMode (legacy entry saved
-  // before pro mode shipped), treat absent as "standard" — matching the
-  // WorkspaceContext seeding semantics — instead of inheriting a possibly-pro
-  // workspace mode from the previously active agent.
+  // An existing per-agent bucket owns the reasoning choice outright (matching
+  // targetWorkspaceBucketToLayer): a configured Pro default must not re-inject
+  // itself over a workspace deliberately toggled to Standard (every composer
+  // change rewrites the bucket, so its presence marks a workspace-level pick).
+  // Explicit switches restore the bucket's saved mode; background sync trusts
+  // the live workspace mode, which hydration seeds from the backend bucket.
+  // Absent reasoningMode on an existing entry (legacy entry saved before pro
+  // mode shipped) means "standard", matching the WorkspaceContext seeding
+  // semantics, instead of inheriting a possibly-pro workspace mode from the
+  // previously active agent.
+  // Without a bucket entry, configured defaults (and the base chain) apply,
+  // matching ACP resolution and the Settings card display, else the
+  // workspace's current mode carries over.
   const resolvedReasoningMode =
-    configuredDefaults.reasoningMode ??
-    (args.useWorkspaceByAgentFallback && workspaceOverride != null
-      ? (coerceOpenAIReasoningMode(workspaceOverride.reasoningMode) ?? "standard")
-      : (coerceOpenAIReasoningMode(args.existingReasoningMode) ?? "standard"));
+    workspaceOverride != null
+      ? args.useWorkspaceByAgentFallback
+        ? (coerceOpenAIReasoningMode(workspaceOverride.reasoningMode) ?? "standard")
+        : (coerceOpenAIReasoningMode(args.existingReasoningMode) ?? "standard")
+      : (configuredDefaults.reasoningMode ??
+        coerceOpenAIReasoningMode(args.existingReasoningMode) ??
+        "standard");
 
   return { resolvedModel, resolvedThinking, resolvedReasoningMode };
 }
