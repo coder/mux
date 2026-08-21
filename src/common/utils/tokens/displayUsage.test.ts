@@ -388,7 +388,7 @@ describe("createDisplayUsage", () => {
     });
   });
 
-  describe("Subscription-covered usage costs", () => {
+  describe("Costs-included usage costs", () => {
     test("returns $0 costs when providerMetadata.mux.costsIncluded is true", () => {
       const usage: LanguageModelV2Usage = {
         inputTokens: 1000, // OpenAI includes cached tokens
@@ -413,7 +413,7 @@ describe("createDisplayUsage", () => {
       expect(result!.reasoning.cost_usd).toBe(0);
     });
 
-    test("gpt-5.3-codex routed through ChatGPT subscription is always zero-cost", () => {
+    test("returns $0 when Codex usage is marked as costs-included", () => {
       const usage: LanguageModelV2Usage = {
         inputTokens: 1500, // includes cached input tokens
         outputTokens: 450,
@@ -456,6 +456,25 @@ describe("createDisplayUsage", () => {
       expect(result).toBeDefined();
       expect(result!.costsIncluded).toBeUndefined();
 
+      expect(result!.input.cost_usd).toBeGreaterThan(0);
+      expect(result!.cached.cost_usd).toBeGreaterThan(0);
+      expect(result!.output.cost_usd).toBeGreaterThan(0);
+      expect(result!.reasoning.cost_usd).toBeGreaterThan(0);
+    });
+
+    test("prices Codex usage when no costs-included marker is present", () => {
+      const usage: LanguageModelV2Usage = {
+        inputTokens: 1500,
+        outputTokens: 450,
+        reasoningTokens: 150,
+        totalTokens: 1950,
+        cachedInputTokens: 500,
+      };
+
+      const result = createDisplayUsage(usage, "openai:gpt-5.3-codex");
+
+      expect(result).toBeDefined();
+      expect(result!.costsIncluded).toBeUndefined();
       expect(result!.input.cost_usd).toBeGreaterThan(0);
       expect(result!.cached.cost_usd).toBeGreaterThan(0);
       expect(result!.output.cost_usd).toBeGreaterThan(0);

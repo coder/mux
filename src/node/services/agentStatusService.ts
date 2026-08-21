@@ -363,7 +363,6 @@ export class AgentStatusService {
             usage,
             usageOptions.providerMetadata,
             {
-              costsIncluded: usageOptions.costsIncluded,
               analyticsSource: "workspace_status",
               // Creation-time identity from the generator's pinned snapshot.
               metadataModel: usageOptions.metadataModel,

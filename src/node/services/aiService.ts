@@ -167,7 +167,7 @@ import {
 import type { PTCEventWithParent } from "@/node/services/tools/code_execution";
 import { MockAiStreamPlayer } from "./mock/mockAiStreamPlayer";
 import { DEVTOOLS_RUN_METADATA_ID_HEADER } from "./devToolsHeaderCapture";
-import { ProviderModelFactory, modelCostsIncluded } from "./providerModelFactory";
+import { ProviderModelFactory } from "./providerModelFactory";
 import { prepareMessagesForProvider } from "./messagePipeline";
 import { getLegacyModeForAgentMetadata, resolveAgentForStream } from "./agentResolution";
 import { buildPlanInstructions, buildStreamSystemContext } from "./streamContextBuilder";
@@ -339,29 +339,6 @@ function mergeProviderExtrasUnderMux(
   }
 
   return merged;
-}
-
-function markProviderMetadataCostsIncluded(
-  providerMetadata: Record<string, unknown> | undefined,
-  costsIncluded: boolean | undefined
-): Record<string, unknown> | undefined {
-  if (!costsIncluded) {
-    return providerMetadata;
-  }
-
-  const muxMetadata = providerMetadata?.mux;
-  const existingMux =
-    muxMetadata && typeof muxMetadata === "object"
-      ? (muxMetadata as Record<string, unknown>)
-      : undefined;
-
-  return {
-    ...(providerMetadata ?? {}),
-    mux: {
-      ...(existingMux ?? {}),
-      costsIncluded: true,
-    },
-  };
 }
 
 const WORKFLOW_CONTINUATION_RETRY_DELAY_MS = 1_000;
@@ -2300,10 +2277,6 @@ export class AIService extends EventEmitter {
             return;
         }
       };
-      // Tool-side generateText() results do not consistently echo mux.costsIncluded in
-      // providerMetadata, so remember the resolved billing mode from model creation and
-      // re-stamp it before converting usage into display/session costs.
-      const toolModelCostsIncludedByModelString = new Map<string, boolean>();
       // Creation-time pricing identity for tool-created models (advisor): a
       // Coder catalog refresh can remove/retag the instance while the tool
       // request runs, and resolving the identity from live config at
@@ -2559,10 +2532,6 @@ export class AIService extends EventEmitter {
                       `Failed to create advisor model: ${getErrorMessage(advisorModel.error)}`
                     );
                   }
-                  toolModelCostsIncludedByModelString.set(
-                    advisorModelString,
-                    modelCostsIncluded(advisorModel.data)
-                  );
                   // Same effective-route rule as createModelWithPinnedMetadata:
                   // a coder: selection whose gateway is unavailable falls away
                   // to a direct provider inside createModel, and identity or
@@ -2668,10 +2637,7 @@ export class AIService extends EventEmitter {
             assert(eventModel.length > 0, "tool model usage event model must be non-empty");
             // Persist tool-side model usage under its own model bucket so session costs keep
             // advisor/system-side pricing separate from the parent chat model.
-            const providerMetadata = markProviderMetadataCostsIncluded(
-              event.providerMetadata,
-              toolModelCostsIncludedByModelString.get(eventModel)
-            );
+            const providerMetadata = event.providerMetadata;
             // Prefer the creation-time identity captured when the tool model
             // was created; models not created through the tool runtime fall
             // back to live resolution (their identity is not coder-scoped).
@@ -3944,9 +3910,6 @@ export class AIService extends EventEmitter {
                     initialMetadataPatch: {
                       routedThroughGateway: next.routedThroughGateway,
                       ...(next.routeProvider != null ? { routeProvider: next.routeProvider } : {}),
-                      // Explicit undefined clears a stale costsIncluded when falling
-                      // back from a subscription-routed model to an API model.
-                      costsIncluded: modelCostsIncluded(next.model) ? true : undefined,
                       systemMessageTokens: nextSystemTokens,
                     },
                   });
@@ -4126,7 +4089,6 @@ export class AIService extends EventEmitter {
           ...(routeProvider != null ? { routeProvider } : {}),
           ...(muxMetadata !== undefined ? { muxMetadata } : {}),
           ...(acpPromptId != null ? { acpPromptId } : {}),
-          ...(modelCostsIncluded(modelResult.data.model) ? { costsIncluded: true } : {}),
         },
         streamProviderOptions,
         maxOutputTokens,

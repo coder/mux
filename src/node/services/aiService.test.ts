@@ -3242,7 +3242,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(typeof sessionUsageDeltaRecord.timestamp).toBe("number");
   });
 
-  it("zeros advisor tool usage costs for costs-included models before persisting", async () => {
+  it("tracks advisor tool usage costs for ChatGPT OAuth models", async () => {
     using muxHome = new DisposableTempDir("ai-service-tool-model-usage-costs-included");
     const projectPath = path.join(muxHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
@@ -3331,18 +3331,19 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       },
       timestamp: Date.now(),
     };
-    const expectedDisplayUsage = createDisplayUsage(event.usage, event.model, {
-      ...(event.providerMetadata ?? {}),
-      mux: { costsIncluded: true },
-    });
+    const expectedDisplayUsage = createDisplayUsage(
+      event.usage,
+      event.model,
+      event.providerMetadata
+    );
     expect(expectedDisplayUsage).toBeDefined();
     if (!expectedDisplayUsage) {
       throw new Error("Expected tool usage event to produce display usage");
     }
-    expect(expectedDisplayUsage.costsIncluded).toBe(true);
-    expect(expectedDisplayUsage.input.cost_usd).toBe(0);
-    expect(expectedDisplayUsage.output.cost_usd).toBe(0);
-    expect(expectedDisplayUsage.reasoning.cost_usd).toBe(0);
+    expect(expectedDisplayUsage.costsIncluded).toBeUndefined();
+    expect(expectedDisplayUsage.input.cost_usd).toBeGreaterThan(0);
+    expect(expectedDisplayUsage.output.cost_usd).toBeGreaterThan(0);
+    expect(expectedDisplayUsage.reasoning.cost_usd).toBeGreaterThan(0);
 
     reportModelUsage(event);
     await Promise.resolve();

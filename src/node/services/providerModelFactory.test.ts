@@ -17,7 +17,6 @@ import {
   buildAIProviderRequestHeaders,
   classifyCopilotInitiator,
   countAnthropicCacheBreakpoints,
-  modelCostsIncluded,
   XUM_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
   markCodexOauthRoutedResponse,
@@ -1199,7 +1198,6 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
         return;
       }
       expect(hasLanguageModelCleanup(result.data)).toBe(false);
-      expect(modelCostsIncluded(result.data)).toBe(true);
     });
   });
 
@@ -1295,74 +1293,6 @@ describe("ProviderModelFactory OpenAI WebSocket transport", () => {
   });
 });
 
-describe("ProviderModelFactory modelCostsIncluded", () => {
-  it("marks gpt-5.3-codex as subscription-covered when routed through Codex OAuth", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        openai: {
-          codexOauth: {
-            type: "oauth",
-            access: "test-access-token",
-            refresh: "test-refresh-token",
-            expires: Date.now() + 60_000,
-            accountId: "test-account-id",
-          },
-        },
-      });
-
-      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(modelCostsIncluded(result.data)).toBe(true);
-    });
-  });
-
-  it("routes a custom OpenAI model through Codex OAuth when it inherits from a compatible model", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        openai: {
-          codexOauth: {
-            type: "oauth",
-            access: "test-access-token",
-            refresh: "test-refresh-token",
-            expires: Date.now() + 60_000,
-            accountId: "test-account-id",
-          },
-          models: [{ id: "team-codex", mappedToModel: KNOWN_MODELS.GPT_53_CODEX.id }],
-        },
-      });
-
-      const result = await factory.createModel("openai:team-codex");
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(modelCostsIncluded(result.data)).toBe(true);
-    });
-  });
-
-  it("does not mark gpt-5.3-codex as subscription-covered when routed through API key", async () => {
-    await withTempConfig(async (config, factory) => {
-      config.saveProvidersConfig({
-        openai: {
-          apiKey: "sk-test",
-        },
-      });
-
-      const result = await factory.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
-      expect(result.success).toBe(true);
-      if (!result.success) {
-        return;
-      }
-
-      expect(modelCostsIncluded(result.data)).toBe(false);
-    });
-  });
-});
 describe("ProviderModelFactory routing", () => {
   it("honors non-mux gateway routes end-to-end", async () => {
     await withTempConfig(async (config, factory) => {

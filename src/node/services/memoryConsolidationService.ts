@@ -17,7 +17,6 @@ import * as path from "node:path";
 import writeFileAtomic from "write-file-atomic";
 import { z } from "zod";
 import type { LanguageModel } from "ai";
-import { modelCostsIncluded } from "@/node/services/providerModelFactory";
 import type { SessionUsageService } from "@/node/services/sessionUsageService";
 import type { CompactionCompletionMetadata } from "@/common/types/compaction";
 import type { Result } from "@/common/types/result";
@@ -515,7 +514,6 @@ export class MemoryConsolidationService extends EventEmitter {
           usage,
           providerMetadata,
           {
-            costsIncluded: modelCostsIncluded(modelResult.data.model),
             analyticsSource: "memory_consolidation",
             // Creation-time identity: a catalog refresh mid-run must not
             // re-attribute this spend (see ModelFactoryLike).
@@ -662,7 +660,6 @@ export class MemoryConsolidationService extends EventEmitter {
               usage,
               providerMetadata,
               {
-                costsIncluded: modelCostsIncluded(modelResult.data.model),
                 analyticsSource: "memory_harvest",
                 // Creation-time identity (see ModelFactoryLike).
                 metadataModel: modelResult.data.metadataModel,
