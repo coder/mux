@@ -528,6 +528,13 @@ export interface WorkspaceTurnWaitResult {
 
 type WorkspaceTurnMuxMetadata = Extract<MuxMessageMetadata, { type: "workspace-turn-task" }>;
 
+interface WorkspaceTurnContinuationReservation {
+  muxMetadata: WorkspaceTurnMuxMetadata;
+  released: Promise<boolean>;
+  markContinuationInstalled(): void;
+  [Symbol.dispose](): void;
+}
+
 interface BackgroundableForegroundWaiter {
   taskId: string;
   reject: (error: Error) => void;
@@ -1338,6 +1345,12 @@ export class TaskService {
   private readonly activeWorkspaceTurnHandleByWorkspaceId = new Map<
     string,
     { handleId: string; ownerWorkspaceId: string }
+  >();
+  // Bridge the short gap between selecting an active turn and installing its concrete queued or
+  // streaming continuation. Settlement checks this exact correlation under the same handle lock.
+  private readonly workspaceTurnContinuationReservationsByWorkspaceId = new Map<
+    string,
+    Set<WorkspaceTurnContinuationReservation>
   >();
   private readonly taskHandleStore: TaskHandleStore;
   private readonly terminalAttentionStore: TerminalAttentionStore;
@@ -6323,6 +6336,11 @@ export class TaskService {
       },
     };
 
+    // Publish the exact active-turn handoff before report reconstruction and model-option reads.
+    // A direct delivery that finds this notification claimed can then release its own reservation.
+    using initialWorkspaceTurnContinuation =
+      await this.reserveActiveWorkspaceTurnContinuation(ownerWorkspaceId);
+
     const agentNotifications = pending.filter(
       (notification) => notification.sourceKind === "agent_task"
     );
@@ -6421,8 +6439,13 @@ export class TaskService {
       entry,
       defaultModel
     );
-    const workspaceTurnMuxMetadata =
-      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(ownerWorkspaceId);
+    using lateWorkspaceTurnContinuation =
+      initialWorkspaceTurnContinuation == null
+        ? await this.reserveActiveWorkspaceTurnContinuation(ownerWorkspaceId)
+        : undefined;
+    const workspaceTurnContinuation =
+      initialWorkspaceTurnContinuation ?? lateWorkspaceTurnContinuation;
+    const workspaceTurnMuxMetadata = workspaceTurnContinuation?.muxMetadata;
 
     const sendOptions = {
       model: resumeOptions.model,
@@ -6449,6 +6472,7 @@ export class TaskService {
         this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
         return;
       }
+      workspaceTurnContinuation?.markContinuationInstalled();
       await markPendingDelivered();
       return;
     }
@@ -6531,6 +6555,7 @@ export class TaskService {
           return;
         }
         if (sendResult.success && !fallbackAccepted) {
+          workspaceTurnContinuation?.markContinuationInstalled();
           // The queued callbacks now own these claims until acceptance or cancellation.
           releasePendingClaimsOnReturn = false;
           return;
@@ -6547,6 +6572,7 @@ export class TaskService {
       return;
     }
 
+    workspaceTurnContinuation?.markContinuationInstalled();
     await markPendingDelivered();
   }
 
@@ -6929,6 +6955,8 @@ export class TaskService {
      * same turn, and the correlated stream-end proves the turn's real outcome.
      */
     allowTerminalResettle?: boolean;
+    /** Recheck a nonterminal settlement guard while holding the handle lock. */
+    shouldSettleCurrent?: (current: WorkspaceTurnTaskHandleRecord) => boolean;
   }): Promise<void> {
     assert(
       params.next.handleId === params.record.handleId,
@@ -7007,6 +7035,10 @@ export class TaskService {
           );
           this.markTaskForegroundRelevant(current.handleId);
           return { pendingNotify: null, winningStatus: current.status };
+        }
+
+        if (params.shouldSettleCurrent?.(current) === false) {
+          return null;
         }
 
         // Decide the terminal wake-up using persisted policy + the restart-safe dedupe marker.
@@ -10609,67 +10641,106 @@ export class TaskService {
   private async interruptWorkspaceTurnFromUncorrelatedStreamEnd(
     event: StreamEndEvent
   ): Promise<boolean> {
-    const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
-    if (active == null) {
-      return false;
-    }
-    const record = await this.taskHandleStore.getWorkspaceTurn(
-      active.ownerWorkspaceId,
-      active.handleId
-    );
-    if (record == null) {
-      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
-      log.warn("Ignoring missing uncorrelated workspace turn stream-end handle", {
-        workspaceId: event.workspaceId,
-        taskHandleId: active.handleId,
-      });
-      return true;
-    }
-    if (record.workspaceId !== event.workspaceId) {
-      log.warn("Ignoring out-of-scope uncorrelated workspace turn stream-end", {
-        workspaceId: event.workspaceId,
-        taskHandleId: record.handleId,
-      });
-      return false;
-    }
-    if (record.status !== "starting" && record.status !== "running") {
-      this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
-      return true;
-    }
+    let checkedStreamEndOrdering = false;
+    let matchedActiveTurn = false;
+    while (true) {
+      const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(event.workspaceId);
+      if (active == null) {
+        return matchedActiveTurn;
+      }
+      matchedActiveTurn = true;
 
-    if (await this.isStreamEndBeforeWorkspaceTurnPrompt(record, event)) {
-      log.debug("Ignoring stale uncorrelated stream-end before queued workspace turn prompt", {
+      const record = await this.taskHandleStore.getWorkspaceTurn(
+        active.ownerWorkspaceId,
+        active.handleId
+      );
+      if (record == null) {
+        this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+        log.warn("Ignoring missing uncorrelated workspace turn stream-end handle", {
+          workspaceId: event.workspaceId,
+          taskHandleId: active.handleId,
+        });
+        return true;
+      }
+      if (record.workspaceId !== event.workspaceId) {
+        log.warn("Ignoring out-of-scope uncorrelated workspace turn stream-end", {
+          workspaceId: event.workspaceId,
+          taskHandleId: record.handleId,
+        });
+        return false;
+      }
+      if (record.status !== "starting" && record.status !== "running") {
+        this.activeWorkspaceTurnHandleByWorkspaceId.delete(event.workspaceId);
+        return true;
+      }
+
+      if (!checkedStreamEndOrdering) {
+        checkedStreamEndOrdering = true;
+        if (await this.isStreamEndBeforeWorkspaceTurnPrompt(record, event)) {
+          log.debug("Ignoring stale uncorrelated stream-end before queued workspace turn prompt", {
+            workspaceId: event.workspaceId,
+            taskHandleId: record.handleId,
+            streamEndMessageId: event.messageId,
+          });
+          return true;
+        }
+      }
+
+      const correlation = this.buildWorkspaceTurnMuxMetadata(record);
+      if (this.hasConcreteSameTurnContinuation(event, correlation)) {
+        log.debug("Deferring uncorrelated stream-end to an exact workspace turn continuation", {
+          workspaceId: event.workspaceId,
+          taskHandleId: record.handleId,
+          streamEndMessageId: event.messageId,
+        });
+        return true;
+      }
+
+      const error = WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR;
+      const next: WorkspaceTurnTaskHandleRecord = {
+        ...record,
+        status: "interrupted",
+        updatedAt: getIsoNow(),
+        messageId: event.messageId,
+        error,
+      };
+      let concreteContinuationInstalled = false;
+      let reservedContinuation: WorkspaceTurnContinuationReservation | undefined;
+      await this.settleWorkspaceTurn({
+        record,
+        next,
+        waiterSettlement: { status: "error", error: new Error(error) },
+        shouldSettleCurrent: (current) => {
+          const currentCorrelation = this.buildWorkspaceTurnMuxMetadata(current);
+          if (this.hasConcreteSameTurnContinuation(event, currentCorrelation)) {
+            concreteContinuationInstalled = true;
+            return false;
+          }
+          reservedContinuation = this.getReservedWorkspaceTurnContinuation(
+            event.workspaceId,
+            currentCorrelation
+          );
+          return reservedContinuation == null;
+        },
+      });
+      if (concreteContinuationInstalled) {
+        return true;
+      }
+      if (reservedContinuation == null) {
+        return true;
+      }
+
+      log.debug("Waiting for a reserved workspace turn continuation handoff", {
         workspaceId: event.workspaceId,
         taskHandleId: record.handleId,
         streamEndMessageId: event.messageId,
       });
-      return true;
+      if (await reservedContinuation.released) {
+        return true;
+      }
+      // The handoff failed before it installed a concrete continuation. Re-evaluate the
+      // original stream-end while the caller still owns the workspace event lock.
     }
-
-    const correlation = this.buildWorkspaceTurnMuxMetadata(record);
-    if (this.hasSameTurnContinuation(event, correlation)) {
-      log.debug("Deferring uncorrelated stream-end to an exact workspace turn continuation", {
-        workspaceId: event.workspaceId,
-        taskHandleId: record.handleId,
-        streamEndMessageId: event.messageId,
-      });
-      return true;
-    }
-
-    const error = WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR;
-    const next: WorkspaceTurnTaskHandleRecord = {
-      ...record,
-      status: "interrupted",
-      updatedAt: getIsoNow(),
-      messageId: event.messageId,
-      error,
-    };
-    await this.settleWorkspaceTurn({
-      record,
-      next,
-      waiterSettlement: { status: "error", error: new Error(error) },
-    });
-    return true;
   }
 
   /**
@@ -10677,6 +10748,16 @@ export class TaskService {
    * Pending entries must carry the same correlation metadata as the ended stream.
    */
   private hasSameTurnContinuation(
+    event: StreamEndEvent,
+    correlation: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
+  ): boolean {
+    return (
+      this.hasReservedWorkspaceTurnContinuation(event.workspaceId, correlation) ||
+      this.hasConcreteSameTurnContinuation(event, correlation)
+    );
+  }
+
+  private hasConcreteSameTurnContinuation(
     event: StreamEndEvent,
     correlation: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
   ): boolean {
@@ -11288,6 +11369,76 @@ export class TaskService {
       }
 
       return this.buildWorkspaceTurnMuxMetadata(current);
+    });
+  }
+
+  private getReservedWorkspaceTurnContinuation(
+    workspaceId: string,
+    correlation: Pick<WorkspaceTurnMuxMetadata, "taskHandleId" | "ownerWorkspaceId" | "turnId">
+  ): WorkspaceTurnContinuationReservation | undefined {
+    const reservations = this.workspaceTurnContinuationReservationsByWorkspaceId.get(workspaceId);
+    return Array.from(reservations ?? []).find((reservation) => {
+      return (
+        reservation.muxMetadata.taskHandleId === correlation.taskHandleId &&
+        reservation.muxMetadata.ownerWorkspaceId === correlation.ownerWorkspaceId &&
+        reservation.muxMetadata.turnId === correlation.turnId
+      );
+    });
+  }
+
+  private hasReservedWorkspaceTurnContinuation(
+    workspaceId: string,
+    correlation: Pick<WorkspaceTurnMuxMetadata, "taskHandleId" | "ownerWorkspaceId" | "turnId">
+  ): boolean {
+    return this.getReservedWorkspaceTurnContinuation(workspaceId, correlation) != null;
+  }
+
+  private async reserveActiveWorkspaceTurnContinuation(
+    workspaceId: string
+  ): Promise<WorkspaceTurnContinuationReservation | undefined> {
+    const candidate = await this.getActiveWorkspaceTurnRecordForWorkspace(workspaceId);
+    if (candidate == null) {
+      return undefined;
+    }
+
+    return await this.workspaceTurnSettlementLocks.withLock(candidate.handleId, async () => {
+      const current = await this.taskHandleStore.getWorkspaceTurn(
+        candidate.ownerWorkspaceId,
+        candidate.handleId
+      );
+      if (
+        current?.workspaceId !== workspaceId ||
+        !isActiveWorkspaceTurnTaskStatus(current.status)
+      ) {
+        return undefined;
+      }
+
+      const reservations =
+        this.workspaceTurnContinuationReservationsByWorkspaceId.get(workspaceId) ?? new Set();
+      const releaseState = Promise.withResolvers<boolean>();
+      let released = false;
+      let continuationInstalled = false;
+      const reservation: WorkspaceTurnContinuationReservation = {
+        muxMetadata: this.buildWorkspaceTurnMuxMetadata(current),
+        released: releaseState.promise,
+        markContinuationInstalled: () => {
+          continuationInstalled = true;
+        },
+        [Symbol.dispose]: () => {
+          if (released) {
+            return;
+          }
+          released = true;
+          reservations.delete(reservation);
+          if (reservations.size === 0) {
+            this.workspaceTurnContinuationReservationsByWorkspaceId.delete(workspaceId);
+          }
+          releaseState.resolve(continuationInstalled);
+        },
+      };
+      reservations.add(reservation);
+      this.workspaceTurnContinuationReservationsByWorkspaceId.set(workspaceId, reservations);
+      return reservation;
     });
   }
 
@@ -12266,6 +12417,7 @@ export class TaskService {
           );
           if (finalization.kind === "finalized") {
             for (const taskId of finalization.taskIds) {
+              this.removeQueuedAgentProgressAfterTerminalDelivery(params.parentWorkspaceId, taskId);
               cleanupTaskIds.add(taskId);
             }
             return;
@@ -13411,9 +13563,11 @@ export class TaskService {
         : {}),
     });
 
-    const workspaceTurnMuxMetadata =
-      await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
-    if (workspaceTurnMuxMetadata != null) {
+    using workspaceTurnContinuation =
+      await this.reserveActiveWorkspaceTurnContinuation(parentWorkspaceId);
+    const workspaceTurnMuxMetadata = workspaceTurnContinuation?.muxMetadata;
+    if (workspaceTurnContinuation != null) {
+      const activeWorkspaceTurnMuxMetadata = workspaceTurnContinuation.muxMetadata;
       const parentEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId);
       if (parentEntry != null) {
         const resumeOptions = await this.resolveParentAutoResumeOptions(
@@ -13439,7 +13593,7 @@ export class TaskService {
             agentId: resumeOptions.agentId,
             thinkingLevel: resumeOptions.thinkingLevel,
             reasoningMode: resumeOptions.reasoningMode,
-            muxMetadata: workspaceTurnMuxMetadata,
+            muxMetadata: activeWorkspaceTurnMuxMetadata,
           },
           {
             skipAutoResumeReset: true,
@@ -13457,13 +13611,14 @@ export class TaskService {
                 parentWorkspaceId,
                 terminalAttention.id
               );
+              workspaceTurnContinuation.markContinuationInstalled();
               terminalContinuationAccepted = true;
               this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
             },
             onCanceled: async (reason: string) => {
               await this.settleWorkspaceTurnContinuationFailure(
                 parentWorkspaceId,
-                workspaceTurnMuxMetadata,
+                activeWorkspaceTurnMuxMetadata,
                 "interrupted",
                 reason
               );
@@ -13481,7 +13636,7 @@ export class TaskService {
             onAcceptedPreStreamFailure: async (error: SendMessageError) => {
               await this.settleWorkspaceTurnContinuationFailure(
                 parentWorkspaceId,
-                workspaceTurnMuxMetadata,
+                activeWorkspaceTurnMuxMetadata,
                 "error",
                 formatSendMessageError(error).message
               );
@@ -13512,12 +13667,14 @@ export class TaskService {
           }
         );
         if (sendResult.success) {
+          workspaceTurnContinuation.markContinuationInstalled();
           // Install the terminal continuation before removing progress. The
           // workspace turn always has a concrete future driver during handoff.
           this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
           return [];
         }
         if (terminalContinuationAccepted) {
+          workspaceTurnContinuation.markContinuationInstalled();
           return [];
         }
         this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
