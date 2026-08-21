@@ -1398,7 +1398,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, []);
 
-  const showCopyFileFeedback = useCallback((kind: "copied" | "failed", filePath: string) => {
+  const showCopyFileFeedback = (kind: "copied" | "failed", filePath: string) => {
     if (copyFileFeedbackTimeoutRef.current != null) {
       clearTimeout(copyFileFeedbackTimeoutRef.current);
     }
@@ -1407,7 +1407,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       setCopyFileFeedback(null);
       copyFileFeedbackTimeoutRef.current = null;
     }, COPY_FEEDBACK_DURATION_MS);
-  }, []);
+  };
 
   // Deleted files no longer exist on disk, so a copy read would always fail;
   // hide the affordance instead of offering a broken action. The file tree keeps
@@ -1421,7 +1421,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   // Copy the entire on-disk file, not the overlay content: the overlay may hold only
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
-  const handleCopyFile = useCallback(async () => {
+  const handleCopyFile = async () => {
     const filePath = activeFilePath;
     if (!api || !filePath || isActiveFileDeleted) {
       return;
@@ -1472,7 +1472,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         showCopyFileFeedback("failed", filePath);
       }
     }
-  }, [api, activeFilePath, isActiveFileDeleted, props.workspaceId, showCopyFileFeedback]);
+  };
+
+  // Keyboard handling reads the handler through a ref (matching onToggleReadRef) so the
+  // effect does not depend on a per-render function identity.
+  const handleCopyFileRef = useRef(handleCopyFile);
+  handleCopyFileRef.current = handleCopyFile;
 
   // Only surface feedback against the file the copy actually targeted, so navigating
   // away within the feedback window cannot show it against another file.
@@ -1748,7 +1753,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Copy the active file's full contents to the clipboard.
       if (matchesKeybind(e, KEYBINDS.REVIEW_COPY_FILE)) {
         e.preventDefault();
-        void handleCopyFile();
+        void handleCopyFileRef.current();
         return;
       }
     };
@@ -1773,7 +1778,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     handleToggleReadWithUndo,
     handleMarkFileAsRead,
     handleUndoLastRead,
-    handleCopyFile,
     isTouchExperience,
   ]);
 
@@ -2075,6 +2079,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 ) : (
                   <Copy aria-hidden="true" className="h-3.5 w-3.5" />
                 )}
+                {/* The keyboard shortcut never focuses the button, so announce
+                    copy outcomes through a live region instead of icon swaps. */}
+                <span className="sr-only" role="status">
+                  {activeCopyFileFeedback === "copied"
+                    ? "File copied to clipboard"
+                    : activeCopyFileFeedback === "failed"
+                      ? "Copy failed: not a copyable text file"
+                      : ""}
+                </span>
               </button>
             </TooltipIfPresent>
           )}
