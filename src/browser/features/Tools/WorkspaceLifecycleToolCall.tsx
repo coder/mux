@@ -48,7 +48,7 @@ import type {
  * lifecycle `status` values. A thrown execute() surfaces instead as `{ success: false,
  * error }`, handled via the shared ErrorBox.
  *
- * Design intent ported from the "Workspace Lifecycle Tool Call" Shux Design System mockup;
+ * Design intent ported from the "Workspace Lifecycle Tool Call" Xum Design System mockup;
  * the mockup used a simplified placeholder schema (archive|delete, top-level success), so
  * this card preserves its visual vocabulary while binding to the real status union.
  */

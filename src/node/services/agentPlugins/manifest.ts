@@ -13,7 +13,7 @@
  *   alphanumeric start/end, no `--` or `..` runs.
  * - Any other schema violation (wrong-typed permitted field) is fatal.
  * - `extensions`: a non-object value is NON-fatal (report + ignore); namespace
- *   member contents are never validated (§8.1/§11.1) — Shux implements no
+ *   member contents are never validated (§8.1/§11.1) — Xum implements no
  *   extension namespace, so all payloads are treated as opaque.
  * - `contributes` (Mux extension, not part of the 1.0.0 spec schema): declares
  *   the plugin's component contributions. Every malformed member is NON-fatal

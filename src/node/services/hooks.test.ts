@@ -52,11 +52,11 @@ describe("hooks", () => {
       expect(result).toBeNull();
     });
 
-    test("falls back to the user-global hook in getShuxHome()", async () => {
-      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-hooks-"));
-      const previousRoot = process.env.SHUX_ROOT;
-      process.env.SHUX_ROOT = shuxHome;
-      const hookPath = path.join(shuxHome, "tool_hook");
+    test("falls back to the user-global hook in getXumHome()", async () => {
+      const xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "xum-home-hooks-"));
+      const previousRoot = process.env.XUM_ROOT;
+      process.env.XUM_ROOT = xumHome;
+      const hookPath = path.join(xumHome, "tool_hook");
       await fs.writeFile(hookPath, "#!/bin/bash\necho test");
       await fs.chmod(hookPath, 0o755);
 
@@ -65,19 +65,19 @@ describe("hooks", () => {
         expect(result).toBe(hookPath);
       } finally {
         if (previousRoot === undefined) {
-          delete process.env.SHUX_ROOT;
+          delete process.env.XUM_ROOT;
         } else {
-          process.env.SHUX_ROOT = previousRoot;
+          process.env.XUM_ROOT = previousRoot;
         }
-        await fs.rm(shuxHome, { recursive: true, force: true });
+        await fs.rm(xumHome, { recursive: true, force: true });
       }
     });
 
-    test("prefers project-local .mux hook over the user-global shux home", async () => {
-      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-hooks-"));
-      const previousRoot = process.env.SHUX_ROOT;
-      process.env.SHUX_ROOT = shuxHome;
-      const userHookPath = path.join(shuxHome, "tool_hook");
+    test("prefers project-local .mux hook over the user-global xum home", async () => {
+      const xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "xum-home-hooks-"));
+      const previousRoot = process.env.XUM_ROOT;
+      process.env.XUM_ROOT = xumHome;
+      const userHookPath = path.join(xumHome, "tool_hook");
       await fs.writeFile(userHookPath, "#!/bin/bash\necho user");
       await fs.chmod(userHookPath, 0o755);
 
@@ -92,11 +92,11 @@ describe("hooks", () => {
         expect(result).toBe(projectHookPath);
       } finally {
         if (previousRoot === undefined) {
-          delete process.env.SHUX_ROOT;
+          delete process.env.XUM_ROOT;
         } else {
-          process.env.SHUX_ROOT = previousRoot;
+          process.env.XUM_ROOT = previousRoot;
         }
-        await fs.rm(shuxHome, { recursive: true, force: true });
+        await fs.rm(xumHome, { recursive: true, force: true });
       }
     });
   });
@@ -126,11 +126,11 @@ describe("hooks", () => {
       expect(result).toBeNull();
     });
 
-    test("falls back to user-global tool_env in getShuxHome()", async () => {
-      const shuxHome = await fs.mkdtemp(path.join(os.tmpdir(), "shux-home-tool-env-"));
-      const previousRoot = process.env.SHUX_ROOT;
-      process.env.SHUX_ROOT = shuxHome;
-      const envPath = path.join(shuxHome, "tool_env");
+    test("falls back to user-global tool_env in getXumHome()", async () => {
+      const xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "xum-home-tool-env-"));
+      const previousRoot = process.env.XUM_ROOT;
+      process.env.XUM_ROOT = xumHome;
+      const envPath = path.join(xumHome, "tool_env");
       await fs.writeFile(envPath, "export FOO=user");
 
       try {
@@ -138,11 +138,11 @@ describe("hooks", () => {
         expect(result).toBe(envPath);
       } finally {
         if (previousRoot === undefined) {
-          delete process.env.SHUX_ROOT;
+          delete process.env.XUM_ROOT;
         } else {
-          process.env.SHUX_ROOT = previousRoot;
+          process.env.XUM_ROOT = previousRoot;
         }
-        await fs.rm(shuxHome, { recursive: true, force: true });
+        await fs.rm(xumHome, { recursive: true, force: true });
       }
     });
   });

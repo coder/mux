@@ -892,7 +892,7 @@ describe("useCreationWorkspace", () => {
     expect(createRequest?.runtimeConfig).toEqual({
       type: "ssh",
       host: "example.com",
-      // SSH remotes keep the stable ~/mux layout; local Shux home is separate.
+      // SSH remotes keep the stable ~/mux layout; local Xum home is separate.
       srcBaseDir: "~/mux",
     });
 

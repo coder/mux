@@ -255,7 +255,7 @@ describe("McpOauthService store", () => {
   // during store parsing made auth() invalidate the tokens and demand
   // interactive re-login after every app restart. The official SDK v2 ignores
   // these fields (it stamps `issuer` instead), but the store must keep
-  // round-tripping them so downgrading Shux does not break token refresh.
+  // round-tripping them so downgrading Xum does not break token refresh.
   test("authorization server binding survives store round-trip", async () => {
     const populatedStore = {
       version: 2,
@@ -284,7 +284,7 @@ describe("McpOauthService store", () => {
     expect(provider).toBeDefined();
 
     // The SDK types no longer carry the legacy binding fields; read them via
-    // Shux's storage type, which is what the provider actually returns.
+    // Xum's storage type, which is what the provider actually returns.
     const tokens = (await provider!.tokens()) as MCPOAuthTokens | undefined;
     expect(tokens?.refresh_token).toBe("refresh-token");
     expect(tokens?.authorization_server).toBe("https://auth.example.com/");

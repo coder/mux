@@ -134,7 +134,7 @@ export async function readPlanFile(
   projectName: string,
   workspaceId: string
 ): Promise<ReadPlanResult> {
-  const muxHome = runtime.getShuxHome();
+  const muxHome = runtime.getXumHome();
   const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
   const legacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
@@ -190,7 +190,7 @@ export async function hasNonEmptyPlanFile(
     return false;
   }
 
-  const muxHome = runtime.getShuxHome();
+  const muxHome = runtime.getXumHome();
   const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
   const legacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
 
@@ -218,7 +218,7 @@ export async function movePlanFile(
   newWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const muxHome = runtime.getShuxHome();
+  const muxHome = runtime.getXumHome();
   const oldPath = getPlanFilePath(oldWorkspaceName, projectName, muxHome);
   const newPath = getPlanFilePath(newWorkspaceName, projectName, muxHome);
 
@@ -252,7 +252,7 @@ export async function copyPlanFile(
   targetWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const muxHome = runtime.getShuxHome();
+  const muxHome = runtime.getXumHome();
   const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, muxHome);
   const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId, muxHome);
   const targetPath = getPlanFilePath(targetWorkspaceName, projectName, muxHome);
@@ -288,11 +288,11 @@ export async function copyPlanFileAcrossRuntimes(
   targetWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const sourceMuxHome = sourceRuntime.getShuxHome();
-  const targetShuxHome = targetRuntime.getShuxHome();
+  const sourceMuxHome = sourceRuntime.getXumHome();
+  const targetXumHome = targetRuntime.getXumHome();
   const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, sourceMuxHome);
   const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId, sourceMuxHome);
-  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetShuxHome);
+  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, targetXumHome);
 
   for (const candidatePath of [sourcePath, legacySourcePath]) {
     try {

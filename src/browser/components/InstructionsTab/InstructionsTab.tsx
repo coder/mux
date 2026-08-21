@@ -131,7 +131,7 @@ function InstructionsBody({ data }: { data: WorkspaceInstructions }) {
   // Render structured groups so the panel layout reflects the prompt structure.
   const groups: Array<{ title: string; sets: InstructionSet[] }> = [];
   if (data.sources.global) {
-    groups.push({ title: "Global (~/.shux)", sets: [data.sources.global] });
+    groups.push({ title: "Global (~/.xum)", sets: [data.sources.global] });
   }
   const workspaceSets = data.sources.context.filter((s) => s.scope === INSTRUCTION_SCOPE.WORKSPACE);
   if (workspaceSets.length > 0) {
@@ -214,7 +214,7 @@ function FileRow({ file, projectName }: FileRowProps) {
               )}
             </span>
             <ScopeBadge scope={file.scope} projectName={projectName} />
-            {/* Shux-dedicated files (~/.shux/AGENTS.md, <dir>/.mux/AGENTS.md) are the
+            {/* Xum-dedicated files (~/.xum/AGENTS.md, <dir>/.mux/AGENTS.md) are the
                 only sources where scoped Model:/Mode: directives are honored. */}
             {file.muxOnly && (
               <span className="text-muted bg-muted/20 shrink-0 rounded px-1.5 py-0.5 text-[9px] tracking-wider uppercase">
@@ -284,7 +284,7 @@ function EmptyState() {
       <p>No instruction files loaded for this workspace.</p>
       <p className="text-[10px]">
         Add an <code className="bg-muted/30 rounded px-1">AGENTS.md</code> at the workspace root or
-        in <code className="bg-muted/30 rounded px-1">~/.shux/</code> to provide context.
+        in <code className="bg-muted/30 rounded px-1">~/.xum/</code> to provide context.
       </p>
     </div>
   );

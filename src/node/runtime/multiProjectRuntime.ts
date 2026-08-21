@@ -427,8 +427,8 @@ export class MultiProjectRuntime implements Runtime {
     return this.primaryRuntime.tempDir();
   }
 
-  getShuxHome(): string {
-    return this.primaryRuntime.getShuxHome();
+  getXumHome(): string {
+    return this.primaryRuntime.getXumHome();
   }
 
   private async rollbackCreatedWorkspaces(

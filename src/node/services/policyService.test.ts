@@ -234,13 +234,13 @@ describe("PolicyService", () => {
     };
 
     let receivedAuth: string | undefined;
-    let receivedShuxAuth: string | undefined;
+    let receivedXumAuth: string | undefined;
 
     const server = createServer((req, res) => {
       // Node lowercases incoming header names. Governor still expects the mux
-      // wire token; a Shux-only header would land on a different key and 401.
+      // wire token; a Xum-only header would land on a different key and 401.
       receivedAuth = req.headers["mux-governor-session-token"] as string | undefined;
-      receivedShuxAuth = req.headers["shux-governor-session-token"] as string | undefined;
+      receivedXumAuth = req.headers["xum-governor-session-token"] as string | undefined;
 
       if (req.url !== "/api/v1/policy.json") {
         res.writeHead(404);
@@ -283,7 +283,7 @@ describe("PolicyService", () => {
       expect(service.isProviderAllowed("openai")).toBe(true);
       expect(service.isProviderAllowed("anthropic")).toBe(false);
       expect(receivedAuth).toBe(token);
-      expect(receivedShuxAuth).toBeUndefined();
+      expect(receivedXumAuth).toBeUndefined();
 
       service.dispose();
     } finally {

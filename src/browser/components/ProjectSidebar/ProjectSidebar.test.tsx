@@ -295,13 +295,13 @@ function installProjectSidebarTestDoubles() {
   confirmDialogMock = mock(() => Promise.resolve(true));
   latestArchiveWorkspaceHandler = null;
   latestArchiveConfirmationModalProps = null;
-  void mock.module("@/browser/assets/logos/shux-logo-dark.svg?react", () => ({
+  void mock.module("@/browser/assets/logos/xum-logo-dark.svg?react", () => ({
     __esModule: true,
-    default: () => <svg data-testid="shux-logo-dark" />,
+    default: () => <svg data-testid="xum-logo-dark" />,
   }));
-  void mock.module("@/browser/assets/logos/shux-logo-light.svg?react", () => ({
+  void mock.module("@/browser/assets/logos/xum-logo-light.svg?react", () => ({
     __esModule: true,
-    default: () => <svg data-testid="shux-logo-light" />,
+    default: () => <svg data-testid="xum-logo-light" />,
   }));
   void mock.module("../AgentListItem/AgentListItem", () => ({
     AgentListItem: (props: MockAgentListItemProps) => {

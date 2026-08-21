@@ -262,9 +262,9 @@ export const ProviderConfigInfoSchema = z.object({
   codexOauthDefaultAuth: CodexOauthDefaultAuthSchema.optional(),
   /** AWS-specific fields (only present for bedrock provider) */
   aws: AWSCredentialStatusSchema.optional(),
-  /** Shux Gateway-specific fields */
+  /** Xum Gateway-specific fields */
   couponCodeSet: z.boolean().optional(),
-  /** Shux Gateway-specific: which models are enabled for gateway routing */
+  /** Xum Gateway-specific: which models are enabled for gateway routing */
   gatewayModels: z.array(z.string()).optional(),
   /** Coder-only: deployment access URL (e.g. https://coder.example.com) */
   deploymentUrl: z.string().optional(),
@@ -419,7 +419,7 @@ export const policy = {
   },
 };
 
-// Shux Gateway OAuth (desktop login flow)
+// Xum Gateway OAuth (desktop login flow)
 export const muxGatewayOauth = {
   startDesktopFlow: {
     input: z.void(),
@@ -475,7 +475,7 @@ export const copilotOauth = {
   },
 };
 
-// Shux Governor OAuth (enrollment for enterprise policy service)
+// Xum Governor OAuth (enrollment for enterprise policy service)
 export const muxGovernorOauth = {
   startDesktopFlow: {
     input: z.object({ governorOrigin: z.string() }).strict(),
@@ -587,7 +587,7 @@ export const coderOauth = {
   },
 };
 
-// Shux Gateway
+// Xum Gateway
 export const muxGateway = {
   getAccountStatus: {
     input: z.void(),
@@ -2203,9 +2203,9 @@ export const ApiServerStatusSchema = z.object({
   tailscaleBindHosts: z.array(TailscaleBindHostSchema),
   /** Auth token required for HTTP/WS API access. */
   token: z.string().nullable(),
-  /** Configured bind host from ~/.shux/config.json (if set). */
+  /** Configured bind host from ~/.xum/config.json (if set). */
   configuredBindHost: z.string().nullable(),
-  /** Configured port from ~/.shux/config.json (if set). */
+  /** Configured port from ~/.xum/config.json (if set). */
   configuredPort: z.number().int().min(0).max(65535).nullable(),
   /** Whether the API server should serve the mux web UI at /. */
   configuredServeWebUi: z.boolean(),
@@ -2321,7 +2321,7 @@ export const config = {
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
-      // Shux Governor enrollment status (safe fields only - token never exposed)
+      // Xum Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
       chatTranscriptFullWidth: z.boolean(),

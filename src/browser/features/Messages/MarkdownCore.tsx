@@ -190,7 +190,7 @@ const REHYPE_PLUGINS: Pluggable[] = [
       allowedProtocols: [INTERNAL_INLINE_SKILL_HREF_PREFIX],
       // rehype-harden requires a defaultOrigin when any allowlist is provided.
       // We use a stable placeholder origin so relative URLs can be resolved.
-      defaultOrigin: "https://shux.invalid",
+      defaultOrigin: "https://xum.invalid",
       allowDataImages: true,
     },
   ],

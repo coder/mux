@@ -149,7 +149,7 @@ Live goal accounting at limit:
     );
 
     expect(getByText("Goal limit reached")).toBeDefined();
-    expect(getByText("Shux is wrapping up the current goal.")).toBeDefined();
+    expect(getByText("Xum is wrapping up the current goal.")).toBeDefined();
     expect(queryByText(longReason)).toBeNull();
   });
 
@@ -171,7 +171,7 @@ Live goal accounting at limit:
     );
 
     expect(getByText("Continuing active goal")).toBeDefined();
-    expect(getByText("Shux is taking the next step automatically.")).toBeDefined();
+    expect(getByText("Xum is taking the next step automatically.")).toBeDefined();
     expect(container.querySelector("blockquote")).toBeNull();
   });
 
@@ -195,7 +195,7 @@ Live goal accounting at limit:
     );
 
     expect(getByText("Continuing active goal")).toBeDefined();
-    expect(getByText("Shux is taking the next step automatically.")).toBeDefined();
+    expect(getByText("Xum is taking the next step automatically.")).toBeDefined();
     expect(container.querySelector("blockquote")).toBeNull();
   });
 
@@ -218,7 +218,7 @@ Live goal accounting at limit:
     );
 
     expect(getByText("Goal limit reached")).toBeDefined();
-    expect(getByText("Shux is wrapping up the current goal.")).toBeDefined();
+    expect(getByText("Xum is wrapping up the current goal.")).toBeDefined();
     expect(getByText("Ship the feature")).toBeDefined();
     expect(container.querySelector("blockquote")).toBeDefined();
     expect(queryByText(/Live goal accounting/)).toBeNull();

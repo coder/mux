@@ -1,18 +1,18 @@
 {
-  "name": "@coder/shux",
+  "name": "@coder/xum",
   "version": "0.28.2",
-  "desktopName": "shux.desktop",
-  "description": "shux - coding agent multiplexer",
+  "desktopName": "xum.desktop",
+  "description": "xum - coding agent multiplexer",
   "author": "Coder",
   "main": "dist/cli/index.js",
   "bin": {
-    "shux": "dist/cli/index.js",
+    "xum": "dist/cli/index.js",
     "mux": "dist/cli/index.js"
   },
   "license": "AGPL-3.0-only",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/coder/shux.git"
+    "url": "git+https://github.com/coder/xum.git"
   },
   "publishConfig": {
     "access": "public"
@@ -258,13 +258,13 @@
   ],
   "build": {
     "appId": "com.mux.app",
-    "productName": "Shux",
-    "executableName": "shux",
+    "productName": "Xum",
+    "executableName": "xum",
     "protocols": [
       {
-        "name": "Shux",
+        "name": "Xum",
         "schemes": [
-          "shux",
+          "xum",
           "mux"
         ]
       }
@@ -294,7 +294,7 @@
         "zip"
       ],
       "icon": "build/icon.icns",
-      "artifactName": "shux-${version}-${arch}.${ext}",
+      "artifactName": "xum-${version}-${arch}.${ext}",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -305,15 +305,15 @@
       "target": "AppImage",
       "category": "Development",
       "icon": "build/icons",
-      "artifactName": "shux-${version}-${arch}.${ext}",
+      "artifactName": "xum-${version}-${arch}.${ext}",
       "desktop": {
-        "StartupWMClass": "shux"
+        "StartupWMClass": "xum"
       }
     },
     "win": {
       "target": "nsis",
       "icon": "build/icon.png",
-      "artifactName": "shux-${version}-${arch}.${ext}",
+      "artifactName": "xum-${version}-${arch}.${ext}",
       "sign": "scripts/sign-windows.js",
       "signingHashAlgorithms": [
         "sha256"

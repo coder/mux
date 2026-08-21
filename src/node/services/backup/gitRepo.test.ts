@@ -369,7 +369,7 @@ exec "$REAL_GIT" "$@"
       "-c",
       "user.email=mux@example.com",
       "-c",
-      "user.name=Shux",
+      "user.name=Xum",
       "commit",
       "-m",
       "add gitlink",
@@ -796,7 +796,7 @@ exec "$REAL_GIT" "$@"
 
   it("materializes only the managed path and preserves the rest of the branch", async () => {
     // Nothing outside the managed path may reach the filesystem, because a name this
-    // platform cannot create (say `linux/CON` on Windows) would fail the checkout before Shux
+    // platform cannot create (say `linux/CON` on Windows) would fail the checkout before Xum
     // reads its own directory. A scoped commit must still leave that file in the tree.
     const seed = path.join(tempDir, "seed");
     await fs.mkdir(path.join(seed, "outside"), { recursive: true });
@@ -1107,7 +1107,7 @@ exec "$REAL_GIT" "$@"
     ]);
     await runGit(["-C", seed, "push", "-q", originPath, "HEAD:refs/heads/main"]);
 
-    // Shux may be launched from a git hook or alias, where these are exported. Git reads them
+    // Xum may be launched from a git hook or alias, where these are exported. Git reads them
     // ahead of `-C`, so without stripping, checkout materializes under the outside worktree
     // and `clean -fdx -- mux` deletes the victim file there.
     const outside = path.join(tempDir, "outside-repo");
@@ -1553,7 +1553,7 @@ exec "$REAL_GIT" "$@"
     await repo.ensureCache();
 
     // A user-level rewrite: `remote get-url` reports the rewritten spelling while the
-    // stored value stays what Shux wrote, so an effective-url comparison rejected every
+    // stored value stays what Xum wrote, so an effective-url comparison rejected every
     // operation for this user.
     const globalConfig = path.join(tempDir, "gitconfig");
     await fs.writeFile(

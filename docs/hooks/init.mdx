@@ -32,7 +32,7 @@ The init script runs in the workspace directory with the workspace's environment
 
 ## Environment Variables
 
-Init hooks receive [environment variables](/hooks/environment-variables) including `SHUX_PROJECT_PATH`, `SHUX_RUNTIME`, `SHUX_WORKSPACE_NAME`, and more.
+Init hooks receive [environment variables](/hooks/environment-variables) including `XUM_PROJECT_PATH`, `XUM_RUNTIME`, `XUM_WORKSPACE_NAME`, and more.
 
 **Note for SSH workspaces:** Since the project is synced to the remote machine, files exist in both locations. The init hook runs in the workspace directory (`$PWD`), so use relative paths to reference project files:
 
@@ -40,8 +40,8 @@ Init hooks receive [environment variables](/hooks/environment-variables) includi
 #!/usr/bin/env bash
 set -e
 
-echo "Runtime: $SHUX_RUNTIME"
-echo "Local project path: $SHUX_PROJECT_PATH"
+echo "Runtime: $XUM_RUNTIME"
+echo "Local project path: $XUM_PROJECT_PATH"
 echo "Workspace directory: $PWD"
 
 # Copy .env from project root (works for both local and SSH)
@@ -51,7 +51,7 @@ if [ -f "../.env" ]; then
 fi
 
 # Runtime-specific behavior
-if [ "$SHUX_RUNTIME" = "local" ]; then
+if [ "$XUM_RUNTIME" = "local" ]; then
   echo "Running on local machine"
 else
   echo "Running on SSH remote"

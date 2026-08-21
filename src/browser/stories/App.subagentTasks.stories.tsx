@@ -9,7 +9,7 @@ import { createAssistantMessage, createUserMessage } from "./mocks/messages";
 import { createWorkspace, STABLE_TIMESTAMP } from "./mocks/workspaces";
 
 const PARENT_WORKSPACE_ID = "ws-persistent-subagents";
-const PROJECT_NAME = "shux";
+const PROJECT_NAME = "xum";
 const PROJECT_PATH = "/home/user/projects/mux";
 
 function setupPersistentSubagentsStory() {

@@ -852,7 +852,7 @@ describe("backup payload", () => {
     expect((oversized as Error).message).toContain("'preferences.json' is larger");
   });
 
-  it("publishes only the MCP fields Shux reads, and restores the rest from local", async () => {
+  it("publishes only the MCP fields Xum reads, and restores the rest from local", async () => {
     const localMcp = JSON.stringify({
       registry: { token: "top-level-secret" },
       servers: {
@@ -911,7 +911,7 @@ describe("backup payload", () => {
     await writeBackupPayload(destination, payload);
     await restoreBackupPayload({ muxRoot, payload: await readBackupPayload(destination) });
     // Restoring onto the machine the values came from puts every one of them back, so a
-    // field Shux ignores is not lost by round-tripping through a repository.
+    // field Xum ignores is not lost by round-tripping through a repository.
     expect(jsonc.parse(await fs.readFile(path.join(muxRoot, "mcp.jsonc"), "utf-8"))).toEqual(
       jsonc.parse(localMcp)
     );

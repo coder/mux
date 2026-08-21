@@ -18,7 +18,7 @@ import {
   classifyCopilotInitiator,
   countAnthropicCacheBreakpoints,
   modelCostsIncluded,
-  SHUX_AI_PROVIDER_USER_AGENT,
+  XUM_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
@@ -1939,16 +1939,16 @@ describe("resolveAIProviderHeaderSource", () => {
 describe("buildAIProviderRequestHeaders", () => {
   it("adds User-Agent when no headers exist", () => {
     const result = buildAIProviderRequestHeaders(undefined);
-    expect(result.get("user-agent")).toBe(SHUX_AI_PROVIDER_USER_AGENT);
+    expect(result.get("user-agent")).toBe(XUM_AI_PROVIDER_USER_AGENT);
   });
 
-  it("prepends Shux attribution to an existing User-Agent", () => {
+  it("prepends Xum attribution to an existing User-Agent", () => {
     const result = buildAIProviderRequestHeaders({ "User-Agent": "custom-agent/1.0" });
-    expect(result.get("user-agent")).toBe(`${SHUX_AI_PROVIDER_USER_AGENT} custom-agent/1.0`);
+    expect(result.get("user-agent")).toBe(`${XUM_AI_PROVIDER_USER_AGENT} custom-agent/1.0`);
   });
 
-  it("does not duplicate Shux attribution when already present", () => {
-    const existing = `${SHUX_AI_PROVIDER_USER_AGENT} ai-sdk/anthropic/3.0.37`;
+  it("does not duplicate Xum attribution when already present", () => {
+    const existing = `${XUM_AI_PROVIDER_USER_AGENT} ai-sdk/anthropic/3.0.37`;
     const result = buildAIProviderRequestHeaders({ "User-Agent": existing });
     expect(result.get("user-agent")).toBe(existing);
   });
@@ -1960,7 +1960,7 @@ describe("buildAIProviderRequestHeaders", () => {
     const result = buildAIProviderRequestHeaders(existing);
 
     expect(result.get("x-custom")).toBe("value");
-    expect(result.get("user-agent")).toBe(SHUX_AI_PROVIDER_USER_AGENT);
+    expect(result.get("user-agent")).toBe(XUM_AI_PROVIDER_USER_AGENT);
     expect(existing).toEqual(existingSnapshot);
   });
 });
@@ -2460,7 +2460,7 @@ describe("ProviderModelFactory Coder", () => {
 
   it("creates the SDK model from the same config snapshot as the wire report", async () => {
     await withTempConfig(async (config, factory) => {
-      // Another Shux process rewrites providers.jsonc between route/wire
+      // Another Xum process rewrites providers.jsonc between route/wire
       // resolution and model creation (an authoritative refresh changing the
       // instance's type). The created SDK model must follow the SAME
       // snapshot as the returned coderWire — a fresh reload inside
@@ -2643,7 +2643,7 @@ describe("ProviderModelFactory Coder", () => {
   it("rejects copilot-type provider instances as unsupported", async () => {
     await withTempConfig(async (config, factory) => {
       // Copilot gateway routes need request-time tokens only an official
-      // Copilot client can mint; Shux's Coder OAuth token is not enough.
+      // Copilot client can mint; Xum's Coder OAuth token is not enough.
       saveCoderConfig(config, {
         discoveredProviders: [{ name: "copilot", type: "copilot" }],
       });

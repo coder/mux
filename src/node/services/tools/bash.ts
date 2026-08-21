@@ -999,8 +999,8 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           scriptWithEnv,
           {
             cwd: config.cwd,
-            // Match foreground bash behavior: shuxEnv is present and secrets override it.
-            env: { ...hooksEnv, ...(config.shuxEnv ?? {}), ...(config.secrets ?? {}) },
+            // Match foreground bash behavior: xumEnv is present and secrets override it.
+            env: { ...hooksEnv, ...(config.xumEnv ?? {}), ...(config.secrets ?? {}) },
             displayName: safeDisplayName,
             isForeground: false, // Explicit background
             ...(monitorConfig ? { monitor: monitorConfig } : {}),
@@ -1079,7 +1079,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
 ${scriptWithEnv}`;
       const execStream = await config.runtime.exec(scriptWithClosedStdin, {
         cwd: config.cwd,
-        env: { ...hooksEnv, ...config.shuxEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },
+        env: { ...hooksEnv, ...config.xumEnv, ...config.secrets, ...NON_INTERACTIVE_ENV_VARS },
         timeout: effectiveTimeout,
         abortSignal: wrappedAbortController.signal,
       });

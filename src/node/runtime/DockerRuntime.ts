@@ -535,13 +535,13 @@ export class DockerRuntime extends RemoteRuntime {
       params,
       runtimeType: "docker",
       hookCheckPath: params.projectPath,
-      runHook: async ({ shuxEnv, initLogger, abortSignal }) => {
+      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
         const hookPath = `${params.workspacePath}/.mux/init`;
         await runInitHookOnRuntime(
           this,
           hookPath,
           params.workspacePath,
-          shuxEnv,
+          xumEnv,
           initLogger,
           abortSignal
         );
@@ -737,7 +737,7 @@ export class DockerRuntime extends RemoteRuntime {
     this.storeContainerUserInfo(containerUser);
 
     // Create /src directory and /var/mux/plans in container.
-    // /var/mux is used instead of ~/.shux because /root has 700 permissions,
+    // /var/mux is used instead of ~/.xum because /root has 700 permissions,
     // which makes it inaccessible to VS Code Dev Containers (non-root user).
     initLogger.logStep("Preparing workspace directory...");
     const mkdirResult = await this.prepareWorkspaceDirectories(
@@ -1331,11 +1331,11 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   /**
-   * Docker uses /var/mux instead of ~/.shux because:
+   * Docker uses /var/mux instead of ~/.xum because:
    * - /root has 700 permissions, inaccessible to VS Code Dev Containers (non-root user)
    * - /var/mux is world-readable by default
    */
-  override getShuxHome(): string {
+  override getXumHome(): string {
     return "/var/mux";
   }
 }

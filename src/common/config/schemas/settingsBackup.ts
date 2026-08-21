@@ -20,7 +20,7 @@ export function isWindowsUnusableSegment(segment: string): boolean {
 /**
  * The managed subdirectory scopes every write and every `git clean`, so it must be a
  * real subdirectory. `.`, `..`, absolute paths, and backslashes would let a backup
- * reach outside the directory Shux is allowed to own.
+ * reach outside the directory Xum is allowed to own.
  */
 export function isValidBackupPath(value: string): boolean {
   const segments = value.split("/").filter((segment) => segment !== "");
@@ -49,7 +49,7 @@ const INVALID_GIT_REF_CHARACTERS: ReadonlySet<string> = new Set([
   "\\",
 ]);
 
-/** Shux prefixes branch names with `refs/heads/`, so callers must provide an unqualified name. */
+/** Xum prefixes branch names with `refs/heads/`, so callers must provide an unqualified name. */
 export function isValidBackupBranch(value: string): boolean {
   if (
     value === "" ||

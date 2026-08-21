@@ -109,8 +109,8 @@ class RemotePathMappedRuntime extends RemoteRuntime {
     });
   }
 
-  override getShuxHome(): string {
-    return this.muxHomeOverride ?? super.getShuxHome();
+  override getXumHome(): string {
+    return this.muxHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -211,7 +211,7 @@ describe("agentSkillsService", () => {
         super(workspacePath);
       }
 
-      override getShuxHome(): string {
+      override getXumHome(): string {
         return this.muxHome;
       }
     }
@@ -325,7 +325,7 @@ describe("agentSkillsService", () => {
     const skills = await discoverAgentSkills(runtime, project.path, { roots });
 
     // Should include project/global skills plus built-in skills
-    // Note: deep-review is a project skill in the Shux repo, not a built-in.
+    // Note: deep-review is a project skill in the Xum repo, not a built-in.
     expect(skills.map((s) => s.name)).toEqual([
       "background-monitors",
       "bar",
@@ -334,10 +334,10 @@ describe("agentSkillsService", () => {
       "init",
       "loop",
       "orchestrate",
-      "shux-diagram",
-      "shux-docs",
       "spawn",
       "workflow-authoring",
+      "xum-diagram",
+      "xum-docs",
     ]);
 
     const foo = skills.find((s) => s.name === "foo");
@@ -447,7 +447,7 @@ describe("agentSkillsService", () => {
       scope: "global",
     });
     expect(skills.find((skill) => skill.name === "init")).toBeDefined();
-    expect(skills.find((skill) => skill.name === "shux-docs")).toBeDefined();
+    expect(skills.find((skill) => skill.name === "xum-docs")).toBeDefined();
   });
 
   test("project-local devcontainer contexts discover and read host-global skills", async () => {
@@ -923,12 +923,12 @@ describe("agentSkillsService", () => {
     const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
     const runtime = new LocalRuntime(project.path);
 
-    const name = SkillNameSchema.parse("shux-docs");
+    const name = SkillNameSchema.parse("xum-docs");
     const resolved = await readAgentSkill(runtime, project.path, name, { roots });
 
     expect(resolved.package.scope).toBe("built-in");
-    expect(resolved.package.frontmatter.name).toBe("shux-docs");
-    expect(resolved.skillDir).toBe("<built-in:shux-docs>");
+    expect(resolved.package.frontmatter.name).toBe("xum-docs");
+    expect(resolved.skillDir).toBe("<built-in:xum-docs>");
   });
 
   test("project/global skills override built-in skills", async () => {
@@ -938,21 +938,21 @@ describe("agentSkillsService", () => {
     const projectSkillsRoot = path.join(project.path, ".mux", "skills");
     const globalSkillsRoot = global.path;
 
-    // Override the built-in shux-docs skill with a project-local version
-    await writeSkill(projectSkillsRoot, "shux-docs", "custom docs from project");
+    // Override the built-in xum-docs skill with a project-local version
+    await writeSkill(projectSkillsRoot, "xum-docs", "custom docs from project");
 
     const roots = { projectRoot: projectSkillsRoot, globalRoot: globalSkillsRoot };
     const runtime = new LocalRuntime(project.path);
 
     const skills = await discoverAgentSkills(runtime, project.path, { roots });
-    const muxDocs = skills.find((s) => s.name === "shux-docs");
+    const muxDocs = skills.find((s) => s.name === "xum-docs");
 
     expect(muxDocs).toBeDefined();
     expect(muxDocs!.scope).toBe("project");
     expect(muxDocs!.description).toBe("custom docs from project");
 
     // readAgentSkill should also return the project version
-    const name = SkillNameSchema.parse("shux-docs");
+    const name = SkillNameSchema.parse("xum-docs");
     const resolved = await readAgentSkill(runtime, project.path, name, { roots });
     expect(resolved.package.scope).toBe("project");
   });
@@ -1004,10 +1004,10 @@ describe("agentSkillsService", () => {
       "init",
       "loop",
       "orchestrate",
-      "shux-diagram",
-      "shux-docs",
       "spawn",
       "workflow-authoring",
+      "xum-diagram",
+      "xum-docs",
     ]);
 
     const invalidNames = diagnostics.invalidSkills.map((issue) => issue.directoryName).sort();
@@ -1378,7 +1378,7 @@ describe("agentSkillsService agent plugins", () => {
       path.join(project.path, ".mux", "plugins"),
       path.join(project.path, ".agents", "plugins"),
     ]);
-    expect(onRoots.globalPluginRoots).toEqual(["~/.shux/plugins", "~/.agents/plugins"]);
+    expect(onRoots.globalPluginRoots).toEqual(["~/.xum/plugins", "~/.agents/plugins"]);
   });
 
   test("getDefaultAgentSkillsRoots never includes plugin containers for remote runtimes", () => {

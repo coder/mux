@@ -704,7 +704,7 @@ export function useCreationWorkspace({
         const stagingFailed = stagingOutcome.failures.length > 0;
 
         // SendMessageOptions.muxMetadata is a black box (z.any); the creation
-        // caller only ever passes ShuxMessageMetadata built in ChatInput.
+        // caller only ever passes XumMessageMetadata built in ChatInput.
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         const overrideMuxMetadata: MuxMessageMetadata | undefined = optionsOverride?.muxMetadata;
         const overrideRawCommand =

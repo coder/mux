@@ -8,7 +8,7 @@ import { CoderSSHRuntime } from "./CoderSSHRuntime";
 import { createSSHTransport } from "./transports";
 import { DockerRuntime, getContainerName } from "./DockerRuntime";
 import { DevcontainerRuntime } from "./DevcontainerRuntime";
-import { SHUX_PRODUCT_NAME } from "@/common/constants/product";
+import { XUM_PRODUCT_NAME } from "@/common/constants/product";
 import type { RuntimeConfig, RuntimeMode, RuntimeAvailabilityStatus } from "@/common/types/runtime";
 import { hasSrcBaseDir } from "@/common/types/runtime";
 import { isIncompatibleRuntimeConfig } from "@/common/utils/runtimeCompatibility";
@@ -79,7 +79,7 @@ function shouldUseSSH2Runtime(): boolean {
 
 /**
  * Error thrown when a workspace has an incompatible runtime configuration,
- * typically from a newer version of Shux that added new runtime types.
+ * typically from a newer version of Xum that added new runtime types.
  */
 export class IncompatibleRuntimeError extends Error {
   constructor(message: string) {
@@ -129,8 +129,8 @@ export function createRuntime(config: RuntimeConfig, options?: CreateRuntimeOpti
   // Check for incompatible configs from newer versions
   if (isIncompatibleRuntimeConfig(config)) {
     throw new IncompatibleRuntimeError(
-      `This workspace uses a runtime configuration from a newer version of ${SHUX_PRODUCT_NAME}. ` +
-        `Please upgrade ${SHUX_PRODUCT_NAME} to use this workspace.`
+      `This workspace uses a runtime configuration from a newer version of ${XUM_PRODUCT_NAME}. ` +
+        `Please upgrade ${XUM_PRODUCT_NAME} to use this workspace.`
     );
   }
 

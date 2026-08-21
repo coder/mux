@@ -3,7 +3,7 @@ import * as path from "node:path";
 
 import type { Runtime } from "@/node/runtime/Runtime";
 import { RemoteRuntime } from "@/node/runtime/RemoteRuntime";
-import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalShuxHome";
+import { resolveGlobalRuntime } from "@/node/runtime/hostGlobalXumHome";
 import { getErrorMessage } from "@/common/utils/errors";
 import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { shellQuote } from "@/node/runtime/backgroundCommands";
@@ -88,7 +88,7 @@ export function computeBaseSkipScope(
   return getSkipScopesAboveForKnownScope(currentScope);
 }
 
-const GLOBAL_AGENTS_ROOT = "~/.shux/agents";
+const GLOBAL_AGENTS_ROOT = "~/.xum/agents";
 
 export interface AgentDefinitionsRoots {
   projectRoot: string;
@@ -119,10 +119,7 @@ export function getDefaultAgentDefinitionsRoots(
             runtime.normalizePath(".mux/plugins", workspacePath),
             runtime.normalizePath(".agents/plugins", workspacePath),
           ],
-          globalPluginRoots: [
-            `${runtime.getShuxHome()}/plugins`,
-            UNIVERSAL_AGENT_PLUGINS_CONTAINER,
-          ],
+          globalPluginRoots: [`${runtime.getXumHome()}/plugins`, UNIVERSAL_AGENT_PLUGINS_CONTAINER],
         }
       : {}),
   };

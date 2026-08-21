@@ -75,8 +75,8 @@ describe("createCodeExecutionTool", () => {
 
       const desc = (tool as { description?: string }).description ?? "";
       // Description now contains TypeScript definitions instead of prose
-      expect(desc).toContain("declare namespace shux");
-      expect(desc).toContain("declare const mux: typeof shux");
+      expect(desc).toContain("declare namespace xum");
+      expect(desc).toContain("declare const mux: typeof xum");
       expect(desc).toContain("function file_read");
       expect(desc).toContain("function bash");
     });
@@ -321,7 +321,7 @@ describe("createCodeExecutionTool", () => {
 
       const tool = await createCodeExecutionTool(runtimeFactory, new ToolBridge(mockTools));
 
-      for (const ns of ["shux", "mux"] as const) {
+      for (const ns of ["xum", "mux"] as const) {
         const result = (await tool.execute!(
           { code: `return ${ns}.file_read({ filePath: "test.txt" })` },
           mockToolCallOptions

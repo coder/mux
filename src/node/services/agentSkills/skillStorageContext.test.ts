@@ -38,7 +38,7 @@ describe("resolveSkillStorageContext", () => {
     const runtimeMuxHome = path.join(tempDir.path, "mux-home");
 
     class MuxHomeRuntime extends LocalRuntime {
-      override getShuxHome(): string {
+      override getXumHome(): string {
         return runtimeMuxHome;
       }
     }

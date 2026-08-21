@@ -12,11 +12,11 @@ import { execSync } from "child_process";
 
 // Import production code - script and parser stay in sync
 import { GIT_STATUS_SCRIPT, parseGitStatusScriptOutput } from "@/common/utils/git/gitStatus";
-import { getShuxSrcDir } from "@/common/constants/paths";
+import { getXumSrcDir } from "@/common/constants/paths";
 
 function findWorkspaces(): Array<{ id: string; path: string }> {
   const workspaces: Array<{ id: string; path: string }> = [];
-  const muxSrcDir = getShuxSrcDir();
+  const muxSrcDir = getXumSrcDir();
 
   try {
     const projects = readdirSync(muxSrcDir);
@@ -116,7 +116,7 @@ function testGitStatus(workspaceId: string, workspacePath: string) {
 }
 
 export function gitStatusCommand(workspaceId?: string) {
-  const muxSrcDir = getShuxSrcDir();
+  const muxSrcDir = getXumSrcDir();
   console.log("🔍 Git Status Debug Tool");
   console.log("Finding workspaces in:", muxSrcDir);
   console.log();
@@ -125,7 +125,7 @@ export function gitStatusCommand(workspaceId?: string) {
   console.log(`Found ${workspaces.length} workspaces\n`);
 
   if (workspaces.length === 0) {
-    console.log("No workspaces found! Check that ~/.shux/src/ contains workspace directories.");
+    console.log("No workspaces found! Check that ~/.xum/src/ contains workspace directories.");
     process.exit(1);
   }
 

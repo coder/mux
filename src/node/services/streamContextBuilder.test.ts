@@ -23,7 +23,7 @@ class TestRuntime extends LocalRuntime {
     super(projectPath);
   }
 
-  override getShuxHome(): string {
+  override getXumHome(): string {
     return this.muxHomePath;
   }
 }

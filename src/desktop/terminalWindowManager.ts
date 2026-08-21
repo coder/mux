@@ -7,16 +7,16 @@
 
 import { app, BrowserWindow, shell } from "electron";
 import * as path from "path";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
 import { normalizeAndValidateExternalUrl } from "@/desktop/utils/normalizeAndValidateExternalUrl";
 import { log } from "@/node/services/log";
 import type { Config } from "@/node/config";
 
-// SHUX_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
-const shuxProxyUri = resolveShuxEnvironmentValue("PROXY_URI", process.env)?.trim();
+// XUM_PROXY_URI explicitly overrides VSCODE_PROXY_URI for localhost external-link rewrites.
+const xumProxyUri = resolveXumEnvironmentValue("PROXY_URI", process.env)?.trim();
 const localhostProxyTemplate =
   // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- empty/whitespace-only env vars should be treated as unset
-  shuxProxyUri || process.env.VSCODE_PROXY_URI?.trim() || undefined;
+  xumProxyUri || process.env.VSCODE_PROXY_URI?.trim() || undefined;
 
 export class TerminalWindowManager {
   private windows = new Map<string, Set<BrowserWindow>>(); // workspaceId -> Set of windows
@@ -108,8 +108,8 @@ export class TerminalWindowManager {
     });
 
     // Load the terminal page
-    // Match main window logic: use dev server unless packaged or SHUX_E2E_LOAD_DIST=1
-    const forceDistLoad = resolveShuxEnvironmentValue("E2E_LOAD_DIST", process.env) === "1";
+    // Match main window logic: use dev server unless packaged or XUM_E2E_LOAD_DIST=1
+    const forceDistLoad = resolveXumEnvironmentValue("E2E_LOAD_DIST", process.env) === "1";
     const useDevServer = !app.isPackaged && !forceDistLoad;
 
     // Build query params including optional sessionId for session handoff

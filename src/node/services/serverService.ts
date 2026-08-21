@@ -1,4 +1,4 @@
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
 import { createOrpcServer, type OrpcServer, type OrpcServerOptions } from "@/node/orpc/server";
 import { ServerLockfile } from "./serverLockfile";
 import type { ORPCContext } from "@/node/orpc/context";
@@ -25,7 +25,7 @@ export interface ServerInfo {
 }
 
 export interface StartServerOptions {
-  /** Path to shux home directory (for lockfile) */
+  /** Path to xum home directory (for lockfile) */
   muxHome: string;
   /** oRPC context with services */
   context: ORPCContext;
@@ -88,7 +88,7 @@ function buildHttpBaseUrl(host: string, port: number): string {
 }
 
 function resolveAllowHttpOriginEnvFlag(): boolean {
-  const raw = resolveShuxEnvironmentValue("SERVER_ALLOW_HTTP_ORIGIN", process.env);
+  const raw = resolveXumEnvironmentValue("SERVER_ALLOW_HTTP_ORIGIN", process.env);
   if (!raw) {
     return false;
   }
@@ -358,7 +358,7 @@ export class ServerService {
     const existing = await lockfile.read();
     if (existing) {
       throw new Error(
-        `Another shux server is already running at ${existing.baseUrl} (PID: ${existing.pid})`
+        `Another xum server is already running at ${existing.baseUrl} (PID: ${existing.pid})`
       );
     }
 
@@ -439,7 +439,7 @@ export class ServerService {
 
     // "auto" mode: only advertise when the bind host is reachable from other devices.
     if (mdnsAdvertisementEnabled !== false && !isLoopbackHost(bindHost)) {
-      const instanceName = options.context.config.getMdnsServiceName() ?? `shux-${os.hostname()}`;
+      const instanceName = options.context.config.getMdnsServiceName() ?? `xum-${os.hostname()}`;
       const serviceOptions = buildMuxMdnsServiceOptions({
         bindHost,
         port: server.port,
@@ -451,7 +451,7 @@ export class ServerService {
       try {
         await this.mdnsAdvertiser.start(serviceOptions);
       } catch (err) {
-        log.warn("Failed to advertise shux API server via mDNS:", err);
+        log.warn("Failed to advertise xum API server via mDNS:", err);
       }
     } else if (mdnsAdvertisementEnabled === true && isLoopbackHost(bindHost)) {
       log.warn(

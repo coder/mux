@@ -389,7 +389,7 @@ export const Conversation: AppStory = {
     <AppWithMocks
       setup={() => {
         collapseLeftSidebar();
-        // Hidden message type uses special "hidden" role not in ChatShuxMessage union.
+        // Hidden message type uses special "hidden" role not in ChatXumMessage union.
         // Cast is needed since this is a display-only message type.
         const hiddenIndicator = {
           type: "message",
@@ -684,12 +684,12 @@ const BASH_MONITOR_WAKE_MATCH_PROMPT = [
 ].join("\n");
 
 const BASH_MONITOR_WAKE_LOST_PROMPT = [
-  "Shux restarted and background bash monitors were lost.",
+  "Xum restarted and background bash monitors were lost.",
   "",
   "Process: TypeCheck Watch",
   "Task ID: bash:proc-typecheck (no longer awaitable — process was terminated)",
   "Monitor: /error TS/",
-  "Status: Shux restarted. This background process was terminated (or orphaned if Shux crashed) and its monitor is no longer active; it will produce no further wakes.",
+  "Status: Xum restarted. This background process was terminated (or orphaned if Xum crashed) and its monitor is no longer active; it will produce no further wakes.",
   "Script:",
   "> bun x tsc --watch",
   "",
@@ -836,7 +836,7 @@ export const Streaming: AppStory = {
  * as a distinct stream-error row in the message list:
  * - generic rate-limit error (StreamError)
  * - Anthropic overloaded / HTTP 529 server error (merged from AnthropicOverloaded)
- * - Shux gateway insufficient-balance quota error (merged from ShuxGatewayQuota)
+ * - Xum gateway insufficient-balance quota error (merged from XumGatewayQuota)
  */
 export const StreamError: AppStory = {
   render: () => (
@@ -882,7 +882,7 @@ export const StreamError: AppStory = {
                 errorType: "server_error",
               });
 
-              // Shux gateway insufficient balance / quota (former ShuxGatewayQuota)
+              // Xum gateway insufficient balance / quota (former XumGatewayQuota)
               callback({
                 type: "stream-start",
                 workspaceId,

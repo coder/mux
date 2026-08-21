@@ -1,6 +1,6 @@
 /**
- * OAuth constants and helpers for Shux Governor (enterprise policy service).
- * Uses same client credentials as Shux Gateway but with a user-provided origin.
+ * OAuth constants and helpers for Xum Governor (enterprise policy service).
+ * Uses same client credentials as Xum Gateway but with a user-provided origin.
  */
 
 import {
@@ -24,7 +24,7 @@ export function normalizeGovernorUrl(inputUrl: string): string {
 }
 
 /**
- * Build the OAuth2 authorize URL for a Shux Governor server.
+ * Build the OAuth2 authorize URL for a Xum Governor server.
  */
 export function buildGovernorAuthorizeUrl(input: {
   governorOrigin: string;
@@ -40,7 +40,7 @@ export function buildGovernorAuthorizeUrl(input: {
 }
 
 /**
- * Build the OAuth2 token exchange URL for a Shux Governor server.
+ * Build the OAuth2 token exchange URL for a Xum Governor server.
  */
 export function buildGovernorExchangeUrl(governorOrigin: string): string {
   return new URL("/api/v1/oauth2/exchange", governorOrigin).toString();

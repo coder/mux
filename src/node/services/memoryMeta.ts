@@ -37,7 +37,7 @@ function encodeKeyComponent(value: string): string {
  * Components are escaped so embedded ':' cannot alias another memory's key
  * (the sidecar drives pins, stats, hot ranking, and rename/delete cleanup).
  *
- * projectId is the project root path from Shux config (the stable project
+ * projectId is the project root path from Xum config (the stable project
  * identity available today — never the per-workspace checkout path). Phase 3
  * may refine this for remote runtimes (host identity + normalized root).
  */

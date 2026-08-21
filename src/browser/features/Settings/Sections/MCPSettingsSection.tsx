@@ -306,7 +306,7 @@ function useMCPOAuthLogin(input: {
 
       if (!api) {
         setLoginStatus("error");
-        setLoginError("Shux API not connected.");
+        setLoginError("Xum API not connected.");
         return;
       }
 
@@ -441,7 +441,7 @@ const MCPOAuthRequiredCallout: React.FC<{
   const disabledTitle =
     disabledReason ??
     (!api
-      ? "Shux API not connected"
+      ? "Xum API not connected"
       : !mcpOauthApi
         ? "OAuth is not available in this environment."
         : !loginFlowMode
@@ -1127,7 +1127,7 @@ export const MCPSettingsSection: React.FC = () => {
       <div>
         <p className="text-muted mb-4 text-xs">
           Configure global MCP servers. Global config lives in{" "}
-          <code className="text-accent">~/.shux/mcp.jsonc</code>, with optional repo overrides in{" "}
+          <code className="text-accent">~/.xum/mcp.jsonc</code>, with optional repo overrides in{" "}
           <code className="text-accent">./.mux/mcp.jsonc</code> and workspace overrides in{" "}
           <code className="text-accent">.mux/mcp.local.jsonc</code>.
         </p>

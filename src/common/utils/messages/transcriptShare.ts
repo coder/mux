@@ -215,7 +215,7 @@ function inlinePlanContentForSharing(
 
       // For shared transcripts, inline plan content into completed propose_plan tool calls.
       // We intentionally do not try to match `planSnapshot.path` to `output.planPath` — tool output
-      // often uses `~/.shux/...` while the snapshot path is resolved, and path normalization is
+      // often uses `~/.xum/...` while the snapshot path is resolved, and path normalization is
       // brittle across platforms.
       if ("planContent" in output) {
         return part;

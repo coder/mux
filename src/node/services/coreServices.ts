@@ -1,5 +1,5 @@
 /**
- * Core service graph shared by `shux run` (CLI) and `ServiceContainer` (desktop).
+ * Core service graph shared by `xum run` (CLI) and `ServiceContainer` (desktop).
  */
 
 import * as os from "os";
@@ -116,7 +116,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
     opts.experimentsService
   );
 
-  // Agent memory (memory experiment): scope roots derive from Config (shux home
+  // Agent memory (memory experiment): scope roots derive from Config (xum home
   // + session dirs); experiment gating happens per stream in AIService.
   // Host-local sidecar for user-owned memory metadata (pins + usage stats).
   const memoryMetaService = new MemoryMetaService(config.rootDir);
@@ -224,7 +224,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   workspaceService.setTaskService(taskService);
 
   // Goal continuation bridge lives at the core scope so every codepath that
-  // uses createCoreServices (shux run, shux server via ServiceContainer, tests)
+  // uses createCoreServices (xum run, xum server via ServiceContainer, tests)
   // gets a working dispatcher. Without this, requestContinuationAfterStreamEnd
   // is a no-op and the auto-continuation loop never fires. The dispatcher is
   // also exposed so ServiceContainer can share it with HeartbeatService.

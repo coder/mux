@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generate npm-shrinkwrap.json for the canonical @coder/shux package.
+# Generate npm-shrinkwrap.json for the canonical @coder/xum package.
 # We rely on npm's resolver and only include production dependencies.
 
 set -euo pipefail

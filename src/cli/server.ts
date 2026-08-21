@@ -1,14 +1,14 @@
 /**
- * CLI entry point for the shux oRPC server.
+ * CLI entry point for the xum oRPC server.
  * Uses ServerService for server lifecycle management.
  */
 import "source-map-support/register";
 import { Config } from "@/node/config";
 import { ServiceContainer } from "@/node/services/serviceContainer";
 import { setOpenSSHHostKeyPolicyMode } from "@/node/runtime/sshConnectionPool";
-import { cleanupObsoleteShuxBinArtifacts, getShuxHome } from "@/common/constants/paths";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
-import { initializeShuxHomeTransition } from "@/node/compat/shuxTransition";
+import { cleanupObsoleteXumBinArtifacts, getXumHome } from "@/common/constants/paths";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
+import { initializeXumHomeTransition } from "@/node/compat/xumTransition";
 import { ServerLockfile } from "@/node/services/serverLockfile";
 import { log } from "@/node/services/log";
 import type { BrowserWindow } from "electron";
@@ -62,8 +62,8 @@ const mockWindow: BrowserWindow = {
 async function main(): Promise<void> {
   const program = new Command();
   program
-    .name("shux server")
-    .description("HTTP/WebSocket ORPC server for Shux")
+    .name("xum server")
+    .description("HTTP/WebSocket ORPC server for Xum")
     .option("-h, --host <host>", "bind to specific host", "localhost")
     .option("-p, --port <port>", "bind to specific port", "3000")
     .option("--auth-token <token>", "bearer token for HTTP/WS auth (default: auto-generated)")
@@ -83,7 +83,7 @@ async function main(): Promise<void> {
   const resolved = resolveServerAuthToken({
     noAuth: options.noAuth === true || options.auth === false,
     cliToken: options.authToken as string | undefined,
-    envToken: resolveShuxEnvironmentValue("SERVER_AUTH_TOKEN", process.env),
+    envToken: resolveXumEnvironmentValue("SERVER_AUTH_TOKEN", process.env),
   });
   const ADD_PROJECT_PATH = options.addProject as string | undefined;
   // HTTPS-terminating proxy compatibility is opt-in so local/default deployments stay strict.
@@ -104,26 +104,26 @@ async function main(): Promise<void> {
   }, 1000);
 
   try {
-    const transition = await initializeShuxHomeTransition();
-    cleanupObsoleteShuxBinArtifacts(transition.activePath);
+    const transition = await initializeXumHomeTransition();
+    cleanupObsoleteXumBinArtifacts(transition.activePath);
     for (const issue of transition.issues) {
-      log.debug("[shux-transition] Server startup compatibility issue", { issue });
+      log.debug("[xum-transition] Server startup compatibility issue", { issue });
     }
   } catch (error) {
     // Server startup remains resilient when compatibility work is blocked by the filesystem.
-    log.debug("[shux-transition] Failed server startup transition", error);
+    log.debug("[xum-transition] Failed server startup transition", error);
   }
 
   // Early lockfile check: detect an existing server BEFORE initializing services.
   // serviceContainer.initialize() resumes queued/running tasks (via TaskService),
   // so we must fail fast here to avoid orphaned side effects when another server
   // already holds the lock. ServerService.startServer() re-checks as defense-in-depth.
-  const muxHome = getShuxHome();
+  const muxHome = getXumHome();
   const earlyLockfile = new ServerLockfile(muxHome);
   const existing = await earlyLockfile.read();
   if (existing) {
-    console.error(`Error: shux API server is already running at ${existing.baseUrl}`);
-    console.error(`Use 'shux api' commands to interact with the running instance.`);
+    console.error(`Error: xum API server is already running at ${existing.baseUrl}`);
+    console.error(`Use 'xum api' commands to interact with the running instance.`);
     process.exit(1);
   }
 
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
   // Set SSH host for editor deep links (CLI > env > config file)
   const sshHost =
     CLI_SSH_HOST ??
-    resolveShuxEnvironmentValue("SSH_HOST", process.env) ??
+    resolveXumEnvironmentValue("SSH_HOST", process.env) ??
     config.getServerSshHost();
   serviceContainer.serverService.setSshHost(sshHost);
 
@@ -165,7 +165,7 @@ async function main(): Promise<void> {
   clearInterval(startupKeepalive);
 
   // --- Startup output ---
-  console.log(`\nshux server v${VERSION.git_describe}`);
+  console.log(`\nxum server v${VERSION.git_describe}`);
   console.log(`  URL:  ${serverInfo.baseUrl}`);
   if (serverInfo.networkBaseUrls.length > 0) {
     for (const url of serverInfo.networkBaseUrls) {

@@ -61,14 +61,14 @@ describe("agent_skill_read_file", () => {
     const tool = createAgentSkillReadFileTool(baseConfig);
 
     const result = await executeReadFile(tool, {
-      name: "shux-docs",
+      name: "xum-docs",
       filePath: "SKILL.md",
       offset: 1,
       limit: 25,
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.content).toMatch(/name:\s*shux-docs/i);
+      expect(result.content).toMatch(/name:\s*xum-docs/i);
     }
   });
 

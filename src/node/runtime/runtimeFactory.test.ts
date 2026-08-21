@@ -15,7 +15,7 @@ describe("isIncompatibleRuntimeConfig", () => {
   it("returns false for local config with srcBaseDir (legacy worktree)", () => {
     const config: RuntimeConfig = {
       type: "local",
-      srcBaseDir: "~/.shux/src",
+      srcBaseDir: "~/.xum/src",
     };
     expect(isIncompatibleRuntimeConfig(config)).toBe(false);
   });
@@ -29,7 +29,7 @@ describe("isIncompatibleRuntimeConfig", () => {
   it("returns false for worktree config", () => {
     const config: RuntimeConfig = {
       type: "worktree",
-      srcBaseDir: "~/.shux/src",
+      srcBaseDir: "~/.xum/src",
     };
     expect(isIncompatibleRuntimeConfig(config)).toBe(false);
   });

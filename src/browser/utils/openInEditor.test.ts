@@ -47,7 +47,7 @@ describe("openInEditor", () => {
     const runtimeConfig: RuntimeConfig = {
       type: "ssh",
       host: "devbox",
-      srcBaseDir: "~/shux",
+      srcBaseDir: "~/xum",
     };
 
     const result = await withWindow(createMockWindow(calls), () =>

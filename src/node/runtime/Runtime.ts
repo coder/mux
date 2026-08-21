@@ -18,7 +18,7 @@ import type { Result } from "@/common/types/result";
  *
  * srcBaseDir (base directory for all workspaces):
  *   - Where mux stores ALL workspace directories
- *   - Local: ~/.shux/src (tilde expanded to full path by LocalRuntime)
+ *   - Local: ~/.xum/src (tilde expanded to full path by LocalRuntime)
  *   - SSH: /home/user/workspace (tilde paths are allowed and are resolved before use)
  *
  * Workspace Path Computation:
@@ -31,7 +31,7 @@ import type { Result } from "@/common/types/result";
  *     Example: "feature-123" or "main"
  *
  * Full Example (Local):
- *   srcBaseDir:    ~/.shux/src (expanded to /home/user/.mux/src)
+ *   srcBaseDir:    ~/.xum/src (expanded to /home/user/.mux/src)
  *   projectPath:   /Users/me/git/my-project (local git repo)
  *   projectName:   my-project (extracted)
  *   workspaceName: feature-123
@@ -615,10 +615,10 @@ export interface Runtime {
   /**
    * Get the mux home directory for this runtime.
    * Used for storing plan files and other mux-specific data.
-   * - LocalRuntime/SSHRuntime: ~/.shux (tilde expanded by runtime)
+   * - LocalRuntime/SSHRuntime: ~/.xum (tilde expanded by runtime)
    * - DockerRuntime: /var/mux (world-readable, avoids /root permission issues)
    */
-  getShuxHome(): string;
+  getXumHome(): string;
 
   /**
    * Env vars that should be forwarded into container processes.

@@ -292,7 +292,7 @@ export function parseReviewLineRange(lineRange: string): ParsedReviewLineRange |
  * normalized `.mux/plans/...` suffix is intentionally retained as a serialized
  * compatibility shape for older review transcripts.
  *
- * Accepts `/.shux/plans/`, legacy `/.mux/plans/`, suffixed development homes,
+ * Accepts `/.xum/plans/`, legacy `/.mux/plans/`, suffixed development homes,
  * Docker `/var/mux/plans/`, and their tilde-prefixed equivalents.
  */
 export function normalizePlanFilePath(filePath: string): string | null {
@@ -300,7 +300,7 @@ export function normalizePlanFilePath(filePath: string): string | null {
 
   const normalized = filePath.replace(/\\/g, "/");
 
-  const tildeMatch = /^~\/\.(?:shux|mux)(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  const tildeMatch = /^~\/\.(?:xum|mux)(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
   if (tildeMatch?.[1]) {
     return `.mux/plans/${tildeMatch[1]}`;
   }
@@ -316,9 +316,9 @@ export function normalizePlanFilePath(filePath: string): string | null {
   const isAbsolute = normalized.startsWith("/") || /^[A-Za-z]:\//.test(normalized);
   if (!isAbsolute) return null;
 
-  const shuxHomeMatch = /\/\.(?:shux|mux)(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
-  if (shuxHomeMatch?.[1]) {
-    return `.mux/plans/${shuxHomeMatch[1]}`;
+  const xumHomeMatch = /\/\.(?:xum|mux)(?:-[^/]+)?\/plans\/(.+)/.exec(normalized);
+  if (xumHomeMatch?.[1]) {
+    return `.mux/plans/${xumHomeMatch[1]}`;
   }
 
   const dockerMatch = /\/var\/mux\/plans\/(.+)/.exec(normalized);

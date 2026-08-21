@@ -235,7 +235,7 @@ export class BackupService {
 
   /**
    * `locks` is keyed per repository, so different repository and branch tuples overlap on the one
-   * Shux root every payload adapter reads and writes: a push can publish a half-restored mixture.
+   * Xum root every payload adapter reads and writes: a push can publish a half-restored mixture.
    * Held only around local payload work, so git and network work stays parallel.
    */
   private readonly localPayload = new MutexMap<string>();
@@ -357,7 +357,7 @@ export class BackupService {
       }
 
       const pushed = await this.dependencies.gitRepo.commitAndPush(repository, {
-        message: "Back up Shux settings",
+        message: "Back up Xum settings",
         expectedRemoteCommit: repository.remoteCommit,
       });
       await this.persistSettings(normalized, { lastPushedCommit: pushed.commit });
@@ -389,7 +389,7 @@ export class BackupService {
       }
 
       // One critical section from the check through the write loop: a concurrent push must not
-      // collect a half-restored Shux root, and a concurrent restore must not interleave its
+      // collect a half-restored Xum root, and a concurrent restore must not interleave its
       // writes with this one.
       return await this.withLocalPayload(async () => {
         // Before the snapshot, so a restore blocked on command approval does not leave an
@@ -579,7 +579,7 @@ export class BackupService {
   }
 
   /**
-   * One key, because the resource is the Shux root itself rather than any repository. Taken inside
+   * One key, because the resource is the Xum root itself rather than any repository. Taken inside
    * `withRepoLock` everywhere, so the two are always acquired in the same order.
    */
   private withLocalPayload<T>(operation: () => Promise<T>): Promise<T> {

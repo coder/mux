@@ -156,7 +156,7 @@ function validateTiming(params: {
  *
  * Backend source-of-truth for timing stats.
  * - Keeps active stream timing in memory
- * - Persists cumulative session timing to ~/.shux/sessions/{workspaceId}/session-timing.json
+ * - Persists cumulative session timing to ~/.xum/sessions/{workspaceId}/session-timing.json
  * - Emits snapshots to oRPC subscribers
  */
 export class SessionTimingService {

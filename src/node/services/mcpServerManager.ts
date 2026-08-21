@@ -542,7 +542,7 @@ interface StdioLaunch {
 /**
  * mkdir -p that self-heals corrupted plugin data state: when the target or one
  * of its ancestors exists as a non-directory (a stray file where
- * `~/.shux/plugin-data` or an instance dir should be), the offending entry is
+ * `~/.xum/plugin-data` or an instance dir should be), the offending entry is
  * quarantined (renamed aside) and the mkdir retried, instead of ENOTDIR/EEXIST
  * permanently bricking every test/launch until the user repairs disk state by
  * hand. Renaming preserves whatever data the file held.

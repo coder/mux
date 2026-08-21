@@ -4,7 +4,7 @@ import { defaultConfig } from "@/node/config";
 import type { MuxMessage } from "@/common/types/message";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import { defaultModel } from "@/common/utils/ai/models";
-import { getShuxSessionsDir } from "@/common/constants/paths";
+import { getXumSessionsDir } from "@/common/constants/paths";
 
 /**
  * Debug command to send a message to a workspace, optionally editing an existing message
@@ -29,7 +29,7 @@ export function sendMessageCommand(
   if (!fs.existsSync(chatHistoryPath)) {
     console.error(`❌ No chat history found at: ${chatHistoryPath}`);
     console.log("\nAvailable workspaces:");
-    const sessionsDir = getShuxSessionsDir();
+    const sessionsDir = getXumSessionsDir();
     if (fs.existsSync(sessionsDir)) {
       const sessions = fs.readdirSync(sessionsDir);
       sessions.forEach((session) => console.log(`  - ${session}`));
@@ -39,7 +39,7 @@ export function sendMessageCommand(
 
   // Read and parse messages
   // Note: We use a more flexible type here because the on-disk format includes workspaceId
-  // which is not part of the ShuxMessage type (it's metadata that gets stripped)
+  // which is not part of the XumMessage type (it's metadata that gets stripped)
   const data = fs.readFileSync(chatHistoryPath, "utf-8");
   const messages: Array<MuxMessage & { workspaceId?: string }> = data
     .split("\n")

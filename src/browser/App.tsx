@@ -46,7 +46,7 @@ import {
   LEFT_SIDEBAR_MAX_WIDTH_PX,
   LEFT_SIDEBAR_MIN_WIDTH_PX,
 } from "@/constants/layout";
-import { SHUX_PRODUCT_SLUG } from "@/common/constants/product";
+import { XUM_PRODUCT_SLUG } from "@/common/constants/product";
 import { buildCoreSources, type BuildSourcesParams } from "./utils/commands/sources";
 
 import {
@@ -340,14 +340,14 @@ function AppInner() {
       // Update window title with workspace title (or name for legacy workspaces)
       const metadata = workspaceMetadata.get(selectedWorkspace.workspaceId);
       const workspaceTitle = metadata?.title ?? metadata?.name ?? selectedWorkspace.workspaceId;
-      const title = `${workspaceTitle} - ${selectedWorkspace.projectName} - ${SHUX_PRODUCT_SLUG}`;
+      const title = `${workspaceTitle} - ${selectedWorkspace.projectName} - ${XUM_PRODUCT_SLUG}`;
       // Set document.title locally for browser mode, call backend for Electron
       document.title = title;
       void api?.window.setTitle({ title });
     } else {
       // Set document.title locally for browser mode, call backend for Electron
-      document.title = SHUX_PRODUCT_SLUG;
-      void api?.window.setTitle({ title: SHUX_PRODUCT_SLUG });
+      document.title = XUM_PRODUCT_SLUG;
+      void api?.window.setTitle({ title: XUM_PRODUCT_SLUG });
     }
   }, [selectedWorkspace, workspaceMetadata, api]);
 
@@ -1457,7 +1457,7 @@ function AppInner() {
                 onWorkspaceCreated={handleWorkspaceCreated}
               />
             ) : (
-              // The dedicated Shux home page was removed. Keep `/` as a minimal shell so
+              // The dedicated Xum home page was removed. Keep `/` as a minimal shell so
               // WorkspaceContext can redirect it to a concrete project route when possible,
               // without reintroducing a sticky dashboard screen.
               <RootRouteShell

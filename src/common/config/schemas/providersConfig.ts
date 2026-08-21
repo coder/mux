@@ -114,7 +114,7 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    * Cross-process disconnect generation (monotonic counter, incremented by
    * coderOauthService.disconnect). Each login flow snapshots the persisted
    * value at start; a flow whose snapshot no longer matches at commit time —
-   * in any Shux process sharing the file — refuses to commit, so an in-flight
+   * in any Xum process sharing the file — refuses to commit, so an in-flight
    * login cannot silently reconnect a just-disconnected account. A counter,
    * not a wall-clock timestamp: clock skew/corrections must not let a
    * pre-disconnect flow commit or lock out post-disconnect logins.
@@ -124,7 +124,7 @@ export const CoderProviderConfigSchema = BaseProviderConfigSchema.extend({
    * Cross-process catalog refresh generation (monotonic counter, incremented
    * by every catalog commit in coderOauthService.refreshBridgeModels). Each
    * refresh snapshots the persisted value before fetching; a refresh whose
-   * snapshot no longer matches at commit time — in any Shux process sharing
+   * snapshot no longer matches at commit time — in any Xum process sharing
    * the file — refuses to commit, so a slower refresh that captured an older
    * provider list can never overwrite a newer catalog. The in-process
    * catalogRefreshMutex orders only one process's refreshes; this counter

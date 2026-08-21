@@ -62,7 +62,7 @@ describe("applyToolPolicyAndExperiments", () => {
       { toolCallId: "test-call-id", messages: [], context: undefined }
     )) as { success: boolean; result?: unknown };
     expect(evalResult.success).toBe(true);
-    expect(evalResult.result).toBe("Capability denied: shux.bash is not granted for this sandbox");
+    expect(evalResult.result).toBe("Capability denied: xum.bash is not granted for this sandbox");
   });
 });
 

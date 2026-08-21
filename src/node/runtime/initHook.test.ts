@@ -2,12 +2,7 @@ import { describe, it, expect } from "bun:test";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import {
-  LineBuffer,
-  createLineBufferedLoggers,
-  getShuxEnv,
-  runWorkspaceInitHook,
-} from "./initHook";
+import { LineBuffer, createLineBufferedLoggers, getXumEnv, runWorkspaceInitHook } from "./initHook";
 import type { InitLogger, WorkspaceInitParams } from "./Runtime";
 
 describe("LineBuffer", () => {
@@ -61,7 +56,7 @@ describe("LineBuffer", () => {
   });
 });
 
-// getShuxEnv tests are placed here because initHook.ts owns the implementation.
+// getXumEnv tests are placed here because initHook.ts owns the implementation.
 describe("createLineBufferedLoggers", () => {
   it("should create separate buffers for stdout and stderr", () => {
     const stdoutLines: string[] = [];
@@ -183,7 +178,7 @@ describe("runWorkspaceInitHook", () => {
     });
 
     const { logger, completions } = createMockInitLogger();
-    const calls: Array<{ shuxEnv: Record<string, string>; abortSignal?: AbortSignal }> = [];
+    const calls: Array<{ xumEnv: Record<string, string>; abortSignal?: AbortSignal }> = [];
 
     try {
       const result = await runWorkspaceInitHook({
@@ -194,18 +189,18 @@ describe("runWorkspaceInitHook", () => {
         }),
         runtimeType: "worktree",
         hookCheckPath: hookRoot,
-        runHook: ({ shuxEnv, abortSignal }) => {
-          calls.push({ shuxEnv, abortSignal });
+        runHook: ({ xumEnv, abortSignal }) => {
+          calls.push({ xumEnv, abortSignal });
           return Promise.resolve();
         },
       });
 
       expect(result).toEqual({ success: true });
       expect(calls).toHaveLength(1);
-      expect(calls[0]?.shuxEnv.MUX_PROJECT_PATH).toBe(hookRoot);
-      expect(calls[0]?.shuxEnv.MUX_RUNTIME).toBe("worktree");
-      expect(calls[0]?.shuxEnv.MUX_WORKSPACE_NAME).toBe("feature/runtime-cleanup");
-      expect(calls[0]?.shuxEnv.TEST_SECRET).toBe("1");
+      expect(calls[0]?.xumEnv.MUX_PROJECT_PATH).toBe(hookRoot);
+      expect(calls[0]?.xumEnv.MUX_RUNTIME).toBe("worktree");
+      expect(calls[0]?.xumEnv.MUX_WORKSPACE_NAME).toBe("feature/runtime-cleanup");
+      expect(calls[0]?.xumEnv.TEST_SECRET).toBe("1");
       expect(completions).toEqual([]);
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
@@ -231,17 +226,17 @@ describe("runWorkspaceInitHook", () => {
 
 const legacyBrowserSessionEnvVar = ["MUX", "BROWSER", "SESSION"].join("_");
 
-describe("getShuxEnv", () => {
-  it("should include canonical SHUX_ variables and legacy MUX_ aliases", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "feature-branch");
+describe("getXumEnv", () => {
+  it("should include canonical XUM_ variables and legacy MUX_ aliases", () => {
+    const env = getXumEnv("/path/to/project", "worktree", "feature-branch");
 
-    expect(env.SHUX_PROJECT_PATH).toBe("/path/to/project");
-    expect(env.SHUX_RUNTIME).toBe("worktree");
-    expect(env.SHUX_WORKSPACE_NAME).toBe("feature-branch");
-    expect(env.SHUX_WORKSPACE_ID).toBeUndefined();
-    expect(env.MUX_PROJECT_PATH).toBe(env.SHUX_PROJECT_PATH);
-    expect(env.MUX_RUNTIME).toBe(env.SHUX_RUNTIME);
-    expect(env.MUX_WORKSPACE_NAME).toBe(env.SHUX_WORKSPACE_NAME);
+    expect(env.XUM_PROJECT_PATH).toBe("/path/to/project");
+    expect(env.XUM_RUNTIME).toBe("worktree");
+    expect(env.XUM_WORKSPACE_NAME).toBe("feature-branch");
+    expect(env.XUM_WORKSPACE_ID).toBeUndefined();
+    expect(env.MUX_PROJECT_PATH).toBe(env.XUM_PROJECT_PATH);
+    expect(env.MUX_RUNTIME).toBe(env.XUM_RUNTIME);
+    expect(env.MUX_WORKSPACE_NAME).toBe(env.XUM_WORKSPACE_NAME);
     expect(env.MUX_WORKSPACE_ID).toBeUndefined();
     expect(legacyBrowserSessionEnvVar in env).toBe(false);
     expect(env.MUX_MODEL_STRING).toBeUndefined();
@@ -250,65 +245,65 @@ describe("getShuxEnv", () => {
   });
 
   it("should include workspace env vars when workspaceId is provided", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "feature-branch", {
+    const env = getXumEnv("/path/to/project", "worktree", "feature-branch", {
       workspaceId: "workspace-id",
     });
 
-    expect(env.SHUX_WORKSPACE_ID).toBe("workspace-id");
+    expect(env.XUM_WORKSPACE_ID).toBe("workspace-id");
     expect(env.MUX_WORKSPACE_ID).toBe("workspace-id");
     expect(legacyBrowserSessionEnvVar in env).toBe(false);
   });
 
   it("should include model + thinking env vars when provided", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "feature-branch", {
+    const env = getXumEnv("/path/to/project", "worktree", "feature-branch", {
       modelString: "openai:gpt-5.2-pro",
       thinkingLevel: "medium",
     });
 
-    expect(env.SHUX_MODEL_STRING).toBe("openai:gpt-5.2-pro");
-    expect(env.SHUX_THINKING_LEVEL).toBe("medium");
+    expect(env.XUM_MODEL_STRING).toBe("openai:gpt-5.2-pro");
+    expect(env.XUM_THINKING_LEVEL).toBe("medium");
     expect(env.MUX_MODEL_STRING).toBe("openai:gpt-5.2-pro");
     expect(env.MUX_THINKING_LEVEL).toBe("medium");
   });
 
   it("should allow explicit thinkingLevel=off", () => {
-    const env = getShuxEnv("/path/to/project", "local", "main", {
+    const env = getXumEnv("/path/to/project", "local", "main", {
       modelString: "anthropic:claude-3-5-sonnet",
       thinkingLevel: "off",
     });
 
-    expect(env.SHUX_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
-    expect(env.SHUX_THINKING_LEVEL).toBe("off");
+    expect(env.XUM_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
+    expect(env.XUM_THINKING_LEVEL).toBe("off");
     expect(env.MUX_MODEL_STRING).toBe("anthropic:claude-3-5-sonnet");
     expect(env.MUX_THINKING_LEVEL).toBe("off");
   });
 
   it("should include MUX_COSTS_USD when costsUsd is provided", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "feature-branch", {
+    const env = getXumEnv("/path/to/project", "worktree", "feature-branch", {
       modelString: "anthropic:claude-opus-4-5",
       thinkingLevel: "high",
       costsUsd: 1.2345,
     });
 
-    expect(env.SHUX_COSTS_USD).toBe("1.23");
+    expect(env.XUM_COSTS_USD).toBe("1.23");
     expect(env.MUX_COSTS_USD).toBe("1.23");
   });
 
   it("should include MUX_COSTS_USD=0.00 when costsUsd is 0", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "main", {
+    const env = getXumEnv("/path/to/project", "worktree", "main", {
       costsUsd: 0,
     });
 
-    expect(env.SHUX_COSTS_USD).toBe("0.00");
+    expect(env.XUM_COSTS_USD).toBe("0.00");
     expect(env.MUX_COSTS_USD).toBe("0.00");
   });
 
   it("should not include costs when costsUsd is undefined", () => {
-    const env = getShuxEnv("/path/to/project", "worktree", "main", {
+    const env = getXumEnv("/path/to/project", "worktree", "main", {
       modelString: "openai:gpt-4",
     });
 
-    expect(env.SHUX_COSTS_USD).toBeUndefined();
+    expect(env.XUM_COSTS_USD).toBeUndefined();
     expect(env.MUX_COSTS_USD).toBeUndefined();
   });
 });

@@ -2,28 +2,28 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { Pencil } from "lucide-react";
 
-import type { WorkspaceChatMessage } from "shux/common/orpc/types";
-import type { DisplayedMessage } from "shux/common/types/message";
-import { createClient } from "shux/common/orpc/client";
+import type { WorkspaceChatMessage } from "xum/common/orpc/types";
+import type { DisplayedMessage } from "xum/common/types/message";
+import { createClient } from "xum/common/orpc/client";
 
-import { ProviderOptionsProvider } from "shux/browser/contexts/ProviderOptionsContext";
-import { SettingsProvider } from "shux/browser/contexts/SettingsContext";
-import { APIProvider } from "shux/browser/contexts/API";
-import { ThemeProvider } from "shux/browser/contexts/ThemeContext";
-import { ChatHostContextProvider } from "shux/browser/contexts/ChatHostContext";
+import { ProviderOptionsProvider } from "xum/browser/contexts/ProviderOptionsContext";
+import { SettingsProvider } from "xum/browser/contexts/SettingsContext";
+import { APIProvider } from "xum/browser/contexts/API";
+import { ThemeProvider } from "xum/browser/contexts/ThemeContext";
+import { ChatHostContextProvider } from "xum/browser/contexts/ChatHostContext";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "shux/browser/components/Tooltip/Tooltip";
-import { Button } from "shux/browser/components/Button/Button";
-import { matchesKeybind, KEYBINDS } from "shux/browser/utils/ui/keybinds";
-import { readPersistedState } from "shux/browser/hooks/usePersistedState";
-import { VIM_ENABLED_KEY } from "shux/common/constants/storage";
-import { useAutoScroll } from "shux/browser/hooks/useAutoScroll";
-import { applyWorkspaceChatEventToAggregator } from "shux/browser/utils/messages/applyWorkspaceChatEventToAggregator";
-import { StreamingMessageAggregator } from "shux/browser/utils/messages/StreamingMessageAggregator";
+} from "xum/browser/components/Tooltip/Tooltip";
+import { Button } from "xum/browser/components/Button/Button";
+import { matchesKeybind, KEYBINDS } from "xum/browser/utils/ui/keybinds";
+import { readPersistedState } from "xum/browser/hooks/usePersistedState";
+import { VIM_ENABLED_KEY } from "xum/common/constants/storage";
+import { useAutoScroll } from "xum/browser/hooks/useAutoScroll";
+import { applyWorkspaceChatEventToAggregator } from "xum/browser/utils/messages/applyWorkspaceChatEventToAggregator";
+import { StreamingMessageAggregator } from "xum/browser/utils/messages/StreamingMessageAggregator";
 
 import type { ExtensionToWebviewMessage, UiConnectionStatus, UiWorkspace } from "./protocol";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -324,7 +324,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                 pushNotice({
                   level: "error",
                   message:
-                    "Shux chat did not finish loading (missing caught-up). Showing a partial transcript; try Refresh if messages look incomplete.",
+                    "Xum chat did not finish loading (missing caught-up). Showing a partial transcript; try Refresh if messages look incomplete.",
                 });
               }
 
@@ -561,7 +561,7 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
 
                       {!selectedWorkspaceId && notices.length === 0 ? (
                         <div className="text-muted text-sm">
-                          Select a Shux workspace to view messages.
+                          Select a Xum workspace to view messages.
                         </div>
                       ) : null}
                     </div>
@@ -574,14 +574,14 @@ export function App(props: { bridge: VscodeBridge }): JSX.Element {
                         workspaceId={selectedWorkspaceId}
                         disabled={!canChat}
                         disabledReason={
-                          canChat ? undefined : "Chat requires Shux server connection."
+                          canChat ? undefined : "Chat requires Xum server connection."
                         }
                         aggregator={aggregatorRef.current}
                         onSendComplete={jumpToBottom}
                         onNotice={pushNotice}
                       />
                     ) : (
-                      <div className="text-muted text-sm">Select a Shux workspace to chat.</div>
+                      <div className="text-muted text-sm">Select a Xum workspace to chat.</div>
                     )}
                   </div>
                 </div>

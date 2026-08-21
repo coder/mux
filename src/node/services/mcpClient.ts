@@ -13,7 +13,7 @@ import assert from "@/common/utils/assert";
  * MCP client adapter over the official TypeScript SDK v2
  * (@modelcontextprotocol/client).
  *
- * Shux previously used @ai-sdk/mcp, which only speaks MCP protocol revisions up
+ * Xum previously used @ai-sdk/mcp, which only speaks MCP protocol revisions up
  * to 2025-11-25 (initialize handshake + Mcp-Session-Id sessions) and has no
  * support for the stateless 2026-07-28 revision (SEP-2575/2567). The official
  * SDK v2 client implements both revisions; its default connect sequence is the
@@ -25,7 +25,7 @@ import assert from "@/common/utils/assert";
  */
 
 /** Client identity sent to servers (initialize request / clientInfo _meta). */
-const CLIENT_INFO = { name: "shux", version: "1.0.0" };
+const CLIENT_INFO = { name: "xum", version: "1.0.0" };
 
 /**
  * Maximum time a single MCP tool call may run.
@@ -39,7 +39,7 @@ export const MCP_TOOL_CALL_TIMEOUT_MS = 300_000;
  * SDK-level timeout for tools/call requests.
  *
  * @ai-sdk/mcp had no per-request timeouts; the official SDK defaults to 60s,
- * which would cut long-running tool calls that Shux intentionally allows (up to
+ * which would cut long-running tool calls that Xum intentionally allows (up to
  * MCP_TOOL_CALL_TIMEOUT_MS). Keep the SDK timeout slightly above the wrapper
  * deadline so wrapMCPTools' MCPDeadlineError (which drives client recycling)
  * always wins the race, while the SDK still cleans up abandoned requests.
@@ -164,7 +164,7 @@ function mcpToModelOutput({
   };
   // mcpServerManager's wrapMCPTools runs transformMCPResult over execute
   // results first — the single conversion layer for MCP binary content
-  // (image/audio/blob resources, size guard included) — producing Shux's
+  // (image/audio/blob resources, size guard included) — producing Xum's
   // canonical { type: "content", value: [text | media] } shape. Map its
   // media parts to model-output file parts here.
   if (

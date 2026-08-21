@@ -16,7 +16,7 @@ import { compareVersions } from "@/node/services/coderService";
 import { stableStringify } from "@/common/utils/stableStringify";
 
 import packageJson from "../../../package.json";
-import { resolveShuxEnvironmentValue } from "@/common/compat/legacyMux";
+import { resolveXumEnvironmentValue } from "@/common/compat/legacyMux";
 import { getErrorMessage } from "@/common/utils/errors";
 
 const POLICY_FETCH_TIMEOUT_MS = 10 * 1000;
@@ -121,8 +121,8 @@ async function loadGovernorPolicyText(input: {
       signal: abortController.signal,
       headers: {
         accept: "application/json",
-        // Governor still keys this token by the mux wire name. Shux is display
-        // identity only; a Shux-prefixed header would not authenticate.
+        // Governor still keys this token by the mux wire name. Xum is display
+        // identity only; a Xum-prefixed header would not authenticate.
         "Mux-Governor-Session-Token": input.token,
       },
     });
@@ -329,7 +329,7 @@ export class PolicyService {
   }
 
   private getActivePolicySource(): ActivePolicySource {
-    const filePath = resolveShuxEnvironmentValue("POLICY_FILE", process.env)?.trim();
+    const filePath = resolveXumEnvironmentValue("POLICY_FILE", process.env)?.trim();
     if (filePath) {
       return { kind: "env", value: filePath };
     }
@@ -390,7 +390,7 @@ export class PolicyService {
             source: schemaSource,
             status: {
               state: "blocked",
-              reason: `Shux ${clientVersion} is below required minimum_client_version ${min}`,
+              reason: `Xum ${clientVersion} is below required minimum_client_version ${min}`,
             },
             policy: null,
           });

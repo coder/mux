@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Icon generation script for shux.
+ * Icon generation script for xum.
  *
  * Usage:
  *   bun scripts/generate-icons.ts [commands...]
@@ -36,10 +36,10 @@ const SOURCE_BLACK = path.join(ROOT, "docs", "img", "logo-black.svg");
 const SOURCE_WHITE = path.join(ROOT, "docs", "img", "logo-white.svg");
 
 const WORDMARK_TARGETS = {
-  "docs/img/black-shux.svg": renderDocsWordmark("black"),
-  "docs/img/white-shux.svg": renderDocsWordmark("white"),
-  "src/browser/assets/logos/shux-logo-dark.svg": renderAppWordmark("white"),
-  "src/browser/assets/logos/shux-logo-light.svg": renderAppWordmark("black"),
+  "docs/img/black-xum.svg": renderDocsWordmark("black"),
+  "docs/img/white-xum.svg": renderDocsWordmark("white"),
+  "src/browser/assets/logos/xum-logo-dark.svg": renderAppWordmark("white"),
+  "src/browser/assets/logos/xum-logo-light.svg": renderAppWordmark("black"),
 } as const;
 
 const INLINE_WORDMARK_TARGETS = {
@@ -90,10 +90,11 @@ type LogoTargetConfig = RasterTargetConfig | SvgTargetConfig;
 const MONO_ICON = { source: SOURCE_BLACK, bg: false } as const;
 const APP_ICON = { source: SOURCE_WHITE, bg: true } as const;
 
-// Crop the centered square source to the outlined "s" + cursor bounds so the
-// mark fills small tray images without clipping the glyph's natural overshoot.
-// Content bounds: x 14.37…57.63, y 24.5…47.99 → 43.26×23.49 units.
-const TRAY_MARK_CROP = "13.5 24 45 24.5";
+// Crop the centered square source to the outlined "x" + cursor bounds so the
+// mark fills small tray images without clipping the glyph or cursor.
+// Content bounds: x 13.13…58.88, y 24.5…47.5 → 45.75×23 units. Keep
+// roughly one output pixel of horizontal breathing room at the 24px tray size.
+const TRAY_MARK_CROP = "11 24 50 24.5";
 
 // Targets to update (path -> config)
 const LOGO_TARGETS = {
@@ -101,7 +102,7 @@ const LOGO_TARGETS = {
   "vscode/icon.png": { size: 128, ...MONO_ICON },
 
   // Browser asset (Vector)
-  "src/browser/assets/icons/shux.svg": { svg: true, source: SOURCE_BLACK },
+  "src/browser/assets/icons/xum.svg": { svg: true, source: SOURCE_BLACK },
 
   // Docs (docs.json points at logo-black/logo-white directly to avoid duplicates)
   "docs/img/logo.webp": { size: 512, ...MONO_ICON, format: "webp" },
@@ -114,7 +115,7 @@ const LOGO_TARGETS = {
   // iOS Safari uses apple-touch-icon for home screen installs.
   "public/apple-touch-icon.png": { size: 180, ...APP_ICON },
 
-  // Electron Tray Icons – Wide Shux Mark (Monochrome on Transparent)
+  // Electron Tray Icons – Wide Xum Mark (Monochrome on Transparent)
   //
   // The source SVGs have heavy internal padding (mark uses ~32% of canvas).
   // We crop to TRAY_MARK_CROP before rendering so the mark fills the output.

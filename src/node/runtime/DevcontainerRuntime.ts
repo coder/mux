@@ -565,14 +565,14 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
       params,
       runtimeType: "devcontainer",
       hookCheckPath: params.workspacePath,
-      runHook: async ({ shuxEnv, initLogger, abortSignal }) => {
+      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
         const containerWorkspacePath = this.remoteWorkspaceFolder ?? params.workspacePath;
         const hookPath = `${containerWorkspacePath}/.mux/init`;
         await runInitHookOnRuntime(
           this,
           hookPath,
           containerWorkspacePath,
-          shuxEnv,
+          xumEnv,
           initLogger,
           abortSignal
         );

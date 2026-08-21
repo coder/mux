@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { getShuxHome } from "@/common/constants/paths";
+import { getXumHome } from "@/common/constants/paths";
 import { createAskpassSession, parseHostKeyPrompt } from "./sshAskpass";
 
 describe("sshAskpass", () => {
@@ -195,17 +195,17 @@ describe("sshAskpass", () => {
       }
     });
 
-    test("writes mux-askpass under getShuxHome() instead of creating ~/.mux", async () => {
-      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "shux-askpass-home-"));
-      const previousRoot = process.env.SHUX_ROOT;
-      process.env.SHUX_ROOT = isolatedHome;
+    test("writes mux-askpass under getXumHome() instead of creating ~/.mux", async () => {
+      const isolatedHome = fs.mkdtempSync(path.join(os.tmpdir(), "xum-askpass-home-"));
+      const previousRoot = process.env.XUM_ROOT;
+      process.env.XUM_ROOT = isolatedHome;
       // Force rewrite if an earlier test cached a helper from a different home.
       const accessSpy = spyOn(fs.promises, "access").mockRejectedValueOnce(new Error("missing"));
 
       try {
         const session = await createAskpassSession(() => Promise.resolve("ok"));
         try {
-          const expectedPath = path.join(getShuxHome(), "bin", "mux-askpass");
+          const expectedPath = path.join(getXumHome(), "bin", "mux-askpass");
           expect(session.env.SSH_ASKPASS).toBe(expectedPath);
           expect((await fs.promises.stat(expectedPath)).isFile()).toBe(true);
           expect(expectedPath.startsWith(path.join(os.homedir(), ".mux"))).toBe(false);
@@ -215,9 +215,9 @@ describe("sshAskpass", () => {
       } finally {
         accessSpy.mockRestore();
         if (previousRoot === undefined) {
-          delete process.env.SHUX_ROOT;
+          delete process.env.XUM_ROOT;
         } else {
-          process.env.SHUX_ROOT = previousRoot;
+          process.env.XUM_ROOT = previousRoot;
         }
         fs.rmSync(isolatedHome, { recursive: true, force: true });
       }

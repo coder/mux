@@ -1,12 +1,12 @@
 import React from "react";
 
-import type { StreamingMessageAggregator } from "shux/browser/utils/messages/StreamingMessageAggregator";
-import { StreamingBarrierView } from "shux/browser/features/Messages/ChatBarrier/StreamingBarrierView";
-import { getModelName } from "shux/common/utils/ai/models";
-import { formatKeybind, KEYBINDS } from "shux/browser/utils/ui/keybinds";
-import { VIM_ENABLED_KEY, getModelKey } from "shux/common/constants/storage";
-import { readPersistedState } from "shux/browser/hooks/usePersistedState";
-import { getDefaultModel } from "shux/browser/hooks/useModelsFromSettings";
+import type { StreamingMessageAggregator } from "xum/browser/utils/messages/StreamingMessageAggregator";
+import { StreamingBarrierView } from "xum/browser/features/Messages/ChatBarrier/StreamingBarrierView";
+import { getModelName } from "xum/common/utils/ai/models";
+import { formatKeybind, KEYBINDS } from "xum/browser/utils/ui/keybinds";
+import { VIM_ENABLED_KEY, getModelKey } from "xum/common/constants/storage";
+import { readPersistedState } from "xum/browser/hooks/usePersistedState";
+import { getDefaultModel } from "xum/browser/hooks/useModelsFromSettings";
 
 type StreamingPhase =
   | "starting" // Message sent, waiting for stream-start

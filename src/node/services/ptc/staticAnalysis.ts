@@ -178,7 +178,7 @@ async function validateSyntax(code: string): Promise<AnalysisError | null> {
 
       if (likelyAwaitFailure) {
         message =
-          "`await` is not supported - shux.* functions return results directly (no await needed)";
+          "`await` is not supported - xum.* functions return results directly (no await needed)";
       }
     }
 
@@ -256,7 +256,7 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
           );
           errors.push({
             type: "forbidden_construct",
-            message: "require() is not available in the sandbox - use shux.* tools instead",
+            message: "require() is not available in the sandbox - use xum.* tools instead",
             line: line - lineOffset + 1,
           });
         }
@@ -347,13 +347,13 @@ function detectUnavailableGlobals(code: string, sourceFile?: ts.SourceFile): Ana
  * Performs:
  * 1. Syntax validation via QuickJS parser
  * 2. Forbidden construct + unavailable global detection via TypeScript AST (require(), import(), process, window, etc.)
- * 3. TypeScript type validation (if shuxTypes provided)
+ * 3. TypeScript type validation (if xumTypes provided)
  *
  * @param code - JavaScript code to analyze
- * @param shuxTypes - Optional .d.ts content for type validation
+ * @param xumTypes - Optional .d.ts content for type validation
  * @returns Analysis result with errors
  */
-export async function analyzeCode(code: string, shuxTypes?: string): Promise<AnalysisResult> {
+export async function analyzeCode(code: string, xumTypes?: string): Promise<AnalysisResult> {
   const errors: AnalysisError[] = [];
 
   // 1. Syntax validation
@@ -365,14 +365,14 @@ export async function analyzeCode(code: string, shuxTypes?: string): Promise<Ana
   }
 
   let typeResult: ReturnType<typeof validateTypes> | undefined;
-  if (shuxTypes) {
-    typeResult = validateTypes(code, shuxTypes);
+  if (xumTypes) {
+    typeResult = validateTypes(code, xumTypes);
   }
 
   // 2. Forbidden construct + unavailable global detection (process, window, require(), import(), etc.)
   errors.push(...detectUnavailableGlobals(code, typeResult?.sourceFile));
 
-  // 3. TypeScript type validation (if shuxTypes provided)
+  // 3. TypeScript type validation (if xumTypes provided)
   if (typeResult) {
     for (const typeError of typeResult.errors) {
       errors.push({

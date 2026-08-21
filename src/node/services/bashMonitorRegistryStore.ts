@@ -49,7 +49,7 @@ function boundScript(script: string): string {
 /**
  * Host-local, per-workspace registry of *armed* bash monitors.
  *
- * BackgroundProcessManager state is in-memory only, so a Shux restart silently kills every
+ * BackgroundProcessManager state is in-memory only, so a Xum restart silently kills every
  * monitored background process and its monitor. This registry survives shutdown (records
  * are only deleted when a monitor retires normally); any record found at the next startup
  * is therefore stale by definition and is converted into a synthetic "monitor lost" wake

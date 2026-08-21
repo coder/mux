@@ -269,7 +269,7 @@ export function preserveAnthropic1MContextForFollowUp(
  * 1. Enable reasoning traces (transparency into model's thought process)
  * 2. Set reasoning level (control depth of reasoning based on task complexity)
  * 3. Enable parallel tool calls (allow concurrent tool execution)
- * 4. Keep provider-specific request knobs consistent with Shux's explicit history model
+ * 4. Keep provider-specific request knobs consistent with Xum's explicit history model
  *
  * @param modelString - Full model string (e.g., "anthropic:claude-opus-4-1")
  * @param thinkingLevel - Unified thinking level (must be pre-clamped via enforceThinkingPolicy)
@@ -336,7 +336,7 @@ export function buildProviderOptions(
 
   // Build Anthropic-specific options
   if (formatProvider === "anthropic") {
-    // Anthropic prompt caching is already applied on Shux's manual cache markers
+    // Anthropic prompt caching is already applied on Xum's manual cache markers
     // (cached system message, conversation tail, last tool) deeper in the
     // request pipeline. Do not also send top-level cacheControl here: the SDK
     // serializes it to a top-level cache_control block, which adds an extra
@@ -433,7 +433,7 @@ export function buildProviderOptions(
     // GPT-5.6 "off" remains explicit "none" because omission defaults to medium.
     const reasoningEffort = getOpenAIReasoningEffort(effectiveThinking, capabilityModel);
 
-    // Shux always sends the latest conversation history explicitly. OpenAI's
+    // Xum always sends the latest conversation history explicitly. OpenAI's
     // previous_response_id is an alternative state-management path, not an additive one.
     // Chaining it on top of explicit history double-counts prior turns and caused GPT-5.4
     // requests to hit context_exceeded far below the documented native window.
@@ -526,7 +526,7 @@ export function buildProviderOptions(
 
     if (isGeminiFlashThinkingModel && effectiveThinking === "off") {
       // Gemini Flash chat models default to medium and do not support true thinking-off;
-      // send minimal explicitly so Shux's "off" setting means lowest-effort behavior.
+      // send minimal explicitly so Xum's "off" setting means lowest-effort behavior.
       thinkingConfig = { thinkingLevel: "minimal" };
     } else if (effectiveThinking !== "off") {
       thinkingConfig = {
@@ -632,7 +632,7 @@ export function buildProviderOptions(
     };
 
     // Frontier Grok Responses: always prefer store=false.
-    // Shux already resends full history explicitly and persists encrypted reasoning
+    // Xum already resends full history explicitly and persists encrypted reasoning
     // client-side, so server storage is unnecessary. Forcing store=false means ZDR
     // and non-ZDR orgs share one code path and one quality bar (no settings surface).
     // Explicit muxProviderOptions.xai.store still wins for tests/escapes.
@@ -707,7 +707,7 @@ export const ANTHROPIC_1M_CONTEXT_HEADER = "context-1m-2025-08-07";
 
 /**
  * HTTP header sent on AI requests for workspace-level observability.
- * The JS symbol can stay Shux-branded; the wire value remains X-Mux-Workspace-Id
+ * The JS symbol can stay Xum-branded; the wire value remains X-Mux-Workspace-Id
  * so mux-gateway and existing correlation pipelines keep matching.
  */
 export const MUX_WORKSPACE_ID_HEADER = "X-Mux-Workspace-Id";

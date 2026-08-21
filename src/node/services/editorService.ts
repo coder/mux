@@ -3,7 +3,7 @@ import * as fsPromises from "fs/promises";
 import type { Config } from "@/node/config";
 import { isDockerRuntime, isSSHRuntime, isDevcontainerRuntime } from "@/common/types/runtime";
 import { log } from "@/node/services/log";
-import { sanitizeShuxChildEnv } from "@/node/runtime/childProcessEnv";
+import { sanitizeXumChildEnv } from "@/node/runtime/childProcessEnv";
 import { getErrorMessage } from "@/common/utils/errors";
 
 /**
@@ -137,10 +137,10 @@ export class EditorService {
         stdio: "ignore",
         shell: true,
         windowsHide: true,
-        // Strip shux-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
-        // identity) so GUI editors don't inherit shux's window identity.
-        // sanitizeShuxChildEnv copies its input, so pass process.env directly.
-        env: sanitizeShuxChildEnv(process.env),
+        // Strip xum-internal vars (e.g. CHROME_DESKTOP, our Linux desktop
+        // identity) so GUI editors don't inherit xum's window identity.
+        // sanitizeXumChildEnv copies its input, so pass process.env directly.
+        env: sanitizeXumChildEnv(process.env),
       });
       child.unref();
 

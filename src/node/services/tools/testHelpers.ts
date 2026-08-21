@@ -231,8 +231,8 @@ export class RemotePathMappedRuntime extends LocalRuntime {
     return path.posix.join(this.remoteBase, path.basename(projectPath), workspaceName);
   }
 
-  override getShuxHome(): string {
-    return this.muxHomeOverride ?? super.getShuxHome();
+  override getXumHome(): string {
+    return this.muxHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {

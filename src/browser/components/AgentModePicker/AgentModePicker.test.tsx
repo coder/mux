@@ -169,7 +169,7 @@ describe("AgentModePicker", () => {
 
     await waitFor(() => {
       expect(queryByLabelText(autoSelectLabel)).toBeNull();
-      expect(queryByText("Shux chooses the best agent")).toBeNull();
+      expect(queryByText("Xum chooses the best agent")).toBeNull();
     });
   });
 });

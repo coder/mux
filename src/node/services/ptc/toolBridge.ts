@@ -1,7 +1,7 @@
 /**
  * Tool Bridge for PTC
  *
- * Bridges Shux tools into the QuickJS sandbox, making them callable via `shux.*`
+ * Bridges Xum tools into the QuickJS sandbox, making them callable via `xum.*`
  * (canonical) and `mux.*` (compatibility alias). Handles argument validation via
  * Zod schemas and result serialization.
  */
@@ -27,7 +27,7 @@ const EXCLUDED_TOOLS = new Set([
 ]);
 
 /**
- * Bridge that exposes Shux tools in the QuickJS sandbox under canonical `shux.*` and legacy `mux.*` namespaces.
+ * Bridge that exposes Xum tools in the QuickJS sandbox under canonical `xum.*` and legacy `mux.*` namespaces.
  */
 export class ToolBridge {
   private readonly bridgeableTools: Map<string, Tool>;
@@ -81,7 +81,7 @@ export class ToolBridge {
   }
 
   /**
-   * Register all bridgeable tools on the runtime under canonical `shux` and legacy `mux` namespaces.
+   * Register all bridgeable tools on the runtime under canonical `xum` and legacy `mux` namespaces.
    *
    * Tools receive the runtime's abort signal, which is aborted when:
    * - The sandbox timeout is exceeded
@@ -91,15 +91,13 @@ export class ToolBridge {
    * not just when the parent stream is cancelled.
    */
   register(runtime: IJSRuntime): void {
-    const shuxObj: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+    const xumObj: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
 
     // Grant-denied tools get an explicit stub: the guest sees a clear
-    // capability error instead of a confusing "shux.x is not a function".
+    // capability error instead of a confusing "xum.x is not a function".
     for (const name of this.deniedToolNames) {
-      shuxObj[name] = () =>
-        Promise.reject(
-          new Error(`Capability denied: shux.${name} is not granted for this sandbox`)
-        );
+      xumObj[name] = () =>
+        Promise.reject(new Error(`Capability denied: xum.${name} is not granted for this sandbox`));
     }
 
     for (const [name, tool] of this.bridgeableTools) {
@@ -107,11 +105,11 @@ export class ToolBridge {
       const boundTool = tool;
       const toolName = name;
 
-      shuxObj[name] = async (args: unknown) => {
+      xumObj[name] = async (args: unknown) => {
         // Defense in depth: re-check the grant at call time so a stale or
         // mutated bridge can never invoke a non-granted tool.
         if (!isBridgeToolGranted(this.grants, toolName)) {
-          throw new Error(`Capability denied: shux.${toolName} is not granted for this sandbox`);
+          throw new Error(`Capability denied: xum.${toolName} is not granted for this sandbox`);
         }
 
         // Get the runtime's abort signal - this is aborted on timeout or manual abort
@@ -140,8 +138,8 @@ export class ToolBridge {
     }
 
     // Same object under both names so saved `mux.*` snippets keep working.
-    runtime.registerObject("shux", shuxObj);
-    runtime.registerObject("mux", shuxObj);
+    runtime.registerObject("xum", xumObj);
+    runtime.registerObject("mux", xumObj);
   }
 
   private hasExecute(tool: Tool): tool is Tool & { execute: NonNullable<Tool["execute"]> } {

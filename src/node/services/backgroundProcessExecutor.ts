@@ -62,7 +62,7 @@ const EXIT_CODE_FILENAME = "exit_code";
 
 /**
  * Compute paths for a background process output directory.
- * @param bgOutputDir Base directory (e.g., /tmp/mux-bashes or ~/.shux/sessions)
+ * @param bgOutputDir Base directory (e.g., /tmp/mux-bashes or ~/.xum/sessions)
  * @param workspaceId Workspace identifier
  * @param processId Process identifier
  */

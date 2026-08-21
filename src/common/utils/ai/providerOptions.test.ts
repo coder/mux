@@ -1378,7 +1378,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
   describe("GPT-5.6 explicit prompt caching serialization", () => {
     // Production-path wire test: createOpenAI + capture fetch + streamText
-    // (the same streaming parser Shux uses), not intermediate TS objects.
+    // (the same streaming parser Xum uses), not intermediate TS objects.
     const providersConfig: ProvidersConfigMap = {
       openai: { apiKeySet: true, isEnabled: true, isConfigured: true },
     };
@@ -1456,7 +1456,7 @@ describe("buildProviderOptions - OpenAI", () => {
 
       // Production system-message shape from the cache strategy helper.
       const cachedSystem = createOpenAICachedSystemMessage(
-        "You are Shux.",
+        "You are Xum.",
         "openai:gpt-5.6-luna",
         "openai",
         providersConfig
@@ -1530,7 +1530,7 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(responsesSystem?.content).toEqual([
         {
           type: "input_text",
-          text: "You are Shux.",
+          text: "You are Xum.",
           prompt_cache_breakpoint: { mode: "explicit" },
         },
       ]);
@@ -1546,7 +1546,7 @@ describe("buildProviderOptions - OpenAI", () => {
       expect(chatSystem?.content).toEqual([
         {
           type: "text",
-          text: "You are Shux.",
+          text: "You are Xum.",
           prompt_cache_breakpoint: { mode: "explicit" },
         },
       ]);
@@ -1562,7 +1562,7 @@ describe("buildProviderOptions - OpenAI", () => {
   });
 
   describe("OpenAI conversation state management", () => {
-    test("does not reuse previousResponseId when Shux already sends explicit GPT-5.5 history", () => {
+    test("does not reuse previousResponseId when Xum already sends explicit GPT-5.5 history", () => {
       const messages = [
         createMuxMessage("assistant-1", "assistant", "", {
           model: "mux-gateway:openai/gpt-5.5",
@@ -2041,10 +2041,10 @@ describe("buildRequestHeaders", () => {
     });
   }
 
-  // Native xhigh effort no longer needs a Shux-internal override header: the
+  // Native xhigh effort no longer needs a Xum-internal override header: the
   // SDK accepts effort "xhigh" directly (see buildProviderOptions tests above),
   // so buildRequestHeaders is thinking-level-independent.
-  test("does not emit any Shux-internal effort header for native-xhigh models", () => {
+  test("does not emit any Xum-internal effort header for native-xhigh models", () => {
     expect(buildRequestHeaders("anthropic:claude-opus-4-7")).toBeUndefined();
     expect(buildRequestHeaders("anthropic:claude-sonnet-5")).toBeUndefined();
   });
@@ -2289,15 +2289,15 @@ describe("buildRequestHeaders", () => {
     test(name, () => {
       const headers = buildRequestHeaders(model, options, workspaceId);
       expect(headers).toEqual(expected);
-      expect(headers?.["X-Shux-Workspace-Id"]).toBeUndefined();
+      expect(headers?.["X-Xum-Workspace-Id"]).toBeUndefined();
     });
   }
 
-  test("workspace correlation header uses the mux wire name, not Shux", () => {
+  test("workspace correlation header uses the mux wire name, not Xum", () => {
     expect(MUX_WORKSPACE_ID_HEADER).toBe("X-Mux-Workspace-Id");
     const headers = buildRequestHeaders("openai:gpt-5.2", undefined, "ws-id");
     expect(headers?.["X-Mux-Workspace-Id"]).toBe("ws-id");
-    expect(headers?.["X-Shux-Workspace-Id"]).toBeUndefined();
+    expect(headers?.["X-Xum-Workspace-Id"]).toBeUndefined();
   });
 
   test("should return undefined when no workspaceId and no provider-specific headers apply", () => {

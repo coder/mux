@@ -3,19 +3,19 @@ import * as os from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { getElectronAppIdentity } from "@/common/compat/electronAppIdentity";
-import { getShuxHomeLegacyFallbackMarkerPath } from "@/common/compat/legacyMux";
-import { getShuxHome } from "@/common/constants/paths";
-import { sanitizeShuxChildEnv } from "@/node/runtime/childProcessEnv";
+import { getXumHomeLegacyFallbackMarkerPath } from "@/common/compat/legacyMux";
+import { getXumHome } from "@/common/constants/paths";
+import { sanitizeXumChildEnv } from "@/node/runtime/childProcessEnv";
 import {
-  ensureShuxDirectoryTransition,
-  initializeShuxHomeTransition,
-  initializeShuxUserDataTransition,
-} from "./shuxTransition";
+  ensureXumDirectoryTransition,
+  initializeXumHomeTransition,
+  initializeXumUserDataTransition,
+} from "./xumTransition";
 
 const tempDirs: string[] = [];
 
 async function createTempDir(): Promise<string> {
-  const dir = await fs.mkdtemp(join(os.tmpdir(), "shux-transition-test-"));
+  const dir = await fs.mkdtemp(join(os.tmpdir(), "xum-transition-test-"));
   tempDirs.push(dir);
   return dir;
 }
@@ -23,14 +23,14 @@ async function createTempDir(): Promise<string> {
 function withHomeDir<T>(homeDir: string, run: () => T): T {
   const previousHome = process.env.HOME;
   const previousUserProfile = process.env.USERPROFILE;
-  const previousShuxRoot = process.env.SHUX_ROOT;
+  const previousXumRoot = process.env.XUM_ROOT;
   const previousMuxRoot = process.env.MUX_ROOT;
   const previousNodeEnv = process.env.NODE_ENV;
   const homedirSpy = spyOn(os, "homedir");
   homedirSpy.mockReturnValue(homeDir);
   process.env.HOME = homeDir;
   process.env.USERPROFILE = homeDir;
-  delete process.env.SHUX_ROOT;
+  delete process.env.XUM_ROOT;
   delete process.env.MUX_ROOT;
   delete process.env.NODE_ENV;
 
@@ -48,10 +48,10 @@ function withHomeDir<T>(homeDir: string, run: () => T): T {
     } else {
       process.env.USERPROFILE = previousUserProfile;
     }
-    if (previousShuxRoot === undefined) {
-      delete process.env.SHUX_ROOT;
+    if (previousXumRoot === undefined) {
+      delete process.env.XUM_ROOT;
     } else {
-      process.env.SHUX_ROOT = previousShuxRoot;
+      process.env.XUM_ROOT = previousXumRoot;
     }
     if (previousMuxRoot === undefined) {
       delete process.env.MUX_ROOT;
@@ -87,13 +87,13 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
-describe("initializeShuxHomeTransition", () => {
+describe("initializeXumHomeTransition", () => {
   test("creates canonical storage and downgrade-compatible aliases for a fresh install", async () => {
     const homeDir = await createTempDir();
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     expect(result).toMatchObject({
       canonicalPath,
       activePath: canonicalPath,
@@ -108,10 +108,10 @@ describe("initializeShuxHomeTransition", () => {
   test("second startup is a no-op once aliases already point at canonical storage", async () => {
     const homeDir = await createTempDir();
 
-    const first = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const first = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
     await fs.writeFile(join(first.canonicalPath, "config.json"), "kept", "utf8");
 
-    const second = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const second = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(second).toMatchObject({
       canonicalPath: first.canonicalPath,
@@ -130,15 +130,15 @@ describe("initializeShuxHomeTransition", () => {
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "config.json"), "legacy", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
-    const canonicalPath = join(homeDir, ".shux");
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const canonicalPath = join(homeDir, ".xum");
 
     expect(result.status).toBe("migrated");
     expect(await fs.readFile(join(canonicalPath, "config.json"), "utf8")).toBe("legacy");
     expect(await fs.realpath(legacyPath)).toBe(await fs.realpath(canonicalPath));
 
-    await fs.writeFile(join(canonicalPath, "from-shux"), "new", "utf8");
-    expect(await fs.readFile(join(legacyPath, "from-shux"), "utf8")).toBe("new");
+    await fs.writeFile(join(canonicalPath, "from-xum"), "new", "utf8");
+    expect(await fs.readFile(join(legacyPath, "from-xum"), "utf8")).toBe("new");
 
     await fs.writeFile(join(legacyPath, "from-mux"), "old", "utf8");
     expect(await fs.readFile(join(canonicalPath, "from-mux"), "utf8")).toBe("old");
@@ -150,8 +150,8 @@ describe("initializeShuxHomeTransition", () => {
     await fs.mkdir(cmuxPath);
     await fs.writeFile(join(cmuxPath, "config.json"), "cmux", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
-    const canonicalPath = join(homeDir, ".shux");
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const canonicalPath = join(homeDir, ".xum");
 
     expect(result.status).toBe("migrated");
     expect(await fs.readFile(join(canonicalPath, "config.json"), "utf8")).toBe("cmux");
@@ -170,13 +170,13 @@ describe("initializeShuxHomeTransition", () => {
     });
 
     try {
-      const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+      const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
       expect(result.status).toBe("legacy-fallback");
       expect(result.activePath).toBe(legacyPath);
       expect(await fs.readFile(join(legacyPath, "config.json"), "utf8")).toBe("legacy");
       expect((await fs.lstat(legacyPath)).isDirectory()).toBe(true);
-      await expectMissingPath(join(homeDir, ".shux"));
+      await expectMissingPath(join(homeDir, ".xum"));
     } finally {
       symlink.mockRestore();
     }
@@ -187,8 +187,8 @@ describe("initializeShuxHomeTransition", () => {
     await fs.symlink(join(homeDir, "missing-target"), join(homeDir, ".mux"));
     await fs.writeFile(join(homeDir, ".cmux"), "not-a-directory", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
-    const canonicalPath = join(homeDir, ".shux");
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const canonicalPath = join(homeDir, ".xum");
 
     expect(result.status).toBe("conflict");
     expect((await fs.lstat(canonicalPath)).isDirectory()).toBe(true);
@@ -204,26 +204,26 @@ describe("initializeShuxHomeTransition", () => {
     await fs.mkdir(legacyDevPath);
     await fs.mkdir(productionCmuxPath);
 
-    const result = await initializeShuxHomeTransition({
+    const result = await initializeXumHomeTransition({
       homeDir,
       env: { NODE_ENV: "development" },
       platform: "linux",
     });
 
-    expect(result.canonicalPath).toBe(join(homeDir, ".shux-dev"));
+    expect(result.canonicalPath).toBe(join(homeDir, ".xum-dev"));
     expect(await fs.realpath(legacyDevPath)).toBe(await fs.realpath(result.canonicalPath));
     expect((await fs.lstat(productionCmuxPath)).isDirectory()).toBe(true);
   });
 
-  test("does not move explicit roots and mirrors SHUX_ROOT to MUX_ROOT", async () => {
+  test("does not move explicit roots and mirrors XUM_ROOT to MUX_ROOT", async () => {
     const homeDir = await createTempDir();
     const explicitRoot = join(homeDir, "custom");
     const leftoverMux = join(homeDir, ".mux");
     await fs.mkdir(leftoverMux);
     await fs.writeFile(join(leftoverMux, "config.json"), "untouched", "utf8");
-    const env: Record<string, string | undefined> = { SHUX_ROOT: explicitRoot };
+    const env: Record<string, string | undefined> = { XUM_ROOT: explicitRoot };
 
-    const result = await initializeShuxHomeTransition({ homeDir, env, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env, platform: "linux" });
 
     expect(result).toEqual({
       canonicalPath: explicitRoot,
@@ -235,21 +235,21 @@ describe("initializeShuxHomeTransition", () => {
     // Explicit roots skip default-home moves, mkdirs, aliases, and leftover markers.
     expect(await fs.readFile(join(leftoverMux, "config.json"), "utf8")).toBe("untouched");
     expect((await fs.lstat(leftoverMux)).isDirectory()).toBe(true);
-    await expectMissingPath(join(homeDir, ".shux"));
+    await expectMissingPath(join(homeDir, ".xum"));
     await expectMissingPath(explicitRoot);
-    await expectMissingPath(getShuxHomeLegacyFallbackMarkerPath(homeDir));
+    await expectMissingPath(getXumHomeLegacyFallbackMarkerPath(homeDir));
   });
 
   test("leaves independent canonical and legacy directories untouched", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(canonicalPath, "canonical"), "new", "utf8");
     await fs.writeFile(join(legacyPath, "legacy"), "old", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(result.status).toBe("conflict");
     expect(result.issues).toHaveLength(1);
@@ -260,13 +260,13 @@ describe("initializeShuxHomeTransition", () => {
 
   test("prefers a healthy legacy tree when canonical storage is a regular file", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.writeFile(canonicalPath, "not-a-directory", "utf8");
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "config.json"), "legacy", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(result.status).toBe("legacy-fallback");
     expect(result.activePath).toBe(legacyPath);
@@ -279,19 +279,19 @@ describe("initializeShuxHomeTransition", () => {
     expect((await fs.lstat(legacyPath)).isDirectory()).toBe(true);
     await expectMissingPath(join(homeDir, ".cmux"));
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(legacyPath);
+      expect(getXumHome()).toBe(legacyPath);
     });
   });
 
   test("prefers a healthy legacy tree when canonical storage is a broken symlink", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.symlink(join(homeDir, "missing-target"), canonicalPath);
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "config.json"), "legacy", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(result.status).toBe("legacy-fallback");
     expect(result.activePath).toBe(legacyPath);
@@ -303,20 +303,20 @@ describe("initializeShuxHomeTransition", () => {
     expect((await fs.lstat(legacyPath)).isDirectory()).toBe(true);
     await expectMissingPath(join(homeDir, ".cmux"));
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(legacyPath);
+      expect(getXumHome()).toBe(legacyPath);
     });
   });
 
   test("quarantines obstructing files and recovers a persistent canonical home", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const muxPath = join(homeDir, ".mux");
     const cmuxPath = join(homeDir, ".cmux");
     await fs.writeFile(canonicalPath, "canonical-bytes", "utf8");
     await fs.writeFile(muxPath, "mux-bytes", "utf8");
     await fs.writeFile(cmuxPath, "cmux-bytes", "utf8");
 
-    const first = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const first = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(first.status).toBe("canonical");
     expect(first.activePath).toBe(canonicalPath);
@@ -329,7 +329,7 @@ describe("initializeShuxHomeTransition", () => {
     expect(await fs.realpath(muxPath)).toBe(await fs.realpath(canonicalPath));
     expect(await fs.realpath(cmuxPath)).toBe(await fs.realpath(canonicalPath));
 
-    const canonicalBackups = await listQuarantineBackups(homeDir, ".shux");
+    const canonicalBackups = await listQuarantineBackups(homeDir, ".xum");
     const muxBackups = await listQuarantineBackups(homeDir, ".mux");
     const cmuxBackups = await listQuarantineBackups(homeDir, ".cmux");
     expect(canonicalBackups).toHaveLength(1);
@@ -339,24 +339,24 @@ describe("initializeShuxHomeTransition", () => {
     expect(await fs.readFile(muxBackups[0], "utf8")).toBe("mux-bytes");
     expect(await fs.readFile(cmuxBackups[0], "utf8")).toBe("cmux-bytes");
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(canonicalPath);
+      expect(getXumHome()).toBe(canonicalPath);
     });
 
-    const second = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const second = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
     expect(second.activePath).toBe(first.activePath);
     expect((await fs.stat(second.activePath)).isDirectory()).toBe(true);
-    expect(await listQuarantineBackups(homeDir, ".shux")).toEqual(canonicalBackups);
+    expect(await listQuarantineBackups(homeDir, ".xum")).toEqual(canonicalBackups);
     expect(await fs.readFile(canonicalBackups[0], "utf8")).toBe("canonical-bytes");
     expect(await fs.readFile(muxBackups[0], "utf8")).toBe("mux-bytes");
     expect(await fs.readFile(cmuxBackups[0], "utf8")).toBe("cmux-bytes");
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(first.activePath);
+      expect(getXumHome()).toBe(first.activePath);
     });
   });
 
   test("quarantines broken aliases and recovers a persistent canonical home", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const muxPath = join(homeDir, ".mux");
     const cmuxPath = join(homeDir, ".cmux");
     const missingCanonical = join(homeDir, "missing-canonical");
@@ -366,7 +366,7 @@ describe("initializeShuxHomeTransition", () => {
     await fs.symlink(missingMux, muxPath);
     await fs.symlink(missingCmux, cmuxPath);
 
-    const first = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const first = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(first.status).toBe("canonical");
     expect(first.activePath).toBe(canonicalPath);
@@ -374,7 +374,7 @@ describe("initializeShuxHomeTransition", () => {
     expect(await fs.realpath(muxPath)).toBe(await fs.realpath(canonicalPath));
     expect(await fs.realpath(cmuxPath)).toBe(await fs.realpath(canonicalPath));
 
-    const canonicalBackups = await listQuarantineBackups(homeDir, ".shux");
+    const canonicalBackups = await listQuarantineBackups(homeDir, ".xum");
     const muxBackups = await listQuarantineBackups(homeDir, ".mux");
     const cmuxBackups = await listQuarantineBackups(homeDir, ".cmux");
     expect(canonicalBackups).toHaveLength(1);
@@ -383,26 +383,26 @@ describe("initializeShuxHomeTransition", () => {
     expect(await fs.readlink(muxBackups[0])).toBe(missingMux);
     expect(await fs.readlink(cmuxBackups[0])).toBe(missingCmux);
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(canonicalPath);
+      expect(getXumHome()).toBe(canonicalPath);
     });
 
-    const second = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const second = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
     expect(second.activePath).toBe(first.activePath);
     expect((await fs.stat(second.activePath)).isDirectory()).toBe(true);
-    expect(await listQuarantineBackups(homeDir, ".shux")).toEqual(canonicalBackups);
+    expect(await listQuarantineBackups(homeDir, ".xum")).toEqual(canonicalBackups);
     expect(await fs.readlink(canonicalBackups[0])).toBe(missingCanonical);
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(first.activePath);
+      expect(getXumHome()).toBe(first.activePath);
     });
   });
 
   test("does not activate an unhealthy canonical path when no healthy legacy tree exists", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const fallbackPath = join(homeDir, ".mux");
     await fs.writeFile(canonicalPath, "not-a-directory", "utf8");
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(result.status).toBe("legacy-fallback");
     expect(result.activePath).toBe(fallbackPath);
@@ -413,13 +413,13 @@ describe("initializeShuxHomeTransition", () => {
     expect(await fs.readFile(canonicalPath, "utf8")).toBe("not-a-directory");
     expect((await fs.lstat(fallbackPath)).isDirectory()).toBe(true);
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(fallbackPath);
+      expect(getXumHome()).toBe(fallbackPath);
     });
   });
 
   test("falls back to the populated leftover when empty canonical cannot be removed", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
@@ -430,7 +430,7 @@ describe("initializeShuxHomeTransition", () => {
     });
 
     try {
-      const result = await initializeShuxHomeTransition({ homeDir, env, platform: "linux" });
+      const result = await initializeXumHomeTransition({ homeDir, env, platform: "linux" });
 
       expect(result.status).toBe("legacy-fallback");
       expect(result.activePath).toBe(legacyPath);
@@ -439,14 +439,12 @@ describe("initializeShuxHomeTransition", () => {
       expect(await fs.readFile(join(legacyPath, "config.json"), "utf8")).toBe("legacy");
       expect((await fs.lstat(canonicalPath)).isDirectory()).toBe(true);
       expect(await fs.readdir(canonicalPath)).toEqual([]);
-      expect(env.SHUX_ROOT).toBe(legacyPath);
+      expect(env.XUM_ROOT).toBe(legacyPath);
       expect(env.MUX_ROOT).toBe(legacyPath);
-      expect(sanitizeShuxChildEnv(env).SHUX_ROOT).toBe(legacyPath);
-      expect(await fs.readFile(getShuxHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(
-        ".mux\n"
-      );
+      expect(sanitizeXumChildEnv(env).XUM_ROOT).toBe(legacyPath);
+      expect(await fs.readFile(getXumHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(".mux\n");
       withHomeDir(homeDir, () => {
-        expect(getShuxHome()).toBe(legacyPath);
+        expect(getXumHome()).toBe(legacyPath);
       });
     } finally {
       rmdir.mockRestore();
@@ -455,7 +453,7 @@ describe("initializeShuxHomeTransition", () => {
 
   test("falls back to the populated leftover when rename into the empty canonical fails", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
@@ -473,7 +471,7 @@ describe("initializeShuxHomeTransition", () => {
     });
 
     try {
-      const result = await initializeShuxHomeTransition({ homeDir, env, platform: "linux" });
+      const result = await initializeXumHomeTransition({ homeDir, env, platform: "linux" });
 
       expect(result.status).toBe("legacy-fallback");
       expect(result.activePath).toBe(legacyPath);
@@ -481,13 +479,11 @@ describe("initializeShuxHomeTransition", () => {
       expect(await fs.readFile(join(legacyPath, "config.json"), "utf8")).toBe("legacy");
       expect((await fs.lstat(canonicalPath)).isDirectory()).toBe(true);
       expect(await fs.readdir(canonicalPath)).toEqual([]);
-      expect(env.SHUX_ROOT).toBe(legacyPath);
+      expect(env.XUM_ROOT).toBe(legacyPath);
       expect(env.MUX_ROOT).toBe(legacyPath);
-      expect(await fs.readFile(getShuxHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(
-        ".mux\n"
-      );
+      expect(await fs.readFile(getXumHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(".mux\n");
       withHomeDir(homeDir, () => {
-        expect(getShuxHome()).toBe(legacyPath);
+        expect(getXumHome()).toBe(legacyPath);
       });
     } finally {
       rename.mockRestore();
@@ -496,7 +492,7 @@ describe("initializeShuxHomeTransition", () => {
 
   test("retries empty-canonical adoption on the next startup without a persisted ROOT pin", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
@@ -507,22 +503,20 @@ describe("initializeShuxHomeTransition", () => {
     });
 
     try {
-      const first = await initializeShuxHomeTransition({
+      const first = await initializeXumHomeTransition({
         homeDir,
         env: firstEnv,
         platform: "linux",
       });
       expect(first.status).toBe("legacy-fallback");
-      expect(firstEnv.SHUX_ROOT).toBe(legacyPath);
-      expect(await fs.readFile(getShuxHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(
-        ".mux\n"
-      );
+      expect(firstEnv.XUM_ROOT).toBe(legacyPath);
+      expect(await fs.readFile(getXumHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(".mux\n");
     } finally {
       rmdir.mockRestore();
     }
 
     const restartedEnv: Record<string, string | undefined> = {};
-    const second = await initializeShuxHomeTransition({
+    const second = await initializeXumHomeTransition({
       homeDir,
       env: restartedEnv,
       platform: "linux",
@@ -530,47 +524,47 @@ describe("initializeShuxHomeTransition", () => {
 
     expect(second.status).toBe("migrated");
     expect(second.activePath).toBe(canonicalPath);
-    expect(restartedEnv.SHUX_ROOT).toBeUndefined();
+    expect(restartedEnv.XUM_ROOT).toBeUndefined();
     expect(restartedEnv.MUX_ROOT).toBeUndefined();
     expect(await fs.readFile(join(canonicalPath, "config.json"), "utf8")).toBe("legacy");
     expect(await fs.realpath(legacyPath)).toBe(await fs.realpath(canonicalPath));
-    await expectMissingPath(getShuxHomeLegacyFallbackMarkerPath(homeDir));
+    await expectMissingPath(getXumHomeLegacyFallbackMarkerPath(homeDir));
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(canonicalPath);
+      expect(getXumHome()).toBe(canonicalPath);
     });
   });
 
   test("stale leftover marker cannot override a populated independent canonical tree", async () => {
     const homeDir = await createTempDir();
-    const canonicalPath = join(homeDir, ".shux");
+    const canonicalPath = join(homeDir, ".xum");
     const legacyPath = join(homeDir, ".mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(canonicalPath, "canonical"), "new", "utf8");
     await fs.writeFile(join(legacyPath, "legacy"), "old", "utf8");
-    await fs.writeFile(getShuxHomeLegacyFallbackMarkerPath(homeDir), ".mux\n", "utf8");
+    await fs.writeFile(getXumHomeLegacyFallbackMarkerPath(homeDir), ".mux\n", "utf8");
 
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(canonicalPath);
+      expect(getXumHome()).toBe(canonicalPath);
     });
 
-    const result = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
+    const result = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
 
     expect(result.status).toBe("conflict");
     expect(result.activePath).toBe(canonicalPath);
     expect(await fs.readFile(join(canonicalPath, "canonical"), "utf8")).toBe("new");
     expect(await fs.readFile(join(legacyPath, "legacy"), "utf8")).toBe("old");
-    await expectMissingPath(getShuxHomeLegacyFallbackMarkerPath(homeDir));
+    await expectMissingPath(getXumHomeLegacyFallbackMarkerPath(homeDir));
     withHomeDir(homeDir, () => {
-      expect(getShuxHome()).toBe(canonicalPath);
+      expect(getXumHome()).toBe(canonicalPath);
     });
   });
 
   test("keeps production leftover markers isolated from development homes", async () => {
     const homeDir = await createTempDir();
-    const prodCanonical = join(homeDir, ".shux");
+    const prodCanonical = join(homeDir, ".xum");
     const prodLegacy = join(homeDir, ".mux");
-    const devCanonical = join(homeDir, ".shux-dev");
+    const devCanonical = join(homeDir, ".xum-dev");
     const devLegacy = join(homeDir, ".mux-dev");
     await fs.mkdir(prodCanonical);
     await fs.mkdir(prodLegacy);
@@ -583,8 +577,8 @@ describe("initializeShuxHomeTransition", () => {
     });
 
     try {
-      const prod = await initializeShuxHomeTransition({ homeDir, env: {}, platform: "linux" });
-      const dev = await initializeShuxHomeTransition({
+      const prod = await initializeXumHomeTransition({ homeDir, env: {}, platform: "linux" });
+      const dev = await initializeXumHomeTransition({
         homeDir,
         env: { NODE_ENV: "development" },
         platform: "linux",
@@ -592,16 +586,14 @@ describe("initializeShuxHomeTransition", () => {
 
       expect(prod.status).toBe("legacy-fallback");
       expect(dev.status).toBe("legacy-fallback");
-      expect(await fs.readFile(getShuxHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(
-        ".mux\n"
-      );
-      expect(await fs.readFile(getShuxHomeLegacyFallbackMarkerPath(homeDir, "-dev"), "utf8")).toBe(
+      expect(await fs.readFile(getXumHomeLegacyFallbackMarkerPath(homeDir), "utf8")).toBe(".mux\n");
+      expect(await fs.readFile(getXumHomeLegacyFallbackMarkerPath(homeDir, "-dev"), "utf8")).toBe(
         ".mux-dev\n"
       );
       withHomeDir(homeDir, () => {
-        expect(getShuxHome()).toBe(prodLegacy);
+        expect(getXumHome()).toBe(prodLegacy);
         process.env.NODE_ENV = "development";
-        expect(getShuxHome()).toBe(devLegacy);
+        expect(getXumHome()).toBe(devLegacy);
       });
     } finally {
       rmdir.mockRestore();
@@ -609,15 +601,15 @@ describe("initializeShuxHomeTransition", () => {
   });
 });
 
-describe("ensureShuxDirectoryTransition", () => {
+describe("ensureXumDirectoryTransition", () => {
   test("requests an absolute Windows junction without asserting NTFS behavior", async () => {
     const root = await createTempDir();
-    const canonicalPath = join(root, "shux");
+    const canonicalPath = join(root, "xum");
     const legacyPath = join(root, "mux");
     const symlink = spyOn(fs, "symlink").mockImplementation(() => Promise.resolve());
 
     try {
-      const result = await ensureShuxDirectoryTransition({
+      const result = await ensureXumDirectoryTransition({
         canonicalPath,
         legacyPaths: [legacyPath],
         platform: "win32",
@@ -631,17 +623,17 @@ describe("ensureShuxDirectoryTransition", () => {
   });
 });
 
-describe("initializeShuxUserDataTransition", () => {
+describe("initializeXumUserDataTransition", () => {
   test("moves Electron userData and leaves the old app-name path pointing forward", async () => {
     const appDataDir = await createTempDir();
     const legacyPath = join(appDataDir, "mux");
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "window-state.json"), "{}", "utf8");
 
-    const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(result.status).toBe("migrated");
-    expect(result.canonicalPath).toBe(join(appDataDir, "shux"));
+    expect(result.canonicalPath).toBe(join(appDataDir, "xum"));
     expect(await fs.readFile(join(result.canonicalPath, "window-state.json"), "utf8")).toBe("{}");
     expect(await fs.realpath(legacyPath)).toBe(await fs.realpath(result.canonicalPath));
     expect(await fs.realpath(join(appDataDir, "Mux"))).toBe(
@@ -655,7 +647,7 @@ describe("initializeShuxUserDataTransition", () => {
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "window-state.json"), "{}", "utf8");
 
-    const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(result.status).toBe("migrated");
     expect(await fs.readFile(join(result.canonicalPath, "window-state.json"), "utf8")).toBe("{}");
@@ -667,13 +659,13 @@ describe("initializeShuxUserDataTransition", () => {
 
   test("adopts a populated legacy tree into an empty canonical userData directory", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const legacyPath = join(appDataDir, "mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "window-state.json"), "{}", "utf8");
 
-    const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(result.status).toBe("migrated");
     expect(await fs.readFile(join(canonicalPath, "window-state.json"), "utf8")).toBe("{}");
@@ -684,7 +676,7 @@ describe("initializeShuxUserDataTransition", () => {
 
   test("returns the populated leftover userData path when empty canonical adoption fails", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const legacyPath = join(appDataDir, "mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(legacyPath);
@@ -694,7 +686,7 @@ describe("initializeShuxUserDataTransition", () => {
     });
 
     try {
-      const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+      const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
       expect(result.status).toBe("legacy-fallback");
       expect(result.activePath).toBe(legacyPath);
@@ -709,20 +701,20 @@ describe("initializeShuxUserDataTransition", () => {
 
   test("does not merge or delete independent populated userData trees", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const muxPath = join(appDataDir, "mux");
     const productNamePath = join(appDataDir, "Mux");
     await fs.mkdir(canonicalPath);
     await fs.mkdir(muxPath);
     await fs.mkdir(productNamePath);
-    await fs.writeFile(join(canonicalPath, "from-shux"), "new", "utf8");
+    await fs.writeFile(join(canonicalPath, "from-xum"), "new", "utf8");
     await fs.writeFile(join(muxPath, "from-mux"), "old", "utf8");
     await fs.writeFile(join(productNamePath, "from-Mux"), "older", "utf8");
 
-    const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(result.status).toBe("conflict");
-    expect(await fs.readFile(join(canonicalPath, "from-shux"), "utf8")).toBe("new");
+    expect(await fs.readFile(join(canonicalPath, "from-xum"), "utf8")).toBe("new");
     expect(await fs.readFile(join(muxPath, "from-mux"), "utf8")).toBe("old");
     expect(await fs.readFile(join(productNamePath, "from-Mux"), "utf8")).toBe("older");
     expect((await fs.lstat(muxPath)).isDirectory()).toBe(true);
@@ -731,21 +723,21 @@ describe("initializeShuxUserDataTransition", () => {
 
   test("quarantines obstructing userData files and recovers a persistent canonical directory", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const muxPath = join(appDataDir, "mux");
     const productNamePath = join(appDataDir, "Mux");
     await fs.writeFile(canonicalPath, "canonical-bytes", "utf8");
     await fs.writeFile(muxPath, "mux-bytes", "utf8");
     await fs.writeFile(productNamePath, "Mux-bytes", "utf8");
 
-    const first = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const first = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(first.status).toBe("canonical");
     expect(first.activePath).toBe(canonicalPath);
     expect((await fs.stat(first.activePath)).isDirectory()).toBe(true);
     expect(await fs.realpath(muxPath)).toBe(await fs.realpath(canonicalPath));
     expect(await fs.realpath(productNamePath)).toBe(await fs.realpath(canonicalPath));
-    expect(await fs.readFile((await listQuarantineBackups(appDataDir, "shux"))[0], "utf8")).toBe(
+    expect(await fs.readFile((await listQuarantineBackups(appDataDir, "xum"))[0], "utf8")).toBe(
       "canonical-bytes"
     );
     expect(await fs.readFile((await listQuarantineBackups(appDataDir, "mux"))[0], "utf8")).toBe(
@@ -755,17 +747,17 @@ describe("initializeShuxUserDataTransition", () => {
       "Mux-bytes"
     );
 
-    const second = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const second = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
     expect(second.activePath).toBe(first.activePath);
     expect((await fs.stat(second.activePath)).isDirectory()).toBe(true);
-    expect(await fs.readFile((await listQuarantineBackups(appDataDir, "shux"))[0], "utf8")).toBe(
+    expect(await fs.readFile((await listQuarantineBackups(appDataDir, "xum"))[0], "utf8")).toBe(
       "canonical-bytes"
     );
   });
 
   test("quarantines broken userData aliases and recovers a persistent canonical directory", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const muxPath = join(appDataDir, "mux");
     const productNamePath = join(appDataDir, "Mux");
     const missingCanonical = join(appDataDir, "missing-canonical");
@@ -775,13 +767,13 @@ describe("initializeShuxUserDataTransition", () => {
     await fs.symlink(missingMux, muxPath);
     await fs.symlink(missingMuxName, productNamePath);
 
-    const first = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const first = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(first.status).toBe("canonical");
     expect(first.activePath).toBe(canonicalPath);
     expect((await fs.stat(first.activePath)).isDirectory()).toBe(true);
     expect(await fs.realpath(muxPath)).toBe(await fs.realpath(canonicalPath));
-    expect(await fs.readlink((await listQuarantineBackups(appDataDir, "shux"))[0])).toBe(
+    expect(await fs.readlink((await listQuarantineBackups(appDataDir, "xum"))[0])).toBe(
       missingCanonical
     );
     expect(await fs.readlink((await listQuarantineBackups(appDataDir, "mux"))[0])).toBe(missingMux);
@@ -789,23 +781,23 @@ describe("initializeShuxUserDataTransition", () => {
       missingMuxName
     );
 
-    const second = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const second = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
     expect(second.activePath).toBe(first.activePath);
     expect((await fs.stat(second.activePath)).isDirectory()).toBe(true);
-    expect(await fs.readlink((await listQuarantineBackups(appDataDir, "shux"))[0])).toBe(
+    expect(await fs.readlink((await listQuarantineBackups(appDataDir, "xum"))[0])).toBe(
       missingCanonical
     );
   });
 
   test("prefers a healthy mux userData tree when the canonical entry is a regular file", async () => {
     const appDataDir = await createTempDir();
-    const canonicalPath = join(appDataDir, "shux");
+    const canonicalPath = join(appDataDir, "xum");
     const legacyPath = join(appDataDir, "mux");
     await fs.writeFile(canonicalPath, "not-a-directory", "utf8");
     await fs.mkdir(legacyPath);
     await fs.writeFile(join(legacyPath, "window-state.json"), "{}", "utf8");
 
-    const result = await initializeShuxUserDataTransition({ appDataDir, platform: "linux" });
+    const result = await initializeXumUserDataTransition({ appDataDir, platform: "linux" });
 
     expect(result.status).toBe("legacy-fallback");
     expect(result.activePath).toBe(legacyPath);
@@ -822,7 +814,7 @@ describe("initializeShuxUserDataTransition", () => {
 
     for (const platform of ["darwin", "win32"] as const) {
       const identity = getElectronAppIdentity(platform);
-      const result = await initializeShuxUserDataTransition({ appDataDir, platform });
+      const result = await initializeXumUserDataTransition({ appDataDir, platform });
 
       expect(identity.appName).not.toBe(identity.userDataDirName);
       expect(result.canonicalPath).toBe(join(appDataDir, identity.userDataDirName));

@@ -22,7 +22,7 @@ function renderBackupSection() {
           backupSettings: {
             repoUrl: "git@github.com:example/dotfiles.git",
             branch: "main",
-            path: "shux/",
+            path: "xum/",
           },
           backupValidation: {
             reachable: true,
