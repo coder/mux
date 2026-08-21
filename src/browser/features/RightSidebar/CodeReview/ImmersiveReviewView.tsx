@@ -1389,6 +1389,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
 
   useEffect(() => {
     return () => {
+      // Invalidate any in-flight copy so a read that resolves after unmount cannot
+      // write to the clipboard (isStale() sees the bumped request id).
+      copyFileRequestIdRef.current += 1;
       if (copyFileFeedbackTimeoutRef.current != null) {
         clearTimeout(copyFileFeedbackTimeoutRef.current);
       }
@@ -1411,15 +1414,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // deletion status even when the file contributes no hunks (empty/binary files),
   // and the UNFILTERED hunk set covers trees without status while search/assisted
   // filters empty the visible hunk list.
-  const isActiveFileDeleted = useMemo(() => {
-    if (!activeFilePath) {
-      return false;
-    }
-    return (
-      findFileTreeStats(props.fileTree, activeFilePath)?.changeType === "deleted" ||
-      getFileHunks(allHunks, activeFilePath)[0]?.changeType === "deleted"
-    );
-  }, [props.fileTree, allHunks, activeFilePath]);
+  const isActiveFileDeleted =
+    activeFilePath != null &&
+    (findFileTreeStats(props.fileTree, activeFilePath)?.changeType === "deleted" ||
+      getFileHunks(allHunks, activeFilePath)[0]?.changeType === "deleted");
 
   // Copy the entire on-disk file, not the overlay content: the overlay may hold only
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
