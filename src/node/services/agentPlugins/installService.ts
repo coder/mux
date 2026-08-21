@@ -30,6 +30,7 @@ import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
 import type { WorkspaceMcpOverridesService } from "@/node/services/workspaceMcpOverridesService";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
+import { acquireCrossProcessLock } from "@/node/utils/main/crossProcessLock";
 import { shellQuote } from "@/common/utils/shell";
 import { execFileAsync } from "@/node/utils/disposableExec";
 import {
@@ -657,7 +658,13 @@ export class AgentPluginInstallService {
     // process sharing rootDir must not interleave its read-modify-write of
     // plugins.json (or its directory moves) with ours.
     const locked = async (): Promise<T> => {
-      const release = await this.acquireMutationLock();
+      const release = await acquireCrossProcessLock({
+        lockPath: path.join(this.stagingRoot, MUTATION_LOCK_FILE),
+        acquireTimeoutMs: MUTATION_LOCK_ACQUIRE_TIMEOUT_MS,
+        staleMs: MUTATION_LOCK_STALE_MS,
+        timeoutMessage:
+          "Another Mux process is currently modifying plugins. Wait for it to finish and try again.",
+      });
       try {
         return await fn();
       } finally {
@@ -667,100 +674,6 @@ export class AgentPluginInstallService {
     const run = this.mutationQueue.then(locked, locked);
     this.mutationQueue = run.catch(() => undefined);
     return run;
-  }
-
-  /** Parse the lock file; undefined when missing/unreadable/corrupt. */
-  private async readMutationLock(
-    lockPath: string
-  ): Promise<{ pid: number; token: string; acquiredAt: number } | undefined> {
-    try {
-      const parsed = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return undefined;
-      }
-      const { pid, token, acquiredAt } = parsed as Record<string, unknown>;
-      if (typeof pid !== "number" || typeof token !== "string" || typeof acquiredAt !== "number") {
-        return undefined;
-      }
-      return { pid, token, acquiredAt };
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * Liveness check for a competing lock holder. Reclaims dead pids
-   * immediately; the stale ceiling guards pid reuse. A same-pid holder is
-   * NOT reclaimable: it is another service instance in this very process
-   * (two ServiceContainers sharing rootDir each have their own in-process
-   * queue), and a lock leaked by a previous same-pid process is covered by
-   * the stale ceiling like any other pid-reuse case.
-   */
-  private mutationLockHolderAlive(holder: { pid: number; acquiredAt: number }): boolean {
-    if (Date.now() - holder.acquiredAt > MUTATION_LOCK_STALE_MS) {
-      return false;
-    }
-    if (holder.pid === process.pid) {
-      return true;
-    }
-    try {
-      process.kill(holder.pid, 0);
-      return true;
-    } catch (error) {
-      // EPERM = alive but owned by another user; anything else (ESRCH) = dead.
-      return hasErrorCode(error, "EPERM");
-    }
-  }
-
-  /**
-   * Acquire the cross-process mutation lock (see MUTATION_LOCK_FILE).
-   * Exclusive-create (wx) + post-create ownership re-read: two processes
-   * that both reclaimed a dead holder cannot both proceed, because the
-   * clobbered one fails the token check and retries. Returns the release
-   * function, which deletes the lock only while it is still OURS.
-   */
-  private async acquireMutationLock(): Promise<() => Promise<void>> {
-    await fsPromises.mkdir(this.stagingRoot, { recursive: true });
-    const lockPath = path.join(this.stagingRoot, MUTATION_LOCK_FILE);
-    const token = randomBytes(16).toString("hex");
-    const deadline = Date.now() + MUTATION_LOCK_ACQUIRE_TIMEOUT_MS;
-    for (;;) {
-      try {
-        await fsPromises.writeFile(
-          lockPath,
-          JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() }),
-          { flag: "wx" }
-        );
-        const confirmed = await this.readMutationLock(lockPath);
-        if (confirmed?.token === token) {
-          return async () => {
-            const current = await this.readMutationLock(lockPath);
-            if (current?.token === token) {
-              await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
-            }
-          };
-        }
-        // Our create was clobbered by a concurrent reclaimer: retry.
-      } catch (error) {
-        if (!hasErrorCode(error, "EEXIST")) {
-          throw error;
-        }
-        const holder = await this.readMutationLock(lockPath);
-        if (holder === undefined || !this.mutationLockHolderAlive(holder)) {
-          // Corrupt/unreadable or dead-owner lock: reclaim and retry. The
-          // unlink-then-create race between two reclaimers is compensated by
-          // the ownership re-read above.
-          await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
-          continue;
-        }
-      }
-      if (Date.now() > deadline) {
-        throw new Error(
-          "Another Mux process is currently modifying plugins. Wait for it to finish and try again."
-        );
-      }
-      await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 250)));
-    }
   }
 
   /**

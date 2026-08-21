@@ -11,6 +11,7 @@ import { type createRuntime } from "@/node/runtime/runtimeFactory";
 import { createRuntimeForWorkspace } from "@/node/runtime/runtimeHelpers";
 import { execBuffered, readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { hasErrorCode } from "@/node/services/tools/skillFileUtils";
+import { acquireCrossProcessLock } from "@/node/utils/main/crossProcessLock";
 import { isCanonicalPluginServerKey } from "@/node/services/agentPlugins/mcpConfig";
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
@@ -490,15 +491,40 @@ export class WorkspaceMcpOverridesService {
   }
 
   /**
-   * All writes flow through this queue so the expectedRevision check-and-set
-   * in setOverridesForWorkspace is atomic within the main process (the only
-   * writer of these files).
+   * All writes flow through this queue AND a cross-process file lock so the
+   * expectedRevision check-and-set in setOverridesForWorkspace is atomic
+   * across every writer. The in-process queue alone is not enough: two
+   * processes sharing one Xum home (ALLOW_MULTIPLE_INSTANCES, a desktop app
+   * alongside `xum server`) each have their own queue, so both could pass
+   * the CAS on the same revision and the last write would silently discard
+   * the other's changes — worse, a save whose plugin-key validation ran
+   * before another process's uninstall could land AFTER that uninstall's
+   * prune retired its cleanup tombstone, letting a same-name reinstall
+   * reactivate the server. Holding the lock across revision read,
+   * validation, write, and prune closes both interleavings: a save either
+   * commits before the prune (which then removes its keys) or validates
+   * after the plugin tree is gone (and is rejected).
    */
   private writeQueue: Promise<unknown> = Promise.resolve();
 
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = () => fn();
-    const next = this.writeQueue.then(run, run);
+    const locked = async (): Promise<T> => {
+      const release = await acquireCrossProcessLock({
+        lockPath: path.join(this.config.rootDir, "mcp-overrides.lock"),
+        // Writes are small file edits plus at most one discovery scan; a
+        // minute of waiting outlasts any legitimate holder.
+        acquireTimeoutMs: 60_000,
+        staleMs: 5 * 60_000,
+        timeoutMessage:
+          "Another Mux process is currently updating workspace MCP settings. Wait for it to finish and try again.",
+      });
+      try {
+        return await fn();
+      } finally {
+        await release();
+      }
+    };
+    const next = this.writeQueue.then(locked, locked);
     this.writeQueue = next.catch(() => undefined);
     return next;
   }

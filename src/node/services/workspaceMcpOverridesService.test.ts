@@ -411,6 +411,67 @@ describe("WorkspaceMcpOverridesService", () => {
     ).rejects.toThrow(/resolves outside the workspace/);
   });
 
+  it("CAS saves from two service instances are serialized by the cross-process lock", async () => {
+    const projectPath = "/fake/project";
+    const workspaceId = "ws-id";
+    const workspaceName = "branch";
+
+    const workspacePath = getWorkspacePath({
+      srcDir: config.srcDir,
+      projectName: "project",
+      workspaceName,
+    });
+    const filePath = path.join(workspacePath, ".mux", "mcp.local.jsonc");
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify({ enabledServers: ["base"] }));
+    await config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: workspacePath,
+            id: workspaceId,
+            name: workspaceName,
+            runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+          },
+        ],
+      });
+      return cfg;
+    });
+
+    // Two INSTANCES sharing one home (desktop + `xum server`): each has its
+    // own in-process write queue, so only the cross-process lock makes the
+    // expectedRevision check-and-set atomic between them. Without it both
+    // saves pass the CAS against the same snapshot and the loser's write is
+    // silently discarded despite reporting success.
+    const serviceA = new WorkspaceMcpOverridesService(config);
+    const serviceB = new WorkspaceMcpOverridesService(config);
+    const { revision } = await serviceA.getOverridesForWorkspace(workspaceId);
+
+    const outcomes = await Promise.allSettled([
+      serviceA.setOverridesForWorkspace(
+        workspaceId,
+        { enabledServers: ["base", "from-a"] },
+        { expectedRevision: revision }
+      ),
+      serviceB.setOverridesForWorkspace(
+        workspaceId,
+        { enabledServers: ["base", "from-b"] },
+        { expectedRevision: revision }
+      ),
+    ]);
+
+    const fulfilled = outcomes.filter((outcome) => outcome.status === "fulfilled");
+    const rejected = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toBeInstanceOf(WorkspaceMcpOverridesConflictError);
+    // The surviving file matches the single successful save.
+    const after = JSON.parse(await fs.readFile(filePath, "utf-8")) as {
+      enabledServers: string[];
+    };
+    expect(after.enabledServers).toHaveLength(2);
+  });
+
   it("prunePluginOverrideKeys matches only canonical plugin keys", async () => {
     const projectPath = "/fake/project";
     const workspaceId = "ws-id";
