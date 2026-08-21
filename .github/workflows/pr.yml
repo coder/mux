@@ -361,6 +361,11 @@ jobs:
       - name: Install xvfb
         if: matrix.os == 'linux'
         run: |
+          if command -v Xvfb >/dev/null 2>&1 && command -v xvfb-run >/dev/null 2>&1; then
+            echo "Xvfb is already installed"
+            exit 0
+          fi
+
           sudo apt-get update
           sudo apt-get install -y xvfb
       # Bound browser setup; Playwright downloads can stall after progress reaches 100%.
