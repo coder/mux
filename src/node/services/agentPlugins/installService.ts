@@ -26,6 +26,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import type { Config } from "@/node/config";
+import { AgentIdSchema } from "@/common/schemas/ids";
 import {
   SkillNameSchema,
   resolveSkillAdvertise,
@@ -178,7 +179,17 @@ function gitEnv(): Record<string, string> {
   // during Preview — before any consent UI appears. GIT_CONFIG_* env config
   // takes precedence over all config files, so this neutralizes hooks
   // regardless of global/system configuration.
-  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0", ...GIT_NO_HOOKS_ENV };
+  //
+  // SECURITY: whitelist transports. Git remote helpers execute arbitrary
+  // commands (`ext::touch /pwn` runs before any consent UI when the user's
+  // config sets protocol.ext.allow=always), and disabling hooks does not
+  // restrict helpers. GIT_ALLOW_PROTOCOL is an env-level whitelist that
+  // overrides protocol.*.allow configuration for every staging invocation.
+  const env: Record<string, string> = {
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ALLOW_PROTOCOL: "file:git:http:https:ssh",
+    ...GIT_NO_HOOKS_ENV,
+  };
   if (process.env.GIT_SSH_COMMAND === undefined) {
     env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes";
   }
@@ -1238,7 +1249,7 @@ export class AgentPluginInstallService {
       );
     }
     const components = new Set<string>([
-      ...(await this.collectComponentFiles(plugin.agentsDir, ".md")).map((f) => `agent ${f}`),
+      ...(await this.collectAgentFiles(plugin.agentsDir)).map((f) => `agent ${f}`),
       ...(await this.collectComponentFiles(plugin.workflowsDir, ".js")).map((f) => `workflow ${f}`),
       ...(plugin.manifest.contributes?.slashCommands ?? []).map(
         (command) => `slash command /${command.name}`
@@ -1351,10 +1362,9 @@ export class AgentPluginInstallService {
   }
 
   /**
-   * Agent definition files (agents/*.md) and executable workflow scripts
-   * (workflows/*.js) for the consent preview, mirroring the runtime listers
-   * (agentDefinitionsService / workflowScriptDiscovery: top-level files and
-   * symlinks with the matching extension, sorted). These activate after
+   * Executable workflow scripts (workflows/*.js) for the consent preview,
+   * mirroring the runtime lister (workflowScriptDiscovery: top-level files
+   * AND symlinks with the matching extension, sorted). These activate after
    * install, so consent must name them.
    */
   private async collectComponentFiles(
@@ -1371,6 +1381,34 @@ export class AgentPluginInstallService {
           (entry) =>
             (entry.isFile() || entry.isSymbolicLink()) &&
             entry.name.toLowerCase().endsWith(extension)
+        )
+        .map((entry) => entry.name)
+        .sort((a, b) => a.localeCompare(b));
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Agent definition files (agents/*.md) for the consent preview, mirroring
+   * the runtime lister exactly (agentDefinitionsService): only REGULAR files
+   * (symlinks never load) whose basename parses as a valid agent ID. A more
+   * permissive filter would promise a selectable agent that never loads —
+   * and the update capability surface built on this list would reject
+   * updates over a nonexistent capability.
+   */
+  private async collectAgentFiles(dir: string | undefined): Promise<string[]> {
+    if (dir === undefined) {
+      return [];
+    }
+    try {
+      const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+      return entries
+        .filter(
+          (entry) =>
+            entry.isFile() &&
+            entry.name.toLowerCase().endsWith(".md") &&
+            AgentIdSchema.safeParse(path.parse(entry.name).name.trim().toLowerCase()).success
         )
         .map((entry) => entry.name)
         .sort((a, b) => a.localeCompare(b));
@@ -1589,7 +1627,7 @@ export class AgentPluginInstallService {
         warnings
       );
       const hook = this.collectHook(plugin);
-      const agents = await this.collectComponentFiles(plugin.agentsDir, ".md");
+      const agents = await this.collectAgentFiles(plugin.agentsDir);
       const workflows = await this.collectComponentFiles(plugin.workflowsDir, ".js");
       const slashCommands = (plugin.manifest.contributes?.slashCommands ?? []).map((command) => ({
         name: command.name,

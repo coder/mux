@@ -70,6 +70,19 @@ describe("parseAgentPluginSourceInput", () => {
     expect(parseAgentPluginSourceInput("coder/mux@main").ref).toBe("main");
   });
 
+  test("rejects Git remote-helper transports (arbitrary command execution)", () => {
+    // `ext::<cmd>` invokes the command via git-remote-ext before any consent
+    // UI when protocol.ext.allow permits; the parser must refuse the syntax
+    // outright (GIT_ALLOW_PROTOCOL backstops sources that bypass parsing).
+    for (const input of ["ext::touch /tmp/pwned", "fd::17", "custom-helper::payload"]) {
+      expect(() => parseAgentPluginSourceInput(input)).toThrow(/remote-helper/);
+    }
+    // SCP-style single-colon hosts still parse.
+    expect(parseAgentPluginSourceInput("git@github.com:coder/mux.git").url).toBe(
+      "git@github.com:coder/mux.git"
+    );
+  });
+
   test("rejects credential-bearing URLs (persisted + rendered verbatim)", () => {
     // Sources land in ~/.mux/plugins.json and Settings; embedded secrets must
     // never reach either. SSH usernames are routing data and stay allowed.

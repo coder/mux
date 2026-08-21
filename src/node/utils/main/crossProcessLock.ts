@@ -268,7 +268,11 @@ export async function acquireCrossProcessLock(
       if (mutex !== undefined) {
         try {
           const current = await readLockHolder(lockPath);
-          if (current?.token === token) {
+          // Last-instant mutex re-check, mirroring reclamation: a stall
+          // longer than the mutex ceiling between the token read and the rm
+          // lets a competitor break our mutex, reclaim, and publish a
+          // successor — deleting it here would hand out double ownership.
+          if (current?.token === token && (await mutex.owns())) {
             await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
           }
         } finally {

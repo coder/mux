@@ -3466,6 +3466,17 @@ export class TaskService {
       );
       if (sanitizeError !== undefined) {
         initLogger.logComplete(-1);
+        // Reclaim the just-materialized worktree/session before failing the
+        // launch: the throw reaches scheduleReservedTaskLaunch, which only
+        // marks the task interrupted — without this cleanup the physical
+        // checkout would accumulate and collide with later same-name forks.
+        await this.cleanupMaterializedTaskWorkspace(
+          runtimeForTaskWorkspace,
+          plan.parentMeta.projectPath,
+          plan.workspaceName,
+          plan.taskId,
+          { preservePhysicalWorkspace: false }
+        );
         throw new Error(sanitizeError);
       }
     }
@@ -4430,14 +4441,15 @@ export class TaskService {
       return config;
     });
 
-    // Emit metadata update so the UI sees the workspace immediately.
-    await this.emitWorkspaceMetadata(taskId);
-
     if (!useSharedWorkspace) {
       // SECURITY: this checkout materialized outside WorkspaceService.create/
       // fork, so registration-time plugin-override sanitization never saw it —
       // a tracked stale `plugin:` enable would re-activate a same-name
-      // reinstall's default-disabled MCP server on the send below.
+      // reinstall's default-disabled MCP server on the send below. Runs
+      // BEFORE emitWorkspaceMetadata (the pre-announcement invariant of
+      // normal workspace creation): once metadata is emitted, the UI or any
+      // subscriber can send to this running-status task workspace while
+      // sanitization is still waiting on the override lock.
       const sanitizeError = await this.workspaceService.sanitizeMaterializedTaskWorkspace(
         taskId,
         workspacePath,
@@ -4454,6 +4466,9 @@ export class TaskService {
         return Err(sanitizeError);
       }
     }
+
+    // Emit metadata update so the UI sees the workspace immediately.
+    await this.emitWorkspaceMetadata(taskId);
 
     // Kick init (best-effort, async). Shared-workspace (isolation: "none") tasks reuse the parent's
     // already-initialized checkout, so re-running init would redundantly (and possibly disruptively)

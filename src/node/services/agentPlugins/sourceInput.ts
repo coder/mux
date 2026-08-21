@@ -80,6 +80,16 @@ export function parseAgentPluginSourceInput(rawInput: string): ParsedAgentPlugin
 
   assertNoAgentPluginUrlCredentials(input);
 
+  // SECURITY: reject Git remote-helper syntax (`<transport>::<address>`,
+  // e.g. `ext::sh -c ...`) up front with a clear message. Helpers execute
+  // arbitrary commands; GIT_ALLOW_PROTOCOL in the installer's git env is the
+  // enforcement backstop for sources that bypass this parser.
+  if (/^[a-zA-Z0-9._+-]+::/.test(input)) {
+    throw new Error(
+      "Git remote-helper sources (transport::address) are not supported. Use an https://, ssh://, git://, or file URL, a local path, or owner/repo shorthand."
+    );
+  }
+
   if (isUrlLike(input)) {
     // Git is spawned without a shell, so `~` never expands on its own —
     // resolve home-relative local paths here (both separator styles, so a
