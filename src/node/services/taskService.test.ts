@@ -4530,6 +4530,71 @@ describe("TaskService", () => {
     });
   });
 
+  test("accepted terminal continuation consumes attention before its stream can end", async () => {
+    const sendMessage = mock(
+      async (...args: unknown[]): Promise<Result<void, SendMessageError>> => {
+        const internal = args[3] as {
+          onAccepted?: () => Promise<void> | void;
+          queueDedupeKey?: string;
+        };
+        if (internal?.queueDedupeKey?.startsWith("agent-terminal-report:") === true) {
+          await internal.onAccepted?.();
+        }
+        return Ok(undefined);
+      }
+    );
+    const { config, taskService, workspaceMocks } = await startWorkspaceTurnForTest({
+      sendMessage,
+    });
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-fast-terminal-report"),
+        id: "nested-fast-terminal-report",
+        name: "nested-fast-terminal-report",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+      });
+      return cfg;
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: "nested-fast-terminal-report",
+      messageId: "assistant-nested-fast-terminal-report",
+      metadata: { model: "anthropic:claude-opus-4-6", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "nested-report-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Nested work completed quickly." },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "Nested work completed quickly." },
+          },
+        },
+        { type: "text", text: "Nested work completed quickly." },
+      ],
+    });
+
+    const attentionStore = new TerminalAttentionStore(config);
+    const attentionId = TerminalAttentionStore.notificationId(
+      "agent_task",
+      "nested-fast-terminal-report"
+    );
+    expect(await attentionStore.get("childworkspace", attentionId)).toMatchObject({
+      status: "delivered",
+    });
+    expect(await attentionStore.listPending("childworkspace")).toEqual([]);
+    expect(workspaceMocks.resumeStream).not.toHaveBeenCalled();
+  });
+
   test("failed terminal continuation enqueue retains queued progress", async () => {
     let terminalContinuationAttempted = false;
     const sendMessage = mock((...args: unknown[]): Promise<Result<void, SendMessageError>> => {

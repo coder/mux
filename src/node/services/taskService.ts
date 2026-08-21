@@ -13075,6 +13075,25 @@ export class TaskService {
     return { groupId: bestOf.groupId, index: bestOf.index, total: bestOf.total };
   }
 
+  private async reserveAgentTerminalAttention(
+    parentWorkspaceId: string,
+    childWorkspaceId: string
+  ): Promise<{ id: string; created: boolean }> {
+    const generationId = await this.getAgentTerminalAttentionGenerationId(
+      parentWorkspaceId,
+      childWorkspaceId
+    );
+    const id = TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, generationId);
+    const created = await this.terminalAttentionStore.enqueueIfAbsent({
+      ownerWorkspaceId: parentWorkspaceId,
+      sourceKind: "agent_task",
+      terminalOutcome: "completed",
+      sourceId: childWorkspaceId,
+      ...(generationId != null ? { generationId } : {}),
+    });
+    return { id, created: created != null };
+  }
+
   private removeQueuedAgentProgressAfterTerminalDelivery(
     parentWorkspaceId: string,
     childWorkspaceId: string
@@ -13256,11 +13275,16 @@ export class TaskService {
     if (workspaceTurnMuxMetadata != null) {
       const parentEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId);
       if (parentEntry != null) {
+        const terminalAttention = await this.reserveAgentTerminalAttention(
+          parentWorkspaceId,
+          childWorkspaceId
+        );
         const resumeOptions = await this.resolveParentAutoResumeOptions(
           parentWorkspaceId,
           parentEntry,
           defaultModel
         );
+        let terminalContinuationAccepted = false;
         const sendResult = await this.workspaceService.sendMessage(
           parentWorkspaceId,
           reportContent,
@@ -13278,7 +13302,20 @@ export class TaskService {
             startStreamInBackground: true,
             workspaceTurnContinuation: true,
             queueDedupeKey: `agent-terminal-report:${childWorkspaceId}`,
+            onAccepted: async () => {
+              // Mark this wake consumed before the accepted continuation can end.
+              // Its stream-end must not race a later terminal-attention drain.
+              await this.terminalAttentionStore.markDelivered(
+                parentWorkspaceId,
+                terminalAttention.id
+              );
+              terminalContinuationAccepted = true;
+            },
             onCanceled: async (reason: string) => {
+              await this.terminalAttentionStore.markSuperseded(
+                parentWorkspaceId,
+                terminalAttention.id
+              );
               await this.settleWorkspaceTurnContinuationFailure(
                 parentWorkspaceId,
                 workspaceTurnMuxMetadata,
@@ -13301,6 +13338,14 @@ export class TaskService {
           // workspace turn always has a concrete future driver during handoff.
           this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
           return [];
+        }
+        if (terminalContinuationAccepted) {
+          return [];
+        }
+        if (terminalAttention.created) {
+          await this.terminalAttentionStore.delete(parentWorkspaceId, terminalAttention.id);
+        } else {
+          this.scheduleTerminalAttentionDrain(parentWorkspaceId);
         }
         log.warn("Failed to queue terminal sub-agent report continuation", {
           parentWorkspaceId,
