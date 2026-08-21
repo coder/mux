@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Circle,
+  Copy,
   MessageSquare,
   Sparkles,
   ThumbsDown,
@@ -48,6 +49,7 @@ import {
   sortHunksInFileOrder,
 } from "@/browser/utils/review/navigation";
 import {
+  formatKeybind,
   isDialogOpen,
   isEditableElement,
   KEYBINDS,
@@ -55,6 +57,8 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
+import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { buildReadFileScript, processFileContents } from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { getReviewSelectedHunkKey } from "@/common/constants/storage";
 import {
@@ -1351,6 +1355,41 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
   }, [resetViewCursorForHunk]);
 
+  const { copied: copiedFile, copyToClipboard: copyFileToClipboard } = useCopyToClipboard();
+  const copyFileInFlightRef = useRef(false);
+
+  // Copy the entire on-disk file, not the overlay content: the overlay may hold only
+  // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
+  const handleCopyFile = useCallback(async () => {
+    const filePath = activeFilePath;
+    if (!api || !filePath || copyFileInFlightRef.current) {
+      return;
+    }
+    copyFileInFlightRef.current = true;
+    try {
+      const result = await api.workspace.executeBash({
+        workspaceId: props.workspaceId,
+        script: buildReadFileScript(filePath),
+      });
+      if (!result.success) {
+        return;
+      }
+      const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
+      if (contents.type !== "text") {
+        console.error(
+          "Cannot copy file contents:",
+          contents.type === "error" ? contents.message : "not a text file"
+        );
+        return;
+      }
+      await copyFileToClipboard(contents.content);
+    } catch (error) {
+      console.error("Failed to copy file contents:", error);
+    } finally {
+      copyFileInFlightRef.current = false;
+    }
+  }, [api, activeFilePath, props.workspaceId, copyFileToClipboard]);
+
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
       const resolvedHunk = findHunkAtLine(lineIndex, overlayData, currentFileHunks);
@@ -1616,6 +1655,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         handleUndoLastRead();
         return;
       }
+
+      // Y: copy the active file's full contents to the clipboard.
+      if (matchesKeybind(e, KEYBINDS.REVIEW_COPY_FILE)) {
+        e.preventDefault();
+        void handleCopyFile();
+        return;
+      }
     };
 
     // Run in capture phase so immersive Escape handling can swallow the event before
@@ -1638,6 +1684,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     handleToggleReadWithUndo,
     handleMarkFileAsRead,
     handleUndoLastRead,
+    handleCopyFile,
     isTouchExperience,
   ]);
 
@@ -1900,6 +1947,39 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           >
             <ChevronRight className="h-4 w-4" />
           </button>
+          {!isReviewComplete && activeFilePath && (
+            <TooltipIfPresent
+              tooltip={
+                copiedFile ? (
+                  "Copied!"
+                ) : (
+                  <span>
+                    Copy file{" "}
+                    <span className="mobile-hide-shortcut-hints">
+                      ({formatKeybind(KEYBINDS.REVIEW_COPY_FILE)})
+                    </span>
+                  </span>
+                )
+              }
+              side="bottom"
+              align="start"
+            >
+              <button
+                onClick={() => void handleCopyFile()}
+                className={cn(
+                  "flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors",
+                  copiedFile ? "text-read" : "text-muted hover:text-foreground"
+                )}
+                aria-label="Copy file contents"
+              >
+                {copiedFile ? (
+                  <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : (
+                  <Copy aria-hidden="true" className="h-3.5 w-3.5" />
+                )}
+              </button>
+            </TooltipIfPresent>
+          )}
         </div>
 
         <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />

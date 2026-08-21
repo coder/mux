@@ -21,6 +21,7 @@ interface MockApiClient {
 }
 
 let mockApi: MockApiClient;
+let clipboardWrites: string[] = [];
 
 void mock.module("@/browser/contexts/API", () => ({
   useAPI: () => ({
@@ -30,6 +31,13 @@ void mock.module("@/browser/contexts/API", () => ({
     authenticate: () => undefined,
     retry: () => undefined,
   }),
+}));
+
+void mock.module("@/browser/utils/clipboard", () => ({
+  copyToClipboard: (text: string) => {
+    clipboardWrites.push(text);
+    return Promise.resolve();
+  },
 }));
 
 import { ImmersiveReviewView, shouldPreserveImmersiveContextCursor } from "./ImmersiveReviewView";
@@ -120,6 +128,7 @@ describe("ImmersiveReviewView", () => {
   let originalNavigator: typeof globalThis.navigator;
   let originalRequestAnimationFrame: typeof globalThis.requestAnimationFrame;
   let originalCancelAnimationFrame: typeof globalThis.cancelAnimationFrame;
+  let originalHTMLElement: typeof globalThis.HTMLElement;
 
   beforeEach(() => {
     originalWindow = globalThis.window;
@@ -127,11 +136,15 @@ describe("ImmersiveReviewView", () => {
     originalNavigator = globalThis.navigator;
     originalRequestAnimationFrame = globalThis.requestAnimationFrame;
     originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    originalHTMLElement = globalThis.HTMLElement;
 
     const dom = new GlobalWindow({ url: "http://localhost" });
     globalThis.window = dom as unknown as Window & typeof globalThis;
     globalThis.document = dom.document as unknown as Document;
     globalThis.navigator = dom.navigator as unknown as Navigator;
+    // Keyboard handlers guard with `target instanceof HTMLElement`; expose the active
+    // dom's constructor so the guard sees this window's elements instead of throwing.
+    globalThis.HTMLElement = dom.HTMLElement as unknown as typeof globalThis.HTMLElement;
     globalThis.requestAnimationFrame = dom.requestAnimationFrame.bind(
       dom
     ) as unknown as typeof globalThis.requestAnimationFrame;
@@ -141,6 +154,7 @@ describe("ImmersiveReviewView", () => {
 
     globalThis.window.api = { platform: "linux", versions: {} };
 
+    clipboardWrites = [];
     mockApi = {
       workspace: {
         executeBash: mock(() =>
@@ -165,6 +179,7 @@ describe("ImmersiveReviewView", () => {
     globalThis.navigator = originalNavigator;
     globalThis.requestAnimationFrame = originalRequestAnimationFrame;
     globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    globalThis.HTMLElement = originalHTMLElement;
   });
 
   test("only preserves context cursors while overlay content is unchanged", () => {
@@ -963,5 +978,77 @@ describe("ImmersiveReviewView", () => {
     // the parent panel must NOT have reset the selection back to the first
     // visible hunk.
     expect(view.container.textContent ?? "").toContain(reviewedHunk.filePath);
+  });
+
+  test("copy button copies the entire on-disk file even when the display read is line-budgeted", async () => {
+    const fullContent = `first line\n${Array.from({ length: 60 }, (_, i) => `line ${i + 2}`).join("\n")}\nlast line`;
+
+    // The full-file display read carries an awk line budget; the copy read must not,
+    // so it still yields the whole file when the display falls back to compact hunks.
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      return Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(fullContent), exitCode: 0 },
+      });
+    });
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+    expect(clipboardWrites[0]).toBe(fullContent);
+  });
+
+  test("pressing the copy-file key copies the file, but not while typing", async () => {
+    const fullContent = "first line\nmiddle\nlast line";
+    let executeBashCalls = 0;
+    mockApi.workspace.executeBash = mock(() => {
+      executeBashCalls += 1;
+      return Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(fullContent), exitCode: 0 },
+      });
+    });
+
+    const view = renderImmersiveReview({ isTouchImmersive: false });
+
+    fireEvent.keyDown(globalThis.window as unknown as Element, { key: "y" });
+    await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+    expect(clipboardWrites[0]).toBe(fullContent);
+
+    // Typing "y" in an editable element must not trigger the copy. The guard is
+    // synchronous, so the read-call count must not move.
+    const callsAfterCopy = executeBashCalls;
+    const input = document.createElement("input");
+    view.container.appendChild(input);
+    fireEvent.keyDown(input, { key: "y" });
+    expect(executeBashCalls).toBe(callsAfterCopy);
+    expect(clipboardWrites).toHaveLength(1);
+  });
+
+  test("no copy affordance when the review is complete", () => {
+    const hunk = createHunk();
+
+    const view = renderImmersiveReview({
+      hunks: [],
+      allHunks: [hunk],
+      isRead: () => true,
+      selectedHunkId: null,
+    });
+
+    expect(view.container.textContent ?? "").toContain("Review complete");
+    expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
   });
 });
