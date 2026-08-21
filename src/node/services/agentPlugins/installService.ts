@@ -24,6 +24,7 @@ import type {
 import { resolvePluginHookGrants } from "@/node/services/agentPlugins/hookSandbox";
 import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
+import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import type { Config } from "@/node/config";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { log } from "@/node/services/log";
@@ -159,7 +160,14 @@ function gitEnv(): Record<string, string> {
   // Fail fast instead of hanging on credential prompts: installs run from the
   // UI with no terminal attached (acceptance: "private repo without auth" must
   // fail cleanly).
-  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0" };
+  //
+  // SECURITY: disable Git hooks for every staging clone/fetch/checkout. A
+  // user with a RELATIVE global core.hooksPath (e.g. ".githooks") would
+  // otherwise execute an attacker-controlled repository's post-checkout hook
+  // during Preview — before any consent UI appears. GIT_CONFIG_* env config
+  // takes precedence over all config files, so this neutralizes hooks
+  // regardless of global/system configuration.
+  const env: Record<string, string> = { GIT_TERMINAL_PROMPT: "0", ...GIT_NO_HOOKS_ENV };
   if (process.env.GIT_SSH_COMMAND === undefined) {
     env.GIT_SSH_COMMAND = "ssh -oBatchMode=yes";
   }

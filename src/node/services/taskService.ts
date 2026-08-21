@@ -3462,7 +3462,7 @@ export class TaskService {
       const secrets = await secretsToRecord(
         this.config.getEffectiveSecrets(plan.parentMeta.projectPath)
       );
-      runBackgroundInit(
+      void runBackgroundInit(
         runtimeForTaskWorkspace,
         {
           projectPath: plan.parentMeta.projectPath,
@@ -4423,7 +4423,7 @@ export class TaskService {
       const secrets = await secretsToRecord(
         this.config.getEffectiveSecrets(parentMeta.projectPath)
       );
-      runBackgroundInit(
+      void runBackgroundInit(
         runtimeForTaskWorkspace,
         {
           projectPath: parentMeta.projectPath,

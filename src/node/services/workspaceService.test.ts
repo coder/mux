@@ -12740,8 +12740,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined
@@ -12869,8 +12869,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined
@@ -12986,8 +12986,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined
@@ -13098,8 +13098,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined
@@ -13208,8 +13208,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined
@@ -13317,8 +13317,8 @@ describe("WorkspaceService fork", () => {
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockReturnValue(
       {} as ReturnType<typeof runtimeFactory.createRuntime>
     );
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     const copyPlanSpy = spyOn(runtimeExecHelpers, "copyPlanFileAcrossRuntimes").mockResolvedValue(
       undefined

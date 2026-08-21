@@ -8002,8 +8002,8 @@ describe("TaskService", () => {
       return cfg;
     });
 
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       await taskService.initialize();
@@ -8107,8 +8107,8 @@ describe("TaskService", () => {
     expect(findWorkspaceInConfig(config, queuedTaskId)?.taskPrompt).toBeUndefined();
     expect(findWorkspaceInConfig(config, acceptedStartingTaskId)?.taskPrompt).toBe(acceptedPrompt);
 
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       await taskService.initialize();
@@ -8433,8 +8433,8 @@ describe("TaskService", () => {
         projects,
       },
     });
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
 
     try {
@@ -8514,8 +8514,8 @@ describe("TaskService", () => {
     // orchestrateFork must NOT be called for isolation: "none"; runBackgroundInit is stubbed only
     // so a stray call would be observable (it should not be invoked either).
     const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -8607,8 +8607,8 @@ describe("TaskService", () => {
     );
 
     const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
@@ -8693,8 +8693,8 @@ describe("TaskService", () => {
     );
 
     const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       const { workspaceService } = createWorkspaceServiceMocks();
@@ -8760,8 +8760,8 @@ describe("TaskService", () => {
     );
 
     const forkSpy = spyOn(forkOrchestrator, "orchestrateFork");
-    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(
-      () => undefined
+    const runBackgroundInitSpy = spyOn(runtimeFactory, "runBackgroundInit").mockImplementation(() =>
+      Promise.resolve(undefined)
     );
     try {
       const { workspaceService, sendMessage } = createWorkspaceServiceMocks();

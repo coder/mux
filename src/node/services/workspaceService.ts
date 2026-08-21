@@ -4573,7 +4573,7 @@ export class WorkspaceService extends EventEmitter {
       // If the user cancelled creation while create() was still in flight, avoid spawning
       // additional background work for a workspace that's already being removed.
       if (!this.removingWorkspaces.has(workspaceId) && !initAbortController.signal.aborted) {
-        runBackgroundInit(
+        void runBackgroundInit(
           runtime,
           {
             projectPath: owningProjectPath,
@@ -8353,7 +8353,12 @@ export class WorkspaceService extends EventEmitter {
       }
 
       const secrets = await resolveProjectEnv(foundProjectPath);
-      runBackgroundInit(
+      // Fire-and-forget on the happy path, but keep the termination handle:
+      // the sanitization-abort cleanup below deletes the fresh worktree, and
+      // doing that while init still runs against the checkout races its
+      // writes/open handles (a failed delete leaves an orphaned worktree that
+      // collides with the next fork of the same branch).
+      const initSettled = runBackgroundInit(
         targetRuntime,
         {
           projectPath: foundProjectPath,
@@ -8565,6 +8570,12 @@ export class WorkspaceService extends EventEmitter {
             workspacePath
           );
           if (sanitizeError !== undefined) {
+            // Background init is still running against this checkout: abort
+            // it and AWAIT termination before deleting the worktree, or the
+            // delete races init's writes/open handles and can fail, leaving
+            // an orphaned worktree that collides with the next fork attempt.
+            initAbortController.abort();
+            await initSettled;
             const rolledBack = await this.rollbackUnsanitizedWorkspaceRegistration(newWorkspaceId);
             if (rolledBack && isWorktreeRuntime(forkedRuntimeConfig)) {
               // Matches the copy-failure cleanup above: the fork's checkout
@@ -8587,7 +8598,6 @@ export class WorkspaceService extends EventEmitter {
             await fsPromises
               .rm(newSessionDir, { recursive: true, force: true })
               .catch(() => undefined);
-            initAbortController.abort();
             this.initAbortControllers.delete(newWorkspaceId);
             this.initStateManager.clearInMemoryState(newWorkspaceId);
             this.disposeSession(newWorkspaceId);
