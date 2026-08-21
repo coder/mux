@@ -975,6 +975,12 @@ export class Config {
     // sidecar regardless of which error message they produced.
     const contentSignature =
       rawBytes !== undefined ? crypto.createHash("sha256").update(rawBytes).digest("hex") : null;
+    // A confirmed backup only protects its own bytes. When the current content differs (or
+    // cannot be read), drop the stale confirmation so the edit gate blocks writes until the
+    // new bytes have their own confirmed sidecar.
+    if (state.backupSignature !== null && state.backupSignature !== contentSignature) {
+      state.backupSignature = null;
+    }
     if (alreadyLogged && (rawBytes === undefined || contentSignature === state.backupSignature)) {
       return;
     }

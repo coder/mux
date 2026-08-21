@@ -239,6 +239,40 @@ describe("Config", () => {
       errorSpy.mockRestore();
     });
 
+    it("re-blocks edits when new corrupt bytes appear after a confirmed backup", async () => {
+      const configFile = configFilePath();
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      fs.writeFileSync(configFile, '{ "projects": ');
+      config.loadConfigOrDefault();
+      expect(corruptBackups()).toHaveLength(1);
+
+      // Different corrupt bytes whose own backup fails must not inherit the
+      // earlier confirmation, or an edit would overwrite the only copy.
+      const newCorrupt = '{ "taskSettings": ';
+      fs.writeFileSync(configFile, newCorrupt);
+      const origWrite = fs.writeFileSync.bind(fs);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (typeof file === "string" && file.includes(".corrupt-")) {
+          throw new Error("disk full");
+        }
+        origWrite(file, data, options);
+      });
+
+      await config.setUpdateChannel("nightly");
+      expect(fs.readFileSync(configFile, "utf-8")).toBe(newCorrupt);
+      expect(corruptBackups()).toHaveLength(1);
+
+      writeSpy.mockRestore();
+
+      await config.setUpdateChannel("nightly");
+      expect(corruptBackups()).toHaveLength(2);
+      const rewritten = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(rewritten.updateChannel).toBe("nightly");
+      errorSpy.mockRestore();
+    });
+
     it("logs a corrupt config once across Config instances on the same path", () => {
       const corruptData = '{ "projects": ';
       fs.writeFileSync(configFilePath(), corruptData);
