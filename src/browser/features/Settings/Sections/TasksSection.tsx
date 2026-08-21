@@ -907,15 +907,17 @@ export function TasksSection() {
         : null;
     // When model is "Inherit", resolve the effective model so the dropdown
     // shows the correct thinking levels (e.g. "max" for Opus 4.6, not "xhigh")
-    // and Pro gating matches ACP resolution: a base-chain model wins over the
-    // ambient default (otherwise an agent inheriting GPT-5.6+pro from its base
-    // would hide the Pro toggle whenever the ambient model isn't pro-capable).
+    // and Pro gating matches ACP resolution: the agent's own definition model
+    // precedes ancestor configuration (resolveAgentAiSettings tier order), and
+    // a base-chain model wins over the ambient default (otherwise an agent
+    // inheriting GPT-5.6+pro from its base would hide the Pro toggle whenever
+    // the ambient model isn't pro-capable).
     const inheritedDefaults = resolveBaseChainDefaults(agent.id);
     const effectiveModel =
       modelValue !== INHERIT
         ? modelValue
-        : (inheritedDefaults.modelString ??
-          resolveDefinitionModel(agent) ??
+        : (resolveDefinitionModel(agent) ??
+          inheritedDefaults.modelString ??
           inheritedEffectiveModel);
 
     const agentDefinitionPath = getAgentDefinitionPath(agent);

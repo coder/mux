@@ -58,15 +58,6 @@ export function resolveConfiguredAiDefaults(
   };
 }
 
-/** Reasoning-mode-only view of resolveConfiguredAiDefaults. */
-export function resolveConfiguredReasoningModeDefault(
-  agentId: string,
-  agentAiDefaults: AgentAiDefaults,
-  agentBaseById?: ReadonlyMap<string, string | undefined>
-): OpenAIReasoningMode | undefined {
-  return resolveConfiguredAiDefaults(agentId, agentAiDefaults, agentBaseById).reasoningMode;
-}
-
 // Keep agent -> model/thinking precedence in one place so mode switches that send immediately
 // (like propose_plan Implement / Continue in Auto) resolve the same settings as sync effects.
 export function resolveWorkspaceAiSettingsForAgent(args: {
