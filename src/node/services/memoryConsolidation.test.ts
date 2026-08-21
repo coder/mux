@@ -439,6 +439,33 @@ describe("consolidation memory tool rails", () => {
     if (!intoFull.success) expect(intoFull.error).toContain("full");
   });
 
+  it("dry-run rejects renaming a directory into its own subtree", async () => {
+    // Codex round 21: source exists and the exact destination doesn't, so
+    // 'notes' -> 'notes/archive/notes' staged, rendered approvable, then the
+    // filesystem rejected moving a dir into itself at apply — consuming the
+    // approved set. Segment-aware: 'notes-x' must not match 'notes'.
+    using fixture = await createFixture({ dryRun: true });
+    await fsPromises.mkdir(path.join(fixture.globalMemoryDir, "notes"), { recursive: true });
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "notes", "a.md"), "a\n");
+
+    const intoSelf = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/notes/archive/notes",
+    });
+    expect(intoSelf.success).toBe(false);
+    if (!intoSelf.success) expect(intoSelf.error).toContain("inside itself");
+
+    // Segment-aware sibling: 'notes-x' shares the prefix but is NOT inside
+    // 'notes' — it must stage normally.
+    const sibling = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/notes-x",
+    });
+    expect(sibling.success).toBe(true);
+  });
+
   it("dry-run rejects delete/rename proposals the real handlers would reject", async () => {
     // Codex round 20: delete/rename skipped staging validation entirely —
     // deleting a nonexistent path, renaming a missing source, or renaming

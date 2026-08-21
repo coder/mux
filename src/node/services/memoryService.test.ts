@@ -1334,6 +1334,36 @@ describe("MemoryService refinement journal", () => {
     expect(events).toHaveLength(1); // create row only
   });
 
+  it("refuses renaming a directory into its own subtree without polluting the source", async () => {
+    // Codex round 21: store.rename mkdirs the destination PARENT before the
+    // filesystem rejects moving a dir into itself — 'notes/archive/' was
+    // created inside the source before the late EINVAL. The pre-flight guard
+    // must refuse cleanly, leaving the source untouched.
+    using fixture = await createFixture();
+    await fixture.service.create(fixture.ctx, "/memories/global/notes/a.md", "a\n", "agent");
+
+    const intoSelf = await fixture.service.rename(
+      fixture.ctx,
+      "/memories/global/notes",
+      "/memories/global/notes/archive/notes",
+      "agent"
+    );
+    expect(intoSelf.success).toBe(false);
+    if (!intoSelf.success) expect(intoSelf.error).toContain("inside itself");
+    // No mkdir pollution: the source contains exactly its original file.
+    const dir = path.join(fixture.muxHome, "memory", "global", "notes");
+    expect(await fsPromises.readdir(dir)).toEqual(["a.md"]);
+
+    // Segment-aware sibling: 'notes-x' is a legal destination.
+    const sibling = await fixture.service.rename(
+      fixture.ctx,
+      "/memories/global/notes",
+      "/memories/global/notes-x",
+      "agent"
+    );
+    expect(sibling.success).toBe(true);
+  });
+
   it("journals rename with an inverse that renames back", async () => {
     using fixture = await createFixture();
     await fixture.service.create(fixture.ctx, "/memories/global/old.md", "content", "agent");

@@ -146,6 +146,34 @@ const ENCODED_TRAVERSAL_PATTERN = /%2e|%2f|%5c/i;
 const CONTROL_CHARS_PATTERN = /[\u0000-\u001f\u007f]/;
 
 /**
+ * Refuse renaming a directory to a destination equal to or inside its own
+ * subtree (r21): the source exists and the exact destination doesn't, so the
+ * existence checks alone accepted 'notes' -> 'notes/archive/notes' — the
+ * filesystem rejects the move only AFTER store.rename mkdirs the destination
+ * parent INSIDE the source (pollution), and a staged proposal consumed the
+ * approved set at apply. Path-SEGMENT-aware on the normalized relPaths
+ * ('notes-x' must not match 'notes'). Shared verbatim by validateMutation and
+ * the real rename handler (round-19/20 zero-drift doctrine).
+ */
+function assertRenameDestinationOutsideDirSource(args: {
+  sourceKind: "file" | "dir";
+  sourceRelPath: string;
+  destRelPath: string;
+  sourceVirtualPath: string;
+  destVirtualPath: string;
+}): void {
+  if (args.sourceKind !== "dir") return;
+  if (
+    args.destRelPath === args.sourceRelPath ||
+    args.destRelPath.startsWith(`${args.sourceRelPath}/`)
+  ) {
+    throw new MemoryCommandError(
+      `Cannot rename ${args.sourceVirtualPath} to ${args.destVirtualPath}: a directory cannot be moved inside itself`
+    );
+  }
+}
+
+/**
  * Parse + validate a virtual memory path. Throws MemoryCommandError with a
  * model-recoverable message on invalid input.
  */
@@ -1077,6 +1105,13 @@ export class MemoryService extends EventEmitter {
           if (oldKind === null) {
             throw new MemoryCommandError(`No memory file or directory at ${command.path}`);
           }
+          assertRenameDestinationOutsideDirSource({
+            sourceKind: oldKind,
+            sourceRelPath: parsed.relPath,
+            destRelPath: newParsed.relPath,
+            sourceVirtualPath: command.path,
+            destVirtualPath: command.new_path,
+          });
           const newKind = await store.kind(newParsed.relPath);
           if (newKind !== null) {
             throw new MemoryCommandError(`Destination ${command.new_path} already exists`);
@@ -1152,6 +1187,16 @@ export class MemoryService extends EventEmitter {
         if (oldKind === null) {
           throw new MemoryCommandError(`No memory file or directory at ${oldVirtualPath}`);
         }
+        // Pre-flight (mirrored in validateMutation): store.rename would mkdir
+        // the destination parent INSIDE the source before the filesystem
+        // rejects the move — refuse cleanly instead of polluting the source.
+        assertRenameDestinationOutsideDirSource({
+          sourceKind: oldKind,
+          sourceRelPath: oldParsed.relPath,
+          destRelPath: newParsed.relPath,
+          sourceVirtualPath: oldVirtualPath,
+          destVirtualPath: newVirtualPath,
+        });
         const newKind = await store.kind(newParsed.relPath);
         if (newKind !== null) {
           throw new MemoryCommandError(`Destination ${newVirtualPath} already exists`);
