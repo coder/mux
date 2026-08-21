@@ -1,7 +1,8 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { mkdir, readFile, unlink, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "fs/promises";
+import type { Dirent } from "fs";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
@@ -392,6 +393,69 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
 }
 
 const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
+
+/**
+ * Clear provider-config-fixable startup abandon markers persisted by workspaces
+ * WITHOUT a live AgentSession (closed chats). Live sessions clear their own
+ * marker via handleProviderConfigChanged(); this sweep covers the rest so that
+ * reopening a chat after a credential fix does not resurrect the stale
+ * "auto-retry stopped" state. Like the live path, it only unlocks retry and
+ * never schedules or resumes a stream (PR #2317 was rejected).
+ */
+export async function clearProviderConfigFixableAbandonMarkers(
+  sessionsDir: string,
+  skipWorkspaceIds: ReadonlySet<string>
+): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(sessionsDir, { withFileTypes: true });
+  } catch (error) {
+    const errno =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (errno === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isDirectory() || skipWorkspaceIds.has(entry.name)) {
+        return;
+      }
+
+      const preferencePath = path.join(sessionsDir, entry.name, AUTO_RETRY_PREFERENCE_FILE);
+      let parsed: { enabled?: unknown; startupAutoRetryAbandon?: unknown };
+      try {
+        parsed = JSON.parse(await readFile(preferencePath, "utf-8")) as typeof parsed;
+      } catch {
+        // Missing file is the default; corrupt files are self-healed by the
+        // session load path when the workspace reopens.
+        return;
+      }
+
+      const abandon = parsed.startupAutoRetryAbandon;
+      const reason =
+        typeof abandon === "object" && abandon !== null && "reason" in abandon
+          ? (abandon as { reason?: unknown }).reason
+          : undefined;
+      if (typeof reason !== "string" || !isProviderConfigFixableError(reason)) {
+        return;
+      }
+
+      // Mirror persistAutoRetryState(): the file only exists to carry an
+      // opt-out or an abandon marker, so dropping the last field deletes it.
+      if (parsed.enabled === false) {
+        await writeFile(preferencePath, JSON.stringify({ enabled: false }) + "\n", "utf-8");
+      } else {
+        await unlink(preferencePath);
+      }
+    })
+  );
+}
+
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS = 1_000;
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS = 30_000;
 const MAX_STARTUP_RECOVERY_DEFERRED_ATTEMPTS = 4;

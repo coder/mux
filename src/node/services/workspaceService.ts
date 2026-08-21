@@ -26,7 +26,11 @@ import { eventSpine } from "@/node/services/events/eventSpine";
 import { agentPluginHookService } from "@/node/services/agentPlugins/hookService";
 import { sandboxHostService } from "@/node/services/sandbox/sandboxHostService";
 import { isPathInsideDir } from "@/node/utils/pathUtils";
-import { AgentSession, type StreamErrorRecoveryOutcome } from "@/node/services/agentSession";
+import {
+  AgentSession,
+  clearProviderConfigFixableAbandonMarkers,
+  type StreamErrorRecoveryOutcome,
+} from "@/node/services/agentSession";
 import type { HistoryService } from "@/node/services/historyService";
 import type { AIService } from "@/node/services/aiService";
 import type { InitStateManager } from "@/node/services/initStateManager";
@@ -1740,6 +1744,18 @@ export class WorkspaceService extends EventEmitter {
         });
       });
     }
+
+    // Closed chats have no session to clear their persisted marker, so sweep their
+    // preference files directly; otherwise reopening after a credential fix would
+    // resurrect the stale abandoned state from disk.
+    void clearProviderConfigFixableAbandonMarkers(
+      this.config.sessionsDir,
+      new Set(liveSessions.keys())
+    ).catch((error: unknown) => {
+      log.warn("Failed to sweep persisted auto-retry abandon markers", {
+        error: getErrorMessage(error),
+      });
+    });
   };
   // Startup recovery may need a short-lived session even before the workspace is opened.
   // Promote only sessions that keep retry/stream activity alive after the initial check.
