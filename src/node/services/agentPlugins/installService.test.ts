@@ -2873,25 +2873,27 @@ describe("AgentPluginInstallService", () => {
     // source is DISCOVERED server keys (managed + project + ~/.agents +
     // unmanaged containers), not the managed registry, so non-managed plugin
     // servers stay enableable.
-    const discoveredKey = "plugin:abc123:echo";
+    const discoveredKey = "plugin:0123456789abcdef:echo";
+    const staleKey = "plugin:fedcba9876543210:echo";
     const validator = buildAddedPluginKeyValidator(() => Promise.resolve(new Set([discoveredKey])));
 
     // Discovered server (managed or not): addition accepted.
     await validator({}, { enabledServers: [discoveredKey] });
 
     // Undiscovered plugin key: NEW key rejected (enabled list, allowlist alike)…
-    await expect(validator({}, { enabledServers: ["plugin:gone:echo"] })).rejects.toThrow(
+    await expect(validator({}, { enabledServers: [staleKey] })).rejects.toThrow(
       /does not match any available plugin server/
     );
-    await expect(validator({}, { toolAllowlist: { "plugin:gone:echo": [] } })).rejects.toThrow(
+    await expect(validator({}, { toolAllowlist: { [staleKey]: [] } })).rejects.toThrow(
       /does not match any available plugin server/
     );
     // …while round-tripping an EXISTING stale key and non-plugin keys stays allowed.
-    await validator(
-      { enabledServers: ["plugin:gone:echo"] },
-      { enabledServers: ["plugin:gone:echo"] }
-    );
+    await validator({ enabledServers: [staleKey] }, { enabledServers: [staleKey] });
     await validator({}, { enabledServers: ["ordinary-server"] });
+    // Only CANONICAL plugin:<16-hex>:<server> keys are validated: a
+    // user-defined server may legitimately be NAMED "plugin:custom", and
+    // treating it as a generated plugin key would reject the whole save.
+    await validator({}, { enabledServers: ["plugin:custom"], toolAllowlist: { "plugin:x": [] } });
 
     // Additions are PER FIELD: a stale key surviving only in toolAllowlist
     // (e.g. a removed unmanaged dir's old tool selection) must not smuggle
@@ -2899,8 +2901,8 @@ describe("AgentPluginInstallService", () => {
     // is the consent-relevant action.
     await expect(
       validator(
-        { toolAllowlist: { "plugin:gone:echo": [] } },
-        { toolAllowlist: { "plugin:gone:echo": [] }, enabledServers: ["plugin:gone:echo"] }
+        { toolAllowlist: { [staleKey]: [] } },
+        { toolAllowlist: { [staleKey]: [] }, enabledServers: [staleKey] }
       )
     ).rejects.toThrow(/does not match any available plugin server/);
 

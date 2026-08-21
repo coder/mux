@@ -95,8 +95,11 @@ export function isCanonicalPluginServerKey(key: string): boolean {
 function collectPluginOverrideKeysByField(
   overrides: WorkspaceMCPOverrides
 ): Record<"enabledServers" | "disabledServers" | "toolAllowlist", Set<string>> {
+  // Canonical shape only (mirrors the pruning path): a user-defined global or
+  // project server may legitimately be NAMED "plugin:custom", and validating
+  // it against discovered plugin-server keys would reject the whole save.
   const pluginKeys = (keys: readonly string[]): Set<string> =>
-    new Set(keys.filter((key) => key.startsWith(PLUGIN_SERVER_KEY_PREFIX)));
+    new Set(keys.filter(isCanonicalPluginServerKey));
   return {
     enabledServers: pluginKeys(overrides.enabledServers ?? []),
     disabledServers: pluginKeys(overrides.disabledServers ?? []),

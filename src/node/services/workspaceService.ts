@@ -8545,7 +8545,63 @@ export class WorkspaceService extends EventEmitter {
           : {}),
       };
 
-      await this.config.addWorkspace(foundProjectPath, metadata);
+      // Same pre-announcement sanitization as create(): a worktree fork of a
+      // trusted repo materializes tracked files, so a committed
+      // .mux/mcp.local.jsonc can carry a stale canonical plugin: enable that
+      // no live workspace consented to — announced unpruned, the first agent
+      // request would spawn that plugin's default-disabled MCP server. Local
+      // (project-dir) forks share the source checkout, which the sibling scan
+      // detects and skips (the source's consent context is alive).
+      const forkIsHostLocalCheckout =
+        forkedRuntimeConfig.type === "local" || forkedRuntimeConfig.type === "worktree";
+      if (forkIsHostLocalCheckout) {
+        this.pendingPluginSanitizations.add(newWorkspaceId);
+      }
+      try {
+        await this.config.addWorkspace(foundProjectPath, metadata);
+        if (forkIsHostLocalCheckout) {
+          const sanitizeError = await this.sanitizeStalePluginOverridesForNewWorkspace(
+            newWorkspaceId,
+            workspacePath
+          );
+          if (sanitizeError !== undefined) {
+            const rolledBack = await this.rollbackUnsanitizedWorkspaceRegistration(newWorkspaceId);
+            if (rolledBack && isWorktreeRuntime(forkedRuntimeConfig)) {
+              // Matches the copy-failure cleanup above: the fork's checkout
+              // is known fresh, so force-delete is safe here.
+              await targetRuntime
+                .deleteWorkspace(
+                  foundProjectPath,
+                  resolvedName,
+                  true,
+                  undefined,
+                  projectConfig.trusted ?? false
+                )
+                .catch((error: unknown) => {
+                  log.warn("Failed to remove forked worktree after sanitization abort", {
+                    newWorkspaceId,
+                    error: getErrorMessage(error),
+                  });
+                });
+            }
+            await fsPromises
+              .rm(newSessionDir, { recursive: true, force: true })
+              .catch(() => undefined);
+            initAbortController.abort();
+            this.initAbortControllers.delete(newWorkspaceId);
+            this.initStateManager.clearInMemoryState(newWorkspaceId);
+            this.disposeSession(newWorkspaceId);
+            initLogger.logComplete(-1);
+            return Err(
+              rolledBack
+                ? sanitizeError
+                : `${sanitizeError} Additionally, the half-created workspace registration could not be rolled back; remove workspace ${newWorkspaceId} manually before retrying.`
+            );
+          }
+        }
+      } finally {
+        this.pendingPluginSanitizations.delete(newWorkspaceId);
+      }
       await this.workspaceGoalService?.inheritFromFork(sourceWorkspaceId, newWorkspaceId);
 
       const enrichedMetadata = this.enrichFrontendMetadata(metadata);
