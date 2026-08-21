@@ -11,6 +11,9 @@ export const EXIT_CODE_TOO_LARGE = 42;
 /** Exit code for "file has too many lines for the current UI budget". */
 export const EXIT_CODE_TOO_MANY_LINES = 43;
 
+/** Exit code for "path resolves outside the workspace" (e.g. a symlink escape). */
+export const EXIT_CODE_OUTSIDE_WORKSPACE = 44;
+
 interface ReadFileScriptOptions {
   maxSizeBytes?: number;
   maxLineCount?: number;
@@ -134,7 +137,17 @@ awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' ${file}
 awk_status=$?
 [ "$awk_status" -ne 0 ] && exit "$awk_status"`;
 
-  return `size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
+  // SECURITY AUDIT: repo-controlled paths are attacker-controlled input. A changed
+  // symlink pointing outside the workspace must not let the UI read (and copy) files
+  // beyond the execution root, so reject paths whose physical resolution escapes it.
+  // Fail closed: an unresolvable path (loop, missing resolver) also exits.
+  return `root=$(pwd -P)
+resolved=$(realpath ${file} 2>/dev/null || readlink -f ${file} 2>/dev/null)
+case "$resolved" in
+  "$root"/*) ;;
+  *) exit ${EXIT_CODE_OUTSIDE_WORKSPACE} ;;
+esac
+size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
 [ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
 echo "$size"
 base64 < ${file}`;
@@ -174,6 +187,10 @@ export function processFileContents(output: string, exitCode: number): FileConte
 
   if (exitCode === EXIT_CODE_TOO_MANY_LINES) {
     return { type: "error", message: "File has too many lines to display." };
+  }
+
+  if (exitCode === EXIT_CODE_OUTSIDE_WORKSPACE) {
+    return { type: "error", message: "File resolves outside the workspace." };
   }
 
   const { size, base64 } = parseReadFileOutput(output);

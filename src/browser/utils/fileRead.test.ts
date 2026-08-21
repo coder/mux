@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import {
   buildReadFileScript,
+  EXIT_CODE_OUTSIDE_WORKSPACE,
   EXIT_CODE_TOO_LARGE,
   EXIT_CODE_TOO_MANY_LINES,
   processFileContents,
@@ -33,6 +34,44 @@ describe("buildReadFileScript", () => {
     expect(script).toContain('[ "$size" -gt 1234 ] && exit 42');
     expect(script).toContain("awk 'NR > 99 { exit 43 }' './test.txt'");
     expect(script).toContain('exit "$awk_status"');
+  });
+
+  test("rejects symlinks that resolve outside the workspace", () => {
+    const outsideDir = mkdtempSync(join(tmpdir(), "mux-file-read-outside-"));
+    const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));
+
+    try {
+      writeFileSync(join(outsideDir, "secret.txt"), "outside secret\n");
+      symlinkSync(join(outsideDir, "secret.txt"), join(workspaceDir, "escape.txt"));
+
+      const result = spawnSync("bash", ["-lc", buildReadFileScript("escape.txt")], {
+        cwd: workspaceDir,
+      });
+      expect(result.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      expect(result.stdout.toString()).not.toContain("outside secret");
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
+  });
+
+  test("still reads symlinks that stay inside the workspace", () => {
+    const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));
+
+    try {
+      writeFileSync(join(workspaceDir, "real.txt"), "inside contents\n");
+      symlinkSync(join(workspaceDir, "real.txt"), join(workspaceDir, "link.txt"));
+
+      const result = spawnSync("bash", ["-lc", buildReadFileScript("link.txt")], {
+        cwd: workspaceDir,
+      });
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      // stat sizes the link inode itself (pre-existing quirk), so assert the decoded content.
+      expect(processed).toMatchObject({ type: "text", content: "inside contents\n" });
+    } finally {
+      rmSync(workspaceDir, { recursive: true, force: true });
+    }
   });
 
   test("reads files whose names look like command options", () => {
