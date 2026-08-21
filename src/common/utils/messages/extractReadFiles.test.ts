@@ -102,6 +102,14 @@ describe("extractReadFilePaths", () => {
               { toolName: "file_read", args: { path: "/nested-failed.ts" }, error: "denied" },
               { toolName: "load", args: { path: "/load-failed.txt", key: "x" }, error: "missing" },
               { toolName: "bash", args: { path: "/not-a-read.sh" }, ok: true },
+              // file_read resolves with {success:false} instead of throwing
+              // for missing/oversized/directory paths — non-compacted records
+              // carry that result and must not be advertised as read (r22).
+              {
+                toolName: "file_read",
+                args: { path: "/resolved-but-failed.ts" },
+                result: { success: false, error: "File not found" },
+              },
             ],
           },
         },

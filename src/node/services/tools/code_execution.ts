@@ -314,10 +314,19 @@ function compactKernelToolCallRecords(result: PTCExecutionResult, loadActive: bo
         }
       }
     }
+    // Tools like file_read resolve normally with {success: false} instead of
+    // throwing (missing/oversized/directory paths) — no `error` is recorded.
+    // The compact record drops `result`, and its ok bit is what
+    // post-compaction read tracking trusts: marking those calls ok would
+    // advertise never-read paths in the already-read-files attachment (r22).
+    const resultReportsFailure =
+      typeof record.result === "object" &&
+      record.result !== null &&
+      (record.result as { success?: unknown }).success === false;
     return {
       toolName: record.toolName,
       args: boundCompactRecordArgs(record.args),
-      ok: record.error === undefined,
+      ok: record.error === undefined && !resultReportsFailure,
       bytes,
       ...(record.error !== undefined ? { error: boundCompactRecordError(record.error) } : {}),
       duration_ms: record.duration_ms,

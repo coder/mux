@@ -933,6 +933,42 @@ describe("createCodeExecutionTool", () => {
       await host.disposeScope("ws-offload");
     });
 
+    it("marks compact records not-ok when the tool resolved with success:false", async () => {
+      // file_read-style tools resolve normally with {success:false} for
+      // missing/oversized/directory paths — no thrown error. The compact
+      // record drops `result`, and post-compaction read tracking trusts its
+      // ok bit: ok:true here would advertise a never-read path in the
+      // already-read-files attachment (r22).
+      using tmp = new DisposableTempDir("code-exec-result-failure");
+      const host = new SandboxHostService();
+      const failingReadTools: Record<string, Tool> = {
+        file_read: createMockTool("file_read", z.object({ path: z.string() }), () => ({
+          success: false,
+          error: "File not found",
+        })),
+      };
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(failingReadTools),
+        undefined,
+        persistentRunner(host, "ws-result-failure", tmp.path)
+      );
+
+      const result = (await tool.execute!(
+        { code: 'const r = mux.file_read({path: "/missing.txt"}); return r.success;' },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+      // Guest code saw the structured failure result.
+      expect(result.result).toBe(false);
+      // The compact record folds the result's success bit into ok.
+      const record = result.toolCalls[0];
+      expect(record.toolName).toBe("file_read");
+      expect(record.error).toBeUndefined();
+      expect(record.ok).toBe(false);
+      await host.disposeScope("ws-result-failure");
+    });
+
     it("bounds nested-call args/results at creation: emitted events never carry full payloads", async () => {
       // Post-eval compaction cannot protect the stream path: nested events
       // land in partial/final session history via the stream manager, so a

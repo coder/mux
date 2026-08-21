@@ -35,6 +35,18 @@ function collectNestedReadPaths(output: unknown): string[] {
       record.toolName === "load";
     if (!isRead) continue;
     if (record.error !== undefined || record.ok === false) continue;
+    // Non-compacted records (classic PTC) retain the full result: file_read
+    // resolves with {success: false} for missing/oversized/directory paths
+    // instead of throwing, so a missing error does not mean the read
+    // succeeded. (Kernel-compacted records fold this into the ok bit.)
+    const result = (record as { result?: unknown }).result;
+    if (
+      typeof result === "object" &&
+      result !== null &&
+      (result as { success?: unknown }).success === false
+    ) {
+      continue;
+    }
     const filePath = extractToolFilePath(record.args);
     if (filePath) paths.push(filePath);
   }
