@@ -736,7 +736,7 @@ export class RefineService {
 
   /**
    * Standard agent_skill_write tool confined to the workspace checkout's
-   * .mux/skills (project scope). Only for host-local single-project
+   * .xum/skills (project scope). Only for host-local single-project
    * workspaces: remote runtimes would need a live runtime connection and
    * multi-project workspaces have no single skills root. Memory scopes remain
    * available either way. Returns undefined (memory-only pass) on any
@@ -758,7 +758,7 @@ export class RefineService {
       const projectRoot = workspace.workspacePath;
 
       // Minimal host-local ToolConfiguration: the project-local skill path
-      // only touches fs/promises under muxScope roots; workspaceSessionDir +
+      // only touches fs/promises under xumScope roots; workspaceSessionDir +
       // workspaceId make the tool's r2 refinement journaling land in this
       // session's durable journal.
       const toolConfig: ToolConfiguration = {
@@ -767,9 +767,9 @@ export class RefineService {
         runtimeTempDir: os.tmpdir(),
         workspaceSessionDir: sessionDir,
         workspaceId,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: this.config.rootDir,
+          xumHome: this.config.rootDir,
           projectRoot,
           projectStorageAuthority: "host-local",
         },

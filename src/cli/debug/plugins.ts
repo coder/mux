@@ -75,12 +75,12 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
 
   const projectTrusted = isWorkspaceProjectTrusted(defaultConfig, metadata);
   const agentPluginsEnabled = await readPersistedExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS, {
-    muxHome: defaultConfig.rootDir,
+    xumHome: defaultConfig.rootDir,
   });
 
   const mcpConfigService = new MCPConfigService(defaultConfig, {
     agentPluginsMcpProvider: createAgentPluginsMcpProvider({
-      muxHome: defaultConfig.rootDir,
+      xumHome: defaultConfig.rootDir,
       isEnabled: () => agentPluginsEnabled,
     }),
   });
@@ -100,7 +100,7 @@ export async function pluginsCommand(workspaceId: string): Promise<void> {
     // never loads them off-host, so discovery must not scan the remote
     // workspacePath as if it were a host project root.
     hostCheckoutRoot,
-    muxHome: defaultConfig.rootDir,
+    xumHome: defaultConfig.rootDir,
     projectTrusted,
     agentPluginsEnabled,
     listMcpServerLayers: () =>

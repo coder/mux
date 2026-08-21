@@ -99,7 +99,7 @@ export const InstructionsSection: React.FC = () => {
         <p className="text-muted mt-1 text-xs">
           For instructions shared with all agents and contributors, use the project&apos;s{" "}
           <code className="text-accent">AGENTS.md</code>; for global personal instructions, use{" "}
-          <code className="text-accent">~/.mux/AGENTS.md</code>.
+          <code className="text-accent">~/.xum/AGENTS.md</code>.
         </p>
       </div>
 

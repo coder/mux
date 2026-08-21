@@ -1445,7 +1445,7 @@ const ChatPaneContent: React.FC<ChatPaneContentProps> = (props) => {
                       <span>
                         Tip: Add a{" "}
                         <code className="bg-inline-code-dark-bg text-code-string rounded-[3px] px-1.5 py-0.5 font-mono text-[11px]">
-                          .mux/init
+                          .xum/init
                         </code>{" "}
                         hook to your project to run setup commands
                         <br />

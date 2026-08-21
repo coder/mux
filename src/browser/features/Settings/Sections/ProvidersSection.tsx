@@ -2166,6 +2166,15 @@ export function ProvidersSection() {
                         const fieldValue = getFieldValue(provider, fieldConfig.key);
                         const fieldDisplayValue = getFieldDisplayValue(provider, fieldConfig.key);
                         const fieldIsSet = isFieldSet(provider, fieldConfig.key, fieldConfig);
+                        const showOpenAIBaseUrlHint =
+                          fieldConfig.key === "baseUrl" &&
+                          provider === "openai" &&
+                          !isCustomOpenAICompatible &&
+                          // The hint's advice is already applied once Chat
+                          // Completions is selected.
+                          config?.openai?.wireFormat !== "chatCompletions" &&
+                          ((fieldDisplayValue?.trim().length ?? 0) > 0 ||
+                            (isEditing && editValue.trim().length > 0));
 
                         return (
                           <div key={fieldConfig.key}>
@@ -2268,6 +2277,14 @@ export function ProvidersSection() {
                                     <div className="text-muted mt-1 text-xs">Set by env vars.</div>
                                   )}
                               </>
+                            )}
+                            {showOpenAIBaseUrlHint && (
+                              <p className="text-muted mt-1 text-xs">
+                                The OpenAI provider uses the Responses API by default. For
+                                llama.cpp, vLLM, and LM Studio endpoints, set Wire format to Chat
+                                completions below or use Add provider to create a custom
+                                OpenAI-compatible provider.
+                              </p>
                             )}
                           </div>
                         );

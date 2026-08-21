@@ -62,6 +62,25 @@ export const LOCAL_PRODUCT_HOME_DIR_NAMES = [
   typeof LEGACY_CMUX_HOME_DIR_NAME,
 ];
 
+export const PROJECT_METADATA_DIR_NAMES = [XUM_HOME_DIR_NAME, LEGACY_MUX_HOME_DIR_NAME] as const;
+
+export const PROJECT_IGNORE_FILE_NAMES = [".xumignore", ".muxignore"] as const;
+
+export function listProjectMetadataRelativePaths(relativePath: string): readonly string[] {
+  const suffix = relativePath.length > 0 ? `/${relativePath}` : "";
+  return PROJECT_METADATA_DIR_NAMES.map((dirName) => `${dirName}${suffix}`);
+}
+
+export function getCanonicalProjectMetadataRelativePath(relativePath: string): string {
+  const suffix = relativePath.length > 0 ? `/${relativePath}` : "";
+  return `${XUM_HOME_DIR_NAME}${suffix}`;
+}
+
+export function normalizeProjectMetadataIdentityPath(relativePath: string): string {
+  const [canonicalDirName, legacyDirName] = PROJECT_METADATA_DIR_NAMES;
+  return relativePath.replace(new RegExp(`^\\${canonicalDirName}(?=$|[\\\\/])`), legacyDirName);
+}
+
 function tildePrefixesForHomeDirName(dirName: string): readonly [string, string] {
   return [`~/${dirName}`, `~\\${dirName}`];
 }

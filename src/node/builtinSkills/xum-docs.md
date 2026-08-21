@@ -58,7 +58,7 @@ Use this index to find a page's:
     - Workspaces (`/workspaces`) → `references/docs/workspaces/index.mdx`: Isolated development environments for parallel agent work
     - Scratch chats (`/workspaces/scratch-chats`) → `references/docs/workspaces/scratch-chats.mdx`: Start a durable chat with an app-managed folder and no project or Git repository.
     - Forking Workspaces (`/workspaces/fork`) → `references/docs/workspaces/fork.mdx`: Clone workspaces with conversation history to explore alternatives
-    - .muxignore (`/workspaces/muxignore`) → `references/docs/workspaces/muxignore.mdx`: Sync gitignored files to worktree workspaces
+    - .xumignore (`/workspaces/xumignore`) → `references/docs/workspaces/xumignore.mdx`: Sync gitignored files to worktree workspaces
     - **Compaction**
       - Compaction (`/workspaces/compaction`) → `references/docs/workspaces/compaction/index.mdx`: Managing conversation context size with compaction
       - Manual Compaction (`/workspaces/compaction/manual`) → `references/docs/workspaces/compaction/manual.mdx`: Commands for manually managing conversation context

@@ -14,7 +14,7 @@ export interface MCPServerPluginProvenance {
   serverName: string;
   sourceScope: "project" | "global";
   /**
-   * Human-readable installation location, e.g. ".mux/plugins/demo". Same-name
+   * Human-readable installation location, e.g. ".xum/plugins/demo". Same-name
    * plugins can be installed in sibling containers of one scope (.mux vs
    * .agents), so the UI needs this discriminator to tell instances apart.
    */
@@ -101,7 +101,7 @@ export interface CachedMCPTestResult {
 /**
  * Per-workspace MCP overrides.
  *
- * Stored per-workspace in <workspace>/.mux/mcp.local.jsonc (workspace-local and intended to be gitignored).
+ * Stored per-workspace in <workspace>/.xum/mcp.local.jsonc (workspace-local and intended to be gitignored).
  *
  * Legacy note: older Mux versions stored these overrides in ~/.mux/config.json under each workspace entry.
  * Newer versions migrate those values into the workspace-local file on first read/write.
@@ -121,7 +121,7 @@ export interface WorkspaceMCPOverrides {
 
   /**
    * Per-server tool allowlist.
-   * Key: server name (from .mux/mcp.jsonc)
+   * Key: server name (from .xum/mcp.jsonc)
    * Value: raw MCP tool names (NOT namespaced)
    *
    * If omitted for a server => expose all tools from that server.

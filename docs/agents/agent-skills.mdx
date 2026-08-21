@@ -30,13 +30,15 @@ npx skills add https://github.com/anthropics/skills --skill frontend-design
 
 Xum discovers skills from these locations:
 
-- **Project**: `.mux/skills/<skill-name>/SKILL.md`
+- **Project**: `.xum/skills/<skill-name>/SKILL.md`
 - **Project (cross-tool)**: `.agents/skills/<skill-name>/SKILL.md`
 - **Global (Xum-specific)**: `~/.xum/skills/<skill-name>/SKILL.md`
 - **Universal (cross-tool)**: `~/.agents/skills/<skill-name>/SKILL.md`
 - **Built-in**: shipped with Xum
 
-For a workspace that executes in a subproject, Xum checks the working directory and each parent directory through the checkout root. It never searches above the checkout. A nearer project definition wins over a farther one; within the same directory, `.mux/skills` wins over `.agents/skills`.
+For a workspace that executes in a subproject, Xum checks the working directory and each parent directory through the checkout root. It never searches above the checkout. A nearer project definition wins over a farther one; within the same directory, `.xum/skills` wins over `.agents/skills`.
+
+Legacy `.mux/skills` directories remain readable after `.xum/skills` at the same directory level. New and updated project skills are written only to `.xum/skills`.
 
 After project skills, the remaining precedence order is **global (`~/.xum/skills`) > universal (`~/.agents/skills`) > built-in**. Built-in skills behave like any other skill for precedence purposes, so any project or global skill with the same name overrides them.
 
@@ -52,13 +54,13 @@ Many repositories already ship skills in Claude Code's directories. Enable the *
 - **Workspace-local**: `.claude/skills/<skill-name>/SKILL.md`
 - **Global**: `~/.claude/skills/<skill-name>/SKILL.md`
 
-Within the same directory, compat roots have the lowest precedence (`.mux/skills` > `.agents/skills` > `.claude/skills`); a nearer directory still wins over a farther one. The global roots use the same convention order. Compat roots are read-only: Xum never writes or deletes skills in `.claude` directories. Skills that package Xum workflow scripts are not discovered from `.claude` roots.
+Within the same directory, compat roots have the lowest precedence (`.xum/skills` > `.agents/skills` > `.claude/skills`); a nearer directory still wins over a farther one. The global roots use the same convention order. Compat roots are read-only: Xum never writes or deletes skills in `.claude` directories. Skills that package Xum workflow scripts are not discovered from `.claude` roots.
 
 ### Agent Plugins (experiment)
 
 Enable the **Agent Plugins** experiment (Settings → Experiments) to also discover skills packaged in [Agent Plugins 1.0.0](https://agent-plugins.org) directories — a plugin is a directory with a `plugin.json` manifest plus an optional `skills/` folder. Plugins are discovered from:
 
-- **Workspace-local**: `.mux/plugins/<plugin>/` and `.agents/plugins/<plugin>/`
+- **Workspace-local**: `.xum/plugins/<plugin>/` and `.agents/plugins/<plugin>/`
 - **Global**: `~/.xum/plugins/<plugin>/` and `~/.agents/plugins/<plugin>/`
 
 Plugin skills have the lowest precedence within their scope and are read-only. A broken plugin (or a broken skill inside one) never affects other plugins or skills. Plugins can also ship MCP servers; see [MCP servers](/config/mcp-servers#agent-plugins-servers-experiment).
@@ -68,7 +70,7 @@ Plugin skills have the lowest precedence within their scope and are read-only. A
 A skill is a directory named after the skill:
 
 ```text
-.mux/skills/
+.xum/skills/
   my-skill/
     SKILL.md
     references/
@@ -124,7 +126,7 @@ Set `disable-model-invocation: true` (or the Xum-specific `advertise: false`) in
 
 ### Example: `deep-review` skill
 
-The Xum repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.mux/skills/deep-review/SKILL.md`.
+The Xum repository includes an unadvertised `deep-review` skill that encourages aggressive use of sub-agents to produce excellent code reviews (correctness, tests, consistency, UX, performance). Invoke it with `/deep-review` when you want a thorough, parallelized review. This skill is defined in `.xum/skills/deep-review/SKILL.md`.
 
 {/* BEGIN DEEP_REVIEW_SKILL */}
 

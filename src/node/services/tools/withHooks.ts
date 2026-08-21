@@ -156,7 +156,7 @@ function ensureShellToolHookMiddleware(): void {
 }
 
 /**
- * The `.mux/tool_pre` / `.mux/tool_post` / legacy `.mux/tool_hook` protocol as
+ * The `.xum/tool_pre` / `.xum/tool_post` / legacy `.xum/tool_hook` protocol as
  * around-style middleware. Behavior is identical to the pre-spine withHooks
  * implementation; the legacy protocol inherently wraps execution, which is why
  * the pipeline is around-style.

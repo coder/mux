@@ -36,18 +36,18 @@ interface JsonParseErrorLike {
   message?: unknown;
 }
 
-function getConfigDocumentPath(muxHomeDir: string, fileKey: ConfigFileKey): string {
+function getConfigDocumentPath(xumHomeDir: string, fileKey: ConfigFileKey): string {
   const entry = CONFIG_FILE_REGISTRY[fileKey];
-  return path.join(muxHomeDir, entry.fileName);
+  return path.join(xumHomeDir, entry.fileName);
 }
 
 // Shared parse-only logic: reads file from disk, returns raw parsed object (no schema validation).
 async function readParsedConfigDocument(
-  muxHomeDir: string,
+  xumHomeDir: string,
   fileKey: ConfigFileKey
 ): Promise<unknown> {
   const entry = CONFIG_FILE_REGISTRY[fileKey];
-  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
+  const filePath = getConfigDocumentPath(xumHomeDir, fileKey);
 
   let raw: string;
   try {
@@ -68,10 +68,10 @@ async function readParsedConfigDocument(
 // Parse-only read for mutation workflows: schema validation is deferred
 // until after mutations are applied, allowing writes to repair invalid configs.
 export async function readConfigDocumentUnvalidated(
-  muxHomeDir: string,
+  xumHomeDir: string,
   fileKey: ConfigFileKey
 ): Promise<unknown> {
-  return readParsedConfigDocument(muxHomeDir, fileKey);
+  return readParsedConfigDocument(xumHomeDir, fileKey);
 }
 
 // Prevent writes from escaping the mux config boundary via symlinked targets.
@@ -91,16 +91,16 @@ async function assertWritableConfigTarget(filePath: string, fileKey: ConfigFileK
 }
 
 export async function writeConfigDocument<TKey extends ConfigFileKey>(
-  muxHomeDir: string,
+  xumHomeDir: string,
   fileKey: TKey,
   document: unknown
 ): Promise<ConfigDocumentFor<TKey>> {
   const entry = CONFIG_FILE_REGISTRY[fileKey];
-  const filePath = getConfigDocumentPath(muxHomeDir, fileKey);
+  const filePath = getConfigDocumentPath(xumHomeDir, fileKey);
   const validatedDocument = parseAndValidateDocument(fileKey, entry.schema, document, filePath);
   const serialized = JSON.stringify(validatedDocument, null, 2);
 
-  await fs.mkdir(muxHomeDir, { recursive: true });
+  await fs.mkdir(xumHomeDir, { recursive: true });
   await assertWritableConfigTarget(filePath, fileKey);
 
   if (entry.fileKind === "jsonc") {

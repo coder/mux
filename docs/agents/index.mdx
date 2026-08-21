@@ -19,7 +19,7 @@ An agent definition is a Markdown file: YAML frontmatter declares metadata, poli
 
 ## Quick Start
 
-Drop a Markdown file in `.mux/agents/` (project) or `~/.xum/agents/` (global):
+Drop a Markdown file in `.xum/agents/` (project) or `~/.xum/agents/` (global):
 
 ```md
 ---
@@ -49,7 +49,7 @@ Xum scans three roots, **non-recursive** (only direct `.md` children):
 
 | Location             | Scope   | Priority |
 | -------------------- | ------- | -------- |
-| `.mux/agents/*.md`   | Project | Highest  |
+| `.xum/agents/*.md`   | Project | Highest  |
 | `~/.xum/agents/*.md` | Global  | Medium   |
 | Built-in             | System  | Lowest   |
 
@@ -85,7 +85,7 @@ prompt:
   append: true # Default.
 
 # Subagent behavior (consulted only when spawned via the task tool).
-# skip_init_hook only skips the .mux/init hook; runtime provisioning
+# skip_init_hook only skips the .xum/init hook; runtime provisioning
 # (SSH sync, Docker setup) still runs.
 subagent:
   runnable: false # Required for task({ agentId: ... }) to spawn this.
@@ -216,12 +216,12 @@ For the normal `task` tool, the agent must have `subagent.runnable: true`. Workf
 
 ### Run-context AI defaults
 
-Each agent has two independent default slots, configured in **Settings → Agents**:
+Each agent has one defaults entry (`agentAiDefaults`), configured in **Settings → Agents**:
 
-- **UI defaults** (`agentAiDefaults`) — used when you select the agent in the workspace.
-- **Subagent defaults** (`subagentAiDefaults`) — used when the agent is spawned via `task`.
+- **Base fields** (`modelString`, `thinkingLevel`, `reasoningMode`) apply when you select the agent in the workspace.
+- **Delegated overrides** (the sparse nested `subagent` profile) apply only when the agent is spawned via `task`, and win over the base fields per field.
 
-Subagent defaults inherit per field from UI defaults; UI defaults inherit per field from the agent's frontmatter `ai` block. You can override one field (e.g. only `thinkingLevel`) and leave the other inherited.
+Delegated overrides inherit per field from the base fields; base fields inherit per field from the agent's frontmatter `ai` block. You can override one field (e.g. only `thinkingLevel`) and leave the others inherited.
 
 Subagent settings are resolved at task creation and frozen on the child workspace. Changing defaults later only affects future spawns.
 

@@ -80,12 +80,7 @@ import { normalizeUserPreferences } from "@/common/config/schemas/userPreference
 import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { isValidModelFormat, normalizeSelectedModel } from "@/common/utils/ai/models";
 import { sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
-import {
-  DEFAULT_TASK_SETTINGS,
-  deriveLegacySubagentAiDefaultsFromAgentDefaults,
-  normalizeSubagentAiDefaults,
-  normalizeTaskSettings,
-} from "@/common/types/tasks";
+import { DEFAULT_TASK_SETTINGS, normalizeTaskSettings } from "@/common/types/tasks";
 import {
   normalizeRuntimeEnablement,
   RUNTIME_ENABLEMENT_IDS,
@@ -208,7 +203,7 @@ export async function sendWorkflowRunTerminalContinuation(input: {
     }
 
     continuationOptions ??=
-      context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
+      await context.workspaceService.getWorkflowContinuationSendOptions(workspaceId);
     if (continuationOptions == null) {
       log.warn("Skipping workflow continuation without send options", { workspaceId, runId });
       return;
@@ -311,9 +306,9 @@ async function resolveAgentSkillDiscoveryContext(
     return resolveSkillStorageContext({
       runtime: resolved.runtime,
       workspacePath: resolved.discoveryPath,
-      muxScope: {
+      xumScope: {
         type: "project",
-        muxHome: context.config.rootDir,
+        xumHome: context.config.rootDir,
         projectRoot: resolved.discoveryPath,
         projectStorageAuthority: "host-local",
         checkoutRoot: creationScope.projectPath,
@@ -330,7 +325,7 @@ async function resolveAgentSkillDiscoveryContext(
           resolved.runtime,
           resolveWorkspaceRootPath(resolved.metadata, resolved.runtime)
         );
-  const muxScope = context.aiService.resolveMuxToolScopeForWorkspace(
+  const xumScope = context.aiService.resolveXumToolScopeForWorkspace(
     resolved.metadata,
     resolved.runtime,
     workspacePath
@@ -338,10 +333,10 @@ async function resolveAgentSkillDiscoveryContext(
   return resolveSkillStorageContext({
     runtime: resolved.runtime,
     workspacePath,
-    muxScope:
-      input.disableWorkspaceAgents === true && muxScope.type === "project"
-        ? { ...muxScope, checkoutRoot: workspacePath }
-        : muxScope,
+    xumScope:
+      input.disableWorkspaceAgents === true && xumScope.type === "project"
+        ? { ...xumScope, checkoutRoot: workspacePath }
+        : xumScope,
     ...options,
   });
 }
@@ -513,10 +508,10 @@ export async function resolveWorkflowContext(
   const skillStorageContext = resolveSkillStorageContext({
     runtime,
     workspacePath,
-    muxScope: context.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath),
+    xumScope: context.aiService.resolveXumToolScopeForWorkspace(metadata, runtime, workspacePath),
     includeAgentPlugins,
   });
-  const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
+  const workflowRuntimeTempDir = runtime.normalizePath(".xum/tmp", workspacePath);
 
   return {
     workflowExecutionProjectPath,
@@ -1036,7 +1031,7 @@ export const router = (authToken?: string) => {
 
             try {
               await context.serverService.startServer({
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 context,
                 authToken,
                 serveStatic: serveWebUi === true,
@@ -1057,7 +1052,7 @@ export const router = (authToken?: string) => {
 
                 try {
                   await context.serverService.startServer({
-                    muxHome: context.config.rootDir,
+                    xumHome: context.config.rootDir,
                     context,
                     serveStatic: prevServeWebUi === true,
                     authToken,
@@ -1150,9 +1145,6 @@ export const router = (authToken?: string) => {
             runtimeEnablement: normalizeRuntimeEnablement(config.runtimeEnablement),
             defaultRuntime: config.defaultRuntime ?? null,
             agentAiDefaults: config.agentAiDefaults ?? {},
-            // Subagent defaults: exec is canonical active storage, non-exec entries
-            // support legacy mirror compatibility.
-            subagentAiDefaults: config.subagentAiDefaults ?? {},
             // Xum Governor enrollment status (safe fields only - token never exposed)
             muxGovernorUrl,
             muxGovernorEnrolled,
@@ -1236,18 +1228,9 @@ export const router = (authToken?: string) => {
           await context.config.editConfig((config) => {
             const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
 
-            const legacySubagentDefaults = deriveLegacySubagentAiDefaultsFromAgentDefaults({
-              agentAiDefaults: normalized,
-              preservedExec: config.subagentAiDefaults?.exec,
-            });
-
             return {
               ...config,
               agentAiDefaults: Object.keys(normalized).length > 0 ? normalized : undefined,
-              // Subagent defaults: exec is canonical active storage, non-exec entries
-              // support legacy mirror compatibility.
-              subagentAiDefaults:
-                Object.keys(legacySubagentDefaults).length > 0 ? legacySubagentDefaults : undefined,
             };
           });
         }),
@@ -1506,71 +1489,6 @@ export const router = (authToken?: string) => {
             if (input.agentAiDefaults !== undefined) {
               const normalized = normalizeAgentAiDefaults(input.agentAiDefaults);
               result.agentAiDefaults = Object.keys(normalized).length > 0 ? normalized : undefined;
-
-              if (input.subagentAiDefaults === undefined) {
-                const legacySubagentDefaults = deriveLegacySubagentAiDefaultsFromAgentDefaults({
-                  agentAiDefaults: normalized,
-                  preservedExec: config.subagentAiDefaults?.exec,
-                });
-                result.subagentAiDefaults =
-                  Object.keys(legacySubagentDefaults).length > 0
-                    ? legacySubagentDefaults
-                    : undefined;
-              }
-            }
-
-            if (input.subagentAiDefaults !== undefined) {
-              const normalizedDefaults = normalizeSubagentAiDefaults(input.subagentAiDefaults);
-              result.subagentAiDefaults =
-                Object.keys(normalizedDefaults).length > 0 ? normalizedDefaults : undefined;
-
-              // Compatibility: keep agentAiDefaults in sync with non-exec subagent entries.
-              // Only mutate keys previously managed by subagentAiDefaults so we don't clobber other
-              // agent defaults (e.g., UI-selectable custom agents).
-              const previousLegacy = config.subagentAiDefaults ?? {};
-              const nextAgentAiDefaults: Record<string, unknown> = {
-                ...(result.agentAiDefaults ?? config.agentAiDefaults ?? {}),
-              };
-
-              for (const legacyAgentType of Object.keys(previousLegacy)) {
-                if (
-                  legacyAgentType === "plan" ||
-                  legacyAgentType === "exec" ||
-                  legacyAgentType === "compact"
-                ) {
-                  continue;
-                }
-                if (!(legacyAgentType in normalizedDefaults)) {
-                  const existing = nextAgentAiDefaults[legacyAgentType];
-                  if (existing && typeof existing === "object") {
-                    const nonAiDefaults: Record<string, unknown> = {
-                      ...(existing as Record<string, unknown>),
-                    };
-                    delete nonAiDefaults.modelString;
-                    delete nonAiDefaults.thinkingLevel;
-
-                    // Preserve non-AI fields (enabled, advisorEnabled) when the legacy mirrored AI
-                    // entry is dropped, so customer agent enable/advisor toggles do not silently reset.
-                    if (Object.keys(nonAiDefaults).length > 0) {
-                      nextAgentAiDefaults[legacyAgentType] = nonAiDefaults;
-                    } else {
-                      delete nextAgentAiDefaults[legacyAgentType];
-                    }
-                  } else {
-                    delete nextAgentAiDefaults[legacyAgentType];
-                  }
-                }
-              }
-
-              for (const [agentType, entry] of Object.entries(normalizedDefaults)) {
-                if (agentType === "plan" || agentType === "exec" || agentType === "compact")
-                  continue;
-                nextAgentAiDefaults[agentType] = entry;
-              }
-
-              const normalizedAgent = normalizeAgentAiDefaults(nextAgentAiDefaults);
-              result.agentAiDefaults =
-                Object.keys(normalizedAgent).length > 0 ? normalizedAgent : undefined;
             }
 
             return result;
@@ -5863,7 +5781,7 @@ export const router = (authToken?: string) => {
               }
               const { plugins } = await discoverWorkspaceAgentPlugins({
                 workspacePath: hostCheckoutRoot,
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 projectTrusted: isWorkspaceProjectTrusted(context.config, metadata),
               });
               return collectPluginSlashCommands(plugins);
@@ -5903,7 +5821,7 @@ export const router = (authToken?: string) => {
                 // nullable host checkout root.
                 workspacePath,
                 hostCheckoutRoot,
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 projectTrusted,
                 agentPluginsEnabled: context.experimentsService.isExperimentEnabled(
                   EXPERIMENT_IDS.AGENT_PLUGINS

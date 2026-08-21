@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 import { useAPI } from "@/browser/contexts/API";
+import { getAppConfigStore } from "@/browser/stores/AppConfigStore";
 import { PROVIDER_DEFINITIONS, type ProviderName } from "@/common/constants/providers";
 import {
   availableRoutes as listAvailableRoutes,
@@ -13,6 +14,8 @@ import { isGatewayModelAccessibleFromAuthoritativeCatalog } from "@/common/utils
 import { useProvidersConfig } from "./useProvidersConfig";
 
 const DEFAULT_ROUTE_PRIORITY = ["direct"];
+// Stable fallback so snapshot-less renders don't churn referential equality.
+const EMPTY_ROUTE_OVERRIDES: Record<string, string> = {};
 
 function getRouteDisplayName(route: string): string {
   if (route === "direct") {
@@ -62,71 +65,13 @@ export interface RoutingState {
 export function useRouting(): RoutingState {
   const { api } = useAPI();
   const { config: providersConfig } = useProvidersConfig();
-  const [routePriority, setRoutePriorityState] = useState<string[]>(DEFAULT_ROUTE_PRIORITY);
-  const [routeOverrides, setRouteOverridesState] = useState<Record<string, string>>({});
-  // Ignore stale config fetches so backend refreshes can't overwrite newer optimistic edits.
-  const fetchVersionRef = useRef(0);
-
-  const fetchRoutingConfig = useCallback(async () => {
-    const getConfig = api?.config?.getConfig;
-    if (!getConfig) {
-      return;
-    }
-
-    const fetchVersion = ++fetchVersionRef.current;
-
-    try {
-      const config = await getConfig();
-      if (fetchVersion !== fetchVersionRef.current) {
-        return;
-      }
-
-      setRoutePriorityState(config.routePriority ?? DEFAULT_ROUTE_PRIORITY);
-      setRouteOverridesState(config.routeOverrides ?? {});
-    } catch {
-      // Best-effort only.
-    }
-  }, [api]);
-
-  useEffect(() => {
-    const onConfigChanged = api?.config?.onConfigChanged;
-    if (!onConfigChanged) {
-      return;
-    }
-
-    const abortController = new AbortController();
-    const { signal } = abortController;
-    let iterator: AsyncIterator<unknown> | null = null;
-
-    void fetchRoutingConfig();
-
-    (async () => {
-      try {
-        const subscribedIterator = await onConfigChanged(undefined, { signal });
-
-        if (signal.aborted) {
-          void subscribedIterator.return?.();
-          return;
-        }
-
-        iterator = subscribedIterator;
-
-        for await (const _ of subscribedIterator) {
-          if (signal.aborted) {
-            break;
-          }
-          void fetchRoutingConfig();
-        }
-      } catch {
-        // Subscription cancelled via abort signal - expected on cleanup
-      }
-    })();
-
-    return () => {
-      abortController.abort();
-      void iterator?.return?.();
-    };
-  }, [api, fetchRoutingConfig]);
+  // Shared AppConfigStore (one fetch + one onConfigChanged subscription per
+  // app session) instead of per-mount fetches: surfaces render one picker per
+  // row, so per-instance subscriptions fanned out O(rows) backend reads.
+  const store = getAppConfigStore();
+  const appConfig = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const routePriority = appConfig?.routePriority ?? DEFAULT_ROUTE_PRIORITY;
+  const routeOverrides = appConfig?.routeOverrides ?? EMPTY_ROUTE_OVERRIDES;
 
   const isConfigured = useCallback(
     (provider: string) =>
@@ -159,20 +104,21 @@ export function useRouting(): RoutingState {
           routeOverrides: overrides,
         })
         .catch(() => {
-          // Best-effort only; backend config reload will reconcile state.
+          // The optimistic update landed in the shared singleton store, so a
+          // failed write must re-fetch or the stale route survives navigation
+          // (same recovery as useMinThinkingLevels).
+          void store.refresh();
         });
     },
-    [api]
+    [api, store]
   );
 
   const setRoutePreferences = useCallback(
     (priority: string[], overrides: Record<string, string>) => {
-      fetchVersionRef.current++;
-      setRoutePriorityState(priority);
-      setRouteOverridesState(overrides);
+      store.updateOptimistically({ routePriority: priority, routeOverrides: overrides });
       persistRoutePreferences(priority, overrides);
     },
-    [persistRoutePreferences]
+    [persistRoutePreferences, store]
   );
 
   const setRoutePriority = useCallback(

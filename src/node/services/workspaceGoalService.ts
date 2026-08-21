@@ -186,7 +186,7 @@ export interface GoalContinuationRuntimeBridge {
    * outside of a stream-end (e.g. when the user resumes a paused goal on an
    * idle workspace). Returns null when defaults can't be derived.
    */
-  getKickoffSendOptions?(workspaceId: string): SendMessageOptions | null;
+  getKickoffSendOptions?(workspaceId: string): Promise<SendMessageOptions | null>;
 }
 
 type PendingGoalContinuationSource = "stream_end" | "kickoff" | "budget_wrapup";
@@ -902,11 +902,11 @@ export class WorkspaceGoalService {
     };
   }
 
-  private getPricedContinuationSendOptions(
+  private async getPricedContinuationSendOptions(
     workspaceId: string,
     goal: GoalRecordV1,
     sendOptions: SendMessageOptions
-  ): SendMessageOptions | null {
+  ): Promise<SendMessageOptions | null> {
     const normalized = continuationSendOptions(sendOptions);
     if (!hasBudgetedResumableGoal(goal)) {
       return normalized;
@@ -915,7 +915,7 @@ export class WorkspaceGoalService {
     if (modelHasPricingData(normalized.model, providersConfig)) {
       return normalized;
     }
-    const kickoff = this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId);
+    const kickoff = await this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId);
     if (!kickoff || kickoff.agentId === "plan" || kickoff.agentId === "compact") {
       return null;
     }
@@ -974,7 +974,7 @@ export class WorkspaceGoalService {
       return;
     }
 
-    const sendOptions = this.getPricedContinuationSendOptions(
+    const sendOptions = await this.getPricedContinuationSendOptions(
       input.workspaceId,
       goal,
       input.sendOptions
@@ -2032,7 +2032,7 @@ export class WorkspaceGoalService {
         }
         if (
           (projected.status === "active" || projected.status === "budget_limited") &&
-          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected)
+          !(await this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, projected))
         ) {
           return Err({
             type: "invalid_transition" as const,
@@ -2081,11 +2081,14 @@ export class WorkspaceGoalService {
     return this.setGoalImmediately({ ...input, objective });
   }
 
-  private canRunBudgetedGoalOnKickoffModel(workspaceId: string, goal: GoalRecordV1): boolean {
+  private async canRunBudgetedGoalOnKickoffModel(
+    workspaceId: string,
+    goal: GoalRecordV1
+  ): Promise<boolean> {
     if (!hasBudgetedResumableGoal(goal)) {
       return true;
     }
-    const model = this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId)?.model;
+    const model = (await this.goalContinuationBridge?.getKickoffSendOptions?.(workspaceId))?.model;
     if (!model) {
       return true;
     }
@@ -2154,7 +2157,7 @@ export class WorkspaceGoalService {
         const withEdits = this.applyMutableFields(renamed, input);
         if (
           (withEdits.status === "active" || withEdits.status === "budget_limited") &&
-          !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, withEdits)
+          !(await this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, withEdits))
         ) {
           return Err({
             type: "invalid_transition" as const,
@@ -2195,7 +2198,7 @@ export class WorkspaceGoalService {
         if (hasMutableChange) {
           if (
             (updated.status === "active" || updated.status === "budget_limited") &&
-            !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, updated)
+            !(await this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, updated))
           ) {
             return Err({
               type: "invalid_transition" as const,
@@ -2246,7 +2249,7 @@ export class WorkspaceGoalService {
       });
       if (
         (next.status === "active" || next.status === "budget_limited") &&
-        !this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, next)
+        !(await this.canRunBudgetedGoalOnKickoffModel(input.workspaceId, next))
       ) {
         return Err({
           type: "invalid_transition" as const,
@@ -2319,7 +2322,7 @@ export class WorkspaceGoalService {
       return Ok(synced ?? result.data);
     }
     if (result.data.status === "budget_limited") {
-      this.armBudgetWrapupForBudgetLimitedGoal(input.workspaceId, result.data);
+      await this.armBudgetWrapupForBudgetLimitedGoal(input.workspaceId, result.data);
     }
     return result;
   }
@@ -2377,7 +2380,7 @@ export class WorkspaceGoalService {
       }
       return;
     }
-    const sendOptions = this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
+    const sendOptions = await this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
     if (!sendOptions) {
       return;
     }
@@ -2417,7 +2420,9 @@ export class WorkspaceGoalService {
         log.warn("Failed to arm promoted goal continuation", { workspaceId, error });
       });
     } else if (goal.status === "budget_limited") {
-      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
+      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal).catch((error: unknown) => {
+        log.warn("Failed to arm promoted goal budget wrap-up", { workspaceId, error });
+      });
     }
   }
 
@@ -2470,7 +2475,7 @@ export class WorkspaceGoalService {
       if (originKind === "user") {
         return;
       }
-      this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
+      await this.armBudgetWrapupForBudgetLimitedGoal(workspaceId, goal);
     }
   }
 
@@ -2487,14 +2492,17 @@ export class WorkspaceGoalService {
    *      `budget_limited`. Without this the wrap-up never fires because the
    *      attribution path does not produce a continuation-origin stream.
    */
-  private armBudgetWrapupForBudgetLimitedGoal(workspaceId: string, goal: GoalRecordV1): void {
+  private async armBudgetWrapupForBudgetLimitedGoal(
+    workspaceId: string,
+    goal: GoalRecordV1
+  ): Promise<void> {
     if (this.goalContinuationDispatcher == null || this.goalContinuationBridge == null) {
       return;
     }
     if (this.pendingContinuationCandidates.has(workspaceId)) {
       return;
     }
-    const sendOptions = this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
+    const sendOptions = await this.goalContinuationBridge.getKickoffSendOptions?.(workspaceId);
     if (!sendOptions || sendOptions.agentId === "plan" || sendOptions.agentId === "compact") {
       return;
     }
@@ -2775,7 +2783,7 @@ export class WorkspaceGoalService {
       // budget_limited with no mechanism to fire the wrap-up because the
       // attribution path never produces a normal stream-end candidate/stamp.
       if (causedLimit) {
-        this.armBudgetWrapupForBudgetLimitedGoal(input.parentWorkspaceId, next);
+        await this.armBudgetWrapupForBudgetLimitedGoal(input.parentWorkspaceId, next);
       } else if (next.status === "active") {
         this.armKickoffContinuationIfIdle(input.parentWorkspaceId, next).catch((error: unknown) => {
           log.warn("Failed to arm parent goal continuation after child attribution", {
@@ -2997,7 +3005,7 @@ export class WorkspaceGoalService {
           status: "active",
           updatedAtMs: Date.now(),
         });
-        if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+        if (!(await this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected))) {
           log.warn(
             "Deferred auto-promote skipped: queued goal is budgeted but kickoff model is unpriced",
             { workspaceId, goalId: head.goalId }
@@ -3468,7 +3476,7 @@ export class WorkspaceGoalService {
       // BudgetedGoal` would block every send until the model is
       // changed or the goal cleared. Same guard `setGoal` uses for
       // direct creates.
-      if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+      if (!(await this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated))) {
         throw new WorkspaceGoalTransitionError(UNPRICED_TARGET_MODEL_GOAL_MESSAGE);
       }
 
@@ -3557,7 +3565,7 @@ export class WorkspaceGoalService {
       status: "active",
       updatedAtMs: Date.now(),
     });
-    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected)) {
+    if (!(await this.canRunBudgetedGoalOnKickoffModel(workspaceId, projected))) {
       log.warn(
         "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
         { workspaceId, goalId: head.goalId }
@@ -3628,7 +3636,7 @@ export class WorkspaceGoalService {
     // The completion mutation still succeeds; the upcoming list keeps
     // its head and the user is left to either change models or clear
     // the head goal before the next promote attempt.
-    if (!this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated)) {
+    if (!(await this.canRunBudgetedGoalOnKickoffModel(workspaceId, activated))) {
       log.warn(
         "Auto-promote on complete skipped: queued goal is budgeted but kickoff model is unpriced",
         { workspaceId, goalId: head.goalId }

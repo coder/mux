@@ -123,7 +123,6 @@ import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
   ModelFallbacksSchema,
-  SubagentAiDefaultsSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
 import {
@@ -957,7 +956,7 @@ export const projects = {
 /**
  * MCP server configuration.
  *
- * Global config lives in <muxHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.mux/mcp.jsonc.
+ * Global config lives in <xumHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.xum/mcp.jsonc.
  */
 export const mcp = {
   list: {
@@ -1982,8 +1981,8 @@ export const tasks = {
 
 // Agent definitions (unifies UI modes + subagents)
 // Agents can be discovered from either the PROJECT path or the WORKSPACE path.
-// - Project path: <projectPath>/.mux/agents - shared across all workspaces
-// - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
+// - Project path: <projectPath>/.xum/agents - shared across all workspaces
+// - Workspace path: <worktree>/.xum/agents - workspace-specific (useful for iterating)
 // Default is workspace path when workspaceId is provided.
 // Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
 
@@ -2370,8 +2369,6 @@ export const config = {
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
-      // Legacy fields (downgrade compatibility)
-      subagentAiDefaults: SubagentAiDefaultsSchema,
       // Xum Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
@@ -2391,8 +2388,6 @@ export const config = {
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.nullish(),
       advisorMaxOutputTokens: AdvisorMaxOutputTokensSchema.nullish(),
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
-      // Legacy field (downgrade compatibility)
-      subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
     }),
     output: z.void(),
   },

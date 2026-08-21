@@ -32,7 +32,7 @@ import { createToolSearchTool } from "@/node/services/tools/toolSearch";
 import { createMcpPromptGetTool } from "@/node/services/tools/mcp_prompt_get";
 import { createAnalyticsQueryTool } from "@/node/services/tools/analyticsQuery";
 import { createDesktopTools } from "@/node/services/tools/desktopTools";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import { createTaskTool } from "@/node/services/tools/task";
 import { createTaskApplyGitPatchTool } from "@/node/services/tools/task_apply_git_patch";
 import { createTaskAwaitTool } from "@/node/services/tools/task_await";
@@ -51,10 +51,10 @@ import { createAgentSkillDeleteTool } from "@/node/services/tools/agent_skill_de
 import { createSkillsCatalogSearchTool } from "@/node/services/tools/skills_catalog_search";
 import { createSkillsCatalogReadTool } from "@/node/services/tools/skills_catalog_read";
 import { createWebFetchTool } from "@/node/services/tools/web_fetch";
-import { createMuxAgentsReadTool } from "@/node/services/tools/mux_agents_read";
-import { createMuxAgentsWriteTool } from "@/node/services/tools/mux_agents_write";
-import { createMuxConfigReadTool } from "@/node/services/tools/mux_config_read";
-import { createMuxConfigWriteTool } from "@/node/services/tools/mux_config_write";
+import { createXumAgentsReadTool } from "@/node/services/tools/xum_agents_read";
+import { createXumAgentsWriteTool } from "@/node/services/tools/xum_agents_write";
+import { createXumConfigReadTool } from "@/node/services/tools/xum_config_read";
+import { createXumConfigWriteTool } from "@/node/services/tools/xum_config_write";
 import { createWorkflowRunTool } from "@/node/services/tools/workflow_run";
 import { createWorkflowResumeTool } from "@/node/services/tools/workflow_resume";
 import { createAgentReportTool } from "@/node/services/tools/agent_report";
@@ -90,13 +90,6 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { ModelMessage } from "@/common/types/message";
 import type { GoalDefaults } from "@/constants/goals";
 import type { ProjectRef, WorkspaceMetadata } from "@/common/types/workspace";
-
-export interface ToolAgentSkillsRoots {
-  projectRoot: string;
-  projectUniversalRoot?: string;
-  globalRoot: string;
-  universalRoot?: string;
-}
 
 export interface ToolModelUsageEvent {
   source: "tool";
@@ -190,9 +183,7 @@ export interface ToolConfiguration {
   /** Workspace ID for tracking background processes and plan storage */
   workspaceId?: string;
   /** Pre-resolved mux-managed resource scope (global ~/.xum vs project root). */
-  muxScope?: MuxToolScope;
-  /** Optional skill roots override for tests and isolated workflow resolution. */
-  agentSkillsRoots?: ToolAgentSkillsRoots;
+  xumScope?: XumToolScope;
   /** Memory service for the memory tool (present only when the memory experiment is enabled). */
   memoryService?: MemoryService;
   timelineService?: TimelineService;
@@ -298,7 +289,7 @@ export interface ToolConfiguration {
     toolSearch?: boolean;
     /** claude-skills-compat: discover skills from .claude/skills and ~/.claude/skills (read-only). */
     claudeSkillsCompat?: boolean;
-    /** agent-plugins: discover Agent Plugins skills from .mux/plugins, .agents/plugins and their global counterparts (read-only). */
+    /** agent-plugins: discover Agent Plugins skills from .xum/plugins, .agents/plugins and their global counterparts (read-only). */
     agentPlugins?: boolean;
   };
   /** Available sub-agents for the task tool description (dynamic context) */
@@ -482,9 +473,9 @@ function wrapToolsWithModelOnlyNotifications(
  * Wrap tools with hook support.
  *
  * If any of these exist, each tool execution is wrapped:
- * - `.mux/tool_pre` (pre-hook)
- * - `.mux/tool_post` (post-hook)
- * - `.mux/tool_hook` (legacy pre+post)
+ * - `.xum/tool_pre` (pre-hook)
+ * - `.xum/tool_post` (post-hook)
+ * - `.xum/tool_hook` (legacy pre+post)
  */
 function wrapToolsWithHooks(
   tools: Record<string, Tool>,
@@ -818,13 +809,13 @@ export async function getToolsForModel(
   // Non-runtime tools execute immediately (no init wait needed)
   // Note: Tool availability is controlled by agent tool policy (allowlist), not mode checks here.
   const nonRuntimeTools: Record<string, Tool> = {
-    mux_agents_read: createMuxAgentsReadTool(config),
-    mux_agents_write: createMuxAgentsWriteTool(config),
+    mux_agents_read: createXumAgentsReadTool(config),
+    mux_agents_write: createXumAgentsWriteTool(config),
     agent_skill_list: createAgentSkillListTool(config),
     agent_skill_write: createAgentSkillWriteTool(config),
     agent_skill_delete: createAgentSkillDeleteTool(config),
-    mux_config_read: createMuxConfigReadTool(config),
-    mux_config_write: createMuxConfigWriteTool(config),
+    mux_config_read: createXumConfigReadTool(config),
+    mux_config_write: createXumConfigWriteTool(config),
     skills_catalog_search: createSkillsCatalogSearchTool(config),
     skills_catalog_read: createSkillsCatalogReadTool(config),
     ...(config.advisorRuntime ? { advisor: createAdvisorTool(config) } : {}),
@@ -902,7 +893,7 @@ export async function getToolsForModel(
         // Known limitations when the native override is active:
         // - Cannot reach private/localhost URLs (Anthropic's servers can't see workspace network).
         // - Not bridgeable in the PTC sandbox (no execute()); see BridgeableToolName comment.
-        // - Tool hooks (.mux/tool_pre/.mux/tool_post) are skipped because withHooks() returns
+        // - Tool hooks (.xum/tool_pre/.xum/tool_post) are skipped because withHooks() returns
         //   early when execute() is absent — same limitation as web_search (provider-native).
         if (supportsAnthropicNativeWebFetch(modelId)) {
           allTools = {

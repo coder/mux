@@ -35,9 +35,19 @@ function isForceAllRetryableEnabled(): boolean {
  * Error types that should NOT be auto-retried because they require user action
  * These errors won't resolve on their own - the user must fix the underlying issue
  */
-const NON_RETRYABLE_STREAM_ERRORS = [
+const PROVIDER_CONFIG_FIXABLE_STREAM_ERRORS = [
   "authentication", // Bad API key - user must fix credentials
   "quota", // Billing/usage limits - user must upgrade or wait for reset
+] as const satisfies readonly StreamErrorType[];
+
+const PROVIDER_CONFIG_FIXABLE_SEND_ERRORS = [
+  "api_key_not_found",
+  "oauth_not_connected",
+  "provider_disabled",
+] as const;
+
+const NON_RETRYABLE_STREAM_ERRORS = [
+  ...PROVIDER_CONFIG_FIXABLE_STREAM_ERRORS,
   "model_not_found", // Invalid model - user must select different model
   "context_exceeded", // Message too long - user must reduce context
   "aborted", // User cancelled - should not auto-retry
@@ -46,6 +56,14 @@ const NON_RETRYABLE_STREAM_ERRORS = [
 ] as const satisfies readonly StreamErrorType[];
 
 const NON_RETRYABLE_STREAM_ERROR_SET = new Set<string>(NON_RETRYABLE_STREAM_ERRORS);
+const PROVIDER_CONFIG_FIXABLE_ERROR_SET = new Set<string>([
+  ...PROVIDER_CONFIG_FIXABLE_STREAM_ERRORS,
+  ...PROVIDER_CONFIG_FIXABLE_SEND_ERRORS,
+]);
+
+export function isProviderConfigFixableError(type: string): boolean {
+  return PROVIDER_CONFIG_FIXABLE_ERROR_SET.has(type);
+}
 
 /**
  * Check if a SendMessageError (from resumeStream failures) is non-retryable
@@ -56,10 +74,11 @@ export function isNonRetryableSendError(error: { type: string }): boolean {
     return false;
   }
 
+  if (PROVIDER_CONFIG_FIXABLE_ERROR_SET.has(error.type)) {
+    return true;
+  }
+
   switch (error.type) {
-    case "api_key_not_found": // Missing API key - user must configure
-    case "oauth_not_connected": // Missing OAuth connection - user must connect/sign in
-    case "provider_disabled": // Provider disabled in settings - user must re-enable
     case "provider_not_supported": // Unsupported provider - user must switch
     case "model_not_available": // Model missing from fetched provider catalog - user must refresh or switch
     case "invalid_model_string": // Bad model format - user must fix

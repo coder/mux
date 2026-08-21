@@ -82,7 +82,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: ./scripts/generate-version.sh
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -180,7 +180,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: make build-main
       # workflow_dispatch inputs are only triggerable by repo members, so direct
       # interpolation is acceptable and preserves shell quoting in the filter.
@@ -271,7 +271,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: make build-main
       # workflow_dispatch inputs are only triggerable by repo members, so direct
       # interpolation is acceptable and preserves shell quoting in the filter.
@@ -322,7 +322,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - uses: ./.github/actions/setup-playwright
         timeout-minutes: 10
       - run: make storybook-build
@@ -357,10 +357,15 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Install xvfb
         if: matrix.os == 'linux'
         run: |
+          if command -v Xvfb >/dev/null 2>&1 && command -v xvfb-run >/dev/null 2>&1; then
+            echo "Xvfb is already installed"
+            exit 0
+          fi
+
           sudo apt-get update
           sudo apt-get install -y xvfb
       # Bound browser setup; Playwright downloads can stall after progress reaches 100%.
@@ -387,7 +392,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
         with:
           skip-build-caches: true
       - name: Generate version.ts
@@ -423,7 +428,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: ./scripts/generate-npm-shrinkwrap.sh
       - run: make build
       - name: Pack npm package
@@ -467,6 +472,12 @@ jobs:
           context: .
           load: true
           tags: mux-server:test
+          # The coder/shux -> coder/xum repo rename broke Depot's OIDC trust
+          # policy (matches owner/repo as a string), so `depot build` fails with
+          # "permission_denied: Invalid token" and blocks the merge queue. Fall
+          # back to plain buildx until the Depot project trust policy is updated
+          # for the new repo name; Depot acceleration resumes automatically then.
+          buildx-fallback: true
       - name: Test container
         run: |
           docker run -d --name mux-test -p 3000:3000 mux-server:test
@@ -492,7 +503,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: bun run build
       - run: make dist-linux
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -514,7 +525,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Setup code signing
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: ./scripts/setup-macos-signing.sh
@@ -556,7 +567,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Add MSYS2 make to PATH
         shell: pwsh
         run: |
@@ -579,6 +590,9 @@ jobs:
           ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
           gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
           gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+          # CI artifact only - keep main green while the repo rename breaks
+          # GCP WIF auth (see setup-windows-signing action for details).
+          allow_unsigned_fallback: "true"
       - name: Package for Windows
         run: make dist-win
         env:
@@ -604,7 +618,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - uses: ./.github/actions/build-vscode-extension
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

@@ -44,12 +44,12 @@ export const InstructionFileSchema = z.object({
   isLocal: z.boolean(),
   /**
    * True for Xum-dedicated instruction files that only Xum reads: the global
-   * `~/.xum/AGENTS.md` set and per-directory `.mux/AGENTS.md` files. Scoped
+   * `~/.xum/AGENTS.md` set and per-directory `.xum/AGENTS.md` files. Scoped
    * `Model:`/`Mode:` directives are honored ONLY in these files, so a
    * heading like "Model: sonnet" never confuses non-Xum agents reading the
    * shared workspace AGENTS.md.
    */
-  muxOnly: z.boolean(),
+  xumOnly: z.boolean(),
   /** Logical scope of the file (drives panel grouping). */
   scope: InstructionScopeSchema,
   /** Project name when scope === "project" (multi-project workspaces). */

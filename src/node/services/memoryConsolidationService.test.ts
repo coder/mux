@@ -188,7 +188,7 @@ function projectMutationModel(): MockLanguageModelV3 {
 }
 
 interface Fixture extends Disposable {
-  muxHome: string;
+  xumHome: string;
   config: Config;
   service: MemoryConsolidationService;
   historyService: HistoryService;
@@ -211,10 +211,10 @@ async function createFixture(options?: {
   withSessionUsage?: boolean;
 }): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation-service");
-  const muxHome = path.join(tempDir.path, "mux-home");
-  await fsPromises.mkdir(path.join(muxHome, "memory"), { recursive: true });
+  const xumHome = path.join(tempDir.path, "mux-home");
+  await fsPromises.mkdir(path.join(xumHome, "memory"), { recursive: true });
 
-  const config = new Config(muxHome);
+  const config = new Config(xumHome);
   // Register a workspace so config.findWorkspace resolves it.
   await config.editConfig((cfg) => {
     cfg.projects.set("/projects/demo", {
@@ -224,7 +224,7 @@ async function createFixture(options?: {
   });
 
   const historyService = new HistoryService(config);
-  const metaService = new MemoryMetaService(muxHome);
+  const metaService = new MemoryMetaService(xumHome);
   const memoryService = new MemoryService(config, metaService);
 
   let enabled = true;
@@ -257,7 +257,7 @@ async function createFixture(options?: {
   );
 
   return {
-    muxHome,
+    xumHome,
     config,
     service,
     historyService,
@@ -354,7 +354,7 @@ describe("MemoryConsolidationService", () => {
     expect(record?.trigger).toBe("compaction");
     // Persisted to the sidecar, not just memory.
     const raw = await fsPromises.readFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       "utf-8"
     );
     expect(raw).toContain("ws-dream");
@@ -408,7 +408,7 @@ describe("MemoryConsolidationService", () => {
     expect(result.success).toBe(true);
 
     const raw = JSON.parse(
-      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+      await fsPromises.readFile(path.join(fixture.xumHome, "memory-consolidation.json"), "utf-8")
     ) as { projects?: Record<string, unknown> };
     expect(raw.projects?.["/projects/demo"]).toBeDefined();
   });
@@ -421,7 +421,7 @@ describe("MemoryConsolidationService", () => {
     expect(result.success).toBe(true);
 
     const raw = JSON.parse(
-      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+      await fsPromises.readFile(path.join(fixture.xumHome, "memory-consolidation.json"), "utf-8")
     ) as { projects?: Record<string, unknown>; workspaces?: Record<string, unknown> };
     expect(raw.workspaces?.["ws-multi"]).toBeDefined();
     expect(raw.projects?.["/projects/demo"]).toBeUndefined();
@@ -441,7 +441,7 @@ describe("MemoryConsolidationService", () => {
     }
 
     const raw = JSON.parse(
-      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+      await fsPromises.readFile(path.join(fixture.xumHome, "memory-consolidation.json"), "utf-8")
     ) as { projects?: Record<string, unknown>; workspaces?: Record<string, unknown> };
     expect(raw.workspaces?.["ws-task"]).toBeDefined();
     expect(raw.projects?.["/projects/demo"]).toBeUndefined();
@@ -466,7 +466,7 @@ describe("MemoryConsolidationService", () => {
   it("does not treat older workspace-only records as project coverage", async () => {
     using fixture = await createFixture();
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {
           "ws-dream": {
@@ -489,7 +489,7 @@ describe("MemoryConsolidationService", () => {
   it("preserves consolidation status when a harvest sidecar record is malformed", async () => {
     using fixture = await createFixture();
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {
           "ws-dream": {
@@ -561,14 +561,14 @@ describe("MemoryConsolidationService", () => {
       ])
     );
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({ workspaces: {}, harvestsByWorkspace: { "ws-dream": oldRecords } })
     );
 
     expect((await fixture.service.maybeHarvestThenSweep(metadata)).success).toBe(true);
 
     const raw = JSON.parse(
-      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+      await fsPromises.readFile(path.join(fixture.xumHome, "memory-consolidation.json"), "utf-8")
     ) as { harvestsByWorkspace?: Record<string, Record<string, unknown>> };
     const records = raw.harvestsByWorkspace?.["ws-dream"] ?? {};
     expect(Object.keys(records).length).toBeLessThanOrEqual(20);
@@ -981,7 +981,7 @@ describe("MemoryConsolidationService", () => {
     using fixture = await createFixture({ modelFactory: harvestCandidateModel });
     const metadata = await seedCompactionEpoch(fixture);
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {},
         harvestsByWorkspace: {
@@ -1015,7 +1015,7 @@ describe("MemoryConsolidationService", () => {
     using fixture = await createFixture({ modelFactory: harvestCandidateModel });
     const metadata = await seedCompactionEpoch(fixture);
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {},
         harvestsByWorkspace: {
@@ -1148,7 +1148,7 @@ describe("MemoryConsolidationService", () => {
 
   it("self-heals a corrupt sidecar instead of failing every later read", async () => {
     using fixture = await createFixture();
-    const sidecarPath = path.join(fixture.muxHome, "memory-consolidation.json");
+    const sidecarPath = path.join(fixture.xumHome, "memory-consolidation.json");
     // typeof null === "object": this once passed a hand-rolled validity check
     // and then blew up getRecord/saveRecord with a TypeError forever.
     await fsPromises.writeFile(sidecarPath, JSON.stringify({ workspaces: null }));
@@ -1164,20 +1164,20 @@ describe("MemoryConsolidationService", () => {
     using fixture = await createFixture();
     // Resolution is rooted at the provided mux root (Config.rootDir), never a
     // hardcoded ~/.mux — the fixture root proves the isolation.
-    const builtIn = await resolveDreamAgentBody(fixture.muxHome);
+    const builtIn = await resolveDreamAgentBody(fixture.xumHome);
     expect(builtIn).not.toBeNull();
 
-    const agentsDir = path.join(fixture.muxHome, "agents");
+    const agentsDir = path.join(fixture.xumHome, "agents");
     await fsPromises.mkdir(agentsDir, { recursive: true });
     await fsPromises.writeFile(
       path.join(agentsDir, "dream.md"),
       "---\nname: Dream\n---\n\nCustom dream body\n"
     );
-    expect(await resolveDreamAgentBody(fixture.muxHome)).toBe("Custom dream body");
+    expect(await resolveDreamAgentBody(fixture.xumHome)).toBe("Custom dream body");
 
     // Malformed override (missing frontmatter) falls back to the built-in.
     await fsPromises.writeFile(path.join(agentsDir, "dream.md"), "body without frontmatter\n");
-    expect(await resolveDreamAgentBody(fixture.muxHome)).toBe(builtIn);
+    expect(await resolveDreamAgentBody(fixture.xumHome)).toBe(builtIn);
   });
 
   it("does nothing when the experiment is disabled", async () => {
@@ -1274,7 +1274,7 @@ describe("MemoryConsolidationService", () => {
     const dayAgo = Date.now() - 25 * 60 * 60 * 1000;
     const recentProjectRunAt = Date.now() - 60_000;
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {},
         projects: {
@@ -1324,7 +1324,7 @@ describe("MemoryConsolidationService", () => {
     // project write older than that legacy run still needs one project pass.
     const projectWriteAt = recentWorkspaceRunAt - 1_000;
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({
         workspaces: {
           "ws-dream": {
@@ -1341,7 +1341,7 @@ describe("MemoryConsolidationService", () => {
       workspaceId: "ws-dream",
     });
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-meta.json"),
+      path.join(fixture.xumHome, "memory-meta.json"),
       JSON.stringify({
         entries: {
           [logicalKey]: {
@@ -1358,7 +1358,7 @@ describe("MemoryConsolidationService", () => {
 
     expect(fixture.modelCalls).toHaveLength(1);
     const raw = JSON.parse(
-      await fsPromises.readFile(path.join(fixture.muxHome, "memory-consolidation.json"), "utf-8")
+      await fsPromises.readFile(path.join(fixture.xumHome, "memory-consolidation.json"), "utf-8")
     ) as { projects?: Record<string, unknown> };
     expect(raw.projects?.["/projects/demo"]).toBeDefined();
   });
@@ -1395,7 +1395,7 @@ describe("MemoryConsolidationService", () => {
     );
     recency.set("ws-eligible", dayAgo);
     await fsPromises.writeFile(
-      path.join(fixture.muxHome, "memory-consolidation.json"),
+      path.join(fixture.xumHome, "memory-consolidation.json"),
       JSON.stringify({ workspaces: sidecarWorkspaces })
     );
 

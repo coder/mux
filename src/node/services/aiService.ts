@@ -61,7 +61,7 @@ import { ContainerManager } from "@/node/multiProject/containerManager";
 import { secretsToRecord } from "@/common/types/secrets";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import type { PolicyService } from "@/node/services/policyService";
 import type { ProviderService } from "@/node/services/providerService";
 import type { CodexOauthService } from "@/node/services/codexOauthService";
@@ -420,13 +420,13 @@ export function resolveMuxProjectRootForHostFs(
   return runtimeType === "ssh" || runtimeType === "docker" ? metadata.projectPath : workspacePath;
 }
 
-function resolveMuxToolScope(
+function resolveXumToolScope(
   config: Config,
   metadata: WorkspaceMetadata,
   workspacePath: string,
   /** Checkout root in the project storage authority's filesystem. */
   checkoutRoot?: string | null
-): MuxToolScope {
+): XumToolScope {
   const projectConfig = config.loadConfigOrDefault().projects.get(metadata.projectPath);
   if (
     projectConfig?.projectKind === "system" &&
@@ -437,14 +437,14 @@ function resolveMuxToolScope(
     // so they stay project-scoped.
     return {
       type: "global",
-      muxHome: config.rootDir,
+      xumHome: config.rootDir,
     };
   }
 
   const runtimeType = metadata.runtimeConfig.type;
   return {
     type: "project",
-    muxHome: config.rootDir,
+    xumHome: config.rootDir,
     projectRoot: resolveMuxProjectRootForHostFs(metadata, workspacePath),
     projectStorageAuthority:
       runtimeType === "ssh" || runtimeType === "docker" ? "runtime" : "host-local",
@@ -617,6 +617,7 @@ export class AIService extends EventEmitter {
     this.telemetryService = telemetryService;
     this.experimentsService = experimentsService;
     this.providerService = providerService;
+    this.providerService.onConfigChanged(() => this.emit("providers-config-changed"));
     this.streamManager = new StreamManager(historyService, sessionUsageService, () =>
       this.providerService.getConfig()
     );
@@ -1365,7 +1366,7 @@ export class AIService extends EventEmitter {
 
   /**
    * Host-evaluated gate for the agent-plugins experiment: when enabled, skill
-   * discovery/read paths also scan Agent Plugins containers (.mux/plugins,
+   * discovery/read paths also scan Agent Plugins containers (.xum/plugins,
    * .agents/plugins, ~/.xum/plugins, ~/.agents/plugins; read-only, lowest
    * precedence). Public for the same reason as isClaudeSkillsCompatEnabled.
    */
@@ -1374,19 +1375,19 @@ export class AIService extends EventEmitter {
   }
 
   /**
-   * Resolve the MuxToolScope a workspace's tools receive, including the checkout
+   * Resolve the XumToolScope a workspace's tools receive, including the checkout
    * boundary used for subproject skill inheritance. Host-local scopes also use
    * this root to anchor Agent Plugins containers.
    */
-  resolveMuxToolScopeForWorkspace(
+  resolveXumToolScopeForWorkspace(
     metadata: WorkspaceMetadata,
     runtime: Runtime,
     workspacePath: string
-  ): MuxToolScope {
+  ): XumToolScope {
     const projectCheckoutRoot = !isMultiProject(metadata)
       ? resolveWorkspaceRootPath(metadata, runtime)
       : null;
-    return resolveMuxToolScope(this.config, metadata, workspacePath, projectCheckoutRoot);
+    return resolveXumToolScope(this.config, metadata, workspacePath, projectCheckoutRoot);
   }
 
   /** Stream a message conversation to the AI model. */
@@ -1976,7 +1977,7 @@ export class AIService extends EventEmitter {
       });
 
       // Fetch workspace MCP overrides (for filtering servers and tools)
-      // NOTE: Stored in <workspace>/.mux/mcp.local.jsonc (not ~/.xum/config.json).
+      // NOTE: Stored in <workspace>/.xum/mcp.local.jsonc (not ~/.xum/config.json).
       let mcpOverrides: WorkspaceMCPOverrides | undefined;
       const loadWorkspaceMcpOverridesStartedAt = Date.now();
       try {
@@ -2007,7 +2008,7 @@ export class AIService extends EventEmitter {
           sessionDir: this.config.getSessionDir(workspaceId),
           journal: this.durableEventJournalFor(workspaceId),
           enabled: this.isAgentPluginsEnabled(),
-          muxHome: this.config.rootDir,
+          xumHome: this.config.rootDir,
           // Project containers follow the same off-host gating as plugin MCP.
           projectRoot: agentPluginsMcpContext?.projectRoot,
           projectTrusted,
@@ -2079,7 +2080,7 @@ export class AIService extends EventEmitter {
         });
       recordStartupPhaseTiming("buildPlanInstructionsMs", buildPlanInstructionsStartedAt);
 
-      const muxScope = resolveMuxToolScope(
+      const xumScope = resolveXumToolScope(
         this.config,
         metadata,
         workspacePath,
@@ -2089,7 +2090,7 @@ export class AIService extends EventEmitter {
       const workflowSkillStorageContext = resolveSkillStorageContext({
         runtime,
         workspacePath,
-        muxScope,
+        xumScope,
         includeAgentPlugins: this.isAgentPluginsEnabled(),
       });
 
@@ -2132,7 +2133,7 @@ export class AIService extends EventEmitter {
           cfg,
           providersConfig: this.providerService.getConfig(),
           mcpServers,
-          muxScope,
+          xumScope,
           loadDesktopCapability,
           advisorToolAvailable: toolset.advisorToolAvailable,
           memoryToolAvailable: toolset.memoryToolAvailable,
@@ -2675,7 +2676,7 @@ export class AIService extends EventEmitter {
         planFilePath,
         ancestorPlanFilePaths,
         workspaceId,
-        muxScope,
+        xumScope,
         timelineService: timelineExperimentEnabled ? this.timelineService : undefined,
         workspaceHeartbeatService: this.workspaceHeartbeatService,
         workflowService,
@@ -2788,7 +2789,7 @@ export class AIService extends EventEmitter {
         desktopSessionManager: this.desktopSessionManager,
         // Agent memory (memory experiment): per-scope write policy derived from
         // the agent class (exec-like / plan-like / read-only). Project memory is
-        // host-local under muxHome, keyed by the stable project identity.
+        // host-local under xumHome, keyed by the stable project identity.
         memoryService: this.memoryService,
         memoryAccess: resolveMemoryAccessPolicy({
           planLike: agentIsPlanLike,

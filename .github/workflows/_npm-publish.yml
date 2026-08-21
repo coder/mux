@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       # Setup Node.js 24+ for npm v11+ required by OIDC trusted publishing.
       # Node 22 ships with npm 10.x which does NOT support OIDC.

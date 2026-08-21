@@ -40,6 +40,7 @@ import {
   type MemoryHarvestRecordPayload,
 } from "@/common/orpc/schemas/memory";
 import { defaultModel } from "@/common/utils/ai/models";
+import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
 import { isWorkspaceArchived } from "@/common/utils/archive";
 import { getErrorMessage } from "@/common/utils/errors";
 import { Err, Ok } from "@/common/types/result";
@@ -109,12 +110,18 @@ export function resolveDreamModelString(config: Config, workspaceId: string): st
   const workspaceEntry = workspace
     ? cfg.projects.get(workspace.projectPath)?.workspaces.find((entry) => entry.id === workspaceId)
     : undefined;
-  return (
-    workspaceEntry?.aiSettingsByAgent?.dream?.model ??
-    cfg.agentAiDefaults?.dream?.modelString ??
-    workspaceEntry?.aiSettings?.model ??
-    defaultModel
-  );
+  // Model-only: the dream runtime ignores thinking and reasoning parameters.
+  const dreamBucket = workspaceEntry?.aiSettingsByAgent?.dream;
+  return resolveAgentAiSettings({
+    targetAgentId: "dream",
+    profile: "interactive",
+    agentAiDefaults: cfg.agentAiDefaults,
+    targetWorkspaceSettings: dreamBucket ? { model: dreamBucket.model } : undefined,
+    fallbacks: workspaceEntry?.aiSettings?.model
+      ? [{ model: workspaceEntry.aiSettings.model }]
+      : undefined,
+    defaultModel,
+  }).selected.model;
 }
 
 /**

@@ -8,7 +8,7 @@ import * as path from "path";
 import { Config } from "@/node/config";
 import type { MuxProviderOptions } from "@/common/types/providerOptions";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
-import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
+import { CODEX_ENDPOINT, CODEX_OAUTH_ROUTED_HEADER } from "@/common/constants/codexOAuth";
 import { PROVIDER_REGISTRY } from "@/common/constants/providers";
 import { resolveProviderOptionsNamespaceKey } from "@/common/utils/ai/providerOptions";
 import { Ok } from "@/common/types/result";
@@ -20,6 +20,8 @@ import {
   modelCostsIncluded,
   XUM_AI_PROVIDER_USER_AGENT,
   normalizeCodexResponsesBody,
+  markCodexOauthRoutedResponse,
+  normalizeOpenAICompatibleBaseURL,
   resolveAIProviderHeaderSource,
   resolveOpenAIWebSocketResponsesUrl,
   wrapFetchWithAnthropicCacheControl,
@@ -173,6 +175,40 @@ describe("resolveOpenAIWebSocketResponsesUrl", () => {
     expect(resolveOpenAIWebSocketResponsesUrl("http://localhost:8080/openai/v1/")).toBe(
       "ws://localhost:8080/openai/v1/responses"
     );
+  });
+});
+
+describe("normalizeOpenAICompatibleBaseURL", () => {
+  it.each([
+    ["http://localhost:8080", "http://localhost:8080/v1"],
+    // Explicit trailing slash opts out for APIs mounted at the origin root.
+    ["http://localhost:8080/", "http://localhost:8080/"],
+    // new URL() tolerates surrounding whitespace; the opt-out must too.
+    ["http://localhost:8080/ ", "http://localhost:8080/"],
+    [" http://localhost:8080 ", "http://localhost:8080/v1"],
+    ["http://localhost:8080/v1", "http://localhost:8080/v1"],
+    ["http://localhost:8080/custom/prefix", "http://localhost:8080/custom/prefix"],
+  ])("normalizes %s", (baseURL, expected) => {
+    expect(normalizeOpenAICompatibleBaseURL(baseURL)).toBe(expected);
+  });
+});
+
+describe("markCodexOauthRoutedResponse", () => {
+  it("marks error responses and preserves status and body", async () => {
+    const marked = markCodexOauthRoutedResponse(
+      new Response('{"error":"bad"}', { status: 400, statusText: "Bad Request" })
+    );
+
+    expect(marked.headers.get(CODEX_OAUTH_ROUTED_HEADER)).toBe("1");
+    expect(marked.status).toBe(400);
+    expect(await marked.text()).toBe('{"error":"bad"}');
+  });
+
+  it("passes success responses through unwrapped", () => {
+    const response = new Response("ok", { status: 200 });
+
+    expect(markCodexOauthRoutedResponse(response)).toBe(response);
+    expect(response.headers.get(CODEX_OAUTH_ROUTED_HEADER)).toBeNull();
   });
 });
 

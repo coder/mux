@@ -285,7 +285,7 @@ export function parseMemoryPath(virtualPath: string): ParsedMemoryPath {
 
 /**
  * Filesystem-safe directory name for a project's host-local memory root
- * (<muxHome>/memory/project/<dirName>). The sanitized basename keeps the dir
+ * (<xumHome>/memory/project/<dirName>). The sanitized basename keeps the dir
  * human-recognizable; the path hash guarantees uniqueness across same-named
  * projects in different parent directories.
  */

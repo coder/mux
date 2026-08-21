@@ -56,7 +56,13 @@ import {
   loadSessionFromWorkspace,
 } from "./experimental/sessionResume";
 import { convertToAcpUsage } from "./experimental/sessionUsage";
-import { resolveAgentAiSettings, type ResolvedAiSettings } from "./resolveAgentAiSettings";
+import {
+  resolveAcpAgentAiSettings,
+  resolveAgentAiSettings,
+  type ResolvedAiSettings,
+} from "./resolveAgentAiSettings";
+import { targetWorkspaceBucketToLayer } from "@/common/types/agentAiSettings";
+import { InvalidExplicitAiSettingError } from "@/common/utils/ai/resolveAgentAiSettings";
 import type { ServerConnection } from "./serverConnection";
 import { SessionManager } from "./sessionManager";
 import {
@@ -854,11 +860,20 @@ export class MuxAgent implements Agent {
       }
 
       case "compact": {
-        const compactionPayload = this.buildCompactionPayload(
-          parsedCommand,
-          parsedPrompt,
-          sessionState
-        );
+        let compactionPayload: { message: string; options: SendMessageOptions };
+        try {
+          compactionPayload = await this.buildCompactionPayload(
+            parsedCommand,
+            parsedPrompt,
+            sessionState,
+            workspaceId
+          );
+        } catch (error) {
+          if (error instanceof InvalidExplicitAiSettingError) {
+            return this.respondToCommand(sessionId, error.message);
+          }
+          throw error;
+        }
 
         return this.sendWorkspaceMessageAndAwaitTurn({
           sessionId,
@@ -1006,11 +1021,12 @@ export class MuxAgent implements Agent {
     }
   }
 
-  private buildCompactionPayload(
+  private async buildCompactionPayload(
     command: Extract<ParsedAcpSlashCommand, { kind: "compact" }>,
     parsedPrompt: ParsedPrompt,
-    sessionState: SessionState
-  ): { message: string; options: SendMessageOptions } {
+    sessionState: SessionState,
+    workspaceId: string
+  ): Promise<{ message: string; options: SendMessageOptions }> {
     const targetWords =
       command.maxOutputTokens != null
         ? Math.round(command.maxOutputTokens / WORDS_TO_TOKENS_RATIO)
@@ -1036,7 +1052,25 @@ export class MuxAgent implements Agent {
         }
       : undefined;
 
-    const compactionModel = command.model ?? sessionState.aiSettings.model;
+    // Unified resolution as agent "compact": the -m flag is an explicit
+    // override (invalid values throw instead of silently falling back), the
+    // workspace's compact bucket and configured compact defaults win over the
+    // live session settings (parent runtime), and a model override reclamps
+    // thinking against the compaction model.
+    const workspace = await this.server.client.workspace.getInfo({ workspaceId });
+    const compactBucket = workspace?.aiSettingsByAgent?.compact;
+    const resolved = await resolveAcpAgentAiSettings(this.server.client, "compact", workspaceId, {
+      explicit: { model: command.model ?? undefined },
+      targetWorkspaceSettings: compactBucket
+        ? targetWorkspaceBucketToLayer(compactBucket)
+        : undefined,
+      parentRuntime: {
+        model: sessionState.aiSettings.model,
+        thinkingLevel: sessionState.aiSettings.thinkingLevel,
+        reasoningMode: sessionState.aiSettings.reasoningMode,
+      },
+    });
+    const compactionModel = resolved.selected.model;
 
     const compactData: CompactionRequestData = {
       model: compactionModel,
@@ -1053,8 +1087,8 @@ export class MuxAgent implements Agent {
 
     const options: SendMessageOptions = {
       model: compactionModel,
-      thinkingLevel: sessionState.aiSettings.thinkingLevel,
-      reasoningMode: sessionState.aiSettings.reasoningMode,
+      thinkingLevel: resolved.effective.thinkingLevel,
+      reasoningMode: resolved.selected.reasoningMode,
       agentId: "compact",
       maxOutputTokens: command.maxOutputTokens,
       skipAiSettingsPersistence: true,

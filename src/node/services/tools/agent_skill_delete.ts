@@ -2,6 +2,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { tool } from "ai";
 
+import { getCanonicalProjectMetadataRelativePath } from "@/common/compat/legacyMux";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import {
   REFINEMENT_CAPTURE_MAX_FILE_BYTES,
@@ -12,7 +13,7 @@ import type { AgentSkillDeleteToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
-import type { FileStat, Runtime } from "@/node/runtime/Runtime";
+import type { Runtime } from "@/node/runtime/Runtime";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import {
   appendRefinementEventFromTool,
@@ -24,12 +25,17 @@ import { execBuffered, readFileString } from "@/node/utils/runtime/helpers";
 import { quoteRuntimeProbePath } from "./runtimePathShellQuote";
 import {
   ensureRuntimePathWithinWorkspace,
+  getProjectSkillDirs,
   inspectContainmentOnRuntime,
+  migrateLegacyProjectSkill,
   resolveContainedSkillFilePathOnRuntime,
+  validateProjectSkillDirs,
 } from "./runtimeSkillPathUtils";
 import {
   hasErrorCode,
+  isSkillMarkdownRootFile,
   resolveContainedSkillFilePath,
+  SKILL_FILENAME,
   validateLocalSkillDirectory,
 } from "./skillFileUtils";
 
@@ -240,9 +246,11 @@ async function captureRuntimeSkillFiles(
   }
 }
 
-/**
- * Tool that deletes skills/files under the contextual skills directory.
- */
+function deleteFailure(error: unknown, prefix = ""): AgentSkillDeleteToolResult {
+  return { success: false, error: prefix + getErrorMessage(error) };
+}
+
+/** Delete skills or files under the contextual skills directory. */
 export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.agent_skill_delete.description,
@@ -270,11 +278,91 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath: config.cwd,
-          muxScope: config.muxScope ?? null,
+          xumScope: config.xumScope ?? null,
         });
 
+        const targetMode = target ?? "file";
+        const projectSkillDirs =
+          targetMode === "skill"
+            ? getProjectSkillDirs(skillCtx, parsedName.data)
+            : await migrateLegacyProjectSkill(skillCtx, parsedName.data);
+
+        const legacyManifestPath =
+          targetMode === "file" &&
+          filePath != null &&
+          isSkillMarkdownRootFile(path.posix.normalize(filePath.replaceAll("\\", "/"))) &&
+          projectSkillDirs != null
+            ? skillCtx.runtime.normalizePath(SKILL_FILENAME, projectSkillDirs[1])
+            : null;
+        if (legacyManifestPath != null && projectSkillDirs != null) {
+          await validateProjectSkillDirs(skillCtx, projectSkillDirs);
+        }
+
+        if (targetMode === "skill" && projectSkillDirs != null) {
+          const boundary = await validateProjectSkillDirs(skillCtx, projectSkillDirs);
+          const isRuntimeSkill = skillCtx.kind === "project-runtime";
+          // Capture → delete → journal, preserving the pre-unification
+          // refinement semantics: runtime contexts capture through the
+          // runtime and journal runtime:"remote" (rollback refuses them);
+          // local contexts run under the per-root mutation lock shared with
+          // the rollback engine. Null capture skips journaling, never the
+          // delete.
+          const deleteProjectSkillDirs = async (): Promise<AgentSkillDeleteToolResult> => {
+            const stats = await Promise.all(
+              projectSkillDirs.map((dir) => skillCtx.runtime.stat(dir).catch(() => null))
+            );
+            if (!stats.some((stat) => stat?.isDirectory)) {
+              return { success: false, error: `Skill not found: ${parsedName.data}` };
+            }
+            let skillCaptures: RefinementFileCapture[] | null = [];
+            for (const [i, dir] of projectSkillDirs.entries()) {
+              if (skillCaptures === null) break;
+              if (!stats[i]?.isDirectory) continue; // Absent dir: nothing to capture.
+              const captured = await captureRuntimeSkillFiles(skillCtx.runtime, dir);
+              if (captured === null) {
+                skillCaptures = null;
+              } else {
+                skillCaptures.push(...captured);
+              }
+            }
+            const result = await execBuffered(
+              skillCtx.runtime,
+              `rm -rf ${projectSkillDirs.map(quoteRuntimeProbePath).join(" ")}`,
+              { cwd: boundary, timeout: 10 }
+            );
+            if (result.exitCode !== 0) {
+              return { success: false, error: result.stderr.trim() || "Failed to delete skill" };
+            }
+            if (skillCaptures !== null && skillCaptures.length > 0) {
+              await appendRefinementEventFromTool(config, {
+                kind: "skill",
+                action: { op: "delete-skill", skillName: parsedName.data },
+                inverse: { op: "restore-files", files: skillCaptures },
+                evidence: { toolName: "agent_skill_delete", toolCallId },
+                // Runtime-namespace inverse paths are not host-addressable:
+                // stamp remote so rollback refuses them.
+                ...(isRuntimeSkill ? { runtime: "remote" as const } : {}),
+              });
+            }
+            return { success: true, deleted: "skill" };
+          };
+          if (isRuntimeSkill || config.xumScope == null) {
+            // Runtime writers are deliberately excluded from target locks
+            // (their rows are remote-stamped and never rollbackable).
+            return await deleteProjectSkillDirs();
+          }
+          return await withTargetMutationLock(
+            config.xumScope.xumHome,
+            path.resolve(projectSkillDirs[0], ".."),
+            deleteProjectSkillDirs
+          );
+        }
+
         if (skillCtx.kind === "project-runtime") {
-          const skillsRoot = config.runtime.normalizePath(".mux/skills", skillCtx.workspacePath);
+          const skillsRoot = config.runtime.normalizePath(
+            getCanonicalProjectMetadataRelativePath("skills"),
+            skillCtx.workspacePath
+          );
           const skillDir = config.runtime.normalizePath(parsedName.data, skillsRoot);
           await ensureRuntimePathWithinWorkspace(
             config.runtime,
@@ -282,72 +370,6 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             skillDir,
             "Skill directory"
           );
-          const targetMode = target ?? "file";
-
-          if (targetMode === "skill") {
-            let skillDirStat: FileStat;
-            try {
-              skillDirStat = await config.runtime.stat(skillDir);
-            } catch (error) {
-              const message = getErrorMessage(error);
-              if (/enoent|no such file|does not exist/i.test(message)) {
-                return {
-                  success: false,
-                  error: `Skill not found: ${parsedName.data}`,
-                };
-              }
-
-              return {
-                success: false,
-                error: message,
-              };
-            }
-
-            if (!skillDirStat.isDirectory) {
-              return {
-                success: false,
-                error: `Skill not found: ${parsedName.data}`,
-              };
-            }
-
-            // Prior contents must be captured before removal (refinement inverse).
-            const skillCaptures = await captureRuntimeSkillFiles(config.runtime, skillDir);
-
-            const rmSkillResult = await execBuffered(
-              config.runtime,
-              `rm -rf ${quoteRuntimeProbePath(skillDir)}`,
-              {
-                cwd: skillCtx.workspacePath,
-                timeout: 10,
-              }
-            );
-
-            if (rmSkillResult.exitCode !== 0) {
-              const details = (rmSkillResult.stderr || rmSkillResult.stdout).trim();
-              return {
-                success: false,
-                error: details || `Failed to delete skill directory '${parsedName.data}'`,
-              };
-            }
-
-            if (skillCaptures !== null) {
-              await appendRefinementEventFromTool(config, {
-                kind: "skill",
-                action: { op: "delete-skill", skillName: parsedName.data },
-                inverse: { op: "restore-files", files: skillCaptures },
-                evidence: { toolName: "agent_skill_delete", toolCallId },
-                // project-runtime = SSH/Docker: inverse paths are
-                // runtime-namespace, not applicable to the host filesystem.
-                runtime: "remote",
-              });
-            }
-
-            return {
-              success: true,
-              deleted: "skill",
-            };
-          }
-
           if (filePath == null) {
             return {
               success: false,
@@ -380,10 +402,7 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
               "Skill file"
             );
           } catch (error) {
-            return {
-              success: false,
-              error: getErrorMessage(error),
-            };
+            return deleteFailure(error);
           }
 
           // Prior content must be captured before removal (refinement inverse).
@@ -417,14 +436,15 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             });
           }
 
-          const rmFileResult = await execBuffered(
-            config.runtime,
-            `rm ${quoteRuntimeProbePath(resolvedPath)}`,
-            {
-              cwd: skillCtx.workspacePath,
-              timeout: 10,
-            }
-          );
+
+          const rmCommand =
+            legacyManifestPath == null
+              ? `rm ${quoteRuntimeProbePath(resolvedPath)}`
+              : `rm -f ${quoteRuntimeProbePath(legacyManifestPath)} && rm ${quoteRuntimeProbePath(resolvedPath)}`;
+          const rmFileResult = await execBuffered(config.runtime, rmCommand, {
+            cwd: skillCtx.workspacePath,
+            timeout: 10,
+          });
 
           if (rmFileResult.exitCode !== 0) {
             const details = (rmFileResult.stderr || rmFileResult.stdout).trim();
@@ -459,18 +479,18 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
           };
         }
 
-        const { muxScope } = config;
-        if (!muxScope) {
-          throw new Error("agent_skill_delete requires muxScope");
+        const { xumScope } = config;
+        if (!xumScope) {
+          throw new Error("agent_skill_delete requires xumScope");
         }
 
         const skillsRoot =
-          muxScope.type === "project"
-            ? path.join(muxScope.projectRoot, ".mux", "skills")
-            : path.join(muxScope.muxHome, "skills");
-        // Containment is anchored at workspace root (project) or mux home (global).
+          xumScope.type === "project"
+            ? path.join(xumScope.projectRoot, getCanonicalProjectMetadataRelativePath("skills"))
+            : path.join(xumScope.xumHome, "skills");
+        // Anchor above metadata directories so aliases cannot escape the project or home.
         const containmentRoot =
-          muxScope.type === "project" ? muxScope.projectRoot : muxScope.muxHome;
+          xumScope.type === "project" ? xumScope.projectRoot : xumScope.xumHome;
 
         const skillDir = path.join(skillsRoot, parsedName.data);
 
@@ -486,10 +506,7 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             };
           }
 
-          return {
-            success: false,
-            error: getErrorMessage(error),
-          };
+          return deleteFailure(error);
         }
 
         if (!skillDirStat) {
@@ -506,20 +523,41 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
           };
         }
 
-        const targetMode = target ?? "file";
         if (targetMode === "skill") {
           // Capture → delete → journal run under the per-root mutation lock
           // shared with the rollback engine (targetMutationLocks.ts), so a
           // rollback's verify+apply window can never interleave with this
-          // delete.
+          // delete. Project skills exit through the unified projectSkillDirs
+          // branch above, so this list is [skillDir] in practice — the
+          // fallback shape is kept for parity with upstream's delete set.
+          const dirsToDelete = projectSkillDirs ?? [skillDir];
           return await withTargetMutationLock(
-            muxScope.muxHome,
+            xumScope.xumHome,
             path.resolve(skillsRoot),
             async () => {
-              // Prior contents must be captured before removal (refinement inverse).
-              const skillCaptures = await captureLocalSkillFiles(skillDir);
-              await fsPromises.rm(skillDir, { recursive: true });
-              if (skillCaptures !== null) {
+              // Prior contents must be captured before removal (refinement
+              // inverse) — across every dir the delete removes.
+              let skillCaptures: RefinementFileCapture[] | null = [];
+              for (const dir of dirsToDelete) {
+                if (skillCaptures === null) break;
+                const captured = await captureLocalSkillFiles(dir).catch(() => null);
+                if (captured === null) {
+                  // Missing dirs are fine (force-rm semantics); a dir that
+                  // exists but cannot be captured faithfully skips journaling.
+                  try {
+                    await fsPromises.access(dir);
+                    skillCaptures = null;
+                  } catch {
+                    // Dir absent: nothing to capture for it.
+                  }
+                } else {
+                  skillCaptures.push(...captured);
+                }
+              }
+              await Promise.all(
+                dirsToDelete.map((dir) => fsPromises.rm(dir, { recursive: true, force: true }))
+              );
+              if (skillCaptures !== null && skillCaptures.length > 0) {
                 await appendRefinementEventFromTool(config, {
                   kind: "skill",
                   action: { op: "delete-skill", skillName: parsedName.data },
@@ -548,17 +586,14 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             allowMissingLeaf: true,
           }));
         } catch (error) {
-          return {
-            success: false,
-            error: getErrorMessage(error),
-          };
+          return deleteFailure(error);
         }
 
         // Stat → capture → unlink → journal run under the per-root mutation
         // lock shared with the rollback engine (targetMutationLocks.ts), so a
         // rollback's verify+apply window can never interleave with this delete.
         return await withTargetMutationLock(
-          muxScope.muxHome,
+          xumScope.xumHome,
           path.resolve(skillsRoot),
           async () => {
             let targetStat;
@@ -622,6 +657,12 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
               }
             }
 
+            // Deleting the canonical SKILL.md also removes any legacy-dir
+            // manifest so stale duplicates cannot shadow the delete (upstream
+            // .xum-canonical migration semantics).
+            if (legacyManifestPath != null) {
+              await fsPromises.rm(legacyManifestPath, { force: true });
+            }
             await fsPromises.unlink(targetPath);
 
             if (localFileCapture !== null) {
@@ -640,10 +681,7 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
           }
         );
       } catch (error) {
-        return {
-          success: false,
-          error: `Failed to delete skill: ${getErrorMessage(error)}`,
-        };
+        return deleteFailure(error, "Failed to delete skill: ");
       }
     },
   });

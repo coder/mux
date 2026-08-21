@@ -56,8 +56,10 @@ import {
   clearPendingWorkspaceAiSettings,
   markPendingWorkspaceAiSettings,
 } from "@/browser/utils/workspaceAiSettingsSync";
+import { resolveWorkspaceAiSettingsForAgent } from "@/browser/utils/workspaceModeAi";
 import {
   getModelKey,
+  getReasoningModeKey,
   getThinkingLevelKey,
   getWorkspaceAISettingsByAgentKey,
   getInputKey,
@@ -162,11 +164,7 @@ import type { AgentSkillDescriptor } from "@/common/types/agentSkill";
 import type { MCPPromptDescriptor } from "@/common/orpc/schemas/mcp";
 import type { PluginSlashCommandDescriptor } from "@/common/orpc/schemas/agentPlugins";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
-import {
-  coerceThinkingLevel,
-  type OpenAIReasoningMode,
-  type ThinkingLevel,
-} from "@/common/types/thinking";
+import { type OpenAIReasoningMode, type ThinkingLevel } from "@/common/types/thinking";
 import {
   DEFAULT_RUNTIME_ENABLEMENT,
   normalizeRuntimeEnablement,
@@ -769,7 +767,7 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
   const preEditReviewsRef = useRef<ReviewNoteDataForDisplay[] | null>(null);
   const { open } = useSettings();
   const { selectedWorkspace, beginWorkspaceCreation } = useWorkspaceContext();
-  const { agentId, currentAgent } = useAgent();
+  const { agentId, currentAgent, agents } = useAgent();
 
   // Use current agent's uiColor, or neutral border until agents load
   const agentColor = currentAgent?.uiColor ?? "var(--color-border-light)";
@@ -1294,16 +1292,27 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     prevCreationScopeIdRef.current = scopeId;
 
     const existingModel = readPersistedState<string>(modelKey, fallbackModel);
-    const candidateModel = agentAiDefaults[normalizedAgentId]?.modelString ?? existingModel;
-    const resolvedModel =
-      typeof candidateModel === "string" && candidateModel.trim().length > 0
-        ? candidateModel
-        : fallbackModel;
-
     const existingThinking = readPersistedState<ThinkingLevel>(thinkingKey, "off");
-    const candidateThinking =
-      agentAiDefaults[normalizedAgentId]?.thinkingLevel ?? existingThinking ?? "off";
-    const resolvedThinking = coerceThinkingLevel(candidateThinking) ?? "off";
+    // Configured defaults (direct or base-chain, field-wise) must reach the
+    // first turn of a new workspace too, not just post-creation agent syncs:
+    // a custom agent inheriting model/thinking/pro from its base would
+    // otherwise send the first prompt with the ambient model and Pro gated off
+    // until WorkspaceModeAISync corrects the workspace.
+    const reasoningKey = getReasoningModeKey(scopeId);
+    const existingReasoning = readPersistedState<OpenAIReasoningMode>(reasoningKey, "standard");
+    const {
+      resolvedModel,
+      resolvedThinking,
+      resolvedReasoningMode: resolvedReasoning,
+    } = resolveWorkspaceAiSettingsForAgent({
+      agentId: normalizedAgentId,
+      agentAiDefaults,
+      fallbackModel,
+      existingModel,
+      existingThinking,
+      existingReasoningMode: existingReasoning,
+      agentBaseById: new Map(agents.map((agent) => [agent.id, agent.base])),
+    });
 
     if (existingModel !== resolvedModel) {
       setWorkspaceModelWithOrigin(scopeId, resolvedModel, isExplicitAgentSwitch ? "agent" : "sync");
@@ -1312,7 +1321,11 @@ const ChatInputInner: React.FC<ChatInputProps> = (props) => {
     if (existingThinking !== resolvedThinking) {
       updatePersistedState(thinkingKey, resolvedThinking);
     }
-  }, [agentAiDefaults, agentId, creationParentProjectPath, defaultModel, variant]);
+
+    if (existingReasoning !== resolvedReasoning) {
+      updatePersistedState(reasoningKey, resolvedReasoning);
+    }
+  }, [agentAiDefaults, agentId, agents, creationParentProjectPath, defaultModel, variant]);
 
   const chatDockColumnWidthClass = useChatDockColumnWidthClass();
 

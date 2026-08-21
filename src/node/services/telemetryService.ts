@@ -133,7 +133,7 @@ export class TelemetryService {
   private client: PostHog | null = null;
   private distinctId: string | null = null;
   private featureFlagVariants: Record<string, string | boolean> = {};
-  private readonly muxHome: string;
+  private readonly xumHome: string;
 
   /**
    * Check if telemetry is enabled.
@@ -180,8 +180,8 @@ export class TelemetryService {
 
     this.featureFlagVariants[key] = variant;
   }
-  constructor(muxHome?: string) {
-    this.muxHome = muxHome ?? getXumHome();
+  constructor(xumHome?: string) {
+    this.xumHome = xumHome ?? getXumHome();
   }
 
   /**
@@ -224,7 +224,7 @@ export class TelemetryService {
    * Persisted in ~/.xum/telemetry_id for cross-session identity.
    */
   private async loadOrCreateDistinctId(): Promise<string> {
-    const idPath = path.join(this.muxHome, TELEMETRY_ID_FILE);
+    const idPath = path.join(this.xumHome, TELEMETRY_ID_FILE);
 
     try {
       // Try to read existing ID
@@ -241,7 +241,7 @@ export class TelemetryService {
 
     try {
       // Ensure directory exists
-      await fs.mkdir(this.muxHome, { recursive: true });
+      await fs.mkdir(this.xumHome, { recursive: true });
       await fs.writeFile(idPath, newId, "utf-8");
     } catch {
       // Silently ignore persistence failures

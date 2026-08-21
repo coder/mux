@@ -100,6 +100,33 @@ For advanced options not exposed in the UI, edit `~/.xum/providers.jsonc` direct
 }
 ```
 
+### OpenAI wire format
+
+The built-in `openai` provider supports two wire formats:
+
+| Value             | Description                                                                                                                                  |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `responses`       | Uses the OpenAI Responses API. This is the default and supports current OpenAI and Codex features.                                           |
+| `chatCompletions` | Uses `/v1/chat/completions`. Use this for OpenAI-API-shaped gateways that do not expose `/v1/responses`, such as Azure Government endpoints. |
+
+Set the format in **Settings → Providers → OpenAI → Wire format**, or in
+`~/.xum/providers.jsonc`:
+
+```jsonc
+{
+  "openai": {
+    "baseUrl": "https://your-openai-gateway.example/v1",
+    "wireFormat": "chatCompletions",
+  },
+}
+```
+
+Like custom providers, a built-in `openai` `baseUrl` without a path gains `/v1` automatically;
+add a trailing slash to keep requests at the origin root.
+
+For llama.cpp, vLLM, LM Studio, and multiple local endpoints, prefer named custom
+`providerType: "openai-compatible"` providers instead of changing the built-in OpenAI provider.
+
 ### Custom OpenAI-compatible providers
 
 Custom OpenAI-compatible providers let you keep the built-in `openai` provider for OpenAI and
@@ -119,14 +146,20 @@ Add each endpoint as a top-level provider in `~/.xum/providers.jsonc`:
 }
 ```
 
-| Option         | Required | Description                                                                           |
-| -------------- | -------- | ------------------------------------------------------------------------------------- |
-| `providerType` | Yes      | Must be `"openai-compatible"` for custom OpenAI-compatible providers.                 |
-| `baseUrl`      | Yes      | The OpenAI-compatible API base URL. Most servers require the `/v1` suffix.            |
-| `apiKey`       | No       | Optional API key. Keyless local servers do not need a placeholder key.                |
-| `apiKeyFile`   | No       | Path to a file containing the API key. Supports `~` for home directory.               |
-| `displayName`  | No       | Optional UI label shown instead of the provider ID.                                   |
-| `models`       | No       | Discovery list shown in the model picker. You can still type any model ID at runtime. |
+| Option         | Required | Description                                                                                                                                               |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `providerType` | Yes      | Must be `"openai-compatible"` for custom OpenAI-compatible providers.                                                                                     |
+| `baseUrl`      | Yes      | The OpenAI-compatible API base URL. Xum appends `/v1` when the URL has no path; a trailing slash (`http://host:8080/`) keeps requests at the origin root. |
+| `apiKey`       | No       | Optional API key. Keyless local servers do not need a placeholder key.                                                                                    |
+| `apiKeyFile`   | No       | Path to a file containing the API key. Supports `~` for home directory.                                                                                   |
+| `displayName`  | No       | Optional UI label shown instead of the provider ID.                                                                                                       |
+| `models`       | No       | Discovery list shown in the model picker. You can still type any model ID at runtime.                                                                     |
+
+Custom providers always use Chat Completions. If the configured `baseUrl` has no path, such as
+`http://localhost:8080`, Xum appends `/v1`; explicit paths remain unchanged. For servers that
+serve the API at the origin root, add a trailing slash (`http://localhost:8080/`) to skip the
+`/v1` suffix. To configure a
+single gateway through the built-in `openai` provider instead, see [OpenAI wire format](#openai-wire-format).
 
 Provider IDs must use lowercase letters, digits, `_`, and `-`, and must start with a letter or digit. They must not collide with
 built-in provider names, and cannot contain `.`, `:`, `/`, or whitespace. Good examples are

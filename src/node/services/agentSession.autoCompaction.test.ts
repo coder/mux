@@ -131,6 +131,51 @@ describe("AgentSession on-send auto-compaction snapshot deferral", () => {
     session.dispose();
   });
 
+  test("tracks a compaction request when a synthetic snapshot follows it", async () => {
+    const model = "openai:gpt-4o";
+    const { session } = await createSessionHarness({
+      workspaceId: "ws-auto-compaction-request-correlation",
+    });
+    const compactionMetadata = {
+      type: "compaction-request" as const,
+      rawCommand: "/compact",
+      parsed: {},
+      source: "auto-compaction" as const,
+    };
+    const compactionRequest = createMuxMessage(
+      "compaction-request",
+      "user",
+      "Summarize the conversation",
+      {
+        synthetic: true,
+        muxMetadata: compactionMetadata,
+      }
+    );
+    const snapshot = createMuxMessage("file-change", "user", "<file-change />", {
+      synthetic: true,
+    });
+    const internals = session as unknown as {
+      resolveCompactionRequest: (
+        history: MuxMessage[],
+        modelString: string,
+        options: SendMessageOptions
+      ) => { id: string; source?: string } | undefined;
+    };
+
+    const request = internals.resolveCompactionRequest([compactionRequest, snapshot], model, {
+      model,
+      agentId: "compact",
+      muxMetadata: compactionMetadata,
+    });
+
+    expect(request).toMatchObject({
+      id: compactionRequest.id,
+      source: "auto-compaction",
+    });
+
+    session.dispose();
+  });
+
   test("does not materialize skill snapshots (or run their directives) on deferred on-send compaction turns", async () => {
     const workspaceId = "ws-auto-compaction-skill-snapshot-deferral";
 

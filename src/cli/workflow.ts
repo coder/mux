@@ -18,7 +18,8 @@ import {
   type ParsedThinkingInput,
 } from "@/common/types/thinking";
 import assert from "@/common/utils/assert";
-import { resolveModelAlias, defaultModel } from "@/common/utils/ai/models";
+import { defaultModel } from "@/common/utils/ai/models";
+import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
 import { getErrorMessage } from "@/common/utils/errors";
 import { resolveThinkingInput } from "@/common/utils/thinking/policy";
 import { Config } from "@/node/config";
@@ -452,7 +453,7 @@ function createWorkflowService(input: {
           workspaceId: input.ctx.workspaceId,
           cwd: input.ctx.workspacePath,
           runtime,
-          runtimeTempDir: runtime.normalizePath(".mux/tmp", input.ctx.workspacePath),
+          runtimeTempDir: runtime.normalizePath(".xum/tmp", input.ctx.workspacePath),
           workspaceSessionDir,
           trusted: input.ctx.projectTrusted,
         },
@@ -483,7 +484,14 @@ async function runWorkflow(scriptPath: string, options: WorkflowCLIOptions): Pro
     argsFile: options.argsFile,
     argsStdin: options.argsStdin,
   });
-  const model = resolveModelAlias(options.model);
+  // Shared normalization (alias resolution + gateway migration + format
+  // validation); an unrecognized -m value fails up front.
+  const model = normalizeModelInput(options.model).model;
+  if (model == null) {
+    throw new Error(
+      `Invalid model "${options.model}". Expected "provider:model-id" or a known alias`
+    );
+  }
   const thinkingLevel = resolveThinkingInput(parseThinkingLevel(options.thinking), model);
   const suppressHuman = options.json === true || options.quiet === true;
   const writeLine = (line = "") => {

@@ -27,6 +27,7 @@ import {
 import type { TodoItem } from "@/common/types/tools";
 import { buildStagedAttachmentNotice } from "@/browser/features/ChatInput/stagedAttachments";
 import { mergeTimelineEvents, WorkspaceStore } from "./WorkspaceStore";
+import { createControllableAsyncIterable } from "@/browser/testUtils";
 import type { ResponseCompleteEvent } from "@/browser/utils/messages/responseCompletionMetadata";
 
 interface LoadMoreResponse {
@@ -98,6 +99,16 @@ const mockTerminalActivitySubscribe = mock(async function* (
   await waitForAbortSignal(options?.signal);
 });
 
+let providerConfigChanges = createControllableAsyncIterable<void>();
+const mockGetProvidersConfig = mock(() => Promise.resolve({}));
+const mockResumeStream = mock(() => Promise.resolve({ success: true, data: { started: true } }));
+const mockSendMessage = mock(() => Promise.resolve({ success: true, data: undefined }));
+const mockOnProvidersConfigChanged = mock((_input?: void, options?: { signal?: AbortSignal }) => {
+  const subscription = providerConfigChanges;
+  options?.signal?.addEventListener("abort", () => subscription.close(), { once: true });
+  return Promise.resolve(subscription.iterable);
+});
+
 const mockSetAutoCompactionThreshold = mock(() =>
   Promise.resolve({ success: true, data: undefined })
 );
@@ -116,11 +127,17 @@ const mockClient = {
     },
     setAutoCompactionThreshold: mockSetAutoCompactionThreshold,
     getStartupAutoRetryModel: mockGetStartupAutoRetryModel,
+    resumeStream: mockResumeStream,
+    sendMessage: mockSendMessage,
   },
   terminal: {
     activity: {
       subscribe: mockTerminalActivitySubscribe,
     },
+  },
+  providers: {
+    getConfig: mockGetProvidersConfig,
+    onConfigChanged: mockOnProvidersConfigChanged,
   },
 };
 
@@ -764,6 +781,11 @@ describe("WorkspaceStore", () => {
     mockTerminalActivitySubscribe.mockClear();
     mockSetAutoCompactionThreshold.mockClear();
     mockGetStartupAutoRetryModel.mockClear();
+    mockGetProvidersConfig.mockClear();
+    mockOnProvidersConfigChanged.mockClear();
+    mockResumeStream.mockClear();
+    mockSendMessage.mockClear();
+    providerConfigChanges = createControllableAsyncIterable<void>();
     global.window.localStorage?.clear?.();
     mockHistoryLoadMore.mockResolvedValue({
       messages: [],
@@ -804,6 +826,58 @@ describe("WorkspaceStore", () => {
 
   afterEach(() => {
     store.dispose();
+  });
+
+  describe("provider config changes", () => {
+    it("clears provider-fixable abandoned retry state without resuming the stream", async () => {
+      const workspaceId = "provider-config-clears-authentication";
+      mockChatScript(
+        [caughtUpEvent(), { type: "auto-retry-abandoned", reason: "authentication" }],
+        { keepOpen: true }
+      );
+      createAndAddWorkspace(store, workspaceId);
+
+      expect(
+        await waitUntil(
+          () =>
+            store.getWorkspaceState(workspaceId).autoRetryStatus?.type === "auto-retry-abandoned"
+        )
+      ).toBe(true);
+
+      providerConfigChanges.push(undefined);
+
+      expect(
+        await waitUntil(() => store.getWorkspaceState(workspaceId).autoRetryStatus === null)
+      ).toBe(true);
+      expect(mockResumeStream).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    });
+
+    it("preserves abandoned retry state that provider settings cannot fix", async () => {
+      const workspaceId = "provider-config-keeps-context-error";
+      mockChatScript(
+        [caughtUpEvent(), { type: "auto-retry-abandoned", reason: "context_exceeded" }],
+        { keepOpen: true }
+      );
+      createAndAddWorkspace(store, workspaceId);
+
+      expect(
+        await waitUntil(
+          () =>
+            store.getWorkspaceState(workspaceId).autoRetryStatus?.type === "auto-retry-abandoned"
+        )
+      ).toBe(true);
+
+      providerConfigChanges.push(undefined);
+      await tick();
+
+      expect(store.getWorkspaceState(workspaceId).autoRetryStatus).toEqual({
+        type: "auto-retry-abandoned",
+        reason: "context_exceeded",
+      });
+      expect(mockResumeStream).not.toHaveBeenCalled();
+      expect(mockSendMessage).not.toHaveBeenCalled();
+    });
   });
 
   describe("pinned todo auto-collapse", () => {

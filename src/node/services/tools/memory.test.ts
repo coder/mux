@@ -25,7 +25,7 @@ function pathExists(target: string): Promise<boolean> {
 }
 
 interface MemoryToolFixture extends Disposable {
-  muxHome: string;
+  xumHome: string;
   checkout: string;
   config: ToolConfiguration;
   tool: Tool;
@@ -33,9 +33,9 @@ interface MemoryToolFixture extends Disposable {
 
 const FIXTURE_PROJECT_PATH = "/stable/project-id";
 
-function projectMemoryPath(muxHome: string, relPath: string): string {
+function projectMemoryPath(xumHome: string, relPath: string): string {
   return path.join(
-    muxHome,
+    xumHome,
     "memory",
     "project",
     projectMemoryDirName(FIXTURE_PROJECT_PATH),
@@ -47,21 +47,21 @@ async function createFixture(options?: {
   memoryAccess?: MemoryScopeAccess;
 }): Promise<MemoryToolFixture> {
   const tempDir = new TestTempDir("test-memory-tool");
-  const muxHome = path.join(tempDir.path, "mux-home");
+  const xumHome = path.join(tempDir.path, "mux-home");
   const checkout = path.join(tempDir.path, "checkout");
-  await fsPromises.mkdir(muxHome, { recursive: true });
+  await fsPromises.mkdir(xumHome, { recursive: true });
   await fsPromises.mkdir(checkout, { recursive: true });
   const config = createTestToolConfig(checkout, { workspaceId: "ws-tool" });
   config.workspaceProjectPath = FIXTURE_PROJECT_PATH;
   config.runtime = new LocalRuntime(checkout);
-  config.memoryService = new MemoryService(new Config(muxHome), new MemoryMetaService(muxHome));
+  config.memoryService = new MemoryService(new Config(xumHome), new MemoryMetaService(xumHome));
   config.memoryAccess = options?.memoryAccess ?? {
     global: "readwrite",
     project: "readwrite",
     workspace: "readwrite",
   };
   return {
-    muxHome,
+    xumHome,
     checkout,
     config,
     tool: createMemoryTool(config),
@@ -88,7 +88,7 @@ describe("memory tool sub-project workspaces", () => {
       file_text: "root-anchored",
     });
     expect(result.success).toBe(true);
-    expect(await pathExists(projectMemoryPath(fixture.muxHome, "facts.md"))).toBe(true);
+    expect(await pathExists(projectMemoryPath(fixture.xumHome, "facts.md"))).toBe(true);
     expect(await pathExists(path.join(fixture.checkout, ".mux", "memory", "facts.md"))).toBe(false);
     expect(await pathExists(path.join(subProjectCwd, ".mux", "memory", "facts.md"))).toBe(false);
   });
@@ -116,7 +116,7 @@ describe("memory tool multi-project workspaces", () => {
       success: false,
       error: "Project memory is unavailable: no project is associated with this session",
     });
-    expect(await pathExists(path.join(fixture.muxHome, "memory", "project"))).toBe(false);
+    expect(await pathExists(path.join(fixture.xumHome, "memory", "project"))).toBe(false);
   });
 });
 
@@ -136,7 +136,7 @@ describe("memory tool", () => {
         file_text: "line one",
       });
       expect(created.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "notes.md"))).toBe(
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "global", "notes.md"))).toBe(
         true
       );
 
@@ -174,7 +174,7 @@ describe("memory tool", () => {
         path: "/memories/global/renamed.md",
       });
       expect(deleted.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "renamed.md"))).toBe(
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "global", "renamed.md"))).toBe(
         false
       );
     });
@@ -416,7 +416,7 @@ describe("memory tool refinement journal", () => {
     expect(result.success).toBe(true);
 
     // Same session-dir resolution the service uses (Config path derivation is pure).
-    const sessionDir = new Config(fixture.muxHome).getSessionDir("ws-tool");
+    const sessionDir = new Config(fixture.xumHome).getSessionDir("ws-tool");
     const events = await readRefinementEvents(sessionDir);
     expect(events).toHaveLength(1);
     const evidence = RefinementEvidenceSchema.parse(events[0].data.evidence);

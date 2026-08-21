@@ -3,7 +3,7 @@
  *
  * Important: These are wire/storage types only.
  * - Do NOT send access tokens or client secrets to the browser.
- * - Never persist tokens into project-local .mux/mcp.jsonc.
+ * - Never persist tokens into project-local .xum/mcp.jsonc.
  */
 
 import type { MCPServerTransport } from "./mcp";

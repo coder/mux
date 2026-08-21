@@ -1,13 +1,13 @@
-import * as fs from "fs";
-import * as fsPromises from "fs/promises";
-import * as path from "path";
 import type {
   ExecOptions,
   ExecStream,
   InitLogger,
+  Runtime,
   WorkspaceInitParams,
   WorkspaceInitResult,
 } from "./Runtime";
+import { shellQuote } from "@/common/utils/shell";
+import { execBuffered } from "@/node/utils/runtime/helpers";
 import {
   isWorktreeRuntime,
   isSSHRuntime,
@@ -17,7 +17,10 @@ import {
   type RuntimeMode,
 } from "@/common/types/runtime";
 
-import { withLegacyMuxEnvironmentAliases } from "@/common/compat/legacyMux";
+import {
+  listProjectMetadataRelativePaths,
+  withLegacyMuxEnvironmentAliases,
+} from "@/common/compat/legacyMux";
 import { log } from "@/node/services/log";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import { assert } from "@/common/utils/assert";
@@ -35,40 +38,32 @@ export function shouldSkipInitHook(
   initLogger: InitLogger
 ): boolean {
   if (params.skipInitHook) {
-    initLogger.logStep("Skipping .mux/init hook (disabled for this task)");
+    initLogger.logStep("Skipping .xum/init hook (disabled for this task)");
     return true;
   }
   if (!params.trusted) {
     log.debug(
-      "Skipping .mux/init hook (project not trusted — should not reach here in normal flow)"
+      "Skipping .xum/init hook (project not trusted — should not reach here in normal flow)"
     );
-    initLogger.logStep("Skipping .mux/init hook (project not trusted)");
+    initLogger.logStep("Skipping .xum/init hook (project not trusted)");
     return true;
   }
   return false;
 }
 
-/**
- * Check if .mux/init hook exists and is executable
- * @param projectPath - Path to the project root
- * @returns true if hook exists and is executable, false otherwise
- */
-export async function checkInitHookExists(projectPath: string): Promise<boolean> {
-  const hookPath = path.join(projectPath, ".mux", "init");
-
-  try {
-    await fsPromises.access(hookPath, fs.constants.X_OK);
-    return true;
-  } catch {
-    return false;
+/** Resolve the preferred executable init hook inside the target checkout. */
+export async function findInitHookRelativePath(
+  runtime: Runtime,
+  workspacePath: string
+): Promise<string | null> {
+  for (const relativePath of listProjectMetadataRelativePaths("init")) {
+    const probe = await execBuffered(runtime, `test -x ${shellQuote(relativePath)}`, {
+      cwd: workspacePath,
+      timeout: 5,
+    });
+    if (probe.exitCode === 0) return relativePath;
   }
-}
-
-/**
- * Get the init hook path for a project
- */
-export function getInitHookPath(projectPath: string): string {
-  return path.join(projectPath, ".mux", "init");
+  return null;
 }
 
 /**
@@ -199,9 +194,10 @@ export interface InitHookRuntime {
 export interface WorkspaceInitHookOptions {
   params: WorkspaceInitParams;
   runtimeType: RuntimeMode;
-  hookCheckPath: string;
+  findHookRelativePath: () => Promise<string | null>;
   beforeHook?: () => Promise<void>;
   runHook: (args: {
+    hookRelativePath: string;
     xumEnv: Record<string, string>;
     initLogger: InitLogger;
     abortSignal?: AbortSignal;
@@ -209,13 +205,13 @@ export interface WorkspaceInitHookOptions {
 }
 
 /**
- * Shared initWorkspace flow for runtimes whose init phase is "optional .mux/init hook"
+ * Shared initWorkspace flow for runtimes whose init phase is "optional .xum/init hook"
  * plus any runtime-specific preparation that must happen before hook gating.
  */
 export async function runWorkspaceInitHook(
   options: WorkspaceInitHookOptions
 ): Promise<WorkspaceInitResult> {
-  const { params, runtimeType, hookCheckPath, beforeHook, runHook } = options;
+  const { params, runtimeType, findHookRelativePath, beforeHook, runHook } = options;
   const { projectPath, branchName, initLogger, abortSignal, env } = params;
 
   try {
@@ -228,15 +224,15 @@ export async function runWorkspaceInitHook(
       return { success: true };
     }
 
-    const hookExists = await checkInitHookExists(hookCheckPath);
-    if (!hookExists) {
+    const hookRelativePath = await findHookRelativePath();
+    if (hookRelativePath == null) {
       initLogger.logComplete(0);
       return { success: true };
     }
 
     initLogger.enterHookPhase?.();
     const xumEnv = { ...env, ...getXumEnv(projectPath, runtimeType, branchName) };
-    await runHook({ xumEnv, initLogger, abortSignal });
+    await runHook({ hookRelativePath, xumEnv, initLogger, abortSignal });
     return { success: true };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : String(error);
@@ -250,11 +246,11 @@ export async function runWorkspaceInitHook(
 }
 
 /**
- * Run .mux/init hook on a runtime and stream output to logger.
+ * Run .xum/init hook on a runtime and stream output to logger.
  * Shared implementation used by SSH and Docker runtimes.
  *
  * @param runtime - Runtime instance with exec capability
- * @param hookPath - Full path to the init hook (e.g., "/src/.mux/init" or "~/mux/project/workspace/.mux/init")
+ * @param hookPath - Full path to the init hook (e.g., "/src/.xum/init" or "~/mux/project/workspace/.xum/init")
  * @param workspacePath - Working directory for the hook
  * @param xumEnv - Canonical XUM_ variables plus legacy MUX_ aliases
  * @param initLogger - Logger for streaming output

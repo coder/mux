@@ -4,7 +4,9 @@ import {
   hasInterruptedStream,
   isEligibleForAutoRetry,
   isNonRetryableSendError,
+  isNonRetryableStreamError,
   isPreTokenInterruptedUserTurn,
+  isProviderConfigFixableError,
   PENDING_STREAM_START_GRACE_PERIOD_MS,
 } from "./retryEligibility";
 import type { DisplayedMessage } from "@/common/types/message";
@@ -445,6 +447,41 @@ describe("isEligibleForAutoRetry", () => {
       expect(isEligibleForAutoRetry(messages, justSent)).toBe(false);
     });
   });
+});
+
+describe("isProviderConfigFixableError", () => {
+  const fixableStreamErrors = ["authentication", "quota"];
+  const fixableSendErrors = ["api_key_not_found", "oauth_not_connected", "provider_disabled"];
+
+  for (const type of fixableStreamErrors) {
+    it(`flags non-retryable stream error ${type} as config-fixable`, () => {
+      expect(isNonRetryableStreamError({ type })).toBe(true);
+      expect(isProviderConfigFixableError(type)).toBe(true);
+    });
+  }
+
+  for (const type of fixableSendErrors) {
+    it(`flags non-retryable send error ${type} as config-fixable`, () => {
+      expect(isNonRetryableSendError({ type })).toBe(true);
+      expect(isProviderConfigFixableError(type)).toBe(true);
+    });
+  }
+
+  for (const type of [
+    "network",
+    "server_error",
+    "rate_limit",
+    "unknown",
+    "context_exceeded",
+    "model_refusal",
+    "aborted",
+    "runtime_not_ready",
+    "model_not_found",
+  ]) {
+    it(`does not flag ${type} as config-fixable`, () => {
+      expect(isProviderConfigFixableError(type)).toBe(false);
+    });
+  }
 });
 
 describe("isNonRetryableSendError", () => {

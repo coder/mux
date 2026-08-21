@@ -20,7 +20,7 @@ description: Agent instructions for AI assistants working on the Xum codebase
 - Core files: `src/main.ts`, `src/preload.ts`, `src/App.tsx`, `src/config.ts`.
 - Up-to-date model names: see `src/common/knownModels.ts` for current provider model IDs.
 - Persistent data: `~/.xum/config.json`, `~/.xum/src/<project>/<branch>` (worktrees), `~/.xum/sessions/<workspace>/chat.jsonl`.
-- Rename compatibility is centralized in `src/common/compat/legacyMux.ts` and `src/node/compat/xumTransition.ts`; do not add scattered `mux` fallbacks. Project-local `.mux/`, stable external IDs, and documented aliases remain compatibility contracts.
+- Rename compatibility is centralized in `src/common/compat/legacyMux.ts` and `src/node/compat/xumTransition.ts`; do not add scattered `mux` fallbacks. Project-local `.xum/` is canonical, `.mux/` is a read fallback, and stable external IDs remain compatibility contracts.
 
 ## Documentation Rules
 
@@ -49,7 +49,7 @@ description: Agent instructions for AI assistants working on the Xum codebase
 - Makefile is source of truth (new commands land there, not `package.json`).
 - Primary targets: `make dev|start|build|lint|lint-fix|fmt|fmt-check|typecheck|test|test-integration|clean|help`.
 - Full `static-check` includes docs link checking via `mintlify broken-links`.
-- `.mux/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
+- `.xum/tool_env` is sourced before every `bash` tool call. Use `run_and_report <step_name> <command...>` when running multiple validation steps in one call.
 - Do not pipe/redirect/wrap `run_and_report` output; keep helper markers intact so Xum can show clean step status.
 - `./scripts/wait_pr_ready.sh <pr_number>` is the preferred tail-end helper after local validation and after you've exhausted useful local work.
 - `./scripts/wait_pr_checks.sh <pr_number>` is the checks watcher; `wait_pr_ready.sh` must execute `wait_pr_checks.sh --once` on each loop iteration.

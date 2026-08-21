@@ -209,6 +209,49 @@ describe("CompactionHandler", () => {
       expect(result).toBe(false);
     });
 
+    it("uses the correlated compaction request when a synthetic snapshot follows it", async () => {
+      const followUpContent = {
+        text: "Continue",
+        model: "openai:gpt-4o",
+        agentId: "exec",
+      };
+      const compactionRequest = createMuxMessage(
+        "correlated-compaction-request",
+        "user",
+        "Please summarize the conversation",
+        {
+          synthetic: true,
+          muxMetadata: {
+            type: "compaction-request",
+            rawCommand: "/compact",
+            parsed: { followUpContent },
+            source: "auto-compaction",
+          },
+        }
+      );
+      const snapshot = createMuxMessage("file-change-snapshot", "user", "<file-change />", {
+        synthetic: true,
+      });
+      await seedHistory(compactionRequest, snapshot);
+
+      const handled = await handler.handleCompletion(
+        createStreamEndEvent("Compacted context"),
+        compactionRequest.id
+      );
+
+      expect(handled).toBe(true);
+      const history = await historyService.getHistoryFromLatestBoundary(workspaceId);
+      expect(history.success).toBe(true);
+      if (!history.success) {
+        throw new Error(history.error);
+      }
+      expect(history.data).toHaveLength(1);
+      expect(history.data[0]?.metadata?.muxMetadata).toEqual({
+        type: "compaction-summary",
+        pendingFollowUp: followUpContent,
+      });
+    });
+
     it("reports the latest durable context boundary sequence in completion metadata", async () => {
       const onCompactionComplete = mock((_metadata: CompactionCompletionMetadata) => undefined);
       handler = new CompactionHandler({

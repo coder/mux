@@ -118,8 +118,8 @@ async function main(): Promise<void> {
   // serviceContainer.initialize() resumes queued/running tasks (via TaskService),
   // so we must fail fast here to avoid orphaned side effects when another server
   // already holds the lock. ServerService.startServer() re-checks as defense-in-depth.
-  const muxHome = getXumHome();
-  const earlyLockfile = new ServerLockfile(muxHome);
+  const xumHome = getXumHome();
+  const earlyLockfile = new ServerLockfile(xumHome);
   const existing = await earlyLockfile.read();
   if (existing) {
     console.error(`Error: xum API server is already running at ${existing.baseUrl}`);
@@ -152,7 +152,7 @@ async function main(): Promise<void> {
 
   // Start server via ServerService (handles lockfile, mDNS, network URLs)
   const serverInfo = await serviceContainer.serverService.startServer({
-    muxHome: serviceContainer.config.rootDir,
+    xumHome: serviceContainer.config.rootDir,
     context,
     host: HOST,
     port: PORT,

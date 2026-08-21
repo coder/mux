@@ -1161,7 +1161,7 @@ describe("RefineService", () => {
 
     const skillFile = path.join(
       fixture.workspacePath,
-      ".mux",
+      ".xum",
       "skills",
       "distilled-lesson",
       "SKILL.md"

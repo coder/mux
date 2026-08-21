@@ -141,7 +141,7 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   // merged into listings; without an ExperimentsService the provider is inert.
   const mcpConfigService = new MCPConfigService(mcpConfig, {
     agentPluginsMcpProvider: createAgentPluginsMcpProvider({
-      muxHome: mcpConfig.rootDir,
+      xumHome: mcpConfig.rootDir,
       isEnabled: () =>
         opts.experimentsService?.isExperimentEnabled(EXPERIMENT_IDS.AGENT_PLUGINS) === true,
     }),

@@ -18,8 +18,7 @@ import * as yaml from "yaml";
 
 const ARGS = new Set(process.argv.slice(2));
 const MODE = ARGS.has("check") ? "check" : "write";
-const SYNC_XUM_DOCS_SKILL =
-  ARGS.has("--sync-xum-docs-skill") || ARGS.has("--sync-mux-docs-skill");
+const SYNC_XUM_DOCS_SKILL = ARGS.has("--sync-xum-docs-skill");
 
 const PROJECT_ROOT = path.join(import.meta.dir, "..");
 const BUILTIN_SKILLS_DIR = path.join(PROJECT_ROOT, "src", "node", "builtinSkills");

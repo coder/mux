@@ -2,7 +2,14 @@ import { describe, it, expect } from "bun:test";
 import * as fsPromises from "fs/promises";
 import * as os from "os";
 import * as path from "path";
-import { LineBuffer, createLineBufferedLoggers, getXumEnv, runWorkspaceInitHook } from "./initHook";
+import { LocalRuntime } from "./LocalRuntime";
+import {
+  LineBuffer,
+  createLineBufferedLoggers,
+  findInitHookRelativePath,
+  getXumEnv,
+  runWorkspaceInitHook,
+} from "./initHook";
 import type { InitLogger, WorkspaceInitParams } from "./Runtime";
 
 describe("LineBuffer", () => {
@@ -144,6 +151,28 @@ function createWorkspaceInitParams(
   };
 }
 
+describe("findInitHookRelativePath", () => {
+  it("prefers .xum/init and falls back to .mux/init", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "xum-init-path-"));
+    try {
+      await fsPromises.mkdir(path.join(tempRoot, ".mux"));
+      await fsPromises.writeFile(path.join(tempRoot, ".mux", "init"), "#!/bin/sh\n", {
+        mode: 0o755,
+      });
+      const runtime = new LocalRuntime(tempRoot);
+      expect(await findInitHookRelativePath(runtime, tempRoot)).toBe(".mux/init");
+
+      await fsPromises.mkdir(path.join(tempRoot, ".xum"));
+      await fsPromises.writeFile(path.join(tempRoot, ".xum", "init"), "#!/bin/sh\n", {
+        mode: 0o755,
+      });
+      expect(await findInitHookRelativePath(runtime, tempRoot)).toBe(".xum/init");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("runWorkspaceInitHook", () => {
   it("runs beforeHook even when skipInitHook disables the repo hook", async () => {
     const { logger, steps, completions } = createMockInitLogger();
@@ -152,7 +181,7 @@ describe("runWorkspaceInitHook", () => {
     const result = await runWorkspaceInitHook({
       params: createWorkspaceInitParams(logger, { skipInitHook: true }),
       runtimeType: "ssh",
-      hookCheckPath: "/project",
+      findHookRelativePath: () => Promise.resolve(null),
       beforeHook: () => {
         order.push("beforeHook");
         return Promise.resolve();
@@ -165,39 +194,46 @@ describe("runWorkspaceInitHook", () => {
 
     expect(result).toEqual({ success: true });
     expect(order).toEqual(["beforeHook"]);
-    expect(steps).toContain("Skipping .mux/init hook (disabled for this task)");
+    expect(steps).toContain("Skipping .xum/init hook (disabled for this task)");
     expect(completions).toEqual([0]);
   });
 
-  it("runs the hook with MUX env when .mux/init exists", async () => {
-    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-init-hook-"));
-    const hookRoot = path.join(tempRoot, "repo");
-    await fsPromises.mkdir(path.join(hookRoot, ".mux"), { recursive: true });
-    await fsPromises.writeFile(path.join(hookRoot, ".mux", "init"), "#!/bin/sh\nexit 0\n", {
+  it("resolves the hook in the target checkout before passing MUX env", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "xum-init-hook-"));
+    const projectRoot = path.join(tempRoot, "project");
+    const workspaceRoot = path.join(tempRoot, "workspace");
+    await fsPromises.mkdir(path.join(projectRoot, ".xum"), { recursive: true });
+    await fsPromises.writeFile(path.join(projectRoot, ".xum", "init"), "#!/bin/sh\n", {
+      mode: 0o755,
+    });
+    await fsPromises.mkdir(path.join(workspaceRoot, ".mux"), { recursive: true });
+    await fsPromises.writeFile(path.join(workspaceRoot, ".mux", "init"), "#!/bin/sh\n", {
       mode: 0o755,
     });
 
     const { logger, completions } = createMockInitLogger();
-    const calls: Array<{ xumEnv: Record<string, string>; abortSignal?: AbortSignal }> = [];
+    const runtime = new LocalRuntime(workspaceRoot);
+    const calls: Array<{ hookRelativePath: string; xumEnv: Record<string, string> }> = [];
 
     try {
       const result = await runWorkspaceInitHook({
         params: createWorkspaceInitParams(logger, {
-          projectPath: hookRoot,
-          workspacePath: "/workspace/review-slot",
+          projectPath: projectRoot,
+          workspacePath: workspaceRoot,
           env: { TEST_SECRET: "1" },
         }),
         runtimeType: "worktree",
-        hookCheckPath: hookRoot,
-        runHook: ({ xumEnv, abortSignal }) => {
-          calls.push({ xumEnv, abortSignal });
+        findHookRelativePath: () => findInitHookRelativePath(runtime, workspaceRoot),
+        runHook: ({ hookRelativePath, xumEnv }) => {
+          calls.push({ hookRelativePath, xumEnv });
           return Promise.resolve();
         },
       });
 
       expect(result).toEqual({ success: true });
       expect(calls).toHaveLength(1);
-      expect(calls[0]?.xumEnv.MUX_PROJECT_PATH).toBe(hookRoot);
+      expect(calls[0]?.hookRelativePath).toBe(".mux/init");
+      expect(calls[0]?.xumEnv.MUX_PROJECT_PATH).toBe(projectRoot);
       expect(calls[0]?.xumEnv.MUX_RUNTIME).toBe("worktree");
       expect(calls[0]?.xumEnv.MUX_WORKSPACE_NAME).toBe("feature/runtime-cleanup");
       expect(calls[0]?.xumEnv.TEST_SECRET).toBe("1");
@@ -213,7 +249,7 @@ describe("runWorkspaceInitHook", () => {
     const result = await runWorkspaceInitHook({
       params: createWorkspaceInitParams(logger),
       runtimeType: "docker",
-      hookCheckPath: "/project",
+      findHookRelativePath: () => Promise.resolve(null),
       beforeHook: () => Promise.reject(new Error("prep failed")),
       runHook: () => Promise.resolve(),
     });

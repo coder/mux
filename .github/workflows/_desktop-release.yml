@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: ""
+      allow_unsigned_windows:
+        description: "Build Windows unsigned when GCP signing auth fails (nightly only; stable releases stay fail-closed)"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-macos:
@@ -35,7 +40,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -102,7 +107,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -155,7 +160,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -201,7 +206,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Add MSYS2 make to PATH
         shell: pwsh
@@ -232,6 +237,7 @@ jobs:
         id: signing
         uses: ./.github/actions/setup-windows-signing
         with:
+          allow_unsigned_fallback: "${{ inputs.allow_unsigned_windows }}"
           ev_signing_cert: ${{ secrets.EV_SIGNING_CERT }}
           gcp_workload_id_provider: ${{ vars.GCP_WORKLOAD_ID_PROVIDER }}
           gcp_service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}

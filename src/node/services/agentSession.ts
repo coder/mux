@@ -1,7 +1,8 @@
 import assert from "@/common/utils/assert";
 import { EventEmitter } from "events";
 import * as path from "path";
-import { mkdir, readFile, unlink, writeFile } from "fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "fs/promises";
+import type { Dirent } from "fs";
 import type { LanguageModelV2Usage } from "@ai-sdk/provider";
 import { PlatformPaths } from "@/common/utils/paths";
 import { log } from "@/node/services/log";
@@ -63,6 +64,12 @@ import {
   coerceThinkingLevel,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import {
+  targetWorkspaceBucketToLayer,
+  type AgentAiSettingsLayerValues,
+} from "@/common/types/agentAiSettings";
+import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
 import {
   enforceThinkingPolicy,
   lookupMinThinkingLevelOverride,
@@ -141,6 +148,7 @@ import { isAnthropic1MEffectivelyEnabled } from "@/common/utils/ai/providerOptio
 import {
   isNonRetryableSendError,
   isNonRetryableStreamError,
+  isProviderConfigFixableError,
 } from "@/common/utils/messages/retryEligibility";
 import { createDisplayUsage } from "@/common/utils/tokens/displayUsage";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
@@ -401,6 +409,69 @@ function isCompactionRequestMetadata(meta: unknown): meta is CompactionRequestMe
 }
 
 const AUTO_RETRY_PREFERENCE_FILE = "auto-retry-preference.json";
+
+/**
+ * Clear provider-config-fixable startup abandon markers persisted by workspaces
+ * WITHOUT a live AgentSession (closed chats). Live sessions clear their own
+ * marker via handleProviderConfigChanged(); this sweep covers the rest so that
+ * reopening a chat after a credential fix does not resurrect the stale
+ * "auto-retry stopped" state. Like the live path, it only unlocks retry and
+ * never schedules or resumes a stream (PR #2317 was rejected).
+ */
+export async function clearProviderConfigFixableAbandonMarkers(
+  sessionsDir: string,
+  skipWorkspaceIds: ReadonlySet<string>
+): Promise<void> {
+  let entries: Dirent[];
+  try {
+    entries = await readdir(sessionsDir, { withFileTypes: true });
+  } catch (error) {
+    const errno =
+      typeof error === "object" && error !== null && "code" in error
+        ? (error as { code?: unknown }).code
+        : undefined;
+    if (errno === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  await Promise.all(
+    entries.map(async (entry) => {
+      if (!entry.isDirectory() || skipWorkspaceIds.has(entry.name)) {
+        return;
+      }
+
+      const preferencePath = path.join(sessionsDir, entry.name, AUTO_RETRY_PREFERENCE_FILE);
+      let parsed: { enabled?: unknown; startupAutoRetryAbandon?: unknown };
+      try {
+        parsed = JSON.parse(await readFile(preferencePath, "utf-8")) as typeof parsed;
+      } catch {
+        // Missing file is the default; corrupt files are self-healed by the
+        // session load path when the workspace reopens.
+        return;
+      }
+
+      const abandon = parsed.startupAutoRetryAbandon;
+      const reason =
+        typeof abandon === "object" && abandon !== null && "reason" in abandon
+          ? (abandon as { reason?: unknown }).reason
+          : undefined;
+      if (typeof reason !== "string" || !isProviderConfigFixableError(reason)) {
+        return;
+      }
+
+      // Mirror persistAutoRetryState(): the file only exists to carry an
+      // opt-out or an abandon marker, so dropping the last field deletes it.
+      if (parsed.enabled === false) {
+        await writeFile(preferencePath, JSON.stringify({ enabled: false }) + "\n", "utf-8");
+      } else {
+        await unlink(preferencePath);
+      }
+    })
+  );
+}
+
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_BASE_DELAY_MS = 1_000;
 const STARTUP_AUTO_RETRY_HISTORY_FAILURE_MAX_DELAY_MS = 30_000;
 const MAX_STARTUP_RECOVERY_DEFERRED_ATTEMPTS = 4;
@@ -1302,6 +1373,17 @@ export class AgentSession {
     await this.persistAutoRetryState();
   }
 
+  async handleProviderConfigChanged(): Promise<void> {
+    await this.loadAutoRetryEnabledPreference();
+    if (!isProviderConfigFixableError(this.startupAutoRetryAbandon?.reason ?? "")) {
+      return;
+    }
+
+    // Config changes only unlock retry. They must not resume the live stream (PR #2317 was
+    // rejected); after a later restart, normal startup recovery may resume the interrupted tail.
+    await this.clearStartupAutoRetryAbandon();
+  }
+
   private async updateStartupAutoRetryAbandonFromFailure(
     errorType: string,
     userMessageId?: string
@@ -1596,6 +1678,14 @@ export class AgentSession {
     return true;
   }
 
+  /**
+   * Startup crash recovery replays the ORIGINAL interrupted request from
+   * persisted retry options / history metadata / workspace buckets. This is
+   * request replay, not preference resolution, so it intentionally does not go
+   * through resolveAgentAiSettings: its layers (and the child-task-workspace
+   * inversion below) reconstruct a specific prior request rather than deriving
+   * a fresh choice, and nothing here is promoted into new defaults.
+   */
   private async deriveStartupAutoRetryRequest(params: {
     partial: MuxMessage | null;
     historyTail: MuxMessage[];
@@ -1703,12 +1793,9 @@ export class AgentSession {
       const compactionRequest: StartupRetrySendOptions = {
         model: compactionModel,
         agentId: "compact",
-        thinkingLevel: enforceThinkingPolicy(
-          compactionModel,
-          requestedThinkingLevel,
-          undefined,
-          this.getProvidersConfigSafe()
-        ),
+        // No clamp here: the stream setup enforces the thinking policy (with
+        // the per-model floor) at request time.
+        thinkingLevel: requestedThinkingLevel,
         ...(requestedReasoningMode != null ? { reasoningMode: requestedReasoningMode } : {}),
         maxOutputTokens:
           typeof lastUserMuxMetadata.parsed.maxOutputTokens === "number"
@@ -3836,39 +3923,41 @@ export class AgentSession {
     return followUp;
   }
 
-  private getPreferredCompactionSettings(): {
-    model: string | null;
-    thinkingLevel: ThinkingLevel | null;
+  /**
+   * Layers for auto-compaction resolution. Defensive reads: tests construct
+   * sessions with partial Config mocks, so missing methods degrade to empty
+   * layers instead of throwing.
+   */
+  private getCompactionResolverInputs(): {
+    agentAiDefaults?: AgentAiDefaults;
+    minThinkingLevelByModel?: Record<string, ThinkingLevel>;
+    compactBucket?: AgentAiSettingsLayerValues;
   } {
     try {
       const maybeConfig = this.config as Config & {
-        loadConfigOrDefault?: () => {
-          agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
-        } | null;
+        loadConfigOrDefault?: () => ReturnType<Config["loadConfigOrDefault"]> | null;
+        findWorkspace?: Config["findWorkspace"];
       };
       if (typeof maybeConfig.loadConfigOrDefault !== "function") {
-        return { model: null, thinkingLevel: null };
+        return {};
       }
-
-      const compactDefaults = maybeConfig.loadConfigOrDefault()?.agentAiDefaults?.compact;
-      const thinkingLevel = coerceThinkingLevel(compactDefaults?.thinkingLevel) ?? null;
-
-      const compactModelString = compactDefaults?.modelString;
-      if (typeof compactModelString !== "string") {
-        return { model: null, thinkingLevel };
-      }
-
-      // Gateway-preserving: a cross-typed Coder compaction default
-      // (coder:openai/<claude>, type anthropic) must not persist as direct
-      // openai:<claude>, which would bypass the explicitly selected route.
-      const normalized = normalizeSelectedModel(compactModelString.trim());
-      if (!isValidModelFormat(normalized)) {
-        return { model: null, thinkingLevel };
-      }
-
-      return { model: normalized, thinkingLevel };
+      const cfg = maybeConfig.loadConfigOrDefault();
+      const workspaceMatch =
+        typeof maybeConfig.findWorkspace === "function"
+          ? maybeConfig.findWorkspace(this.workspaceId)
+          : null;
+      const project = workspaceMatch ? cfg?.projects.get(workspaceMatch.projectPath) : undefined;
+      const workspaceEntry = project?.workspaces.find(
+        (workspace) => workspace.id === this.workspaceId
+      );
+      const compactBucket = workspaceEntry?.aiSettingsByAgent?.compact;
+      return {
+        agentAiDefaults: cfg?.agentAiDefaults,
+        minThinkingLevelByModel: cfg?.minThinkingLevelByModel,
+        compactBucket: compactBucket ? targetWorkspaceBucketToLayer(compactBucket) : undefined,
+      };
     } catch {
-      return { model: null, thinkingLevel: null };
+      return {};
     }
   }
 
@@ -3942,29 +4031,39 @@ export class AgentSession {
     sendOptions: SendMessageOptions;
     agentInitiated: boolean;
   } {
-    // Callers pass the stream model in baseOptions.model; avoid ambient session state
-    // here because the current stream is cleared before compaction and could go stale.
-    const compactSettings = this.getPreferredCompactionSettings();
-    const compactionModel = compactSettings.model ?? params.baseOptions.model;
-    assert(
-      typeof compactionModel === "string" && compactionModel.trim().length > 0,
-      "auto-compaction requires a non-empty model"
-    );
+    // Unified resolution for agent "compact": the workspace's compact bucket
+    // and configured compact defaults win over the active stream's settings
+    // (parent runtime) — the stream's level was chosen for its model, not the
+    // compaction model. Callers pass the stream settings in baseOptions; avoid
+    // ambient session state here because the current stream is cleared before
+    // compaction and could go stale.
+    const inputs = this.getCompactionResolverInputs();
+    const resolved = resolveAgentAiSettings({
+      targetAgentId: "compact",
+      profile: "interactive",
+      agentAiDefaults: inputs.agentAiDefaults,
+      targetWorkspaceSettings: inputs.compactBucket,
+      parentRuntime: {
+        model: params.baseOptions.model,
+        thinkingLevel: coerceThinkingLevel(params.baseOptions.thinkingLevel),
+        reasoningMode: coerceOpenAIReasoningMode(params.baseOptions.reasoningMode),
+      },
+      providersConfig: this.getProvidersConfigSafe(),
+      minThinkingLevelByModel: inputs.minThinkingLevelByModel,
+    });
 
     const sendOptions: SendMessageOptions = {
       ...params.baseOptions,
       agentId: "compact",
       skipAiSettingsPersistence: true,
-      model: compactionModel,
-      // Prefer the compact agent's configured thinking level over the active
-      // stream's, matching desktop /compact (applyCompactionOverrides) — the
-      // stream's level was chosen for its model, not the compaction model.
-      thinkingLevel: enforceThinkingPolicy(
-        compactionModel,
-        compactSettings.thinkingLevel ?? params.baseOptions.thinkingLevel ?? "off",
-        undefined,
-        this.getProvidersConfigSafe()
-      ),
+      model: resolved.selected.model,
+      // Effective (clamped) thinking: this internal request skips persistence,
+      // so there is no user preference to preserve.
+      thinkingLevel: resolved.effective.thinkingLevel,
+      // Selected reasoning; the send path re-gates per model/route.
+      ...(resolved.selected.reasoningMode != null
+        ? { reasoningMode: resolved.selected.reasoningMode }
+        : {}),
       maxOutputTokens: undefined,
       toolPolicy: [{ regex_match: ".*", action: "disable" }],
     };
@@ -4446,21 +4545,28 @@ export class AgentSession {
         source?: "idle-compaction" | "auto-compaction";
       }
     | undefined {
+    const streamIsCompaction = isCompactionRequestMetadata(options?.muxMetadata);
+
     for (let index = history.length - 1; index >= 0; index -= 1) {
       const message = history[index];
       if (message.role !== "user") {
         continue;
       }
       const muxMetadata = message.metadata?.muxMetadata;
-      if (!isCompactionRequestMetadata(muxMetadata)) {
+      if (isCompactionRequestMetadata(muxMetadata)) {
+        return {
+          id: message.id,
+          modelString,
+          options,
+          source: muxMetadata.source,
+        };
+      }
+
+      // Snapshot rows can follow a synthetic compaction request before stream startup.
+      // Skip only those rows when the current send options identify this stream as compaction.
+      if (!streamIsCompaction || message.metadata?.synthetic !== true) {
         return undefined;
       }
-      return {
-        id: message.id,
-        modelString,
-        options,
-        source: muxMetadata.source,
-      };
     }
     return undefined;
   }
@@ -5219,7 +5325,10 @@ export class AgentSession {
         });
         this.clearLiveUsageState();
 
-        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+        const handled = await this.compactionHandler.handleCompletion(
+          streamEndPayload,
+          completedCompactionRequest?.id
+        );
 
         await this.recordGoalAccountingFromUsage({
           model: streamEndPayload.metadata.model,
@@ -6739,17 +6848,17 @@ export class AgentSession {
         // skill tools so subprojects inherit checkout-level skills and plugins
         // across host-local and runtime-backed workspaces. disableWorkspaceAgents
         // keeps default projectPath discovery.
-        const muxScope =
+        const xumScope =
           !disableWorkspaceAgents &&
-          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
-            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
+          typeof this.aiService.resolveXumToolScopeForWorkspace === "function"
+            ? this.aiService.resolveXumToolScopeForWorkspace(metadata, runtime, workspacePath)
             : null;
         const skillCtx =
-          muxScope?.type === "project"
+          xumScope?.type === "project"
             ? resolveSkillStorageContext({
                 runtime,
                 workspacePath: skillDiscoveryPath,
-                muxScope,
+                xumScope,
                 includeClaudeSkills,
                 includeAgentPlugins,
               })
@@ -6886,7 +6995,7 @@ export class AgentSession {
         // this path — so each execution traces to a deliberate user action on a skill
         // they chose, the same trust level as the user running the command themselves.
         // Commands run non-interactively (no stdin) in the workspace directory with
-        // the runtime's default environment; the bash tool's `.mux/tool_env` sourcing
+        // the runtime's default environment; the bash tool's `.xum/tool_env` sourcing
         // lives behind hook/trust plumbing that is not reachable here, and directive
         // commands should not depend on tool-specific env anyway.
         execute: async (command) => {

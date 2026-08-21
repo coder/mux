@@ -18,7 +18,7 @@
 > [!IMPORTANT]
 > This project was renamed from Mux to Xum after Mux.com raised a trademark concern. “Mux” is a common technical abbreviation of “multiplexer” and we do not expect confusion between the projects, but chose to rename ours rather than spend more time on the dispute.
 
-<p><img src="./docs/img/mux-demo.gif" alt="Xum product demo" width="100%" /></p>
+<p><img src="./docs/img/xum-demo.gif" alt="Xum product demo" width="100%" /></p>
 
 ## Features
 

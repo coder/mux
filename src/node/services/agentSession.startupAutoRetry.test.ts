@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "events";
-import { AgentSession } from "./agentSession";
+import { AgentSession, clearProviderConfigFixableAbandonMarkers } from "./agentSession";
 import { createAgentSessionHarness } from "./agentSession.testHarness";
 import { createTestHistoryService } from "./testHistoryService";
 import type { AIService } from "./aiService";
@@ -981,6 +981,116 @@ describe("AgentSession startup auto-retry recovery", () => {
     expect(await Bun.file(preferencePath).exists()).toBe(false);
 
     session.dispose();
+  });
+
+  test("provider config changes clear credential abandon state without starting a stream", async () => {
+    const workspaceId = "startup-retry-clear-abandon-on-provider-config";
+    const { session, aiService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+      startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
+    };
+    await privateSession.persistStartupAutoRetryAbandon("authentication", "user-1");
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+    const streamMessageSpy = spyOn(aiService, "streamMessage");
+
+    await session.handleProviderConfigChanged();
+
+    expect(privateSession.startupAutoRetryAbandon).toBeNull();
+    expect(await Bun.file(preferencePath).exists()).toBe(false);
+    expect(streamMessageSpy).not.toHaveBeenCalled();
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+  });
+
+  test("provider config changes preserve non-fixable abandon state without starting a stream", async () => {
+    const workspaceId = "startup-retry-keep-abandon-on-provider-config";
+    const { session, aiService, events, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+      startupAutoRetryAbandon: { reason: string; userMessageId?: string } | null;
+    };
+    await privateSession.persistStartupAutoRetryAbandon("context_exceeded", "user-1");
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+    const streamMessageSpy = spyOn(aiService, "streamMessage");
+
+    await session.handleProviderConfigChanged();
+
+    expect(privateSession.startupAutoRetryAbandon).toEqual({
+      reason: "context_exceeded",
+      userMessageId: "user-1",
+    });
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+    expect(streamMessageSpy).not.toHaveBeenCalled();
+    expect(events.some((event) => event.type === "auto-retry-scheduled")).toBe(false);
+  });
+
+  test("provider config sweep clears fixable markers for workspaces without live sessions", async () => {
+    const workspaceId = "startup-retry-sweep-closed-workspace";
+    const { session, config, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+    };
+    await privateSession.persistStartupAutoRetryAbandon("authentication", "user-1");
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+
+    // Not in the skip set = no live session for this workspace.
+    await clearProviderConfigFixableAbandonMarkers(config.sessionsDir, new Set());
+
+    expect(await Bun.file(preferencePath).exists()).toBe(false);
+  });
+
+  test("provider config sweep preserves non-fixable markers and skips live sessions", async () => {
+    const workspaceId = "startup-retry-sweep-preserve";
+    const { session, config, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+    };
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+
+    await privateSession.persistStartupAutoRetryAbandon("context_exceeded", "user-1");
+    await clearProviderConfigFixableAbandonMarkers(config.sessionsDir, new Set());
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+
+    await privateSession.persistStartupAutoRetryAbandon("authentication", "user-1");
+    await clearProviderConfigFixableAbandonMarkers(config.sessionsDir, new Set([workspaceId]));
+    expect(await Bun.file(preferencePath).exists()).toBe(true);
+  });
+
+  test("provider config sweep keeps a persisted auto-retry opt-out while clearing the marker", async () => {
+    const workspaceId = "startup-retry-sweep-keep-opt-out";
+    const { session, config, cleanup } = await createSessionBundle(workspaceId);
+    cleanups.push(cleanup);
+
+    const privateSession = session as unknown as {
+      persistAutoRetryEnabledPreference: (enabled: boolean) => Promise<void>;
+      persistStartupAutoRetryAbandon: (reason: string, userMessageId?: string) => Promise<void>;
+      getAutoRetryPreferencePath: () => string;
+    };
+    await privateSession.persistAutoRetryEnabledPreference(false);
+    await privateSession.persistStartupAutoRetryAbandon("quota", "user-1");
+    const preferencePath = privateSession.getAutoRetryPreferencePath();
+
+    await clearProviderConfigFixableAbandonMarkers(config.sessionsDir, new Set());
+
+    const persisted = JSON.parse(await Bun.file(preferencePath).text()) as {
+      enabled?: boolean;
+      startupAutoRetryAbandon?: unknown;
+    };
+    expect(persisted.enabled).toBe(false);
+    expect(persisted.startupAutoRetryAbandon).toBeUndefined();
   });
 
   test("reschedules retry when resumeStream defers without starting a stream", async () => {

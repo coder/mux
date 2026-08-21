@@ -34,7 +34,7 @@ export interface DiscoverWorkflowScriptsInput {
  * attempting to resolve it — a skill that resolves is a workflow; anything that
  * throws (no entry, or project trust missing) is skipped.
  *
- * Standalone `.mux/workflows/*.js` files are intentionally not enumerated here:
+ * Standalone `.xum/workflows/*.js` files are intentionally not enumerated here:
  * they're an advanced, trust-gated path still launchable from chat. Skill-based
  * workflows cover the common case.
  */

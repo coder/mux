@@ -25,7 +25,11 @@ import { shellQuote } from "@/common/utils/shell";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { expandTilde } from "./tildeExpansion";
-import { getInitHookPath, createLineBufferedLoggers } from "./initHook";
+import {
+  createLineBufferedLoggers,
+  findInitHookRelativePath,
+  runWorkspaceInitHook,
+} from "./initHook";
 import { getErrorMessage } from "@/common/utils/errors";
 import { getAtomicWriteTempPath } from "./atomicWriteTempPath";
 import { buildShellExport } from "./shellEnv";
@@ -454,8 +458,24 @@ export abstract class LocalBaseRuntime implements Runtime {
     return Promise.resolve({ ready: true });
   }
 
+  protected initLocalWorkspace(params: WorkspaceInitParams, runtimeType: "local" | "worktree") {
+    return runWorkspaceInitHook({
+      params,
+      runtimeType,
+      findHookRelativePath: () => findInitHookRelativePath(this, params.workspacePath),
+      runHook: ({ hookRelativePath, xumEnv, initLogger, abortSignal }) =>
+        this.runInitHook(
+          params.workspacePath,
+          this.normalizePath(hookRelativePath, params.workspacePath),
+          xumEnv,
+          initLogger,
+          abortSignal
+        ),
+    });
+  }
+
   /**
-   * Helper to run .mux/init hook if it exists and is executable.
+   * Helper to run .xum/init hook if it exists and is executable.
    * Shared between WorktreeRuntime and LocalRuntime.
    * @param workspacePath - Path to the workspace directory
    * @param xumEnv - Canonical XUM_ variables plus legacy MUX_ aliases
@@ -464,13 +484,11 @@ export abstract class LocalBaseRuntime implements Runtime {
    */
   protected async runInitHook(
     workspacePath: string,
+    hookPath: string,
     xumEnv: Record<string, string>,
     initLogger: InitLogger,
     abortSignal?: AbortSignal
   ): Promise<void> {
-    // Hook path is derived from the canonical XUM_PROJECT_PATH value.
-    const projectPath = xumEnv.XUM_PROJECT_PATH;
-    const hookPath = getInitHookPath(projectPath);
     initLogger.logStep(`Running init hook: ${hookPath}`);
 
     if (abortSignal?.aborted) {

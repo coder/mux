@@ -1479,7 +1479,7 @@ describe("Config", () => {
     });
   });
 
-  describe("agent AI defaults model normalization", () => {
+  describe("agent AI defaults canonical shape", () => {
     it("preserves explicit gateway-scoped model strings in nested AI defaults", async () => {
       await config.editConfig((cfg) => {
         cfg.agentAiDefaults = {
@@ -1504,6 +1504,8 @@ describe("Config", () => {
           thinkingLevel: "low",
         },
       });
+      // Downgrade projection mirrors the effective delegated profile for
+      // non-built-in agents so old builds keep resolving delegated runs.
       expect(raw.subagentAiDefaults).toEqual({
         worker: {
           modelString: "mux-gateway:anthropic/claude-haiku-4-5",
@@ -1516,12 +1518,12 @@ describe("Config", () => {
       expect(loaded.agentAiDefaults?.worker?.modelString).toBe(
         "mux-gateway:anthropic/claude-haiku-4-5"
       );
-      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe(
-        "mux-gateway:anthropic/claude-haiku-4-5"
-      );
+      // The mirrored projection folds back into nothing: equal delegated
+      // fields are pruned rather than frozen as overrides.
+      expect(loaded.agentAiDefaults?.worker?.subagent).toBeUndefined();
     });
 
-    it("removes mirrored exec subagent fields on first load", async () => {
+    it("folds mirrored legacy subagent entries away on load", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -1537,20 +1539,16 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
-      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
-      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
-
-      await flushConfigEdits();
-      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
-        subagentAiDefaults?: Record<string, unknown>;
-        migrations?: { execSubagentDefaultsSplit?: boolean };
-      };
-      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
-      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+      expect(loaded.agentAiDefaults?.exec?.subagent).toBeUndefined();
+      // Legacy-only delegated data stays a delegated override; it is not
+      // promoted to the interactive profile.
+      expect(loaded.agentAiDefaults?.worker?.modelString).toBeUndefined();
+      expect(loaded.agentAiDefaults?.worker?.subagent).toEqual({
+        modelString: "openai:gpt-5.2",
+      });
     });
 
-    it("preserves session usage cache when only exec-split cleanup modifies config", async () => {
+    it("preserves session usage cache when loading a legacy dual-map config", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -1568,24 +1566,13 @@ describe("Config", () => {
       const usagePath = path.join(config.getSessionDir("workspace-1"), "session-usage.json");
       fs.mkdirSync(path.dirname(usagePath), { recursive: true });
       fs.writeFileSync(usagePath, JSON.stringify({ totalCost: 1.23 }));
-      expect(fs.existsSync(usagePath)).toBe(true);
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.subagentAiDefaults?.exec).toBeUndefined();
-      expect(loaded.subagentAiDefaults?.worker?.modelString).toBe("openai:gpt-5.2");
-      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
-
-      await flushConfigEdits();
-      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
-        subagentAiDefaults?: Record<string, unknown>;
-        migrations?: { execSubagentDefaultsSplit?: boolean };
-      };
-      expect(raw.subagentAiDefaults?.exec).toBeUndefined();
-      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+      expect(loaded.agentAiDefaults?.exec?.subagent).toBeUndefined();
       expect(fs.existsSync(usagePath)).toBe(true);
     });
 
-    it("preserves differing exec subagent defaults on first load", () => {
+    it("preserves differing legacy exec subagent defaults under the nested profile", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -1600,14 +1587,13 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.subagentAiDefaults?.exec).toEqual({
+      expect(loaded.agentAiDefaults?.exec?.subagent).toEqual({
         modelString: "anthropic:claude-haiku-4-5",
         thinkingLevel: "off",
       });
-      expect(loaded.migrations?.execSubagentDefaultsSplit).toBe(true);
     });
 
-    it("removes only mirrored exec subagent fields during first-load cleanup", () => {
+    it("keeps only differing fields from a partially mirrored legacy exec entry", () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
@@ -1622,30 +1608,75 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.subagentAiDefaults?.exec).toEqual({
+      expect(loaded.agentAiDefaults?.exec?.subagent).toEqual({
         thinkingLevel: "off",
       });
     });
 
-    it("preserves intentionally equal exec subagent defaults after migration marker is set", () => {
+    it("keeps a differing legacy exec subagent reasoning mode", () => {
+      // UI Exec pro + sub-agent standard share a model: the fold may drop the
+      // mirrored model but must keep the explicit standard override (deleting
+      // it would silently flip the sub-agent to pro after restart).
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
           projects: [],
-          migrations: { execSubagentDefaultsSplit: true },
           agentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
           },
           subagentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "standard" },
           },
         })
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.subagentAiDefaults?.exec).toEqual({
-        modelString: "openai:gpt-5.3-codex",
-        thinkingLevel: "xhigh",
+      expect(loaded.agentAiDefaults?.exec?.subagent).toEqual({
+        reasoningMode: "standard",
+      });
+    });
+
+    it("prunes a mirrored legacy exec subagent reasoning mode", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "openai:gpt-5.3-codex", reasoningMode: "pro" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec?.subagent).toBeUndefined();
+    });
+
+    it("prefers nested subagent fields over the legacy projection on load", () => {
+      fs.writeFileSync(
+        path.join(tempDir, "config.json"),
+        JSON.stringify({
+          projects: [],
+          agentAiDefaults: {
+            exec: {
+              modelString: "openai:gpt-5.3-codex",
+              subagent: { thinkingLevel: "high" },
+            },
+          },
+          subagentAiDefaults: {
+            exec: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.agentAiDefaults?.exec?.subagent).toEqual({
+        // Canonical nested value wins; the legacy map only fills fields the
+        // nested profile leaves unset.
+        thinkingLevel: "high",
+        modelString: "anthropic:claude-haiku-4-5",
       });
     });
 
@@ -1661,64 +1692,109 @@ describe("Config", () => {
       );
 
       const loaded = config.loadConfigOrDefault();
-      expect(loaded.agentAiDefaults?.exec).toBeUndefined();
-      expect(loaded.subagentAiDefaults?.exec).toEqual({
+      expect(loaded.agentAiDefaults?.exec?.modelString).toBeUndefined();
+      expect(loaded.agentAiDefaults?.exec?.subagent).toEqual({
         modelString: "openai:gpt-5.3-codex",
         thinkingLevel: "xhigh",
       });
     });
 
-    it("preserves existing exec subagent defaults when saving derived legacy defaults", async () => {
-      fs.writeFileSync(
-        path.join(tempDir, "config.json"),
-        JSON.stringify({
-          projects: [],
-          migrations: { execSubagentDefaultsSplit: true },
-          agentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
-          },
-          subagentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
-          },
-        })
-      );
-
+    it("writes a downgrade-compatible legacy projection on save", async () => {
       await config.editConfig((cfg) => {
         cfg.agentAiDefaults = {
-          ...cfg.agentAiDefaults,
-          worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+          exec: {
+            modelString: "openai:gpt-5.2",
+            thinkingLevel: "medium",
+            subagent: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+          },
+          plan: { modelString: "anthropic:claude-opus-4-6" },
+          worker: {
+            modelString: "anthropic:claude-haiku-4-5",
+            subagent: { thinkingLevel: "off" },
+          },
         };
         return cfg;
       });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         subagentAiDefaults?: Record<string, unknown>;
+        migrations?: { execSubagentDefaultsSplit?: boolean };
       };
       expect(raw.subagentAiDefaults).toEqual({
+        // Exec projects only sparse overrides (old builds treat the exec key
+        // as canonical delegated storage).
         exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+        // Other agents project the effective delegated profile; plan/compact
+        // stay excluded for parity with old builds.
         worker: { modelString: "anthropic:claude-haiku-4-5", thinkingLevel: "off" },
+      });
+      expect(raw.migrations?.execSubagentDefaultsSplit).toBe(true);
+    });
+
+    it("round-trips distinct interactive and delegated exec profiles through downgrade save", async () => {
+      await config.editConfig((cfg) => {
+        cfg.agentAiDefaults = {
+          exec: {
+            modelString: "openai:gpt-5.2",
+            thinkingLevel: "medium",
+            reasoningMode: "pro",
+            subagent: {
+              modelString: "openai:gpt-5.3-codex",
+              thinkingLevel: "xhigh",
+              reasoningMode: "standard",
+            },
+          },
+        };
+        return cfg;
+      });
+
+      // Simulate a downgrade save: old builds strip the nested subagent
+      // profile from agentAiDefaults but keep the legacy root map.
+      const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
+        agentAiDefaults?: Record<string, Record<string, unknown>>;
+        subagentAiDefaults?: Record<string, unknown>;
+      };
+      const execEntry = raw.agentAiDefaults?.exec ?? {};
+      delete execEntry.subagent;
+      fs.writeFileSync(path.join(tempDir, "config.json"), JSON.stringify(raw));
+
+      const reloaded = new Config(tempDir).loadConfigOrDefault();
+      expect(reloaded.agentAiDefaults?.exec).toEqual({
+        modelString: "openai:gpt-5.2",
+        thinkingLevel: "medium",
+        reasoningMode: "pro",
+        enabled: undefined,
+        advisorEnabled: undefined,
+        subagent: {
+          modelString: "openai:gpt-5.3-codex",
+          thinkingLevel: "xhigh",
+          reasoningMode: "standard",
+        },
       });
     });
 
-    it("allows an explicit empty exec subagent default to delete the preserved value", async () => {
+    it("clearing the delegated exec profile removes the legacy exec projection on save", async () => {
       fs.writeFileSync(
         path.join(tempDir, "config.json"),
         JSON.stringify({
           projects: [],
-          migrations: { execSubagentDefaultsSplit: true },
           agentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
-          },
-          subagentAiDefaults: {
-            exec: { modelString: "openai:gpt-5.3-codex", thinkingLevel: "xhigh" },
+            exec: {
+              modelString: "openai:gpt-5.2",
+              thinkingLevel: "medium",
+              subagent: { modelString: "openai:gpt-5.3-codex" },
+            },
           },
         })
       );
 
-      await config.editConfig((cfg) => ({
-        ...cfg,
-        subagentAiDefaults: {},
-      }));
+      await config.editConfig((cfg) => {
+        const exec = cfg.agentAiDefaults?.exec;
+        if (exec) {
+          delete exec.subagent;
+        }
+        return cfg;
+      });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
         subagentAiDefaults?: Record<string, unknown>;

@@ -134,9 +134,9 @@ export async function readPlanFile(
   projectName: string,
   workspaceId: string
 ): Promise<ReadPlanResult> {
-  const muxHome = runtime.getXumHome();
-  const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
-  const legacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
+  const xumHome = runtime.getXumHome();
+  const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
+  const legacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
 
   // Resolve tilde to absolute path for client use (editor deep links, etc.)
   // For local runtimes this expands ~ to /home/user; for SSH it resolves remotely
@@ -190,9 +190,9 @@ export async function hasNonEmptyPlanFile(
     return false;
   }
 
-  const muxHome = runtime.getXumHome();
-  const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
-  const legacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
+  const xumHome = runtime.getXumHome();
+  const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
+  const legacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
 
   for (const candidatePath of [planPath, legacyPath]) {
     try {
@@ -218,9 +218,9 @@ export async function movePlanFile(
   newWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const muxHome = runtime.getXumHome();
-  const oldPath = getPlanFilePath(oldWorkspaceName, projectName, muxHome);
-  const newPath = getPlanFilePath(newWorkspaceName, projectName, muxHome);
+  const xumHome = runtime.getXumHome();
+  const oldPath = getPlanFilePath(oldWorkspaceName, projectName, xumHome);
+  const newPath = getPlanFilePath(newWorkspaceName, projectName, xumHome);
 
   try {
     await runtime.stat(oldPath);
@@ -252,10 +252,10 @@ export async function copyPlanFile(
   targetWorkspaceName: string,
   projectName: string
 ): Promise<void> {
-  const muxHome = runtime.getXumHome();
-  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, muxHome);
-  const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId, muxHome);
-  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, muxHome);
+  const xumHome = runtime.getXumHome();
+  const sourcePath = getPlanFilePath(sourceWorkspaceName, projectName, xumHome);
+  const legacySourcePath = getLegacyPlanFilePath(sourceWorkspaceId, xumHome);
+  const targetPath = getPlanFilePath(targetWorkspaceName, projectName, xumHome);
 
   // Prefer the new layout, but fall back to the legacy layout.
   //

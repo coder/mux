@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import React from "react";
 
 import { APIProvider, type APIClient } from "@/browser/contexts/API";
 import { KNOWN_MODELS } from "@/common/constants/knownModels";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
+import { getAppConfigStore } from "@/browser/stores/AppConfigStore";
 import { getProvidersConfigStore } from "@/browser/stores/ProvidersConfigStore";
 
 import { useRouting } from "./useRouting";
@@ -17,6 +18,7 @@ let configGetConfig: () => Promise<{
   routePriority: string[];
   routeOverrides: Record<string, string>;
 }>;
+let updateRoutePreferencesImpl: () => Promise<undefined>;
 
 async function* emptyStream() {
   await Promise.resolve();
@@ -34,7 +36,7 @@ function createStubApiClient(): APIClient {
     config: {
       getConfig: () => configGetConfig(),
       onConfigChanged: () => Promise.resolve(emptyStream()),
-      updateRoutePreferences: () => Promise.resolve(undefined),
+      updateRoutePreferences: () => updateRoutePreferencesImpl(),
     },
   } as unknown as APIClient;
 }
@@ -63,11 +65,13 @@ describe("useRouting", () => {
     routePriority = ["direct"];
     routeOverrides = {};
     configGetConfig = () => Promise.resolve({ routePriority, routeOverrides });
+    updateRoutePreferencesImpl = () => Promise.resolve(undefined);
   });
 
   afterEach(() => {
     cleanup();
     getProvidersConfigStore().setClient(null);
+    getAppConfigStore().setClient(null);
     testWindow?.close();
     testWindow = null;
     globalThis.window = previousWindow;
@@ -85,11 +89,12 @@ describe("useRouting", () => {
       },
     };
 
-    // useProvidersConfig reads the shared ProvidersConfigStore (wired by
+    // useProvidersConfig/useRouting read the shared stores (wired by
     // AppLoader in the real app); this hook test bypasses AppLoader, so wire
-    // it manually AFTER the stubbed config is in place so the store's fetch
+    // them manually AFTER the stubbed config is in place so the stores' fetch
     // observes it.
     getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
 
     const { result } = renderHook(() => useRouting(), { wrapper });
 
@@ -106,5 +111,48 @@ describe("useRouting", () => {
       isAuto: true,
       displayName: "Direct",
     });
+  });
+
+  test("hook instances share one config fetch via the AppConfigStore", async () => {
+    routeOverrides = { "openai:gpt-5.4": "mux-gateway" };
+    let configFetchCount = 0;
+    const baseGetConfig = configGetConfig;
+    configGetConfig = () => {
+      configFetchCount++;
+      return baseGetConfig();
+    };
+    getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
+
+    // Regression: each useRouting instance used to issue its own
+    // config.getConfig fetch + onConfigChanged subscription, so surfaces with
+    // one picker per row fanned out O(rows) backend reads.
+    const first = renderHook(() => useRouting(), { wrapper });
+    const second = renderHook(() => useRouting(), { wrapper });
+
+    await waitFor(() => {
+      expect(first.result.current.routeOverrides).toEqual(routeOverrides);
+      expect(second.result.current.routeOverrides).toEqual(routeOverrides);
+    });
+    expect(configFetchCount).toBe(1);
+  });
+
+  test("failed route persistence refreshes the shared store from the backend", async () => {
+    // The optimistic update lands in the SINGLETON store, so a failed write
+    // must re-fetch: otherwise the stale route survives navigation and every
+    // picker keeps gating on state the backend never accepted.
+    updateRoutePreferencesImpl = () => Promise.reject(new Error("write failed"));
+    getProvidersConfigStore().setClient(stubClient);
+    getAppConfigStore().setClient(stubClient);
+
+    const { result } = renderHook(() => useRouting(), { wrapper });
+    await waitFor(() => expect(result.current.routePriority).toEqual(["direct"]));
+
+    act(() => {
+      result.current.setRoutePriority(["mux-gateway", "direct"]);
+    });
+    expect(result.current.routePriority).toEqual(["mux-gateway", "direct"]);
+
+    await waitFor(() => expect(result.current.routePriority).toEqual(["direct"]));
   });
 });

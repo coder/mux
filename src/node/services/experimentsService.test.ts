@@ -40,7 +40,7 @@ describe("ExperimentsService", () => {
 
   test("experiments are disabled until the user sets an override", async () => {
     const { telemetryService } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.initialize();
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING)).toBe(false);
@@ -54,7 +54,7 @@ describe("ExperimentsService", () => {
     const first = createTelemetryService();
     const service = new ExperimentsService({
       telemetryService: first.telemetryService,
-      muxHome: tempDir,
+      xumHome: tempDir,
     });
     await service.setOverride(EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES, true);
 
@@ -65,7 +65,7 @@ describe("ExperimentsService", () => {
     const second = createTelemetryService();
     const reloaded = new ExperimentsService({
       telemetryService: second.telemetryService,
-      muxHome: tempDir,
+      xumHome: tempDir,
     });
     await reloaded.initialize();
 
@@ -78,7 +78,7 @@ describe("ExperimentsService", () => {
 
   test("clearing an override disables the experiment and drops its telemetry variant", async () => {
     const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.setOverride(EXPERIMENT_IDS.MEMORY, true);
 
     await service.setOverride(EXPERIMENT_IDS.MEMORY, null);
@@ -90,7 +90,7 @@ describe("ExperimentsService", () => {
 
   test("an explicit false override keeps the experiment disabled", async () => {
     const { telemetryService } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.setOverride(EXPERIMENT_IDS.AGENT_BROWSER, false);
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.AGENT_BROWSER)).toBe(false);
@@ -113,7 +113,7 @@ describe("ExperimentsService", () => {
     const { telemetryService, setFeatureFlagVariant } = createTelemetryService();
     const service = new ExperimentsService({
       telemetryService,
-      muxHome: tempDir,
+      xumHome: tempDir,
       platform: "darwin",
     });
     await service.initialize();
@@ -140,7 +140,7 @@ describe("ExperimentsService", () => {
     );
 
     const { telemetryService } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.initialize();
 
     expect(service.isExperimentEnabled(EXPERIMENT_IDS.AGENT_BROWSER)).toBe(true);
@@ -160,7 +160,7 @@ describe("ExperimentsService", () => {
     );
 
     const { telemetryService } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.initialize();
 
     // A second renderer (different origin, so empty localStorage) uploads nothing and
@@ -188,7 +188,7 @@ describe("ExperimentsService", () => {
     const { telemetryService } = createTelemetryService();
     const service = new ExperimentsService({
       telemetryService,
-      muxHome: tempDir,
+      xumHome: tempDir,
       platform: "darwin",
     });
 
@@ -197,7 +197,7 @@ describe("ExperimentsService", () => {
 
   test("writes an empty experiments map so older builds still read overrides", async () => {
     const { telemetryService } = createTelemetryService();
-    const service = new ExperimentsService({ telemetryService, muxHome: tempDir });
+    const service = new ExperimentsService({ telemetryService, xumHome: tempDir });
     await service.setOverride(EXPERIMENT_IDS.TIMELINE, true);
 
     expect((await readOverridesFile()).experiments).toEqual({});

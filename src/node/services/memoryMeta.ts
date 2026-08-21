@@ -2,7 +2,7 @@
  * MemoryMetaService — host-local sidecar for user/UI-owned memory metadata:
  * pins and usage stats ({lastAccessedAt, accessCount, lastWriteAt}).
  *
- * Lives at <muxHome>/memory-meta.json. Pins and stats NEVER live in the memory
+ * Lives at <xumHome>/memory-meta.json. Pins and stats NEVER live in the memory
  * files themselves: pinning is a per-user UI action and usage is per-user
  * signal, so the sidecar stays host-local and never git-tracked.
  *
@@ -124,8 +124,8 @@ export class MemoryMetaService {
   private readonly lock = new MutexMap<"meta">();
   private cache: MemoryMetaFile | null = null;
 
-  constructor(muxHome: string) {
-    this.metaPath = path.join(muxHome, "memory-meta.json");
+  constructor(xumHome: string) {
+    this.metaPath = path.join(xumHome, "memory-meta.json");
   }
 
   private async load(): Promise<MemoryMetaFile> {

@@ -92,6 +92,7 @@ import { DEFAULT_AUTO_COMPACTION_THRESHOLD_PERCENT } from "@/common/constants/ui
 import { APPROX_CHARS_PER_TOKEN } from "@/constants/streaming";
 import { trackStreamCompleted } from "@/common/telemetry";
 import { isWorkflowRunEmittingToolName } from "@/common/utils/workflowRunMessages";
+import { isProviderConfigFixableError } from "@/common/utils/messages/retryEligibility";
 
 /** Stable empty reference returned when a workspace has no assisted hunks; keeps useSyncExternalStore snapshot identity stable. */
 const EMPTY_ASSISTED_REVIEW: AssistedReviewHunk[] = [];
@@ -1313,6 +1314,20 @@ export class WorkspaceStore {
     }
   }
 
+  private clearProviderConfigFixableAutoRetryStatuses(): void {
+    // Provider notifications are not provider-scoped. Clear every fixable banner rather than
+    // guessing which chat changed, but never resume a stream here (PR #2317 was rejected).
+    for (const [workspaceId, transient] of this.chatTransientState) {
+      const status = transient.autoRetryStatus;
+      if (status?.type !== "auto-retry-abandoned" || !isProviderConfigFixableError(status.reason)) {
+        continue;
+      }
+
+      transient.autoRetryStatus = null;
+      this.states.bump(workspaceId);
+    }
+  }
+
   private subscribeToProvidersConfig(client: RouterClient<AppRouter>): void {
     const { signal } = this.clientChangeController;
 
@@ -1337,6 +1352,7 @@ export class WorkspaceStore {
           }
 
           this.providersConfigFailureStreak = 0;
+          this.clearProviderConfigFixableAutoRetryStatuses();
           void this.refreshProvidersConfig(client);
         }
       } catch {

@@ -1,3 +1,4 @@
+import { listProjectMetadataRelativePaths } from "@/common/compat/legacyMux";
 import type {
   WorkspaceComposition,
   WorkspaceCompositionEntry,
@@ -41,7 +42,7 @@ export interface BuildWorkspaceCompositionArgs {
    * production never loads.
    */
   hostCheckoutRoot: string | null;
-  muxHome: string;
+  xumHome: string;
   projectTrusted: boolean;
   agentPluginsEnabled: boolean;
   /** MCP servers split by config layer (see MCPConfigService.listServerLayers). */
@@ -92,7 +93,7 @@ function summarizePlugin(plugin: AgentPluginInfo): WorkspaceCompositionPlugin {
   };
 }
 
-/** Shell tool hooks (hooks.ts): project .mux/<file> shadows user ~/.mux/<file>. */
+/** Shell tool hooks: project Xum metadata shadows the runtime user's Xum home. */
 const SHELL_HOOK_FILENAMES = ["tool_hook", "tool_pre", "tool_post"] as const;
 
 async function collectShellHookEntries(
@@ -100,16 +101,16 @@ async function collectShellHookEntries(
   workspacePath: string
 ): Promise<WorkspaceCompositionEntry[]> {
   const entries: WorkspaceCompositionEntry[] = [];
-  // Same resolution as production hooks.ts: both layers live in the WORKSPACE
-  // runtime's filesystem (project .mux + the runtime user's ~/.mux) — host
-  // fs.stat/os.homedir would miss real remote hooks and could report
-  // unrelated host files for SSH/Docker workspaces.
-  const layers: Array<{ dir: string; source: string }> = [
-    { dir: joinPathLike(workspacePath, ".mux"), source: "project" },
-  ];
+  // Match production hook resolution on the workspace runtime filesystem.
+  const layers: Array<{ dir: string; source: string }> = listProjectMetadataRelativePaths("").map(
+    (relativePath) => ({
+      dir: joinPathLike(workspacePath, relativePath),
+      source: "project",
+    })
+  );
   try {
-    const homeDir = await runtime.resolvePath("~");
-    layers.push({ dir: joinPathLike(homeDir, ".mux"), source: "global" });
+    const homeDir = await runtime.resolvePath(runtime.getXumHome());
+    layers.push({ dir: homeDir, source: "global" });
   } catch {
     // Home resolution failed (e.g. dead SSH connection) — skip the user layer,
     // matching hooks.ts's best-effort fallback.
@@ -151,7 +152,7 @@ export async function buildWorkspaceComposition(
     args.hostCheckoutRoot != null
       ? await discoverWorkspaceAgentPlugins({
           workspacePath: args.hostCheckoutRoot,
-          muxHome: args.muxHome,
+          xumHome: args.xumHome,
           projectTrusted: args.projectTrusted,
         })
       : { plugins: [], diagnostics: [] };
@@ -177,7 +178,9 @@ export async function buildWorkspaceComposition(
           roots: {
             ...defaultSkillRoots,
             projectPluginRoots: [
-              args.runtime.normalizePath(".mux/plugins", args.hostCheckoutRoot),
+              ...listProjectMetadataRelativePaths("plugins").map((relativePath) =>
+                args.runtime.normalizePath(relativePath, args.hostCheckoutRoot!)
+              ),
               args.runtime.normalizePath(".agents/plugins", args.hostCheckoutRoot),
             ],
           },

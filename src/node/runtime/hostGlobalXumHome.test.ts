@@ -5,7 +5,7 @@ import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { resolveGlobalRuntime, shouldUseHostGlobalXumFallback } from "./hostGlobalXumHome";
 
 class StubRemoteRuntime extends RemoteRuntime {
-  constructor(private readonly muxHome: string) {
+  constructor(private readonly xumHome: string) {
     super();
   }
 
@@ -28,7 +28,7 @@ class StubRemoteRuntime extends RemoteRuntime {
   }
 
   override getXumHome(): string {
-    return this.muxHome;
+    return this.xumHome;
   }
 
   resolvePath(filePath: string): Promise<string> {

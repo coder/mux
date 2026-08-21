@@ -30,11 +30,11 @@ Tool hooks let you run your own scripts before and after Xum tool executions.
 
 ## Block dangerous commands
 
-Create `.mux/tool_pre` to validate commands before they run. Exit non-zero to block:
+Create `.xum/tool_pre` to validate commands before they run. Exit non-zero to block:
 
 ```bash
 #!/usr/bin/env bash
-# .mux/tool_pre - runs before every tool
+# .xum/tool_pre - runs before every tool
 
 if [[ "$XUM_TOOL" == "bash" ]]; then
   script="$XUM_TOOL_INPUT_SCRIPT"
@@ -54,7 +54,7 @@ exit 0  # Allow tool to run
 ```
 
 ```bash
-chmod +x .mux/tool_pre
+chmod +x .xum/tool_pre
 ```
 
 The agent sees your error message and can adjust its approach.
@@ -63,11 +63,11 @@ The agent sees your error message and can adjust its approach.
 
 ## Lint after file edits
 
-Create `.mux/tool_post` to run validation after tools complete:
+Create `.xum/tool_post` to run validation after tools complete:
 
 ```bash
 #!/usr/bin/env bash
-# .mux/tool_post - runs after every tool
+# .xum/tool_post - runs after every tool
 set -euo pipefail
 
 [[ "$XUM_TOOL" == file_edit_* ]] || exit 0
@@ -85,7 +85,7 @@ esac
 ```
 
 ```bash
-chmod +x .mux/tool_post
+chmod +x .xum/tool_post
 ```
 
 <details>
@@ -93,7 +93,7 @@ chmod +x .mux/tool_post
 
 ```bash
 #!/usr/bin/env bash
-# .mux/tool_post - runs after every tool
+# .xum/tool_post - runs after every tool
 set -euo pipefail
 
 [[ "$XUM_TOOL" == file_edit_* ]] || exit 0
@@ -117,10 +117,10 @@ Lint errors appear in `hook_output` and the agent can fix them.
 
 ## Set up environment
 
-Create `.mux/tool_env` to configure your shell environment. This file is **sourced** before every `bash` tool call:
+Create `.xum/tool_env` to configure your shell environment. This file is **sourced** before every `bash` tool call:
 
 ```bash
-# .mux/tool_env - sourced before bash commands
+# .xum/tool_env - sourced before bash commands
 
 # direnv
 eval "$(direnv export bash 2>/dev/null)" || true
@@ -177,7 +177,7 @@ Flattened result fields are available as `XUM_TOOL_RESULT_<...>`. Fields longer 
 
 Xum searches for each hook file in this order:
 
-1. Project-level: `.mux/<hook>`
+1. Project-level: `.xum/<hook>`
 2. User-level: `~/.xum/<hook>`
 
 This applies to `tool_pre`, `tool_post`, and `tool_env`.
@@ -196,7 +196,7 @@ Keep hooks fast—if you need longer operations, consider running them asynchron
 
 <Accordion title="Comparison">
 
-| Feature        | `.mux/tool_pre`          | `.mux/tool_post`      | `.mux/tool_env`         |
+| Feature        | `.xum/tool_pre`          | `.xum/tool_post`      | `.xum/tool_env`         |
 | -------------- | ------------------------ | --------------------- | ----------------------- |
 | **Purpose**    | Block dangerous commands | Lint/validate results | Environment setup       |
 | **Runs**       | Before tool              | After tool            | Sourced in bash shell   |
@@ -866,7 +866,7 @@ If a value is too large for the environment, it may be omitted (not set). Xum al
 
 ```bash
 #!/usr/bin/env bash
-# .mux/tool_post
+# .xum/tool_post
 
 if [[ "$XUM_TOOL" == file_edit_* ]]; then
   file="$XUM_TOOL_INPUT_FILE_PATH"
@@ -880,7 +880,7 @@ fi
 
 ```bash
 #!/usr/bin/env bash
-# .mux/tool_post
+# .xum/tool_post
 
 # Tool results are available via XUM_TOOL_RESULT_* if needed.
 echo "$(date '+%H:%M:%S') $XUM_TOOL completed" >> /tmp/xum-tools.log
@@ -892,7 +892,7 @@ echo "$(date '+%H:%M:%S') $XUM_TOOL completed" >> /tmp/xum-tools.log
 
 ```python
 #!/usr/bin/env python3
-# .mux/tool_pre
+# .xum/tool_pre
 
 import os, sys
 

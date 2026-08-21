@@ -1628,7 +1628,7 @@ export const ProposeStatusToolArgsSchema = z.object({
     ),
 });
 
-const MuxConfigFileSchema = z.enum(["providers", "config"]);
+const XumConfigFileSchema = z.enum(["providers", "config"]);
 
 /**
  * Rename a string-typed alias field to its canonical name on a plain object,
@@ -2000,7 +2000,7 @@ export const TOOL_DEFINITIONS = {
       "Use 'providers' for ~/.xum/providers.jsonc (API provider settings) or 'config' for ~/.xum/config.json (app settings).",
     schema: z
       .object({
-        file: MuxConfigFileSchema.describe("Which configuration file to read"),
+        file: XumConfigFileSchema.describe("Which configuration file to read"),
         path: ConfigMutationPathSchema.nullish().describe(
           "Optional path segments to read a specific nested value. If omitted, returns the full config."
         ),
@@ -2014,7 +2014,7 @@ export const TOOL_DEFINITIONS = {
       "Requires explicit confirmation via confirm: true.",
     schema: z
       .object({
-        file: MuxConfigFileSchema.describe("Which configuration file to write"),
+        file: XumConfigFileSchema.describe("Which configuration file to write"),
         operations: ConfigOperationsSchema.describe("Operations to apply to the config document"),
         confirm: z
           .boolean()
@@ -2025,7 +2025,7 @@ export const TOOL_DEFINITIONS = {
   agent_skill_read: {
     description:
       "Load an Agent Skill's SKILL.md (YAML frontmatter + markdown body) by name. " +
-      "Skills are discovered from <projectRoot>/.mux/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.xum/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
+      "Skills are discovered from <projectRoot>/.xum/skills/<name>/SKILL.md, <projectRoot>/.agents/skills/<name>/SKILL.md, ~/.xum/skills/<name>/SKILL.md, and ~/.agents/skills/<name>/SKILL.md.",
     schema: z
       .object({
         name: SkillNameSchema.describe("Skill name (directory name under the skills root)"),
@@ -2063,7 +2063,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_list: {
     description:
-      "List available skills. In a project workspace, lists project skills from .mux/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.xum/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
+      "List available skills. In a project workspace, lists project skills from .xum/skills/ and legacy/universal .agents/skills/, plus global skills from ~/.xum/skills/ and legacy/universal ~/.agents/skills/, each tagged with its scope. In the system workspace, lists global skills only.",
     schema: z
       .object({
         includeUnadvertised: z
@@ -2077,7 +2077,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_write: {
     description:
-      "Create or update a file within the contextual skills directory. In a project workspace, writes under .mux/skills/<name>/. In the system workspace, writes under ~/.xum/skills/<name>/. " +
+      "Create or update a file within the contextual skills directory. In a project workspace, writes under .xum/skills/<name>/. In the system workspace, writes under ~/.xum/skills/<name>/. " +
       "When writing SKILL.md, content is validated as a skill definition and frontmatter.name is aligned to the skill name argument.",
     schema: z
       .object({
@@ -2093,7 +2093,7 @@ export const TOOL_DEFINITIONS = {
   },
   agent_skill_delete: {
     description:
-      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .mux/skills/. In the system workspace, deletes from ~/.xum/skills/. " +
+      "Delete either a file within the contextual skills directory or the entire skill directory. In a project workspace, deletes from .xum/skills/. In the system workspace, deletes from ~/.xum/skills/. " +
       "Requires confirm: true.",
     schema: z
       .object({
@@ -2956,9 +2956,9 @@ export const BashBackgroundTerminateResultSchema = z.union([
 ]);
 
 /**
- * mux_agents_read tool result.
+ * xum_agents_read tool result.
  */
-export const MuxAgentsReadToolResultSchema = z.union([
+export const XumAgentsReadToolResultSchema = z.union([
   z.object({
     success: z.literal(true),
     content: z.string(),
@@ -2970,9 +2970,9 @@ export const MuxAgentsReadToolResultSchema = z.union([
 ]);
 
 /**
- * mux_agents_write tool result.
+ * xum_agents_write tool result.
  */
-export const MuxAgentsWriteToolResultSchema = z.union([
+export const XumAgentsWriteToolResultSchema = z.union([
   z
     .object({
       success: z.literal(true),
@@ -2988,9 +2988,9 @@ export const MuxAgentsWriteToolResultSchema = z.union([
 ]);
 
 /**
- * mux_config_read tool result.
+ * xum_config_read tool result.
  */
-export const MuxConfigReadToolResultSchema = z.union([
+export const XumConfigReadToolResultSchema = z.union([
   z.object({
     success: z.literal(true),
     file: z.string(),
@@ -3002,15 +3002,15 @@ export const MuxConfigReadToolResultSchema = z.union([
   }),
 ]);
 
-const MuxConfigWriteValidationIssueSchema = z.object({
+const XumConfigWriteValidationIssueSchema = z.object({
   path: z.array(z.union([z.string(), z.number()])),
   message: z.string(),
 });
 
 /**
- * mux_config_write tool result.
+ * xum_config_write tool result.
  */
-export const MuxConfigWriteToolResultSchema = z.union([
+export const XumConfigWriteToolResultSchema = z.union([
   z.object({
     success: z.literal(true),
     file: z.string(),
@@ -3020,7 +3020,7 @@ export const MuxConfigWriteToolResultSchema = z.union([
   z.object({
     success: z.literal(false),
     error: z.string(),
-    validationIssues: z.array(MuxConfigWriteValidationIssueSchema).optional(),
+    validationIssues: z.array(XumConfigWriteValidationIssueSchema).optional(),
   }),
 ]);
 

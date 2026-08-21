@@ -43,7 +43,7 @@ import { buildWorkflowRunCardMessage } from "@/common/utils/workflowRunMessages"
 import { jsonSchema, tool, type LanguageModel, type Tool } from "ai";
 import { createMuxMessage } from "@/common/types/message";
 import type { ModelMessage, MuxMessage } from "@/common/types/message";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import { uniqueSuffix } from "@/common/utils/hasher";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
@@ -631,7 +631,7 @@ describe("AIService.setupStreamEventForwarding", () => {
     clearPendingRunMetadataSpy: ReturnType<typeof mock>;
     [Symbol.dispose]: () => void;
   } {
-    const muxHome = new DisposableTempDir(tempDirName);
+    const xumHome = new DisposableTempDir(tempDirName);
     const clearPendingRunMetadataSpy = mock(
       (_workspaceId: string, _metadataId?: string) => undefined
     );
@@ -639,13 +639,13 @@ describe("AIService.setupStreamEventForwarding", () => {
       enabled: true,
       clearPendingRunMetadata: clearPendingRunMetadataSpy,
     } as unknown as DevToolsService;
-    const { historyService, service } = createBasicAIService(muxHome.path, { devToolsService });
+    const { historyService, service } = createBasicAIService(xumHome.path, { devToolsService });
     return {
       historyService,
       service,
       internals: service as unknown as ForwardingInternals,
       clearPendingRunMetadataSpy,
-      [Symbol.dispose]: () => muxHome[Symbol.dispose](),
+      [Symbol.dispose]: () => xumHome[Symbol.dispose](),
     };
   }
 
@@ -772,17 +772,17 @@ describe("AIService.setupStreamEventForwarding", () => {
 
 describe("AIService.resolveGatewayModelString", () => {
   it("routes allowlisted models when gateway is enabled + configured", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing");
+    using xumHome = new DisposableTempDir("gateway-routing");
 
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [KNOWN_MODELS.SONNET.id],
     });
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -791,12 +791,12 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 
   it("does not route when the mux-gateway provider is disabled", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-provider-disabled");
+    using xumHome = new DisposableTempDir("gateway-routing-provider-disabled");
 
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       routePriority: ["mux-gateway", "direct"],
     });
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       anthropic: { apiKey: "sk-ant-test" },
       "mux-gateway": {
         couponCode: "test-coupon",
@@ -804,7 +804,7 @@ describe("AIService.resolveGatewayModelString", () => {
       },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -813,14 +813,14 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 
   it("does not route when gateway is not configured", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-unconfigured");
+    using xumHome = new DisposableTempDir("gateway-routing-unconfigured");
 
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [KNOWN_MODELS.SONNET.id],
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(KNOWN_MODELS.SONNET.id);
@@ -829,18 +829,18 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 
   it("does not route unsupported providers even when allowlisted", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-unsupported-provider");
+    using xumHome = new DisposableTempDir("gateway-routing-unsupported-provider");
 
     const modelString = "openrouter:some-model";
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [modelString],
     });
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(modelString);
@@ -849,18 +849,18 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 
   it("routes model variants when the base model is allowlisted via modelKey", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-model-key");
+    using xumHome = new DisposableTempDir("gateway-routing-model-key");
 
     const variant = "xai:grok-4-1-fast-reasoning";
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: ["xai:grok-4-1-fast"],
     });
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(
@@ -872,17 +872,17 @@ describe("AIService.resolveGatewayModelString", () => {
   });
 
   it("honors explicit mux-gateway prefixes from legacy clients", async () => {
-    using muxHome = new DisposableTempDir("gateway-routing-explicit");
+    using xumHome = new DisposableTempDir("gateway-routing-explicit");
 
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       muxGatewayEnabled: true,
       muxGatewayModels: [],
     });
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       "mux-gateway": { couponCode: "test-coupon" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
 
     // @ts-expect-error - accessing private field for testing
     const resolved = service.providerModelFactory.resolveGatewayModelString(
@@ -897,9 +897,9 @@ describe("AIService.resolveGatewayModelString", () => {
 
 describe("AIService.createModel (Codex OAuth routing)", () => {
   it("returns oauth_not_connected for required Codex models when both OAuth and API key are missing", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-missing");
+    using xumHome = new DisposableTempDir("codex-oauth-missing");
 
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       openai: {},
     });
 
@@ -907,7 +907,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createBasicAIService(muxHome.path).service;
+      const service = createBasicAIService(xumHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
       expect(result.success).toBe(false);
@@ -922,16 +922,16 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("returns api_key_not_found for released gpt-5.3-codex when OAuth and API key are missing", async () => {
-    using muxHome = new DisposableTempDir("codex-api-model-missing-auth");
+    using xumHome = new DisposableTempDir("codex-api-model-missing-auth");
 
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       openai: {},
     });
 
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createBasicAIService(muxHome.path).service;
+      const service = createBasicAIService(xumHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX.id);
 
       expect(result.success).toBe(false);
@@ -946,16 +946,16 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("returns api_key_not_found for gpt-5.5 when OAuth and API key are missing", async () => {
-    using muxHome = new DisposableTempDir("codex-gpt-5-5-missing-auth");
+    using xumHome = new DisposableTempDir("codex-gpt-5-5-missing-auth");
 
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       openai: {},
     });
 
     const savedKey = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
     try {
-      const service = createBasicAIService(muxHome.path).service;
+      const service = createBasicAIService(xumHome.path).service;
       const result = await service.createModel(KNOWN_MODELS.GPT.id);
 
       expect(result.success).toBe(false);
@@ -970,13 +970,13 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("falls back to API key for required Codex models when OAuth is missing but API key is present", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-missing-apikey-present");
+    using xumHome = new DisposableTempDir("codex-oauth-missing-apikey-present");
 
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       openai: { apiKey: "sk-test-key" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
     const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     // Should succeed — falls back to API key instead of erroring with oauth_not_connected
@@ -984,9 +984,9 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("does not require an OpenAI API key when Codex OAuth is configured", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-present");
+    using xumHome = new DisposableTempDir("codex-oauth-present");
 
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       openai: {
         codexOauth: {
           type: "oauth",
@@ -998,7 +998,7 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
     const result = await service.createModel(KNOWN_MODELS.GPT_53_CODEX_SPARK.id);
 
     expect(result.success).toBe(true);
@@ -1018,8 +1018,8 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
       endpointMatcher: (url: string) => expect(url).not.toBe(CODEX_ENDPOINT),
     },
   ])("$name", async ({ tempDirName, defaultAuth, endpointMatcher }) => {
-    using muxHome = new DisposableTempDir(tempDirName);
-    const { config, service } = createBasicAIService(muxHome.path);
+    using xumHome = new DisposableTempDir(tempDirName);
+    const { config, service } = createBasicAIService(xumHome.path);
     const requests: RecordedFetchRequest[] = [];
     configureOpenAICodexOAuth(service, config, requests, { defaultAuth });
 
@@ -1033,8 +1033,8 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("ensures Codex OAuth routed Responses requests include non-empty instructions", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-instructions");
-    const { config, service } = createBasicAIService(muxHome.path);
+    using xumHome = new DisposableTempDir("codex-oauth-instructions");
+    const { config, service } = createBasicAIService(xumHome.path);
     const requests: RecordedFetchRequest[] = [];
     configureOpenAICodexOAuth(service, config, requests, { responseModel: "gpt-5.3-codex" });
     const systemPrompt = "Test system prompt";
@@ -1094,8 +1094,8 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
   });
 
   it("filters out item_reference entries and preserves inline items when routing through Codex OAuth", async () => {
-    using muxHome = new DisposableTempDir("codex-oauth-filter-refs");
-    const { config, service } = createBasicAIService(muxHome.path);
+    using xumHome = new DisposableTempDir("codex-oauth-filter-refs");
+    const { config, service } = createBasicAIService(xumHome.path);
     const requests: RecordedFetchRequest[] = [];
     configureOpenAICodexOAuth(service, config, requests, { responseModel: "gpt-5.3-codex" });
 
@@ -1172,19 +1172,19 @@ describe("AIService.createModel (Codex OAuth routing)", () => {
 
 describe("AIService.createModelWithPinnedMetadata", () => {
   it("derives the pinned identity from the effective route when a coder selection falls away", async () => {
-    using muxHome = new DisposableTempDir("pinned-metadata-fallback-away");
+    using xumHome = new DisposableTempDir("pinned-metadata-fallback-away");
 
     // Cross-typed canonical-named instance (name openai, type anthropic) with
     // NO coder credential: the gateway is not routable, so createModel falls
     // away to direct OpenAI. The pinned identity must follow that effective
     // route — resolving the raw selection would price/bucket this spend as
     // anthropic:<model> despite the request being served by OpenAI.
-    await writeProvidersConfig(muxHome.path, {
+    await writeProvidersConfig(xumHome.path, {
       coder: { additionalProviders: [{ name: "openai", type: "anthropic" }] },
       openai: { apiKey: "sk-test-key" },
     });
 
-    const service = createBasicAIService(muxHome.path).service;
+    const service = createBasicAIService(xumHome.path).service;
     const result = await service.createModelWithPinnedMetadata("coder:openai/claude-opus-4-1");
 
     expect(result.success).toBe(true);
@@ -1201,7 +1201,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     planPayloadMessageIds: string[][];
     preparedPayloadMessageIds: string[][];
     preparedToolNamesForSentinel: string[][];
-    streamSystemContextMuxScopes: MuxToolScope[];
+    streamSystemContextMuxScopes: XumToolScope[];
     streamSystemContextAdvisorFlags: Array<boolean | undefined>;
     streamSystemContextMemoryToolFlags: Array<boolean | undefined>;
     streamSystemContextHotMemoriesBlocks: Array<string | undefined>;
@@ -1252,7 +1252,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   }
 
   function createHarness(
-    muxHomePath: string,
+    xumHomePath: string,
     metadata: WorkspaceMetadata,
     options?: {
       routeProvider?: ProviderName;
@@ -1267,7 +1267,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     }
   ): StreamMessageHarness {
     const { config, historyService, initStateManager, service } = createBasicAIService(
-      muxHomePath,
+      xumHomePath,
       {
         sessionUsageService: options?.sessionUsageService,
         experimentsService: options?.experimentsService,
@@ -1276,7 +1276,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     const planPayloadMessageIds: string[][] = [];
     const preparedPayloadMessageIds: string[][] = [];
     const preparedToolNamesForSentinel: string[][] = [];
-    const streamSystemContextMuxScopes: MuxToolScope[] = [];
+    const streamSystemContextMuxScopes: XumToolScope[] = [];
     const streamSystemContextAdvisorFlags: Array<boolean | undefined> = [];
     const streamSystemContextMemoryToolFlags: Array<boolean | undefined> = [];
     const streamSystemContextHotMemoriesBlocks: Array<string | undefined> = [];
@@ -1297,10 +1297,10 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       useRequestedModelString: options?.useRequestedModelString,
       onPlanPayloadMessageIds: (messageIds) => planPayloadMessageIds.push(messageIds),
       onBuildStreamSystemContext: (contextArgs) => {
-        if (!contextArgs.muxScope) {
-          throw new Error("Expected muxScope in stream system context build args");
+        if (!contextArgs.xumScope) {
+          throw new Error("Expected xumScope in stream system context build args");
         }
-        streamSystemContextMuxScopes.push(contextArgs.muxScope);
+        streamSystemContextMuxScopes.push(contextArgs.xumScope);
         streamSystemContextAdvisorFlags.push(contextArgs.advisorToolAvailable);
         streamSystemContextMemoryToolFlags.push(contextArgs.memoryToolAvailable);
         streamSystemContextHotMemoriesBlocks.push(contextArgs.hotMemoriesBlock);
@@ -1443,13 +1443,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("keeps set_goal disabled for one-shot streams that do not opt into agent-created goals", async () => {
-    using muxHome = new DisposableTempDir("ai-service-set-goal-disabled");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-set-goal-disabled");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-set-goal-disabled";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     const goalService = {
       getGoal: mock(() => Promise.resolve(null)),
     } as unknown as WorkspaceGoalService;
@@ -1469,13 +1469,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("enables set_goal for parent streams that opt into agent-created goals", async () => {
-    using muxHome = new DisposableTempDir("ai-service-set-goal-enabled");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-set-goal-enabled");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-set-goal-enabled";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     const goalService = {
       getGoal: mock(() => Promise.resolve(null)),
     } as unknown as WorkspaceGoalService;
@@ -1496,15 +1496,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("keeps set_goal disabled for child workspaces even when the host opts in", async () => {
-    using muxHome = new DisposableTempDir("ai-service-set-goal-child-disabled");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-set-goal-child-disabled");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-set-goal-child-disabled";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath, {
       parentWorkspaceId: "parent-workspace",
     });
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     const goalService = {
       getGoal: mock(() => Promise.resolve(null)),
     } as unknown as WorkspaceGoalService;
@@ -1525,20 +1525,20 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("prepares fallback continuation from partial assistant output with one sentinel", async () => {
-    using muxHome = new DisposableTempDir("ai-service-fallback-continuation");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-fallback-continuation");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-fallback-continuation";
     const fallbackModel = KNOWN_MODELS.GPT.id;
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       modelFallbacks: {
         [KNOWN_MODELS.SONNET.id]: { models: [fallbackModel] },
       },
     });
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       effectiveModelString: KNOWN_MODELS.SONNET.id,
       canonicalProviderName: "anthropic",
       canonicalModelId: "claude-sonnet-4-5",
@@ -1595,14 +1595,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("prepares fallback system context with the fallback model's hot memories", async () => {
-    using muxHome = new DisposableTempDir("ai-service-fallback-hot-memories");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-fallback-hot-memories");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-fallback-hot-memories";
     const sourceModel = KNOWN_MODELS.SONNET.id;
     const fallbackModel = KNOWN_MODELS.GPT.id;
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       modelFallbacks: {
         [sourceModel]: { models: [fallbackModel] },
       },
@@ -1610,8 +1610,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const experimentsService = new ExperimentsService({
-      telemetryService: new TelemetryService(muxHome.path),
-      muxHome: muxHome.path,
+      telemetryService: new TelemetryService(xumHome.path),
+      xumHome: xumHome.path,
     });
     spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
       (experimentId) =>
@@ -1619,13 +1619,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     );
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
     const stubTool: Tool = {} as never;
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       allTools: { memory: stubTool },
       useRequestedModelString: true,
       experimentsService,
     });
     harness.service.setMemoryService(
-      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+      new MemoryService(harness.config, new MemoryMetaService(xumHome.path))
     );
 
     const memoryCalls: Array<{ modelString: string; includeHotMemories: boolean }> = [];
@@ -1722,17 +1722,17 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     preparedOpenAIOptions: Record<string, unknown>;
     preparedMetadataPatch: Record<string, unknown>;
   }> {
-    using muxHome = new DisposableTempDir(options.tempDirName);
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir(options.tempDirName);
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       modelFallbacks: {
         [options.sourceModel]: { models: [options.fallbackModel] },
       },
     });
 
     const metadata = createLocalWorkspaceMetadata(options.workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
     stubPerModelRouteResolution(harness.service);
 
     const result = await harness.service.streamMessage({
@@ -1822,18 +1822,18 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // to option/header/cache builders (like the main path does) so they can
     // recover the instance metadata — the canonical string would emit OpenAI
     // options for an Anthropic-wire request.
-    using muxHome = new DisposableTempDir("ai-service-fallback-coder-raw-identity");
+    using xumHome = new DisposableTempDir("ai-service-fallback-coder-raw-identity");
     const workspaceId = "workspace-fallback-coder-raw";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const sourceModel = "openai:gpt-5.2";
     const fallbackModel = "coder:openai/claude-opus-4-5";
-    await writeMainConfig(muxHome.path, {
+    await writeMainConfig(xumHome.path, {
       modelFallbacks: { [sourceModel]: { models: [fallbackModel] } },
     });
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
     // Model parameter overrides must resolve from the instance TYPE
     // (anthropic), not the name-canonicalized provider (openai): the OpenAI
     // wildcard here must NOT leak into the Anthropic-wire request.
@@ -1951,14 +1951,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // canonicalization rewrites coder:openai/x (type anthropic) to openai:x,
     // which can no longer consult the instance metadata — tool/instruction
     // decisions would treat a Claude model as OpenAI.
-    using muxHome = new DisposableTempDir("ai-service-main-coder-raw-capability");
+    using xumHome = new DisposableTempDir("ai-service-main-coder-raw-capability");
     const workspaceId = "workspace-main-coder-raw";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const modelString = "coder:openai/claude-opus-4-5";
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
 
     const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
       | ProviderModelFactory
@@ -2022,14 +2022,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // origin-shaped payloads, so tool assembly must key on the canonical
     // wire identity — the mux-gateway:* prefix would skip the Anthropic
     // tool branch entirely.
-    using muxHome = new DisposableTempDir("ai-service-main-coder-passthrough-fallback");
+    using xumHome = new DisposableTempDir("ai-service-main-coder-passthrough-fallback");
     const workspaceId = "workspace-main-coder-passthrough";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const modelString = "coder:prod-anthropic/claude-opus-4-5";
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
 
     const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
       | ProviderModelFactory
@@ -2080,14 +2080,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // coder:openrouter/... is created via provider.chat(...): tool assembly
     // must not add Responses-only native web_search, and providerOptions
     // must build for the Chat Completions wire (via the wireFormat knob).
-    using muxHome = new DisposableTempDir("ai-service-main-coder-chat-wire");
+    using xumHome = new DisposableTempDir("ai-service-main-coder-chat-wire");
     const workspaceId = "workspace-main-coder-chat-wire";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const modelString = "coder:openrouter/openai/gpt-5.2";
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
 
     const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
       | ProviderModelFactory
@@ -2150,14 +2150,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // (user option, or a refusal chain that started on direct OpenAI Chat
     // Completions) must be overridden, or tools/options build Chat
     // Completions payloads for a Responses request.
-    using muxHome = new DisposableTempDir("ai-service-main-coder-responses-wire");
+    using xumHome = new DisposableTempDir("ai-service-main-coder-responses-wire");
     const workspaceId = "workspace-main-coder-responses-wire";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const modelString = "coder:prod-openai/gpt-5.2";
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
 
     const providerModelFactory = Reflect.get(harness.service, "providerModelFactory") as
       | ProviderModelFactory
@@ -2217,14 +2217,14 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     // name-canonical anthropic:<model> would apply the anthropic block's
     // wildcard/model settings to an OpenAI-chat request and merge
     // Anthropic-shaped extras into the OpenAI SDK namespace.
-    using muxHome = new DisposableTempDir("ai-service-main-coder-unmappable-overrides");
+    using xumHome = new DisposableTempDir("ai-service-main-coder-unmappable-overrides");
     const workspaceId = "workspace-main-coder-unmappable-overrides";
-    const projectPath = path.join(muxHome.path, "project");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
     const modelString = "coder:anthropic/gpt-5";
 
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { useRequestedModelString: true });
+    const harness = createHarness(xumHome.path, metadata, { useRequestedModelString: true });
     harness.config.saveProvidersConfig({
       anthropic: { modelParameters: { "*": { anthropicKnob: "yes" } } },
       coder: { modelParameters: { "*": { coderKnob: "yes" } } },
@@ -2328,13 +2328,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("emits startup breadcrumbs as runtime-status events before stream start", async () => {
-    using muxHome = new DisposableTempDir("ai-service-startup-breadcrumbs");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-startup-breadcrumbs");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-startup-breadcrumbs";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     const runtimeStatusEvents: RuntimeStatusEvent[] = [];
 
     harness.service.on("runtime-status", (event) => {
@@ -2400,13 +2400,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("reuses the pre-policy stream system context when advisor availability is unchanged", async () => {
-    using muxHome = new DisposableTempDir("ai-service-reuse-system-context");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-reuse-system-context");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-reuse-system-context";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "hello")],
@@ -2423,15 +2423,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("rebuilds the stream system context when policy removes advisor guidance", async () => {
-    using muxHome = new DisposableTempDir("ai-service-rebuild-system-context-advisor");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-rebuild-system-context-advisor");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-rebuild-system-context-advisor";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for advisor availability gating
     const stubTool: Tool = {} as never;
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       allTools: { advisor: stubTool },
       postPolicyTools: {},
     });
@@ -2453,15 +2453,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("rebuilds the stream system context without memory availability when policy strips the memory tool", async () => {
-    using muxHome = new DisposableTempDir("ai-service-rebuild-system-context-memory");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-rebuild-system-context-memory");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-rebuild-system-context-memory";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
     const stubTool: Tool = {} as never;
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       allTools: { memory: stubTool },
       // Tool policy strips the memory tool: the final prompt must not claim
       // the memory tool is enabled (memoryToolAvailable gates the
@@ -2470,7 +2470,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       postPolicyTools: {},
     });
     harness.service.setMemoryService(
-      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+      new MemoryService(harness.config, new MemoryMetaService(xumHome.path))
     );
     const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
 
@@ -2492,19 +2492,19 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("does not upgrade memory context when the hot-set sub-experiment is disabled", async () => {
-    using muxHome = new DisposableTempDir("ai-service-memory-hot-set-disabled");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-memory-hot-set-disabled");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-memory-hot-set-disabled";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- stub for memory availability gating
     const stubTool: Tool = {} as never;
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       allTools: { memory: stubTool },
     });
     harness.service.setMemoryService(
-      new MemoryService(harness.config, new MemoryMetaService(muxHome.path))
+      new MemoryService(harness.config, new MemoryMetaService(xumHome.path))
     );
     const memoryCalls: Array<{ includeHotMemories: boolean }> = [];
 
@@ -2526,16 +2526,16 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("anchors the memory index by project identity and gates hot preloading on the memory-hot-set experiment", async () => {
-    using muxHome = new DisposableTempDir("ai-service-memory-session-context");
-    const projectPath = path.join(muxHome.path, "project");
-    const checkoutRoot = path.join(muxHome.path, "checkout");
+    using xumHome = new DisposableTempDir("ai-service-memory-session-context");
+    const projectPath = path.join(xumHome.path, "project");
+    const checkoutRoot = path.join(xumHome.path, "checkout");
     const subProjectCwd = path.join(checkoutRoot, "packages", "app");
     await fs.mkdir(subProjectCwd, { recursive: true });
     // Project memory lives in a host-local root keyed by the stable project
     // identity, so the advertised index must enumerate it even when the
     // workspace executes inside a sub-project checkout directory.
     const projectMemoryRoot = path.join(
-      muxHome.path,
+      xumHome.path,
       "memory",
       "project",
       projectMemoryDirName(projectPath)
@@ -2545,16 +2545,16 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
 
     let hotSetEnabled = false;
     const experimentsService = new ExperimentsService({
-      telemetryService: new TelemetryService(muxHome.path),
-      muxHome: muxHome.path,
+      telemetryService: new TelemetryService(xumHome.path),
+      xumHome: xumHome.path,
     });
     spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
       (experimentId) =>
         experimentId === EXPERIMENT_IDS.MEMORY ||
         (experimentId === EXPERIMENT_IDS.MEMORY_HOT_SET && hotSetEnabled)
     );
-    const { config, service } = createBasicAIService(muxHome.path, { experimentsService });
-    const memoryService = new MemoryService(config, new MemoryMetaService(muxHome.path));
+    const { config, service } = createBasicAIService(xumHome.path, { experimentsService });
+    const memoryService = new MemoryService(config, new MemoryMetaService(xumHome.path));
     service.setMemoryService(memoryService);
 
     const workspaceId = "workspace-memory-session-context";
@@ -2592,11 +2592,11 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("preserves the memory index when hot-memory selection fails", async () => {
-    using muxHome = new DisposableTempDir("ai-service-memory-hot-failure");
-    const projectPath = path.join(muxHome.path, "project");
-    const checkoutRoot = path.join(muxHome.path, "checkout");
+    using xumHome = new DisposableTempDir("ai-service-memory-hot-failure");
+    const projectPath = path.join(xumHome.path, "project");
+    const checkoutRoot = path.join(xumHome.path, "checkout");
     const projectMemoryRoot = path.join(
-      muxHome.path,
+      xumHome.path,
       "memory",
       "project",
       projectMemoryDirName(projectPath)
@@ -2605,15 +2605,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     await fs.writeFile(path.join(projectMemoryRoot, "root-note.md"), "root fact\n");
 
     const experimentsService = new ExperimentsService({
-      telemetryService: new TelemetryService(muxHome.path),
-      muxHome: muxHome.path,
+      telemetryService: new TelemetryService(xumHome.path),
+      xumHome: xumHome.path,
     });
     spyOn(experimentsService, "isExperimentEnabled").mockImplementation(
       (experimentId) =>
         experimentId === EXPERIMENT_IDS.MEMORY || experimentId === EXPERIMENT_IDS.MEMORY_HOT_SET
     );
-    const { config, service } = createBasicAIService(muxHome.path, { experimentsService });
-    const memoryService = new MemoryService(config, new MemoryMetaService(muxHome.path));
+    const { config, service } = createBasicAIService(xumHome.path, { experimentsService });
+    const memoryService = new MemoryService(config, new MemoryMetaService(xumHome.path));
     service.setMemoryService(memoryService);
 
     const workspaceId = "workspace-memory-hot-failure";
@@ -2636,13 +2636,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("resolves the memory context only after the runtime is ready", async () => {
-    using muxHome = new DisposableTempDir("ai-service-hot-memories-after-ready");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-hot-memories-after-ready");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-hot-memories-after-ready";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     // Ordering is the contract under test: AgentSession caches the resolver
     // result per model/session segment, so resolving before ensureReady on a
@@ -2688,13 +2688,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("keeps legacy system workspaces on the global mux tool scope", async () => {
-    using muxHome = new DisposableTempDir("ai-service-system-tool-scope");
-    const projectPath = path.join(muxHome.path, "legacy-system-project");
+    using xumHome = new DisposableTempDir("ai-service-system-tool-scope");
+    const projectPath = path.join(xumHome.path, "legacy-system-project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-system-tool-scope";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await harness.config.editConfig((cfg) => {
       cfg.projects.set(projectPath, { workspaces: [], projectKind: "system" });
       return cfg;
@@ -2710,15 +2710,15 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(result.success).toBe(true);
     expect(harness.streamSystemContextMuxScopes.at(-1)).toEqual({
       type: "global",
-      muxHome: muxHome.path,
+      xumHome: xumHome.path,
     });
   });
 
   it("keeps _multi workspaces on the project mux tool scope", async () => {
-    using muxHome = new DisposableTempDir("ai-service-multi-project-tool-scope");
+    using xumHome = new DisposableTempDir("ai-service-multi-project-tool-scope");
     const workspaceId = "workspace-multi-project-tool-scope";
     const metadata = createLocalWorkspaceMetadata(workspaceId, MULTI_PROJECT_CONFIG_KEY);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await harness.config.editConfig((cfg) => {
       cfg.projects.set(MULTI_PROJECT_CONFIG_KEY, { workspaces: [], projectKind: "system" });
       return cfg;
@@ -2734,7 +2734,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     expect(result.success).toBe(true);
     expect(harness.streamSystemContextMuxScopes.at(-1)).toEqual({
       type: "project",
-      muxHome: muxHome.path,
+      xumHome: xumHome.path,
       projectRoot: MULTI_PROJECT_CONFIG_KEY,
       projectStorageAuthority: "host-local",
       checkoutRoot: MULTI_PROJECT_CONFIG_KEY,
@@ -2742,13 +2742,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("uses the latest durable boundary slice for provider payload and OpenAI derivations", async () => {
-    using muxHome = new DisposableTempDir("ai-service-slice-latest-boundary");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-slice-latest-boundary");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-slice-latest";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     const messages: MuxMessage[] = [
       createMuxMessage("boundary-1", "assistant", "compaction epoch 1", {
@@ -2810,13 +2810,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("passes the resolved routeProvider into initial stream metadata", async () => {
-    using muxHome = new DisposableTempDir("ai-service-route-provider-present");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-route-provider-present");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-route-provider-present";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+    const harness = createHarness(xumHome.path, metadata, { routeProvider: "openrouter" });
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
@@ -2839,13 +2839,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("passes muxMetadata into initial stream metadata", async () => {
-    using muxHome = new DisposableTempDir("ai-service-mux-metadata");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-mux-metadata");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-mux-metadata";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
@@ -2879,13 +2879,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("omits routeProvider from initial stream metadata when unresolved", async () => {
-    using muxHome = new DisposableTempDir("ai-service-route-provider-absent");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-route-provider-absent");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-route-provider-absent";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
@@ -2908,8 +2908,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("derives sentinel tool names from assembled post-policy tools", async () => {
-    using muxHome = new DisposableTempDir("ai-service-sentinel-tool-names");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-sentinel-tool-names");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-sentinel-tools";
@@ -2925,7 +2925,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       my_mcp_tool: stubTool,
       bash: stubTool,
     };
-    const harness = createHarness(muxHome.path, metadata, {
+    const harness = createHarness(xumHome.path, metadata, {
       allTools,
       postPolicyTools: finalTools,
     });
@@ -2946,13 +2946,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("falls back safely when boundary metadata is malformed", async () => {
-    using muxHome = new DisposableTempDir("ai-service-slice-malformed-boundary");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-slice-malformed-boundary");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-slice-malformed";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     const messages: MuxMessage[] = [
       createMuxMessage("assistant-before-malformed", "assistant", "response before malformed", {
@@ -3006,13 +3006,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("freezes advisor tool-call snapshots at the tool-call boundary", async () => {
-    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-boundary");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-advisor-step-snapshot-boundary");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-boundary";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
     await startAdvisorStream(harness, workspaceId);
@@ -3044,13 +3044,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("keeps multiple advisor tool-call snapshots isolated within the same step", async () => {
-    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-isolated");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-advisor-step-snapshot-isolated");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-isolated";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
     await startAdvisorStream(harness, workspaceId);
@@ -3091,13 +3091,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("resets advisor step capture buffers and frozen snapshots between steps", async () => {
-    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-reset");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-advisor-step-snapshot-reset");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-reset";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
     await startAdvisorStream(harness, workspaceId);
@@ -3141,13 +3141,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("consumes advisor tool-call snapshots on first read", async () => {
-    using muxHome = new DisposableTempDir("ai-service-advisor-step-snapshot-consume");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-advisor-step-snapshot-consume");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-advisor-step-snapshot-consume";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
     await enableAdvisorForHarness(harness);
 
     await startAdvisorStream(harness, workspaceId);
@@ -3174,8 +3174,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("resolves advisor tool metadata pricing without changing the stored model bucket", async () => {
-    using muxHome = new DisposableTempDir("ai-service-tool-model-usage");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-tool-model-usage");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage";
@@ -3186,7 +3186,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       recordUsage,
       getSessionUsage,
     } as unknown as SessionUsageService;
-    const harness = createHarness(muxHome.path, metadata, { sessionUsageService });
+    const harness = createHarness(xumHome.path, metadata, { sessionUsageService });
     const metadataModel = KNOWN_MODELS.SONNET.id;
     harness.config.saveProvidersConfig({
       anthropic: {
@@ -3292,8 +3292,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("zeros advisor tool usage costs for costs-included models before persisting", async () => {
-    using muxHome = new DisposableTempDir("ai-service-tool-model-usage-costs-included");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-tool-model-usage-costs-included");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage-costs-included";
@@ -3304,7 +3304,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       recordUsage,
       getSessionUsage,
     } as unknown as SessionUsageService;
-    const harness = createHarness(muxHome.path, metadata, { sessionUsageService });
+    const harness = createHarness(xumHome.path, metadata, { sessionUsageService });
 
     harness.config.saveProvidersConfig({
       openai: {
@@ -3405,8 +3405,8 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
   });
 
   it("logs and swallows tool model usage persistence failures", async () => {
-    using muxHome = new DisposableTempDir("ai-service-tool-model-usage-failure");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-tool-model-usage-failure");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-tool-model-usage-failure";
@@ -3419,7 +3419,7 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
       getSessionUsage,
     } as unknown as SessionUsageService;
     const warnSpy = spyOn(log, "warn").mockImplementation(() => undefined);
-    const harness = createHarness(muxHome.path, metadata, { sessionUsageService });
+    const harness = createHarness(xumHome.path, metadata, { sessionUsageService });
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("latest-user", "user", "continue")],
@@ -3494,13 +3494,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     }
 
     it("threads the session holder by reference and rebuilds options through the same pipeline", async () => {
-      using muxHome = new DisposableTempDir("ai-service-thinking-override");
-      const projectPath = path.join(muxHome.path, "project");
+      using xumHome = new DisposableTempDir("ai-service-thinking-override");
+      const projectPath = path.join(xumHome.path, "project");
       await fs.mkdir(projectPath, { recursive: true });
 
       const workspaceId = "workspace-thinking-override";
       const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-      const harness = createHarness(muxHome.path, metadata, {
+      const harness = createHarness(xumHome.path, metadata, {
         useRequestedModelString: true,
         canonicalProviderName: "anthropic",
       });
@@ -3539,13 +3539,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     it("clamps mid-turn requests against the session-provided floor", async () => {
-      using muxHome = new DisposableTempDir("ai-service-thinking-floor");
-      const projectPath = path.join(muxHome.path, "project");
+      using xumHome = new DisposableTempDir("ai-service-thinking-floor");
+      const projectPath = path.join(xumHome.path, "project");
       await fs.mkdir(projectPath, { recursive: true });
 
       const workspaceId = "workspace-thinking-floor";
       const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-      const harness = createHarness(muxHome.path, metadata, {
+      const harness = createHarness(xumHome.path, metadata, {
         useRequestedModelString: true,
         canonicalProviderName: "anthropic",
       });
@@ -3570,13 +3570,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     it("applies Anthropic native-xhigh transitions as plain provider-option rebuilds", async () => {
-      using muxHome = new DisposableTempDir("ai-service-thinking-xhigh");
-      const projectPath = path.join(muxHome.path, "project");
+      using xumHome = new DisposableTempDir("ai-service-thinking-xhigh");
+      const projectPath = path.join(xumHome.path, "project");
       await fs.mkdir(projectPath, { recursive: true });
 
       const workspaceId = "workspace-thinking-xhigh";
       const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-      const harness = createHarness(muxHome.path, metadata, {
+      const harness = createHarness(xumHome.path, metadata, {
         useRequestedModelString: true,
         canonicalProviderName: "anthropic",
       });
@@ -3602,13 +3602,13 @@ describe("AIService.streamMessage compaction boundary slicing", () => {
     });
 
     it("skips the grok-4-1-fast off<->on transition (model-instance swap)", async () => {
-      using muxHome = new DisposableTempDir("ai-service-thinking-grok");
-      const projectPath = path.join(muxHome.path, "project");
+      using xumHome = new DisposableTempDir("ai-service-thinking-grok");
+      const projectPath = path.join(xumHome.path, "project");
       await fs.mkdir(projectPath, { recursive: true });
 
       const workspaceId = "workspace-thinking-grok";
       const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-      const harness = createHarness(muxHome.path, metadata, {
+      const harness = createHarness(xumHome.path, metadata, {
         useRequestedModelString: true,
         canonicalProviderName: "xai" as ProviderName,
       });
@@ -3663,14 +3663,14 @@ describe("AIService.streamMessage multi-project trust gating", () => {
   }
 
   function createHarness(
-    muxHomePath: string,
+    xumHomePath: string,
     metadata: WorkspaceMetadata,
     multiProjectExperimentEnabled = true,
     workspacePathOverride?: string
   ): TrustGatingHarness {
     const experimentsService = new ExperimentsService({
-      telemetryService: new TelemetryService(muxHomePath),
-      muxHome: muxHomePath,
+      telemetryService: new TelemetryService(xumHomePath),
+      xumHome: xumHomePath,
     });
     spyOn(experimentsService, "isExperimentEnabled").mockImplementation((experimentId) =>
       experimentId === EXPERIMENT_IDS.MULTI_PROJECT_WORKSPACES
@@ -3678,7 +3678,7 @@ describe("AIService.streamMessage multi-project trust gating", () => {
         : false
     );
     const { config, historyService, initStateManager, service } = createBasicAIService(
-      muxHomePath,
+      xumHomePath,
       {
         experimentsService,
       }
@@ -3722,15 +3722,15 @@ describe("AIService.streamMessage multi-project trust gating", () => {
   });
 
   it("marks multi-project tool execution untrusted when any secondary project is untrusted", async () => {
-    using muxHome = new DisposableTempDir("ai-service-multi-project-trust-gating");
-    const projectAPath = path.join(muxHome.path, "project-a");
-    const projectBPath = path.join(muxHome.path, "project-b");
+    using xumHome = new DisposableTempDir("ai-service-multi-project-trust-gating");
+    const projectAPath = path.join(xumHome.path, "project-a");
+    const projectBPath = path.join(xumHome.path, "project-b");
     await fs.mkdir(projectAPath, { recursive: true });
     await fs.mkdir(projectBPath, { recursive: true });
 
     const workspaceId = "workspace-multi-project-trust";
     const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath]);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     await harness.config.editConfig((cfg) => {
       cfg.projects.set(projectAPath, { workspaces: [], trusted: true });
@@ -3745,20 +3745,20 @@ describe("AIService.streamMessage multi-project trust gating", () => {
   });
 
   it("uses the persisted workspace root as cwd for multi-project ssh startup", async () => {
-    using muxHome = new DisposableTempDir("ai-service-multi-project-persisted-cwd");
-    const projectAPath = path.join(muxHome.path, "project-a");
-    const projectBPath = path.join(muxHome.path, "project-b");
+    using xumHome = new DisposableTempDir("ai-service-multi-project-persisted-cwd");
+    const projectAPath = path.join(xumHome.path, "project-a");
+    const projectBPath = path.join(xumHome.path, "project-b");
     await fs.mkdir(projectAPath, { recursive: true });
     await fs.mkdir(projectBPath, { recursive: true });
 
     const workspaceId = "workspace-multi-project-persisted-cwd";
-    const persistedWorkspacePath = path.join(muxHome.path, "persisted-legacy-workspace-root");
+    const persistedWorkspacePath = path.join(xumHome.path, "persisted-legacy-workspace-root");
     const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath], {
       type: "ssh",
       host: "example.com",
       srcBaseDir: "/remote/src",
     });
-    const harness = createHarness(muxHome.path, metadata, true, persistedWorkspacePath);
+    const harness = createHarness(xumHome.path, metadata, true, persistedWorkspacePath);
     const createRuntimeSpy = spyOn(runtimeFactory, "createRuntime").mockImplementation(
       (_runtimeConfig, options) => new LocalRuntime(options?.projectPath ?? projectAPath)
     );
@@ -3781,15 +3781,15 @@ describe("AIService.streamMessage multi-project trust gating", () => {
     }
   });
   it("fails closed before tool setup when the multi-project experiment is disabled", async () => {
-    using muxHome = new DisposableTempDir("ai-service-multi-project-experiment-disabled");
-    const projectAPath = path.join(muxHome.path, "project-a");
-    const projectBPath = path.join(muxHome.path, "project-b");
+    using xumHome = new DisposableTempDir("ai-service-multi-project-experiment-disabled");
+    const projectAPath = path.join(xumHome.path, "project-a");
+    const projectBPath = path.join(xumHome.path, "project-b");
     await fs.mkdir(projectAPath, { recursive: true });
     await fs.mkdir(projectBPath, { recursive: true });
 
     const workspaceId = "workspace-multi-project-disabled";
     const metadata = createTrustMetadata(workspaceId, [projectAPath, projectBPath]);
-    const harness = createHarness(muxHome.path, metadata, false);
+    const harness = createHarness(xumHome.path, metadata, false);
 
     const result = await harness.service.streamMessage({
       messages: [createMuxMessage("user-message", "user", "hello")],
@@ -3843,11 +3843,11 @@ describe("AIService.streamMessage model parameter overrides", () => {
   }
 
   function createHarness(
-    muxHomePath: string,
+    xumHomePath: string,
     metadata: WorkspaceMetadata,
     options?: { routeProvider?: ProviderName }
   ): ModelParameterOverridesHarness {
-    const { config, historyService, initStateManager, service } = createBasicAIService(muxHomePath);
+    const { config, historyService, initStateManager, service } = createBasicAIService(xumHomePath);
     const startStreamCalls: unknown[][] = [];
     stubCommonStreamMessageDependencies({
       service,
@@ -3893,13 +3893,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("passes resolved call settings overrides as the final startStream argument", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-standard");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-standard");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-standard";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
       anthropic: {
@@ -3920,13 +3920,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("deep-merges provider extras under Xum-built provider options", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-provider-extras");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-provider-extras");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-provider-extras";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
       anthropic: {
@@ -3954,13 +3954,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("merges routed OpenAI provider extras under the active route namespace", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-routed-openai");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-routed-openai");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-routed-openai";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { routeProvider: "openrouter" });
+    const harness = createHarness(xumHome.path, metadata, { routeProvider: "openrouter" });
 
     const providerModelFactory = Reflect.get(
       harness.service,
@@ -4023,14 +4023,14 @@ describe("AIService.streamMessage model parameter overrides", () => {
     // TYPE), but the request speaks OpenAI-chat on the wire: standard call
     // settings are SDK-agnostic and must apply, while Google-SDK-shaped
     // extras must NOT merge into the OpenAI namespace.
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-coder-wire-mismatch");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-coder-wire-mismatch");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-coder-wire-mismatch";
     const modelString = "coder:google/gemini-3-pro";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata, { routeProvider: "coder" });
+    const harness = createHarness(xumHome.path, metadata, { routeProvider: "coder" });
 
     const providerModelFactory = Reflect.get(
       harness.service,
@@ -4090,13 +4090,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("passes empty call settings overrides when providers config is empty", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-empty");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-empty");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-empty";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({});
 
@@ -4105,13 +4105,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("preserves Xum-built provider options when provider extras conflict", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-conflict");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-conflict");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-conflict";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     spyOn(harness.config, "loadProvidersConfig").mockReturnValue({
       anthropic: {
@@ -4142,13 +4142,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("deep-merges nested provider extras with Xum-built options", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-nested");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-nested");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-nested";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     // Override to OpenRouter provider
     const providerModelFactory = Reflect.get(
@@ -4207,13 +4207,13 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("Xum values win on nested leaf conflicts during deep merge", async () => {
-    using muxHome = new DisposableTempDir("ai-service-model-overrides-nested-conflict");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-model-overrides-nested-conflict");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-model-overrides-nested-conflict";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     // Override to OpenRouter provider
     const providerModelFactory = Reflect.get(
@@ -4272,14 +4272,14 @@ describe("AIService.streamMessage model parameter overrides", () => {
   });
 
   it("builds options for the effective route when a Coder selection falls away to a passthrough gateway", async () => {
-    using muxHome = new DisposableTempDir("ai-service-coder-fallback-options");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-coder-fallback-options");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-coder-fallback-options";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
     const { config, historyService, initStateManager, service } = createBasicAIService(
-      muxHome.path
+      xumHome.path
     );
     const startStreamCalls: unknown[][] = [];
     stubCommonStreamMessageDependencies({
@@ -4351,11 +4351,11 @@ describe("AIService.streamMessage turn envelope", () => {
   }
 
   function createHarness(
-    muxHomePath: string,
+    xumHomePath: string,
     metadata: WorkspaceMetadata,
     options?: { allTools?: Record<string, Tool> }
   ): TurnEnvelopeHarness {
-    const { config, historyService, initStateManager, service } = createBasicAIService(muxHomePath);
+    const { config, historyService, initStateManager, service } = createBasicAIService(xumHomePath);
     const startStreamCalls: unknown[][] = [];
     stubCommonStreamMessageDependencies({
       service,
@@ -4384,8 +4384,8 @@ describe("AIService.streamMessage turn envelope", () => {
   });
 
   it("appends one turn-envelope row per assistant turn with a deduped prompt blob", async () => {
-    using muxHome = new DisposableTempDir("ai-service-turn-envelope");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-turn-envelope");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-turn-envelope";
@@ -4401,7 +4401,7 @@ describe("AIService.streamMessage turn envelope", () => {
         inputSchema: jsonSchema({ type: "object", properties: { b: {} } }),
       }),
     };
-    const harness = createHarness(muxHome.path, metadata, { allTools });
+    const harness = createHarness(xumHome.path, metadata, { allTools });
 
     // Two turns (e.g. a retry/continuation) must each emit their own row.
     await streamTurn(harness, workspaceId);
@@ -4431,13 +4431,13 @@ describe("AIService.streamMessage turn envelope", () => {
   });
 
   it("never fails the turn when the session dir is unwritable", async () => {
-    using muxHome = new DisposableTempDir("ai-service-turn-envelope-unwritable");
-    const projectPath = path.join(muxHome.path, "project");
+    using xumHome = new DisposableTempDir("ai-service-turn-envelope-unwritable");
+    const projectPath = path.join(xumHome.path, "project");
     await fs.mkdir(projectPath, { recursive: true });
 
     const workspaceId = "workspace-turn-envelope-unwritable";
     const metadata = createLocalWorkspaceMetadata(workspaceId, projectPath);
-    const harness = createHarness(muxHome.path, metadata);
+    const harness = createHarness(xumHome.path, metadata);
 
     // A regular file where the session dir should be makes every journal write
     // fail (ENOTDIR); the turn must still stream.
@@ -4543,7 +4543,7 @@ describe("buildAppAttributionHeaders", () => {
 describe("discoverAvailableSubagentsForToolContext", () => {
   it("includes derived agents that inherit subagent.runnable from base", async () => {
     using project = new DisposableTempDir("available-subagents");
-    using muxHome = new DisposableTempDir("available-subagents-home");
+    using xumHome = new DisposableTempDir("available-subagents-home");
 
     const agentsRoot = path.join(project.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
@@ -4556,14 +4556,14 @@ describe("discoverAvailableSubagentsForToolContext", () => {
     );
 
     const runtime = new LocalRuntime(project.path);
-    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+    const cfg = new Config(xumHome.path).loadConfigOrDefault();
 
     const availableSubagents = await discoverAvailableSubagentsForToolContext({
       runtime,
       workspacePath: project.path,
       cfg,
       roots: {
-        projectRoot: agentsRoot,
+        projectRoots: [agentsRoot],
         globalRoot: path.join(project.path, "empty-global-agents"),
       },
     });
@@ -4588,7 +4588,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
 
   it("filters the desktop agent when capability is unavailable", async () => {
     using project = new DisposableTempDir("available-subagents-desktop");
-    using muxHome = new DisposableTempDir("available-subagents-desktop-home");
+    using xumHome = new DisposableTempDir("available-subagents-desktop-home");
 
     const agentsRoot = path.join(project.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
@@ -4599,7 +4599,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
     );
 
     const runtime = new LocalRuntime(project.path);
-    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+    const cfg = new Config(xumHome.path).loadConfigOrDefault();
     const loadDesktopCapability = mock(() =>
       Promise.resolve({
         available: false as const,
@@ -4612,7 +4612,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
       workspacePath: project.path,
       cfg,
       roots: {
-        projectRoot: agentsRoot,
+        projectRoots: [agentsRoot],
         globalRoot: path.join(project.path, "empty-global-agents"),
       },
       loadDesktopCapability,
@@ -4625,10 +4625,10 @@ describe("discoverAvailableSubagentsForToolContext", () => {
 
   it("keeps the desktop agent when capability is available", async () => {
     using project = new DisposableTempDir("available-subagents-desktop-enabled");
-    using muxHome = new DisposableTempDir("available-subagents-desktop-enabled-home");
+    using xumHome = new DisposableTempDir("available-subagents-desktop-enabled-home");
 
     const runtime = new LocalRuntime(project.path);
-    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+    const cfg = new Config(xumHome.path).loadConfigOrDefault();
     const loadDesktopCapability = mock(() =>
       Promise.resolve({
         available: true as const,
@@ -4643,7 +4643,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
       workspacePath: project.path,
       cfg,
       roots: {
-        projectRoot: path.join(project.path, "empty-project-agents"),
+        projectRoots: [path.join(project.path, "empty-project-agents")],
         globalRoot: path.join(project.path, "empty-global-agents"),
       },
       loadDesktopCapability,
@@ -4654,7 +4654,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
 
   it("keeps a project-scope `desktop.md` override even when capability is unavailable", async () => {
     using project = new DisposableTempDir("available-subagents-desktop-override");
-    using muxHome = new DisposableTempDir("available-subagents-desktop-override-home");
+    using xumHome = new DisposableTempDir("available-subagents-desktop-override-home");
 
     const agentsRoot = path.join(project.path, ".mux", "agents");
     await fs.mkdir(agentsRoot, { recursive: true });
@@ -4668,7 +4668,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
     );
 
     const runtime = new LocalRuntime(project.path);
-    const cfg = new Config(muxHome.path).loadConfigOrDefault();
+    const cfg = new Config(xumHome.path).loadConfigOrDefault();
     const loadDesktopCapability = mock(() =>
       Promise.resolve({
         available: false as const,
@@ -4681,7 +4681,7 @@ describe("discoverAvailableSubagentsForToolContext", () => {
       workspacePath: project.path,
       cfg,
       roots: {
-        projectRoot: agentsRoot,
+        projectRoots: [agentsRoot],
         globalRoot: path.join(project.path, "empty-global-agents"),
       },
       loadDesktopCapability,

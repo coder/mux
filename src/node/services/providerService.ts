@@ -915,13 +915,8 @@ export class ProviderService {
         if (modelStringStartsWithProvider(entry.modelString, provider)) {
           delete entry.modelString;
         }
-      }
-    }
-
-    if (config.subagentAiDefaults) {
-      for (const entry of Object.values(config.subagentAiDefaults)) {
-        if (modelStringStartsWithProvider(entry.modelString, provider)) {
-          delete entry.modelString;
+        if (entry.subagent && modelStringStartsWithProvider(entry.subagent.modelString, provider)) {
+          delete entry.subagent.modelString;
         }
       }
     }

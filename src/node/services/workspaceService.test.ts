@@ -13446,7 +13446,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         hasActiveDescendantTasks: () => false,
         getRuntimeState: (id) => service.getGoalContinuationRuntimeState(id),
         executeGoalContinuation: execute,
-        getKickoffSendOptions: () => ({ model: "openai:gpt-4o", agentId: "exec" }),
+        getKickoffSendOptions: () => Promise.resolve({ model: "openai:gpt-4o", agentId: "exec" }),
       });
 
       const result = await goalService.setGoal({ workspaceId, objective: "Ship the kickoff fix" });
@@ -13507,7 +13507,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         findWorkspace: mock(() => null),
         loadConfigOrDefault: mock(() => ({ projects: new Map() })),
       });
-      expect(service.getGoalContinuationKickoffSendOptions("ws-unknown")).toBeNull();
+      expect(await service.getGoalContinuationKickoffSendOptions("ws-unknown")).toBeNull();
     });
 
     test("prefers per-workspace agent model over workspace default and globals", async () => {
@@ -13537,7 +13537,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
           agentAiDefaults: { exec: { modelString: "google:gemini-2.5-pro" } },
         })),
       });
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
       expect(result?.model).toContain("haiku");
       expect(result?.agentId).toBe("exec");
     });
@@ -13568,12 +13568,14 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         loadConfigOrDefault: mock(() => ({ projects })),
       });
 
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
 
       expect(result).toEqual({
         model: "anthropic:claude-sonnet-4-6",
         agentId: "review",
         thinkingLevel: "off",
+        // The bucket owns the reasoning choice; absent resolves to explicit standard.
+        reasoningMode: "standard",
       });
     });
 
@@ -13601,7 +13603,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         loadConfigOrDefault: mock(() => ({ projects })),
       });
 
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
 
       // Regression: continuations previously dropped the persisted thinking
       // level, streaming with an implicit "off" that Fable/Mythos-class
@@ -13610,6 +13612,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         model: "anthropic:claude-fable-5",
         agentId: "exec",
         thinkingLevel: "medium",
+        reasoningMode: "standard",
       });
     });
 
@@ -13639,12 +13642,13 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         loadConfigOrDefault: mock(() => ({ projects })),
       });
 
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
 
       expect(result).toEqual({
         model: "openai:gpt-4o",
         agentId: "exec",
         thinkingLevel: "off",
+        reasoningMode: "standard",
       });
     });
 
@@ -13669,7 +13673,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
         loadConfigOrDefault: mock(() => ({ projects })),
       });
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
       expect(result?.model).toBe("openai:gpt-4o");
     });
 
@@ -13686,8 +13690,221 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
           agentAiDefaults: { exec: { modelString: "anthropic:claude-sonnet-4-6" } },
         })),
       });
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
       expect(result?.model).toContain("sonnet");
+    });
+
+    test("model-less reasoning-only agent default still contributes its fields", async () => {
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          // "Inherit" model in settings persists entries with only thinking
+          // fields; the model must fall through while these fields apply.
+          agentAiDefaults: {
+            exec: { thinkingLevel: "high" as const, reasoningMode: "pro" as const },
+          },
+        })),
+      });
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
+      expect(result?.model).toBeTruthy();
+      expect(result?.thinkingLevel).toBe("high");
+      expect(result?.reasoningMode).toBe("pro");
+    });
+
+    test("resolves defaults through the selected agent's declared base chain", async () => {
+      // A custom agent declaring base: plan must inherit Plan's configured
+      // defaults, not fall through to the Exec approximation (mirrors
+      // Settings/ACP/task-spawn resolution).
+      const projectPath = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-goal-chain-"));
+      try {
+        const agentsDir = path.join(projectPath, ".mux", "agents");
+        await fsPromises.mkdir(agentsDir, { recursive: true });
+        await fsPromises.writeFile(
+          path.join(agentsDir, "researcher.md"),
+          `---\nname: Researcher\ndescription: Plan-derived custom agent for tests\nbase: plan\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+          "utf-8"
+        );
+
+        const workspaceId = "ws-1";
+        const projects = new Map([
+          [
+            projectPath,
+            { workspaces: [{ id: workspaceId, path: projectPath, agentId: "researcher" }] },
+          ],
+        ]);
+        const service = await makeServiceWithConfig({
+          findWorkspace: mock(() => ({ projectPath, workspacePath: projectPath })),
+          loadConfigOrDefault: mock(() => ({
+            projects,
+            agentAiDefaults: {
+              plan: { thinkingLevel: "high" as const, reasoningMode: "pro" as const },
+              exec: { thinkingLevel: "low" as const, reasoningMode: "standard" as const },
+            },
+          })),
+        });
+        // In-place metadata (projectPath === name) resolves the checkout root
+        // to the fixture directory holding .mux/agents/researcher.md.
+        spyOn(service, "getInfo").mockResolvedValue({
+          id: workspaceId,
+          name: projectPath,
+          projectPath,
+          projectName: "goal-chain",
+          runtimeConfig: { type: "local" },
+        } as FrontendWorkspaceMetadata);
+
+        const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
+        expect(result?.thinkingLevel).toBe("high");
+        expect(result?.reasoningMode).toBe("pro");
+      } finally {
+        await fsPromises.rm(projectPath, { recursive: true, force: true });
+      }
+    });
+
+    test("a project-scoped exec override with base: plan inherits Plan's defaults", async () => {
+      // Every agent's declaration must be inspected, including one named
+      // "exec": a project exec.md with base: plan must resolve Plan's pro
+      // default, matching ACP/task/desktop resolution.
+      const projectPath = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-exec-chain-"));
+      try {
+        const agentsDir = path.join(projectPath, ".mux", "agents");
+        await fsPromises.mkdir(agentsDir, { recursive: true });
+        await fsPromises.writeFile(
+          path.join(agentsDir, "exec.md"),
+          `---\nname: Exec\ndescription: Project exec override for tests\nbase: plan\n---\n\nTest agent body.\n`,
+          "utf-8"
+        );
+
+        const workspaceId = "ws-1";
+        const projects = new Map([
+          [projectPath, { workspaces: [{ id: workspaceId, path: projectPath, agentId: "exec" }] }],
+        ]);
+        const service = await makeServiceWithConfig({
+          findWorkspace: mock(() => ({ projectPath, workspacePath: projectPath })),
+          loadConfigOrDefault: mock(() => ({
+            projects,
+            agentAiDefaults: {
+              plan: { reasoningMode: "pro" as const },
+            },
+          })),
+        });
+        spyOn(service, "getInfo").mockResolvedValue({
+          id: workspaceId,
+          name: projectPath,
+          projectPath,
+          projectName: "exec-chain",
+          runtimeConfig: { type: "local" },
+        } as FrontendWorkspaceMetadata);
+
+        const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
+        expect(result?.reasoningMode).toBe("pro");
+      } finally {
+        await fsPromises.rm(projectPath, { recursive: true, force: true });
+      }
+    });
+
+    test("idle compaction inherits reasoning through compact's configured base chain", async () => {
+      // Same class as the /compact frontend fix: exec's configured pro must
+      // reach backend compaction even with no workspace-level overrides.
+      const projectPath = "/tmp/proj";
+      const workspaceId = "ws-1";
+      const projects = new Map([
+        [projectPath, { workspaces: [{ id: workspaceId, path: "/tmp/proj/ws" }] }],
+      ]);
+      const service = await makeServiceWithConfig({
+        findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
+        loadConfigOrDefault: mock(() => ({
+          projects,
+          agentAiDefaults: {
+            exec: { reasoningMode: "pro" as const },
+          },
+        })),
+      });
+      (
+        service as unknown as {
+          extensionMetadata: { getSnapshot: (id: string) => Promise<undefined> };
+        }
+      ).extensionMetadata = { getSnapshot: () => Promise.resolve(undefined) };
+
+      const result = await (
+        service as unknown as {
+          buildIdleCompactionSendOptions(id: string): Promise<{ reasoningMode?: string }>;
+        }
+      ).buildIdleCompactionSendOptions(workspaceId);
+      expect(result.reasoningMode).toBe("pro");
+    });
+
+    test("heartbeat reasoning resolves through the selected agent's declared base chain", async () => {
+      // Same parity requirement as goal kickoffs: a base: plan custom agent
+      // must inherit Plan's configured Pro default, not the Exec fallback.
+      const projectPath = await fsPromises.mkdtemp(path.join(tmpdir(), "mux-hb-chain-"));
+      try {
+        const agentsDir = path.join(projectPath, ".mux", "agents");
+        await fsPromises.mkdir(agentsDir, { recursive: true });
+        await fsPromises.writeFile(
+          path.join(agentsDir, "researcher.md"),
+          `---\nname: Researcher\ndescription: Plan-derived custom agent for tests\nbase: plan\nsubagent:\n  runnable: true\n---\n\nTest agent body.\n`,
+          "utf-8"
+        );
+
+        const workspaceId = "ws-1";
+        const projects = new Map([
+          [
+            projectPath,
+            { workspaces: [{ id: workspaceId, path: projectPath, agentId: "researcher" }] },
+          ],
+        ]);
+        const service = await makeServiceWithConfig({
+          findWorkspace: mock(() => ({ projectPath, workspacePath: projectPath })),
+          loadConfigOrDefault: mock(() => ({
+            projects,
+            agentAiDefaults: {
+              plan: {
+                modelString: "openai:gpt-5.6-sol",
+                thinkingLevel: "high" as const,
+                reasoningMode: "pro" as const,
+              },
+              exec: {
+                modelString: "anthropic:claude-sonnet-4-6",
+                thinkingLevel: "low" as const,
+                reasoningMode: "standard" as const,
+              },
+            },
+          })),
+        });
+        (
+          service as unknown as {
+            extensionMetadata: { getSnapshot: (id: string) => Promise<undefined> };
+          }
+        ).extensionMetadata = { getSnapshot: () => Promise.resolve(undefined) };
+        spyOn(service, "getInfo").mockResolvedValue({
+          id: workspaceId,
+          name: projectPath,
+          projectPath,
+          projectName: "hb-chain",
+          runtimeConfig: { type: "local" },
+        } as FrontendWorkspaceMetadata);
+
+        // Model, thinking, and reasoning must ALL resolve through the chain:
+        // inheriting pro beside exec's Anthropic model would gate pro out.
+        const result = await (
+          service as unknown as {
+            buildHeartbeatSendOptions(id: string): Promise<{
+              sendOptions: { model: string; thinkingLevel?: string; reasoningMode?: string };
+            }>;
+          }
+        ).buildHeartbeatSendOptions(workspaceId);
+        expect(result.sendOptions.model).toBe("openai:gpt-5.6-sol");
+        expect(result.sendOptions.thinkingLevel).toBe("high");
+        expect(result.sendOptions.reasoningMode).toBe("pro");
+      } finally {
+        await fsPromises.rm(projectPath, { recursive: true, force: true });
+      }
     });
 
     test("falls through to DEFAULT_MODEL as the final fallback", async () => {
@@ -13700,7 +13917,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
         findWorkspace: mock(() => ({ projectPath, workspacePath: "/tmp/proj/ws" })),
         loadConfigOrDefault: mock(() => ({ projects })),
       });
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
       expect(result?.model).toBeTruthy();
       expect(result?.agentId).toBe("exec");
     });
@@ -13729,7 +13946,7 @@ describe("WorkspaceService.getGoalContinuationRuntimeState", () => {
           agentAiDefaults: { exec: { modelString: "openai:gpt-4o" } },
         })),
       });
-      const result = service.getGoalContinuationKickoffSendOptions(workspaceId);
+      const result = await service.getGoalContinuationKickoffSendOptions(workspaceId);
       expect(result?.model).toBe("openai:gpt-4o");
     });
   });

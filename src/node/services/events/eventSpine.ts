@@ -17,7 +17,7 @@
  *
  * The tool-execution pipeline is around-style: `run("tool.execute", ctx,
  * terminal)` composes middleware around a terminal that executes the tool.
- * This models the legacy `.mux/tool_hook` protocol (which inherently wraps
+ * This models the legacy `.xum/tool_hook` protocol (which inherently wraps
  * execution) with the same primitive as pre/post hooks. The handoff's
  * `tool.execute.before` / `tool.execute.after` vocabulary is exposed as
  * first-class registration sugar that composes onto the around pipeline.

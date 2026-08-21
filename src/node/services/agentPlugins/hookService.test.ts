@@ -81,7 +81,7 @@ async function createHarness(opts?: { hookTimeoutMs?: number }): Promise<Harness
         sessionDir,
         journal: overrides?.journal ?? journal,
         enabled: overrides?.enabled ?? true,
-        muxHome: tmp.path,
+        xumHome: tmp.path,
         projectTrusted: false,
       }),
   };
@@ -519,7 +519,7 @@ describe("replay determinism with hooks active", () => {
       sessionDir: harness.sessionDir,
       journal: fixtureCtx.journal,
       enabled: true,
-      muxHome: harness.tmp.path,
+      xumHome: harness.tmp.path,
       projectTrusted: false,
     });
 

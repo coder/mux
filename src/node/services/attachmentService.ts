@@ -52,9 +52,9 @@ export class AttachmentService {
     workspaceId: string,
     runtime: Runtime
   ): Promise<PlanFileReferenceAttachment | null> {
-    const muxHome = runtime.getXumHome();
-    const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
+    const xumHome = runtime.getXumHome();
+    const planFilePath = getPlanFilePath(workspaceName, projectName, xumHome);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, xumHome);
 
     // Try new path first
     try {
@@ -273,9 +273,9 @@ export class AttachmentService {
     excludedItems: Set<string> = new Set<string>()
   ): Promise<PostCompactionAttachment[]> {
     const attachments: PostCompactionAttachment[] = [];
-    const muxHome = runtime.getXumHome();
-    const planFilePath = getPlanFilePath(workspaceName, projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
+    const xumHome = runtime.getXumHome();
+    const planFilePath = getPlanFilePath(workspaceName, projectName, xumHome);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, xumHome);
 
     // Plan file reference (skip if excluded)
     let planRef: PlanFileReferenceAttachment | null = null;

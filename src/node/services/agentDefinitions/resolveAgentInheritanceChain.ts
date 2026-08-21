@@ -16,6 +16,8 @@ export interface AgentForInheritance {
   base?: AgentId;
   tools?: AgentDefinitionPackage["frontmatter"]["tools"];
   uiColor?: string;
+  /** Per-hop (unmerged) frontmatter `ai` defaults for AI-settings resolution. */
+  ai?: AgentDefinitionPackage["frontmatter"]["ai"];
 }
 
 interface ResolveAgentInheritanceChainOptions {
@@ -68,6 +70,7 @@ export async function resolveAgentInheritanceChain(
       base: currentDefinition.frontmatter.base,
       tools: currentDefinition.frontmatter.tools,
       uiColor: currentDefinition.frontmatter.ui?.color,
+      ai: currentDefinition.frontmatter.ai,
     });
 
     const baseId = currentDefinition.frontmatter.base;

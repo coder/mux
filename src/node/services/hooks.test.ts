@@ -73,23 +73,24 @@ describe("hooks", () => {
       }
     });
 
-    test("prefers project-local .mux hook over the user-global xum home", async () => {
+    test("prefers .xum hooks over legacy and user-global hooks", async () => {
       const xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "xum-home-hooks-"));
       const previousRoot = process.env.XUM_ROOT;
       process.env.XUM_ROOT = xumHome;
-      const userHookPath = path.join(xumHome, "tool_hook");
-      await fs.writeFile(userHookPath, "#!/bin/bash\necho user");
-      await fs.chmod(userHookPath, 0o755);
+      await fs.writeFile(path.join(xumHome, "tool_hook"), "#!/bin/bash\necho user");
 
-      const projectHookDir = path.join(tempDir, ".mux");
-      const projectHookPath = path.join(projectHookDir, "tool_hook");
-      await fs.mkdir(projectHookDir, { recursive: true });
-      await fs.writeFile(projectHookPath, "#!/bin/bash\necho project");
-      await fs.chmod(projectHookPath, 0o755);
+      const legacyHookDir = path.join(tempDir, ".mux");
+      await fs.mkdir(legacyHookDir, { recursive: true });
+      await fs.writeFile(path.join(legacyHookDir, "tool_hook"), "#!/bin/bash\necho legacy");
+
+      const canonicalHookDir = path.join(tempDir, ".xum");
+      const canonicalHookPath = path.join(canonicalHookDir, "tool_hook");
+      await fs.mkdir(canonicalHookDir, { recursive: true });
+      await fs.writeFile(canonicalHookPath, "#!/bin/bash\necho canonical");
 
       try {
         const result = await getHookPath(runtime, tempDir);
-        expect(result).toBe(projectHookPath);
+        expect(result).toBe(canonicalHookPath);
       } finally {
         if (previousRoot === undefined) {
           delete process.env.XUM_ROOT;

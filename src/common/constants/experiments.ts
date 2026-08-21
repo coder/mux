@@ -186,7 +186,7 @@ export const EXPERIMENTS: Record<ExperimentId, ExperimentDefinition> = {
     id: EXPERIMENT_IDS.AGENT_PLUGINS,
     name: "Agent Plugins",
     description:
-      "Discover Agent Plugins (agent-plugins.org 1.0.0) from .mux/plugins, .agents/plugins, ~/.xum/plugins, and ~/.agents/plugins: plugin skills join skill discovery and plugin MCP servers appear disabled by default",
+      "Discover Agent Plugins (agent-plugins.org 1.0.0) from .xum/plugins, .agents/plugins, ~/.xum/plugins, and ~/.agents/plugins: plugin skills join skill discovery and plugin MCP servers appear disabled by default",
     enabledByDefault: false,
     showInSettings: true,
   },

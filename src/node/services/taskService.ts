@@ -78,8 +78,6 @@ import {
   createTaskReportMessageId,
 } from "@/node/services/utils/messageIds";
 import { defaultModel, normalizeSelectedModel } from "@/common/utils/ai/models";
-import { normalizeModelInput } from "@/common/utils/ai/normalizeModelInput";
-import type { AgentDefinitionFrontmatter } from "@/common/types/agentDefinition";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
 import { SCRATCH_PROJECT_CONFIG_KEY, SCRATCH_PROJECT_NAME } from "@/common/constants/scratch";
 import { DEFAULT_RUNTIME_CONFIG } from "@/common/constants/workspace";
@@ -101,10 +99,20 @@ import { NOOP_TIMELINE_RECORDER, type TimelineRecorder } from "@/node/services/t
 import { getTotalCost, sumUsageHistory } from "@/common/utils/tokens/usageAggregator";
 import {
   coerceOpenAIReasoningMode,
+  coerceThinkingLevel,
   type OpenAIReasoningMode,
   type ParsedThinkingInput,
   type ThinkingLevel,
 } from "@/common/types/thinking";
+import {
+  targetWorkspaceBucketToLayer,
+  type AgentAiSettingsLayerValues,
+} from "@/common/types/agentAiSettings";
+import { InvalidExplicitAiSettingError } from "@/common/utils/ai/resolveAgentAiSettings";
+import {
+  resolveNodeAgentAiSettings,
+  type NodeAgentDefinitionContext,
+} from "@/node/services/agentDefinitions/resolveNodeAgentAiSettings";
 import type { ErrorEvent, StreamAbortEvent, StreamEndEvent } from "@/common/types/stream";
 import {
   isActiveWorkflowRunStatus,
@@ -128,7 +136,6 @@ import {
 } from "@/common/utils/tools/toolDefinitions";
 import { isPlanLikeInResolvedChain } from "@/common/utils/agentTools";
 import { formatSendMessageError } from "@/node/services/utils/sendMessageError";
-import { enforceThinkingPolicy, resolveThinkingInput } from "@/common/utils/thinking/policy";
 import { taskQueueDebug } from "@/node/services/taskQueueDebug";
 import { readSubagentGitPatchArtifact } from "@/node/services/subagentGitPatchArtifacts";
 import {
@@ -194,6 +201,13 @@ interface ResolvedWorkspaceAiSettings {
   thinkingLevel?: ThinkingLevel;
   /** OpenAI pro reasoning mode; per-workspace choice inherited by spawned tasks. */
   reasoningMode?: OpenAIReasoningMode;
+}
+
+interface TaskParentAiMeta {
+  /** Parent's persisted selected agent (see persistSelectedAgentId). */
+  agentId?: string;
+  aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
+  aiSettings?: ResolvedWorkspaceAiSettings;
 }
 
 export interface AgentTaskStatusLookup {
@@ -1858,112 +1872,86 @@ export class TaskService {
     );
   }
 
-  private resolveTaskAISettings(params: {
-    cfg: ReturnType<Config["loadConfigOrDefault"]>;
-    parentMeta: {
-      /** Parent's persisted selected agent (see persistSelectedAgentId). */
-      agentId?: string;
-      aiSettingsByAgent?: Record<string, ResolvedWorkspaceAiSettings>;
-      aiSettings?: ResolvedWorkspaceAiSettings;
+  /**
+   * Parent-workspace fallback layers (unified precedence tier 7) for a spawned
+   * task: the parent's bucket for the TARGET agent, then the parent's ACTIVE
+   * agent bucket (the user toggles settings on the active agent, so the target
+   * bucket rarely exists), then legacy workspace settings.
+   */
+  private buildParentAiSettingsFallbacks(
+    parentMeta: TaskParentAiMeta,
+    targetAgentId: string
+  ): AgentAiSettingsLayerValues[] {
+    const layers: AgentAiSettingsLayerValues[] = [];
+    const push = (settings: ResolvedWorkspaceAiSettings | undefined) => {
+      if (!settings) return;
+      layers.push({
+        model: settings.model,
+        thinkingLevel: coerceThinkingLevel(settings.thinkingLevel),
+        reasoningMode: coerceOpenAIReasoningMode(settings.reasoningMode),
+      });
     };
+    const normalizedTarget = normalizeAgentId(targetAgentId, "");
+    push(normalizedTarget ? parentMeta.aiSettingsByAgent?.[normalizedTarget] : undefined);
+    push(parentMeta.aiSettingsByAgent?.[normalizeAgentId(parentMeta.agentId)]);
+    push(parentMeta.aiSettings);
+    return layers;
+  }
+
+  /**
+   * Delegated-run AI settings for a spawned task via the unified resolver
+   * (profile "subagent"). Persistence and send options use selected values so
+   * a pro preference survives temporarily non-pro models (the send path
+   * re-gates per model/route); thinking uses the effective clamped level.
+   * Model normalization stays gateway-preserving (see resolveAgentAiSettings):
+   * the value is persisted into child workspace aiSettings and drives queued
+   * follow-ups and plan->exec continuations.
+   *
+   * Throws InvalidExplicitAiSettingError for an invalid explicit model; call
+   * sites convert it to their Err surface instead of silently running a
+   * fallback model.
+   */
+  private async resolveTaskAISettings(params: {
+    cfg: ReturnType<Config["loadConfigOrDefault"]>;
+    parentMeta: TaskParentAiMeta;
     agentId: string;
     modelString?: string;
     thinkingLevel?: ParsedThinkingInput;
     parentRuntimeAiSettings?: { modelString?: string; thinkingLevel?: ThinkingLevel };
-    /** `ai` defaults from the agent's resolved .md frontmatter (base chain applied). */
-    agentDefinitionAiDefaults?: AgentDefinitionFrontmatter["ai"];
-  }): {
+    /** Checkout for definition/base-chain tiers; omit to use the implicit fallback chain. */
+    definitionContext?: NodeAgentDefinitionContext;
+  }): Promise<{
     taskModelString: string;
     canonicalModel: string;
     effectiveThinkingLevel: ThinkingLevel;
     effectiveReasoningMode?: OpenAIReasoningMode;
-  } {
-    const parentAiSettings = this.resolveWorkspaceAISettings(params.parentMeta, params.agentId);
-    // Sub-agent defaults take priority over UI agent defaults per field for any agent invoked as a sub-agent.
-    const subagentDefault = params.cfg.subagentAiDefaults?.[params.agentId];
-    const agentDefault = params.cfg.agentAiDefaults?.[params.agentId];
-    const parentRuntimeAiSettings = params.parentRuntimeAiSettings;
-
-    // Agent definition `ai` defaults sit below config-level defaults (Settings
-    // stays authoritative per docs/agents "overridable by user settings") and
-    // above parent inheritance, so a definition-pinned model beats silently
-    // inheriting the parent's model. `ai.model` may be an abbreviation (e.g.
-    // "sonnet"); resolve aliases the same way the explicit task-tool override
-    // does. An invalid value falls through to parent inheritance instead of
-    // failing the spawn (a typo in a .md must not brick the agent).
-    const definitionDefaults = params.agentDefinitionAiDefaults;
-    const definitionModelRaw = coerceNonEmptyString(definitionDefaults?.model);
-    const definitionModel =
-      definitionModelRaw != null ? normalizeModelInput(definitionModelRaw).model : null;
-    if (definitionModelRaw != null && definitionModel == null) {
-      log.warn("resolveTaskAISettings: ignoring invalid agent definition ai.model", {
-        agentId: params.agentId,
-        model: definitionModelRaw,
-      });
-    }
-
-    const taskModelString =
-      coerceNonEmptyString(params.modelString) ??
-      coerceNonEmptyString(subagentDefault?.modelString) ??
-      coerceNonEmptyString(agentDefault?.modelString) ??
-      definitionModel ??
-      coerceNonEmptyString(parentRuntimeAiSettings?.modelString) ??
-      coerceNonEmptyString(parentAiSettings?.model) ??
-      defaultModel;
-    // Gateway-preserving normalization: this value is persisted into child
-    // workspace aiSettings and drives queued follow-ups and plan→exec
-    // continuations. normalizeToCanonical would rewrite a cross-typed Coder
-    // instance (coder:openai/<claude> with type anthropic) to openai:<claude>,
-    // silently bypassing the gateway on later sends. Thinking helpers below
-    // resolve coder: identities type-derived via resolveModelForMetadata.
-    const canonicalModel = normalizeSelectedModel(taskModelString);
-    assert(canonicalModel.length > 0, "resolveTaskAISettings: resolved model must be non-empty");
-
-    // Resolve an explicit override first so numeric thinking indices map into the
-    // chosen model's allowed levels (named levels pass through unchanged).
-    // Providers config threads through so mapped aliases (mappedToModel, e.g.
-    // openai:team-sol -> gpt-5.6-sol) keep their target's native levels instead
-    // of being clamped to the default four-level ladder.
-    const providersConfig = this.aiService.getProvidersConfig();
-    const overrideThinkingLevel =
-      params.thinkingLevel != null
-        ? resolveThinkingInput(params.thinkingLevel, canonicalModel, providersConfig)
-        : undefined;
-    const requestedThinkingLevel: ThinkingLevel =
-      overrideThinkingLevel ??
-      subagentDefault?.thinkingLevel ??
-      agentDefault?.thinkingLevel ??
-      definitionDefaults?.thinkingLevel ??
-      parentRuntimeAiSettings?.thinkingLevel ??
-      parentAiSettings?.thinkingLevel ??
-      "off";
-    const effectiveThinkingLevel = enforceThinkingPolicy(
-      canonicalModel,
-      requestedThinkingLevel,
-      undefined,
-      providersConfig
-    );
-
-    // Pro reasoning mode is a per-workspace choice (agent/subagent defaults do
-    // not carry it), so tasks inherit it from the parent's persisted settings.
-    // The user toggles pro on the parent's ACTIVE agent, so the target agent's
-    // bucket rarely carries one — fall back to the parent's active-agent bucket
-    // (persisted selected agent, defaulting to exec), then legacy settings.
-    // Safe to pass through unconditionally: the send path re-gates per model
-    // (buildRequestHeaders is inert for unsupported models/routes).
-    const activeParentAiSettings = this.resolveWorkspaceAISettings(
-      params.parentMeta,
-      normalizeAgentId(params.parentMeta.agentId)
-    );
-    const effectiveReasoningMode = coerceOpenAIReasoningMode(
-      parentAiSettings?.reasoningMode ?? activeParentAiSettings?.reasoningMode
-    );
+  }> {
+    const resolved = await resolveNodeAgentAiSettings({
+      agentId: params.agentId,
+      profile: "subagent",
+      cfg: params.cfg,
+      providersConfig: this.aiService.getProvidersConfig(),
+      explicit: {
+        model: coerceNonEmptyString(params.modelString) ?? undefined,
+        thinkingLevel: params.thinkingLevel ?? undefined,
+      },
+      parentRuntime: params.parentRuntimeAiSettings
+        ? {
+            model: coerceNonEmptyString(params.parentRuntimeAiSettings.modelString) ?? undefined,
+            thinkingLevel: params.parentRuntimeAiSettings.thinkingLevel,
+          }
+        : undefined,
+      fallbacks: this.buildParentAiSettingsFallbacks(params.parentMeta, params.agentId),
+      definitionContext: params.definitionContext,
+    });
 
     return {
-      taskModelString,
-      canonicalModel,
-      effectiveThinkingLevel,
-      ...(effectiveReasoningMode != null ? { effectiveReasoningMode } : {}),
+      taskModelString: resolved.selected.model,
+      canonicalModel: resolved.effective.model,
+      effectiveThinkingLevel: resolved.effective.thinkingLevel,
+      ...(resolved.selected.reasoningMode != null
+        ? { effectiveReasoningMode: resolved.selected.reasoningMode }
+        : {}),
     };
   }
 
@@ -2020,15 +2008,37 @@ export class TaskService {
     // This path needs a deterministic editing-capable fallback for legacy/incomplete metadata.
     agentId = agentId ?? TASK_RECOVERY_FALLBACK_AGENT_ID;
 
-    const aiSettings = this.resolveWorkspaceAISettings(parentEntry.workspace, agentId);
-    const reasoningMode = coerceOpenAIReasoningMode(aiSettings?.reasoningMode);
-    return {
-      model: aiSettings?.model ?? fallbackModel,
+    // Unified interactive resolution: the workspace's own bucket owns the
+    // settings; configured agent defaults and the legacy workspace settings
+    // fill unset fields. Reasoning passes through selected (un-gated); the
+    // send path re-gates per model/route so pro is inert for unsupported models.
+    const workspace = parentEntry.workspace;
+    const normalizedAgentId = normalizeAgentId(agentId, "");
+    const bucket = normalizedAgentId ? workspace.aiSettingsByAgent?.[normalizedAgentId] : undefined;
+    const resolved = await resolveNodeAgentAiSettings({
       agentId,
-      thinkingLevel: aiSettings?.thinkingLevel,
-      // Per-workspace pro mode carries into synthetic auto-resumes; the send
-      // path re-gates per model/route so this is inert for unsupported models.
-      ...(reasoningMode != null ? { reasoningMode } : {}),
+      profile: "interactive",
+      cfg: this.config.loadConfigOrDefault(),
+      providersConfig: this.aiService.getProvidersConfig(),
+      targetWorkspaceSettings: bucket ? targetWorkspaceBucketToLayer(bucket) : undefined,
+      fallbacks: workspace.aiSettings
+        ? [
+            {
+              model: workspace.aiSettings.model,
+              thinkingLevel: workspace.aiSettings.thinkingLevel,
+              reasoningMode: coerceOpenAIReasoningMode(workspace.aiSettings.reasoningMode),
+            },
+          ]
+        : undefined,
+      defaultModel: fallbackModel,
+    });
+    return {
+      model: resolved.selected.model,
+      agentId,
+      thinkingLevel: resolved.selected.thinkingLevel,
+      ...(resolved.selected.reasoningMode != null
+        ? { reasoningMode: resolved.selected.reasoningMode }
+        : {}),
     };
   }
 
@@ -2976,7 +2986,6 @@ export class TaskService {
       };
 
       let skipInitHook = false;
-      let agentDefinitionAiDefaults: AgentDefinitionFrontmatter["ai"];
       try {
         const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
         if (!isAgentRunnableAsChild(frontmatter, { workflowOwned: args.workflowTask != null })) {
@@ -2990,22 +2999,36 @@ export class TaskService {
           return Err(`Task.createMany: agentId is disabled (${agentId}). ${hint}`);
         }
         skipInitHook = frontmatter.subagent?.skip_init_hook === true;
-        agentDefinitionAiDefaults = frontmatter.ai;
       } catch {
         const hint = await getRunnableHint();
         return Err(`Task.createMany: unknown agentId (${agentId}). ${hint}`);
       }
 
-      const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
-        this.resolveTaskAISettings({
-          cfg,
-          parentMeta,
-          agentId,
-          modelString: args.modelString,
-          thinkingLevel: args.thinkingLevel,
-          parentRuntimeAiSettings: args.parentRuntimeAiSettings,
-          agentDefinitionAiDefaults,
-        });
+      let taskModelString: string;
+      let canonicalModel: string;
+      let effectiveThinkingLevel: ThinkingLevel;
+      let effectiveReasoningMode: OpenAIReasoningMode | undefined;
+      try {
+        ({ taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
+          await this.resolveTaskAISettings({
+            cfg,
+            parentMeta,
+            agentId,
+            modelString: args.modelString,
+            thinkingLevel: args.thinkingLevel,
+            parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+            definitionContext: {
+              runtime,
+              workspacePath: parentWorkspacePath,
+              workspaceId: parentWorkspaceId,
+            },
+          }));
+      } catch (error) {
+        if (error instanceof InvalidExplicitAiSettingError) {
+          return Err(`Task.createMany: ${error.message}`);
+        }
+        throw error;
+      }
 
       const status: "queued" | "starting" =
         reservedActiveCount >= taskSettings.maxParallelAgentTasks ? "queued" : "starting";
@@ -3704,59 +3727,56 @@ export class TaskService {
       createdWorkspace = true;
     }
 
-    // Per-field precedence: explicit per-launch override → target workspace's
-    // own persisted settings (mode="existing" follow-ups) → configured agent
-    // defaults (so agent-created workspaces match what the user would get
-    // creating one by hand) → owner's live runtime settings → owner's
-    // persisted settings → app default.
-    const workspaceTurnAgentDefault = cfg.agentAiDefaults?.[workspaceTurnAgentId];
-    const model =
-      coerceNonEmptyString(args.modelString) ??
-      coerceNonEmptyString(targetAiSettings?.model) ??
-      targetTaskModelString ??
-      coerceNonEmptyString(workspaceTurnAgentDefault?.modelString) ??
-      coerceNonEmptyString(args.parentRuntimeAiSettings?.modelString) ??
-      coerceNonEmptyString(parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.model) ??
-      coerceNonEmptyString(parentMeta.aiSettings?.model) ??
-      defaultModel;
-    const thinkingLevel =
-      args.thinkingLevel != null
-        ? // Providers config keeps mapped aliases on their target's ladder
-          // (see resolveTaskAISettings).
-          resolveThinkingInput(
-            args.thinkingLevel,
-            // Gateway-preserving so cross-typed Coder instances map indices
-            // into their TYPE-derived ladder, not the name-alike provider's.
-            normalizeSelectedModel(model),
-            this.aiService.getProvidersConfig()
-          )
-        : (targetAiSettings?.thinkingLevel ??
-          targetTaskThinkingLevel ??
-          workspaceTurnAgentDefault?.thinkingLevel ??
-          args.parentRuntimeAiSettings?.thinkingLevel ??
-          parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.thinkingLevel ??
-          parentMeta.aiSettings?.thinkingLevel);
-    // Per-workspace pro mode inherits alongside model/thinking; the send path
-    // re-gates per model/route so this is inert for non-GPT-5.6 models.
-    // The user toggles pro on the parent's ACTIVE agent, so after the exec
-    // bucket fall back to the active-agent bucket (then legacy settings) —
-    // mirroring resolveTaskAISettings — or a workspace turn launched from a
-    // non-exec parent agent would silently drop back to standard mode.
-    // When the target has its own persisted settings (mode="existing"), those
-    // own the choice outright — absent means standard per
-    // WorkspaceAISettingsSchema — so the owner's pro toggle is not re-injected
-    // into follow-up sends.
-    const activeParentAiSettings = this.resolveWorkspaceAISettings(
-      parentMeta,
-      normalizeAgentId(parentMeta.agentId)
-    );
-    const reasoningMode = coerceOpenAIReasoningMode(
+    // Unified per-field precedence (see resolveAgentAiSettings): explicit
+    // per-launch override → target workspace's own persisted settings
+    // (mode="existing" follow-ups, plus task-frozen settings for resumed agent
+    // workspaces) → configured agent defaults → owner's live runtime settings
+    // → owner's persisted settings → app default.
+    const targetLayer: AgentAiSettingsLayerValues | undefined =
       targetAiSettings != null
-        ? targetAiSettings.reasoningMode
-        : (parentMeta.aiSettingsByAgent?.[workspaceTurnAgentId]?.reasoningMode ??
-            activeParentAiSettings?.reasoningMode ??
-            parentMeta.aiSettings?.reasoningMode)
-    );
+        ? {
+            ...targetWorkspaceBucketToLayer(targetAiSettings),
+            // Resumed agent workspaces prefer the bucket, then task-frozen settings.
+            model: coerceNonEmptyString(targetAiSettings.model) ?? targetTaskModelString,
+            thinkingLevel: targetAiSettings.thinkingLevel ?? targetTaskThinkingLevel,
+          }
+        : targetTaskModelString != null || targetTaskThinkingLevel != null
+          ? { model: targetTaskModelString, thinkingLevel: targetTaskThinkingLevel }
+          : undefined;
+    let model: string;
+    let thinkingLevel: ThinkingLevel;
+    let reasoningMode: OpenAIReasoningMode | undefined;
+    try {
+      const resolved = await resolveNodeAgentAiSettings({
+        agentId: workspaceTurnAgentId,
+        profile: "interactive",
+        cfg,
+        providersConfig: this.aiService.getProvidersConfig(),
+        explicit: {
+          model: coerceNonEmptyString(args.modelString) ?? undefined,
+          thinkingLevel: args.thinkingLevel ?? undefined,
+        },
+        targetWorkspaceSettings: targetLayer,
+        parentRuntime: args.parentRuntimeAiSettings
+          ? {
+              model: coerceNonEmptyString(args.parentRuntimeAiSettings.modelString) ?? undefined,
+              thinkingLevel: args.parentRuntimeAiSettings.thinkingLevel,
+            }
+          : undefined,
+        fallbacks: this.buildParentAiSettingsFallbacks(parentMeta, workspaceTurnAgentId),
+      });
+      // Selected (not effective) values: sendMessage persists what it
+      // receives, and the send path re-clamps thinking and re-gates reasoning
+      // per model/route at request time.
+      model = resolved.selected.model;
+      thinkingLevel = resolved.selected.thinkingLevel;
+      reasoningMode = resolved.selected.reasoningMode;
+    } catch (error) {
+      if (error instanceof InvalidExplicitAiSettingError) {
+        return Err(`Task.createWorkspaceTurn: ${error.message}`);
+      }
+      throw error;
+    }
 
     const record: WorkspaceTurnTaskHandleRecord = {
       kind: "workspace_turn",
@@ -4144,7 +4164,6 @@ export class TaskService {
     };
 
     let skipInitHook = false;
-    let agentDefinitionAiDefaults: AgentDefinitionFrontmatter["ai"];
     try {
       const frontmatter = await resolveAgentFrontmatter(runtime, parentWorkspacePath, agentId);
       if (!isAgentRunnableAsChild(frontmatter, { workflowOwned: args.workflowTask != null })) {
@@ -4163,22 +4182,36 @@ export class TaskService {
         return Err(`Task.create: agentId is disabled (${agentId}). ${hint}`);
       }
       skipInitHook = frontmatter.subagent?.skip_init_hook === true;
-      agentDefinitionAiDefaults = frontmatter.ai;
     } catch {
       const hint = await getRunnableHint();
       return Err(`Task.create: unknown agentId (${agentId}). ${hint}`);
     }
 
-    const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
-      this.resolveTaskAISettings({
-        cfg,
-        parentMeta,
-        agentId,
-        modelString: args.modelString,
-        thinkingLevel: args.thinkingLevel,
-        parentRuntimeAiSettings: args.parentRuntimeAiSettings,
-        agentDefinitionAiDefaults,
-      });
+    let taskModelString: string;
+    let canonicalModel: string;
+    let effectiveThinkingLevel: ThinkingLevel;
+    let effectiveReasoningMode: OpenAIReasoningMode | undefined;
+    try {
+      ({ taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
+        await this.resolveTaskAISettings({
+          cfg,
+          parentMeta,
+          agentId,
+          modelString: args.modelString,
+          thinkingLevel: args.thinkingLevel,
+          parentRuntimeAiSettings: args.parentRuntimeAiSettings,
+          definitionContext: {
+            runtime,
+            workspacePath: parentWorkspacePath,
+            workspaceId: parentWorkspaceId,
+          },
+        }));
+    } catch (error) {
+      if (error instanceof InvalidExplicitAiSettingError) {
+        return Err(`Task.create: ${error.message}`);
+      }
+      throw error;
+    }
 
     const createdAt = getIsoNow();
 
@@ -12216,12 +12249,15 @@ export class TaskService {
         });
       }
 
-      // Use the same sub-agent resolution as Task.create so Plan to Exec honors
-      // subagentAiDefaults before UI agent defaults, then inherits the plan task settings.
-      const { taskModelString, canonicalModel, effectiveThinkingLevel } =
-        this.resolveTaskAISettings({
+      // Same delegated resolution as Task.create: configured exec sub-agent/agent
+      // defaults win, then the plan phase's frozen task settings (parent
+      // runtime), then the plan workspace's own buckets — a PRO toggle during
+      // the plan phase persists under the plan agent's bucket
+      // (aiSettingsByAgent), which the shared fallback layers carry over.
+      const { taskModelString, canonicalModel, effectiveThinkingLevel, effectiveReasoningMode } =
+        await this.resolveTaskAISettings({
           cfg: this.config.loadConfigOrDefault(),
-          parentMeta: {},
+          parentMeta: args.entry.workspace,
           agentId: targetAgentId,
           parentRuntimeAiSettings: {
             modelString: args.entry.workspace.taskModelString,
@@ -12229,25 +12265,13 @@ export class TaskService {
           },
         });
 
-      // Plan -> Exec continues in the same workspace, so its own persisted pro
-      // choice carries over (resolveTaskAISettings sees an empty parentMeta here).
-      // A PRO toggle during the plan phase persists under the plan agent's
-      // bucket (aiSettingsByAgent), so read the still-current plan agent's
-      // settings first and only then fall back to legacy aiSettings.
-      const planAgentSettings = this.resolveWorkspaceAISettings(
-        args.entry.workspace,
-        normalizeAgentId(args.entry.workspace.agentId, "plan")
-      );
-      const planPhaseReasoningMode = coerceOpenAIReasoningMode(
-        planAgentSettings?.reasoningMode ?? args.entry.workspace.aiSettings?.reasoningMode
-      );
       await this.editWorkspaceEntry(args.workspaceId, (workspace) => {
         workspace.agentId = targetAgentId;
         workspace.agentType = targetAgentId;
         workspace.aiSettings = {
           model: canonicalModel,
           thinkingLevel: effectiveThinkingLevel,
-          ...(planPhaseReasoningMode != null ? { reasoningMode: planPhaseReasoningMode } : {}),
+          ...(effectiveReasoningMode != null ? { reasoningMode: effectiveReasoningMode } : {}),
         };
         workspace.taskModelString = taskModelString;
         workspace.taskThinkingLevel = effectiveThinkingLevel;
@@ -12267,7 +12291,7 @@ export class TaskService {
             model: taskModelString,
             agentId: targetAgentId,
             thinkingLevel: effectiveThinkingLevel,
-            ...(planPhaseReasoningMode != null ? { reasoningMode: planPhaseReasoningMode } : {}),
+            ...(effectiveReasoningMode != null ? { reasoningMode: effectiveReasoningMode } : {}),
             experiments: args.entry.workspace.taskExperiments,
           },
           { synthetic: true, agentInitiated: true }

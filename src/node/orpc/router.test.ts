@@ -104,9 +104,9 @@ describe("router agent skill routes", () => {
         config: new Config(tempDir),
         aiService: {
           waitForInit: mock(async () => undefined),
-          resolveMuxToolScopeForWorkspace: mock(() => ({
+          resolveXumToolScopeForWorkspace: mock(() => ({
             type: "project",
-            muxHome: tempDir,
+            xumHome: tempDir,
             projectRoot: subProjectPath,
             projectStorageAuthority: "host-local",
             checkoutRoot,
@@ -172,9 +172,9 @@ describe("router agent skill routes", () => {
         config: new Config(tempDir),
         aiService: {
           waitForInit: mock(async () => undefined),
-          resolveMuxToolScopeForWorkspace: mock(() => ({
+          resolveXumToolScopeForWorkspace: mock(() => ({
             type: "project",
-            muxHome: tempDir,
+            xumHome: tempDir,
             projectRoot: subProjectPath,
             projectStorageAuthority: "host-local",
             checkoutRoot,
@@ -333,9 +333,9 @@ describe("router workflow routes", () => {
       config,
       aiService: {
         waitForInit: mock(async () => undefined),
-        resolveMuxToolScopeForWorkspace: mock((_metadata, _runtime, executionPath) => ({
+        resolveXumToolScopeForWorkspace: mock((_metadata, _runtime, executionPath) => ({
           type: "project",
-          muxHome: tempDir,
+          xumHome: tempDir,
           projectRoot: executionPath,
           projectStorageAuthority: "host-local",
           checkoutRoot: workspacePath,
@@ -977,39 +977,42 @@ describe("router config.saveConfig", () => {
     } as ORPCContext;
   }
 
-  test("preserves agent enable flags when a mirrored legacy subagent entry is removed", async () => {
-    await config.editConfig((current) => ({
-      ...current,
+  test("persists canonical nested subagent agent defaults", async () => {
+    const client = createRouterClient(router(), { context: createContext() });
+
+    await client.config.saveConfig({
+      taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {
         foo: {
           modelString: "anthropic:claude-3-5-sonnet",
           thinkingLevel: "high",
           enabled: true,
           advisorEnabled: true,
+          subagent: {
+            modelString: "openai:gpt-5.6-sol",
+            thinkingLevel: "xhigh",
+            reasoningMode: "pro",
+          },
         },
       },
-      subagentAiDefaults: {
-        foo: {
-          modelString: "anthropic:claude-3-5-sonnet",
-          thinkingLevel: "high",
-        },
-      },
-    }));
-
-    const client = createRouterClient(router(), { context: createContext() });
-
-    await client.config.saveConfig({
-      taskSettings: DEFAULT_TASK_SETTINGS,
-      subagentAiDefaults: {},
     });
 
     const saved = config.loadConfigOrDefault();
+    const output = await client.config.getConfig();
 
-    expect(saved.agentAiDefaults?.foo?.modelString).toBeUndefined();
-    expect(saved.agentAiDefaults?.foo?.thinkingLevel).toBeUndefined();
-    expect(saved.agentAiDefaults?.foo?.enabled).toBe(true);
-    expect(saved.agentAiDefaults?.foo?.advisorEnabled).toBe(true);
-    expect(saved.subagentAiDefaults?.foo).toBeUndefined();
+    expect(saved.agentAiDefaults?.foo).toEqual({
+      modelString: "anthropic:claude-3-5-sonnet",
+      thinkingLevel: "high",
+      enabled: true,
+      advisorEnabled: true,
+      subagent: {
+        modelString: "openai:gpt-5.6-sol",
+        thinkingLevel: "xhigh",
+        reasoningMode: "pro",
+      },
+    });
+    expect(output.agentAiDefaults?.foo?.subagent?.reasoningMode).toBe("pro");
+    expect("subagentAiDefaults" in output).toBe(false);
   });
 
   test("persists the full-width chat transcript config flag", async () => {

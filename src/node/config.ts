@@ -22,17 +22,15 @@ import type {
   ProvidersConfig as CanonicalProvidersConfig,
 } from "@/common/config/schemas";
 import { DEFAULT_MODEL_FALLBACKS, sanitizeModelFallbacks } from "@/common/utils/ai/modelFallbacks";
-import {
-  DEFAULT_TASK_SETTINGS,
-  deriveLegacySubagentAiDefaultsFromAgentDefaults,
-  normalizeSubagentAiDefaults,
-  normalizeTaskSettings,
-  shouldMirrorAgentDefaultToLegacySubagent,
-} from "@/common/types/tasks";
+import { DEFAULT_TASK_SETTINGS, normalizeTaskSettings } from "@/common/types/tasks";
 import { normalizeUserPreferences } from "@/common/config/schemas/userPreferences";
 import { SettingsBackupSchema } from "@/common/config/schemas/settingsBackup";
 import { isLayoutPresetsConfigEmpty, normalizeLayoutPresetsConfig } from "@/common/types/uiLayouts";
-import { normalizeAgentAiDefaults } from "@/common/types/agentAiDefaults";
+import {
+  deriveLegacySubagentAiDefaultsProjection,
+  mergeLegacySubagentAiDefaults,
+  normalizeAgentAiDefaults,
+} from "@/common/types/agentAiDefaults";
 import {
   isWorktreeRuntime,
   RUNTIME_ENABLEMENT_IDS,
@@ -510,15 +508,29 @@ function normalizeOptionalModelStringArray(value: unknown): string[] | undefined
   return out;
 }
 
-function normalizeAiDefaultsModelStrings<T extends Record<string, { modelString?: string }>>(
-  value: T
-): T {
+function normalizeAiDefaultsModelStrings<
+  T extends Record<string, { modelString?: string; subagent?: { modelString?: string } }>,
+>(value: T): T {
   let modified = false;
   const normalizedEntries = Object.entries(value).map(([id, entry]) => {
     const normalizedModelString = normalizeOptionalModelString(entry.modelString);
-    if (normalizedModelString !== entry.modelString) {
+    const normalizedSubagentModelString = entry.subagent
+      ? normalizeOptionalModelString(entry.subagent.modelString)
+      : undefined;
+    const subagentChanged =
+      entry.subagent != null && normalizedSubagentModelString !== entry.subagent.modelString;
+    if (normalizedModelString !== entry.modelString || subagentChanged) {
       modified = true;
-      return [id, { ...entry, modelString: normalizedModelString }];
+      return [
+        id,
+        {
+          ...entry,
+          modelString: normalizedModelString,
+          ...(entry.subagent
+            ? { subagent: { ...entry.subagent, modelString: normalizedSubagentModelString } }
+            : {}),
+        },
+      ];
     }
 
     return [id, entry];
@@ -526,9 +538,6 @@ function normalizeAiDefaultsModelStrings<T extends Record<string, { modelString?
 
   return modified ? (Object.fromEntries(normalizedEntries) as T) : value;
 }
-
-type SubagentAiDefaultsConfig = NonNullable<ProjectsConfig["subagentAiDefaults"]>;
-type AgentAiDefaultsConfig = NonNullable<ProjectsConfig["agentAiDefaults"]>;
 
 function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -547,66 +556,6 @@ function normalizeConfigMigrations(value: unknown): AppConfigMigrations {
     }
   }
   return migrations;
-}
-
-function extractAgentDefaultsFromLegacySubagents(
-  legacySubagentAiDefaults: SubagentAiDefaultsConfig
-): Record<string, unknown> {
-  const fallbackDefaults: Record<string, unknown> = {};
-  for (const [agentId, entry] of Object.entries(legacySubagentAiDefaults)) {
-    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) continue;
-    fallbackDefaults[agentId] = entry;
-  }
-  return fallbackDefaults;
-}
-
-function removeMirroredExecSubagentDefaults(params: {
-  subagentAiDefaults: SubagentAiDefaultsConfig;
-  agentAiDefaults: AgentAiDefaultsConfig;
-}): {
-  subagentAiDefaults: SubagentAiDefaultsConfig;
-  modified: boolean;
-} {
-  const execSubagentDefault = params.subagentAiDefaults.exec;
-  const execAgentDefault = params.agentAiDefaults.exec;
-  if (!execSubagentDefault || !execAgentDefault) {
-    return { subagentAiDefaults: params.subagentAiDefaults, modified: false };
-  }
-
-  const nextExecSubagentDefault = { ...execSubagentDefault };
-  let modified = false;
-
-  if (
-    nextExecSubagentDefault.modelString !== undefined &&
-    nextExecSubagentDefault.modelString === execAgentDefault.modelString
-  ) {
-    delete nextExecSubagentDefault.modelString;
-    modified = true;
-  }
-
-  if (
-    nextExecSubagentDefault.thinkingLevel !== undefined &&
-    nextExecSubagentDefault.thinkingLevel === execAgentDefault.thinkingLevel
-  ) {
-    delete nextExecSubagentDefault.thinkingLevel;
-    modified = true;
-  }
-
-  if (!modified) {
-    return { subagentAiDefaults: params.subagentAiDefaults, modified: false };
-  }
-
-  const subagentAiDefaults = { ...params.subagentAiDefaults };
-  if (
-    nextExecSubagentDefault.modelString === undefined &&
-    nextExecSubagentDefault.thinkingLevel === undefined
-  ) {
-    delete subagentAiDefaults.exec;
-  } else {
-    subagentAiDefaults.exec = nextExecSubagentDefault;
-  }
-
-  return { subagentAiDefaults, modified: true };
 }
 
 function parseOptionalPort(value: unknown): number | undefined {
@@ -784,7 +733,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
 }
 /**
  * The built-in Chat with Mux workspace (removed in #3123) lived in a hidden
- * `<muxHome>/system/Mux` project. Real upgraded installs still carry that
+ * `<xumHome>/system/Mux` project. Real upgraded installs still carry that
  * shipped path/title; later xum-branded leftovers use system/Xum and
  * "Chat with Xum". The removal shipped no config migration, so upgraded
  * installs kept the entry: invisible in the UI (system projects are filtered
@@ -1285,38 +1234,14 @@ export class Config {
             ? null
             : parseOptionalPositiveInteger(parsed.advisorMaxOutputTokens);
         const hiddenModels = normalizeOptionalModelStringArray(parsed.hiddenModels);
-        let legacySubagentAiDefaults = normalizeSubagentAiDefaults(parsed.subagentAiDefaults);
-        const agentAiDefaults =
-          parsed.agentAiDefaults !== undefined
-            ? normalizeAgentAiDefaults(parsed.agentAiDefaults)
-            : normalizeAgentAiDefaults(
-                extractAgentDefaultsFromLegacySubagents(legacySubagentAiDefaults)
-              );
-        const configMigrations = normalizeConfigMigrations(parsed.migrations);
-
-        const needsExecSubagentDefaultsSplitMigration =
-          configMigrations.execSubagentDefaultsSplit !== true &&
-          (legacySubagentAiDefaults.exec != null || agentAiDefaults.exec != null);
-        if (needsExecSubagentDefaultsSplitMigration) {
-          const cleanup = removeMirroredExecSubagentDefaults({
-            subagentAiDefaults: legacySubagentAiDefaults,
-            agentAiDefaults,
-          });
-          legacySubagentAiDefaults = cleanup.subagentAiDefaults;
-          if (cleanup.modified) {
-            if (Object.keys(legacySubagentAiDefaults).length > 0) {
-              parsed.subagentAiDefaults = legacySubagentAiDefaults;
-            } else {
-              delete parsed.subagentAiDefaults;
-            }
-          }
-
-          parsed.migrations = {
-            ...configMigrations,
-            execSubagentDefaultsSplit: true,
-          };
-          configModified = true;
-        }
+        // Legacy root subagentAiDefaults (written by older builds and by the
+        // save-time downgrade projection) folds into the canonical nested
+        // `subagent` profile here; nothing outside this load and the save
+        // projection may read or write the legacy root map.
+        const agentAiDefaults = mergeLegacySubagentAiDefaults(
+          normalizeAgentAiDefaults(parsed.agentAiDefaults),
+          parsed.subagentAiDefaults
+        );
 
         if (shouldInvalidateSessionUsageCaches) {
           // Invalidate stale usage caches only when model id formats changed.
@@ -1426,9 +1351,6 @@ export class Config {
           advisorMaxOutputTokens,
           hiddenModels,
           agentAiDefaults,
-          // Subagent defaults: exec is canonical active storage, non-exec entries
-          // support legacy mirror compatibility.
-          subagentAiDefaults: legacySubagentAiDefaults,
           migrations,
           useSSH2Transport: parseOptionalBoolean(parsed.useSSH2Transport),
           muxGovernorUrl: parseOptionalNonEmptyString(parsed.muxGovernorUrl),
@@ -1462,7 +1384,6 @@ export class Config {
       projects: new Map(),
       taskSettings: DEFAULT_TASK_SETTINGS,
       agentAiDefaults: {},
-      subagentAiDefaults: {},
       routePriority: this.seedRoutePriorityFromProviders(),
       coderWorkspaceArchiveBehavior: DEFAULT_CODER_ARCHIVE_BEHAVIOR,
       worktreeArchiveBehavior: DEFAULT_WORKTREE_ARCHIVE_BEHAVIOR,
@@ -1668,19 +1589,12 @@ export class Config {
         const normalizedAgentAiDefaults = normalizeAiDefaultsModelStrings(config.agentAiDefaults);
         data.agentAiDefaults = normalizedAgentAiDefaults;
 
-        const preservedExec = config.subagentAiDefaults?.exec;
-        const legacySubagent = deriveLegacySubagentAiDefaultsFromAgentDefaults({
-          agentAiDefaults: normalizedAgentAiDefaults,
-          preservedExec,
-        });
+        // Downgrade-compatibility projection only: older builds resolve
+        // delegated runs from the legacy root map. Never read back at runtime;
+        // load folds it into the nested `subagent` profile.
+        const legacySubagent = deriveLegacySubagentAiDefaultsProjection(normalizedAgentAiDefaults);
         if (Object.keys(legacySubagent).length > 0) {
           data.subagentAiDefaults = legacySubagent;
-        }
-      } else {
-        // Subagent-only configs keep exec as active storage. Other entries are
-        // retained for legacy fallback.
-        if (config.subagentAiDefaults && Object.keys(config.subagentAiDefaults).length > 0) {
-          data.subagentAiDefaults = normalizeAiDefaultsModelStrings(config.subagentAiDefaults);
         }
       }
 
@@ -1690,15 +1604,14 @@ export class Config {
       if (
         Object.keys(migrations).length > 0 ||
         config.userPreferences !== undefined ||
-        config.agentAiDefaults?.exec != null ||
-        config.subagentAiDefaults?.exec != null
+        config.agentAiDefaults?.exec != null
       ) {
         data.migrations = {
           ...migrations,
           ...(config.userPreferences !== undefined ? { userPreferencesInitialized: true } : {}),
-          ...(config.agentAiDefaults?.exec != null || config.subagentAiDefaults?.exec != null
-            ? { execSubagentDefaultsSplit: true }
-            : {}),
+          // Written for downgrade compatibility so older builds do not re-run
+          // their exec split migration against the projected legacy map.
+          ...(config.agentAiDefaults?.exec != null ? { execSubagentDefaultsSplit: true } : {}),
         };
       }
 
@@ -3420,7 +3333,7 @@ ${jsonString}`;
   /**
    * Get global secrets (not project-scoped).
    *
-   * Stored in <muxHome>/secrets.json under a sentinel key for backwards compatibility.
+   * Stored in <xumHome>/secrets.json under a sentinel key for backwards compatibility.
    */
   getGlobalSecrets(): Secret[] {
     const config = this.loadSecretsConfig();

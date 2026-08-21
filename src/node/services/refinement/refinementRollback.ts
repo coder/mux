@@ -9,7 +9,8 @@
  * Safety posture:
  * - Confinement (never overridable, not even with force): inverse paths must
  *   resolve inside legal self-modification roots — memory scope roots under
- *   the session's mux home, or `.mux/skills` / `.agents/skills` directories.
+ *   the session's xum home, or `.xum/skills` / `.mux/skills` (legacy) /
+ *   `.agents/skills` directories.
  *   r2 only instruments the memory + skill tools, so repo AGENTS.md files and
  *   built-in skills (embedded in the app bundle) never appear in the journal;
  *   the confinement check refuses them anyway in case of a corrupted row.
@@ -252,13 +253,16 @@ function resolveConfinementRoot(
   const segments = resolved.split(path.sep);
 
   if (kind === "skill") {
-    // Project skill files live under a `.mux/skills` or `.agents/skills`
-    // directory (project checkout or home). Require at least <skill>/<file>
-    // below the skills root so the roots themselves can never be a rollback
-    // target.
+    // Project skill files live under a `.xum/skills` (canonical),
+    // `.mux/skills` (legacy read fallback), or `.agents/skills` directory
+    // (project checkout or home). Require at least <skill>/<file> below the
+    // skills root so the roots themselves can never be a rollback target.
     for (let i = 0; i + 1 < segments.length; i++) {
       const pair = `${segments[i]}/${segments[i + 1]}`;
-      if ((pair === ".mux/skills" || pair === ".agents/skills") && segments.length >= i + 4) {
+      if (
+        (pair === ".xum/skills" || pair === ".mux/skills" || pair === ".agents/skills") &&
+        segments.length >= i + 4
+      ) {
         return segments.slice(0, i + 2).join(path.sep);
       }
     }
@@ -280,7 +284,7 @@ function resolveConfinementRoot(
       }
     }
     throw new RollbackError(
-      `Refusing rollback: path is outside every skills root (.mux/skills, .agents/skills, <muxHome>/skills): '${filePath}'`
+      `Refusing rollback: path is outside every skills root (.xum/skills, .mux/skills, .agents/skills, <xumHome>/skills): '${filePath}'`
     );
   }
 
@@ -330,7 +334,7 @@ function resolveConfinementRoot(
 function repoControlledRootComponents(rootAbs: string): string[] {
   const parent = path.dirname(rootAbs);
   const parentBase = path.basename(parent);
-  if (parentBase === ".mux" || parentBase === ".agents") {
+  if (parentBase === ".xum" || parentBase === ".mux" || parentBase === ".agents") {
     return [parent, rootAbs];
   }
   return [rootAbs];
@@ -339,7 +343,7 @@ function repoControlledRootComponents(rootAbs: string): string[] {
 /**
  * Reject link-substituted confinement roots. assertNoSymlinkEscape trusts
  * realpath(rootAbs) as its anchor, so a repo revision that replaces
- * `.mux/skills` (or `.agents/skills`) with a symlink would make the
+ * `.xum/skills` (or `.mux/skills` / `.agents/skills`) with a symlink would make the
  * attacker-selected external directory the trust anchor — targets appear
  * "inside" it and the later rm/writeFileAtomic follows the link outside the
  * checkout. lstat each repo-controlled component and refuse when any is a

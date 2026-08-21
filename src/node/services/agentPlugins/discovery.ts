@@ -2,6 +2,10 @@ import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 
+import {
+  PROJECT_METADATA_DIR_NAMES,
+  listProjectMetadataRelativePaths,
+} from "@/common/compat/legacyMux";
 import { getErrorMessage } from "@/common/utils/errors";
 import { log } from "@/node/services/log";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
@@ -35,7 +39,7 @@ export type AgentPluginScope = "project" | "global";
 export const UNIVERSAL_AGENT_PLUGINS_CONTAINER = "~/.agents/plugins";
 
 export interface AgentPluginContainer {
-  /** Absolute host path of the container directory (e.g. `<projectRoot>/.mux/plugins`). */
+  /** Absolute host path of the container directory (e.g. `<projectRoot>/.xum/plugins`). */
   path: string;
   scope: AgentPluginScope;
 }
@@ -272,23 +276,23 @@ async function discoverPluginAt(args: {
   };
 }
 
-/**
- * Canonical container list for one discovery pass (shared by plugin MCP config
- * and plugin hooks so both consult identical locations with identical Project
- * Trust gating): project containers are consulted only for trusted projects
- * with an absolute host checkout root; global containers always apply.
- */
+/** Ordered plugin containers shared by hooks, MCP, skills, and agents. */
 export function computeAgentPluginContainers(args: {
-  muxHome: string;
+  xumHome: string;
   projectRoot?: string;
   projectTrusted: boolean;
 }): AgentPluginContainer[] {
   const containers: AgentPluginContainer[] = [];
   if (args.projectRoot !== undefined && args.projectTrusted && path.isAbsolute(args.projectRoot)) {
-    containers.push({ path: path.join(args.projectRoot, ".mux", "plugins"), scope: "project" });
-    containers.push({ path: path.join(args.projectRoot, ".agents", "plugins"), scope: "project" });
+    containers.push(
+      ...listProjectMetadataRelativePaths("plugins").map((relativePath) => ({
+        path: path.join(args.projectRoot!, relativePath),
+        scope: "project" as const,
+      })),
+      { path: path.join(args.projectRoot, ".agents", "plugins"), scope: "project" }
+    );
   }
-  containers.push({ path: path.join(args.muxHome, "plugins"), scope: "global" });
+  containers.push({ path: path.join(args.xumHome, "plugins"), scope: "global" });
   containers.push({ path: path.join(os.homedir(), ".agents", "plugins"), scope: "global" });
   return containers;
 }
@@ -297,15 +301,15 @@ export function computeAgentPluginContainers(args: {
  * Workspace-level plugin discovery for host-local consumers (contributed slash
  * commands, composition inspector): canonical containers with Project Trust
  * gating, plus the repo-symlink posture check on project plugin roots (a
- * committed .mux/plugins/<name> symlink must not resolve outside the checkout).
+ * committed .xum/plugins/<name> symlink must not resolve outside the checkout).
  */
 export async function discoverWorkspaceAgentPlugins(args: {
   workspacePath: string;
-  muxHome: string;
+  xumHome: string;
   projectTrusted: boolean;
 }): Promise<DiscoverAgentPluginsResult> {
   const containers = computeAgentPluginContainers({
-    muxHome: args.muxHome,
+    xumHome: args.xumHome,
     projectRoot: args.workspacePath,
     projectTrusted: args.projectTrusted,
   });
@@ -332,20 +336,14 @@ export async function discoverWorkspaceAgentPlugins(args: {
   return { plugins: contained, diagnostics };
 }
 
-/**
- * Discover Agent Plugins in the given container directories.
- *
- * Containers are scanned in the given order; plugins within a container are
- * ordered alphabetically for determinism. Duplicate plugin names are NOT
- * deduplicated here — downstream consumers key on plugin root path (MCP) or
- * dedupe by skill name at their own precedence rules (skills).
- */
+/** Canonical project plugins shadow same-named legacy copies during ordered scans. */
 export async function discoverAgentPlugins(
   containers: AgentPluginContainer[]
 ): Promise<DiscoverAgentPluginsResult> {
   const plugins: AgentPluginInfo[] = [];
   const diagnostics: AgentPluginDiagnostic[] = [];
 
+  const canonicalProjectPluginNames = new Set<string>();
   const seenContainers = new Set<string>();
   for (const container of containers) {
     if (!path.isAbsolute(container.path)) {
@@ -356,7 +354,15 @@ export async function discoverAgentPlugins(
     }
     seenContainers.add(container.path);
 
+    const projectMetadataIndex =
+      container.scope === "project"
+        ? PROJECT_METADATA_DIR_NAMES.findIndex(
+            (dirName) => dirName === path.basename(path.dirname(container.path))
+          )
+        : -1;
     for (const entryName of await listChildDirectories(container.path)) {
+      if (projectMetadataIndex === 0) canonicalProjectPluginNames.add(entryName);
+      else if (projectMetadataIndex === 1 && canonicalProjectPluginNames.has(entryName)) continue;
       const plugin = await discoverPluginAt({
         pluginDir: path.join(container.path, entryName),
         containerPath: container.path,

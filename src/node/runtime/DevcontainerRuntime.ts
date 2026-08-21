@@ -29,7 +29,7 @@ import {
   type BindMount,
 } from "./credentialForwarding";
 import { devcontainerUp, devcontainerDown, spawnDevcontainer } from "./devcontainerCli";
-import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
+import { findInitHookRelativePath, runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { DisposableProcess, forceCloseStdio, killProcessTree } from "@/node/utils/disposableExec";
 import { EXIT_CODE_ABORTED, EXIT_CODE_TIMEOUT } from "@/common/constants/exitCodes";
 import { NON_INTERACTIVE_ENV_VARS } from "@/common/constants/env";
@@ -558,16 +558,17 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
   }
 
   /**
-   * Run .mux/init hook inside the devcontainer.
+   * Run .xum/init hook inside the devcontainer.
    */
   async initWorkspace(params: WorkspaceInitParams): Promise<WorkspaceInitResult> {
     return runWorkspaceInitHook({
       params,
       runtimeType: "devcontainer",
-      hookCheckPath: params.workspacePath,
-      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
+      findHookRelativePath: () =>
+        findInitHookRelativePath(this, this.remoteWorkspaceFolder ?? params.workspacePath),
+      runHook: async ({ hookRelativePath, xumEnv, initLogger, abortSignal }) => {
         const containerWorkspacePath = this.remoteWorkspaceFolder ?? params.workspacePath;
-        const hookPath = `${containerWorkspacePath}/.mux/init`;
+        const hookPath = `${containerWorkspacePath}/${hookRelativePath}`;
         await runInitHookOnRuntime(
           this,
           hookPath,
@@ -776,8 +777,8 @@ export class DevcontainerRuntime extends LocalBaseRuntime {
     }
 
     const tmpPath = this.remoteWorkspaceFolder
-      ? path.posix.join(workspaceRoot, ".mux", "tmp")
-      : path.join(workspaceRoot, ".mux", "tmp");
+      ? path.posix.join(workspaceRoot, ".xum", "tmp")
+      : path.join(workspaceRoot, ".xum", "tmp");
     return Promise.resolve(tmpPath);
   }
 
