@@ -1272,6 +1272,136 @@ describe("AgentPluginInstallService", () => {
     expect(await pathExists(targetPath)).toBe(true);
   });
 
+  test("unreadable journals stay unresolved and keep discovery suppressed", async () => {
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    // A truncated/corrupt journal's recovery instructions are unknown:
+    // consuming it would leave an orphaned promotion live as an unmanaged
+    // plugin (unreadable nonce) or abandon an interrupted update's staged
+    // original (unreadable trashDir). It must survive as unresolved, keeping
+    // the managed container suppressed, until repaired.
+    const journalPath = path.join(stagingDir(), "update-demo-plugin.json");
+    await fsPromises.writeFile(journalPath, '{"name": "demo-plugin", "trash');
+
+    // The registry row still lists, but discovery of the managed container is
+    // suppressed (present:false, no components) and the journal survives.
+    const items = await service.list();
+    expect(items.find((item) => item.name === "demo-plugin")?.present).toBe(false);
+    expect(await pathExists(journalPath)).toBe(true);
+
+    // Repairing the journal (here: to a consumed-state no-op) recovers.
+    await fsPromises.writeFile(journalPath, JSON.stringify({ name: "demo-plugin" }));
+    const repaired = await service.list();
+    expect(repaired.find((item) => item.name === "demo-plugin")?.present).toBe(true);
+    expect(await pathExists(journalPath)).toBe(false);
+  });
+
+  test("concurrent mutations from two service instances cannot drop registry entries", async () => {
+    // Two ServiceContainer instances can share one rootDir (a desktop app
+    // alongside `mux server`, ALLOW_MULTIPLE_INSTANCES): each has its own
+    // in-process queue, so only the cross-process mutation lock serializes
+    // their read-modify-write of plugins.json. Without it, both installs
+    // read the same snapshot and the later atomic write drops the earlier
+    // entry despite both reporting success.
+    const secondRemote = await fsPromises.mkdtemp(path.join(os.tmpdir(), "mux-plugin-remote2-"));
+    try {
+      await initRemote(secondRemote);
+      await writePluginFixture(secondRemote, { version: "1.0.0" });
+      await fsPromises.writeFile(
+        path.join(secondRemote, "plugin.json"),
+        JSON.stringify({ $schema: AGENT_PLUGIN_SCHEMA_ID_1_0_0, name: "second-plugin" })
+      );
+      await commitAll(secondRemote, "initial");
+
+      const serviceB = new AgentPluginInstallService(config, { isEnabled: () => true });
+      const [previewA, previewB] = await Promise.all([
+        service.preview({ input: remoteDir }),
+        serviceB.preview({ input: secondRemote }),
+      ]);
+      await Promise.all([
+        service.install({ source: previewA.source, expectedSha: previewA.lockedSha }),
+        serviceB.install({ source: previewB.source, expectedSha: previewB.lockedSha }),
+      ]);
+
+      const names = (await registry()).map((entry) => (entry as { name: string }).name).sort();
+      expect(names).toEqual(["demo-plugin", "second-plugin"]);
+    } finally {
+      await fsPromises.rm(secondRemote, { recursive: true, force: true });
+    }
+  });
+
+  test("uninstall prunes workspaces registered after its pre-commit enumeration", async () => {
+    // A workspace created between the pre-commit enumeration and the tree
+    // removal can still save a valid enable (save-time validation sees the
+    // then-present server). The post-commit re-enumeration must fold it in,
+    // or a same-name reinstall would silently reactivate the server there.
+    const prunedIds: string[] = [];
+    const overridesStub = {
+      prunePluginOverrideKeys: (workspaceId: string) => {
+        prunedIds.push(workspaceId);
+        return Promise.resolve();
+      },
+    };
+    const serviceWithDeps = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: overridesStub as unknown as WorkspaceMcpOverridesService,
+    });
+    const preview = await serviceWithDeps.preview({ input: remoteDir });
+    await serviceWithDeps.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    let enumerations = 0;
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() => {
+      enumerations += 1;
+      const workspaces =
+        enumerations === 1
+          ? [{ id: "ws-old", runtimeConfig: { type: "local" } }]
+          : [
+              { id: "ws-old", runtimeConfig: { type: "local" } },
+              { id: "ws-mid-uninstall", runtimeConfig: { type: "worktree" } },
+            ];
+      return Promise.resolve(
+        workspaces as unknown as Awaited<ReturnType<Config["getAllWorkspaceMetadata"]>>
+      );
+    });
+    try {
+      await serviceWithDeps.uninstall({ name: "demo-plugin", deletePluginData: false });
+    } finally {
+      metadataSpy.mockRestore();
+    }
+    expect(prunedIds.sort()).toEqual(["ws-mid-uninstall", "ws-old"]);
+  });
+
+  test("staged trees reject dangling and root-escaping relative symlinks", async () => {
+    // The exact consent-miss attack: hooks.js -> ../../plugins/<name>/payload.js
+    // is dangling in staging (component checks see "no hook"), but after
+    // promotion it resolves INSIDE the live root and auto-loads without
+    // consent. Unresolvable links are rejected outright.
+    await fsPromises.symlink(
+      "../../plugins/demo-plugin/payload.js",
+      path.join(remoteDir, "hooks.js")
+    );
+    await commitAll(remoteDir, "dangling hook link");
+    await expect(service.preview({ input: remoteDir })).rejects.toThrow(/does not resolve/);
+
+    // During an UPDATE the same link RESOLVES (the old tree is installed), so
+    // the dangling check alone is not enough: a relative link escaping the
+    // staged root changes meaning after promotion and is rejected too.
+    await fsPromises.rm(path.join(remoteDir, "hooks.js"));
+    await commitAll(remoteDir, "remove hook link");
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+    await fsPromises.writeFile(path.join(remoteDir, "server.js"), "// moved target\n");
+    await fsPromises.symlink(
+      "../../plugins/demo-plugin/mcp.json",
+      path.join(remoteDir, "hooks.js")
+    );
+    await commitAll(remoteDir, "escaping-but-resolving hook link");
+    await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(
+      /escapes the repository root/
+    );
+  });
+
   test("repositories shipping the reserved recovery marker name are rejected", async () => {
     // install/update write a nonce file at this path pre-rename; a repo
     // shipping it would get that file clobbered then deleted, making the
@@ -1283,11 +1413,14 @@ describe("AgentPluginInstallService", () => {
     // A DANGLING symlink at the same path must be rejected too: access-style
     // existence checks follow it and report "absent", and the nonce write
     // would then follow the attacker-controlled target OUTSIDE the staged
-    // tree (e.g. creating ../../plugins.json with nonce content).
+    // tree (e.g. creating ../../plugins.json with nonce content). The
+    // staged-tree symlink validation rejects it first (unresolvable link).
     await fsPromises.rm(path.join(remoteDir, ".mux-promotion-marker"));
     await fsPromises.symlink("../../plugins.json", path.join(remoteDir, ".mux-promotion-marker"));
     await commitAll(remoteDir, "dangling symlink at reserved marker path");
-    await expect(service.preview({ input: remoteDir })).rejects.toThrow(/reserved file name/);
+    await expect(service.preview({ input: remoteDir })).rejects.toThrow(
+      /reserved file name|does not resolve/
+    );
   });
 
   test("update refuses subpath installs recorded by a newer build", async () => {

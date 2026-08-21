@@ -44,6 +44,7 @@ import {
   bumpContainerMutationEpoch,
   isJournalName,
   JOURNAL_PREFIXES,
+  MUTATION_EPOCH_FILE,
   PROMOTION_JOURNAL_PREFIX,
   STAGING_DIR_NAME,
   UNINSTALL_JOURNAL_PREFIX,
@@ -126,6 +127,21 @@ const PROMOTION_MARKER_FILE = ".mux-promotion-marker";
 
 /** Staging dirs left behind by crashes are reclaimed after this age. */
 const STALE_STAGING_MAX_AGE_MS = 60 * 60 * 1000;
+
+/**
+ * Cross-process mutation lock file in the staging root. The in-process
+ * mutationQueue serializes one service instance, but two processes sharing
+ * the same rootDir (ALLOW_MULTIPLE_INSTANCES, a desktop app alongside `mux
+ * server`) each have their own queue: two concurrent mutations could both
+ * read the same plugins.json snapshot and the later atomic write would
+ * silently drop the earlier one's entry. Every mutation transaction
+ * (registry read → directory moves → registry write) holds this lock.
+ */
+const MUTATION_LOCK_FILE = "mutation.lock";
+/** How long an acquire waits on a live holder before failing (covers a full clone). */
+const MUTATION_LOCK_ACQUIRE_TIMEOUT_MS = 10 * 60 * 1000;
+/** Pid-reuse guard: no plugin mutation legitimately runs this long. */
+const MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
 
 const LS_REMOTE_TIMEOUT_MS = 30_000;
 const CLONE_TIMEOUT_MS = 120_000;
@@ -637,9 +653,114 @@ export class AgentPluginInstallService {
   }
 
   private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.mutationQueue.then(fn, fn);
+    // In-process queue first (cheap), then the cross-process lock: a second
+    // process sharing rootDir must not interleave its read-modify-write of
+    // plugins.json (or its directory moves) with ours.
+    const locked = async (): Promise<T> => {
+      const release = await this.acquireMutationLock();
+      try {
+        return await fn();
+      } finally {
+        await release();
+      }
+    };
+    const run = this.mutationQueue.then(locked, locked);
     this.mutationQueue = run.catch(() => undefined);
     return run;
+  }
+
+  /** Parse the lock file; undefined when missing/unreadable/corrupt. */
+  private async readMutationLock(
+    lockPath: string
+  ): Promise<{ pid: number; token: string; acquiredAt: number } | undefined> {
+    try {
+      const parsed = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as unknown;
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return undefined;
+      }
+      const { pid, token, acquiredAt } = parsed as Record<string, unknown>;
+      if (typeof pid !== "number" || typeof token !== "string" || typeof acquiredAt !== "number") {
+        return undefined;
+      }
+      return { pid, token, acquiredAt };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Liveness check for a competing lock holder. Reclaims dead pids
+   * immediately; the stale ceiling guards pid reuse. A same-pid holder is
+   * NOT reclaimable: it is another service instance in this very process
+   * (two ServiceContainers sharing rootDir each have their own in-process
+   * queue), and a lock leaked by a previous same-pid process is covered by
+   * the stale ceiling like any other pid-reuse case.
+   */
+  private mutationLockHolderAlive(holder: { pid: number; acquiredAt: number }): boolean {
+    if (Date.now() - holder.acquiredAt > MUTATION_LOCK_STALE_MS) {
+      return false;
+    }
+    if (holder.pid === process.pid) {
+      return true;
+    }
+    try {
+      process.kill(holder.pid, 0);
+      return true;
+    } catch (error) {
+      // EPERM = alive but owned by another user; anything else (ESRCH) = dead.
+      return hasErrorCode(error, "EPERM");
+    }
+  }
+
+  /**
+   * Acquire the cross-process mutation lock (see MUTATION_LOCK_FILE).
+   * Exclusive-create (wx) + post-create ownership re-read: two processes
+   * that both reclaimed a dead holder cannot both proceed, because the
+   * clobbered one fails the token check and retries. Returns the release
+   * function, which deletes the lock only while it is still OURS.
+   */
+  private async acquireMutationLock(): Promise<() => Promise<void>> {
+    await fsPromises.mkdir(this.stagingRoot, { recursive: true });
+    const lockPath = path.join(this.stagingRoot, MUTATION_LOCK_FILE);
+    const token = randomBytes(16).toString("hex");
+    const deadline = Date.now() + MUTATION_LOCK_ACQUIRE_TIMEOUT_MS;
+    for (;;) {
+      try {
+        await fsPromises.writeFile(
+          lockPath,
+          JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() }),
+          { flag: "wx" }
+        );
+        const confirmed = await this.readMutationLock(lockPath);
+        if (confirmed?.token === token) {
+          return async () => {
+            const current = await this.readMutationLock(lockPath);
+            if (current?.token === token) {
+              await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+            }
+          };
+        }
+        // Our create was clobbered by a concurrent reclaimer: retry.
+      } catch (error) {
+        if (!hasErrorCode(error, "EEXIST")) {
+          throw error;
+        }
+        const holder = await this.readMutationLock(lockPath);
+        if (holder === undefined || !this.mutationLockHolderAlive(holder)) {
+          // Corrupt/unreadable or dead-owner lock: reclaim and retry. The
+          // unlink-then-create race between two reclaimers is compensated by
+          // the ownership re-read above.
+          await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+          continue;
+        }
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          "Another Mux process is currently modifying plugins. Wait for it to finish and try again."
+        );
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 250)));
+    }
   }
 
   /**
@@ -704,31 +825,43 @@ export class AgentPluginInstallService {
       const entries = await fsPromises.readdir(this.stagingRoot);
       // Journals pin the staged trash dirs they reference: reclaiming a
       // journaled rollback copy by age before reconcileJournals runs would
-      // turn a restorable interrupted uninstall/update into data loss.
+      // turn a restorable interrupted uninstall/update into data loss. An
+      // UNREADABLE journal pins everything it could reference: its staged
+      // paths are unknown, so all trash entries stay until it is repaired.
       const journalProtected = new Set<string>();
+      let allJournalsReadable = true;
       for (const entry of entries) {
         if (!isJournalName(entry)) {
           continue;
         }
-        for (const field of ["trashDir", "dataTrashDir"]) {
-          const staged = await this.readJournalStagedPath(
-            path.join(this.stagingRoot, entry),
-            field
-          );
-          if (staged !== undefined) {
-            journalProtected.add(staged);
+        try {
+          const doc = await this.readJournalDocument(path.join(this.stagingRoot, entry));
+          for (const field of ["trashDir", "dataTrashDir"]) {
+            const staged = this.journalStagedPath(doc, field);
+            if (staged !== undefined) {
+              journalProtected.add(staged);
+            }
           }
+        } catch {
+          allJournalsReadable = false;
         }
       }
       for (const entry of entries) {
         const entryPath = path.join(this.stagingRoot, entry);
         // Never touch paths an in-process operation still owns, journals
-        // (their lifecycle belongs to reconcileJournals), or trash dirs a
-        // journal still references.
+        // (their lifecycle belongs to reconcileJournals), trash dirs a
+        // journal still references (or MIGHT reference, when a journal is
+        // unreadable), or the durable staging-root state files: the
+        // mutation-epoch token must survive (a scan bracket comparing tokens
+        // across a deletion would misread every managed plugin as mutated)
+        // and the cross-process lock belongs to its holder.
         if (
           this.activeStagingPaths.has(entryPath) ||
           isJournalName(entry) ||
-          journalProtected.has(entryPath)
+          journalProtected.has(entryPath) ||
+          entry === MUTATION_EPOCH_FILE ||
+          entry === MUTATION_LOCK_FILE ||
+          (!allJournalsReadable && entry.startsWith("trash"))
         ) {
           continue;
         }
@@ -866,9 +999,22 @@ export class AgentPluginInstallService {
    * tiny pack into thousands of them. Runs immediately after every staged
    * clone so an oversized tree is deleted by the caller's error path before
    * any validation reads it.
+   *
+   * The same walk validates SYMLINK final-path semantics: component checks
+   * (consent preview, update capability comparison) resolve links against
+   * the STAGED location, but the tree executes from the promoted location —
+   * a relative link that escapes the staged root, or a link whose target
+   * does not exist yet, can resolve to something entirely different after
+   * promotion (e.g. `hooks.js -> ../../plugins/<name>/payload.js` resolves
+   * to nothing in staging but to an executable hook inside the live root
+   * post-install, skipping consent). Links that RESOLVE INSIDE the staged
+   * root keep their meaning across the promote rename; absolute links keep
+   * their meaning too (same target string) and stay subject to runtime
+   * escape containment — everything else is rejected before any commit.
    */
   private async assertStagedTreeWithinQuota(dir: string): Promise<void> {
     const quota = this.stagingQuota();
+    const rootReal = await fsPromises.realpath(dir);
     let bytes = 0;
     let entryCount = 0;
     const pending: string[] = [dir];
@@ -886,6 +1032,24 @@ export class AgentPluginInstallService {
         } else if (entry.isFile()) {
           const stat = await fsPromises.lstat(entryPath);
           bytes += stat.size;
+        } else if (entry.isSymbolicLink()) {
+          const relative = path.relative(dir, entryPath);
+          const resolvedTarget = await fsPromises.realpath(entryPath).catch(() => undefined);
+          if (resolvedTarget === undefined) {
+            throw new Error(
+              `The repository ships a symbolic link that does not resolve (${relative}). Its target could appear at the install location AFTER the consent preview validated the tree, so unresolvable links are rejected.`
+            );
+          }
+          const rawTarget = await fsPromises.readlink(entryPath);
+          if (
+            !path.isAbsolute(rawTarget) &&
+            resolvedTarget !== rootReal &&
+            !resolvedTarget.startsWith(rootReal + path.sep)
+          ) {
+            throw new Error(
+              `The repository ships a relative symbolic link that escapes the repository root (${relative}). Such links resolve differently after install than during the consent preview, so they are rejected.`
+            );
+          }
         }
         if (entryCount > quota.maxFiles || bytes > quota.maxBytes) {
           throw new Error(
@@ -1647,18 +1811,41 @@ export class AgentPluginInstallService {
     await fsPromises.rm(journalPath, { force: true });
   }
 
-  /** A string field from a journal, or undefined when absent/unreadable. */
-  private async readJournalField(journalPath: string, field: string): Promise<string | undefined> {
+  /**
+   * Parse a journal file into its raw object. Returns null when the file is
+   * MISSING (ENOENT). THROWS on any other read/parse failure (truncated
+   * write, transient I/O, permissions): an unreadable journal's recovery
+   * instructions are unknown, so callers must treat it as UNRESOLVED — keep
+   * the journal and its discovery suppression for a later repair attempt —
+   * rather than consume it. Degrading the failure to "field absent" would
+   * let recovery leave an orphaned promotion live as an unmanaged plugin
+   * (unreadable nonce) or abandon an interrupted update's staged original
+   * while the registry points at a missing tree (unreadable trashDir).
+   */
+  private async readJournalDocument(journalPath: string): Promise<Record<string, unknown> | null> {
+    let raw: string;
     try {
-      const parsed = JSON.parse(await fsPromises.readFile(journalPath, "utf-8")) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        return undefined;
+      raw = await fsPromises.readFile(journalPath, "utf-8");
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT")) {
+        return null;
       }
-      const value = (parsed as Record<string, unknown>)[field];
-      return typeof value === "string" ? value : undefined;
-    } catch {
-      return undefined;
+      throw error;
     }
+    const parsed = JSON.parse(raw) as unknown; // Malformed JSON throws (fail closed).
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error(`Plugin journal has a non-object root: ${journalPath}`);
+    }
+    return parsed as Record<string, unknown>;
+  }
+
+  /** A string field from a parsed journal document, or undefined when absent. */
+  private journalStringField(
+    doc: Record<string, unknown> | null,
+    field: string
+  ): string | undefined {
+    const value = doc?.[field];
+    return typeof value === "string" ? value : undefined;
   }
 
   /**
@@ -1666,11 +1853,11 @@ export class AgentPluginInstallService {
    * Defensive: recovery renames/deletes these paths, so a corrupted journal
    * must never aim them anywhere but a direct trash child of the staging root.
    */
-  private async readJournalStagedPath(
-    journalPath: string,
+  private journalStagedPath(
+    doc: Record<string, unknown> | null,
     field: string
-  ): Promise<string | undefined> {
-    const value = await this.readJournalField(journalPath, field);
+  ): string | undefined {
+    const value = this.journalStringField(doc, field);
     if (value === undefined) {
       return undefined;
     }
@@ -1678,6 +1865,27 @@ export class AgentPluginInstallService {
       return undefined;
     }
     return value;
+  }
+
+  /**
+   * Read a recovery journal's document for a recover* helper. Returns
+   * `{ unreadable: true }` when the journal cannot be read/parsed — the
+   * caller must return false (journal retained, discovery stays suppressed).
+   */
+  private async readJournalForRecovery(
+    journalPath: string,
+    name: string
+  ): Promise<{ doc: Record<string, unknown> | null; unreadable: false } | { unreadable: true }> {
+    try {
+      return { doc: await this.readJournalDocument(journalPath), unreadable: false };
+    } catch (error) {
+      log.warn("Plugin recovery journal is unreadable; keeping it for a later repair attempt", {
+        name,
+        journalPath,
+        error: getErrorMessage(error),
+      });
+      return { unreadable: true };
+    }
   }
 
   /**
@@ -1773,6 +1981,10 @@ export class AgentPluginInstallService {
     journalPath: string,
     registryNames: Set<string>
   ): Promise<boolean> {
+    const journal = await this.readJournalForRecovery(journalPath, name);
+    if (journal.unreadable) {
+      return false;
+    }
     const targetPath = this.targetPathFor(name);
     if (registryNames.has(name)) {
       // The install committed and only the journal deletion was lost; sweep
@@ -1783,7 +1995,7 @@ export class AgentPluginInstallService {
       // deleting it would make update recovery misread the live tree as an
       // unrecognized user replacement (staged old tree + markerless target)
       // and suppress the container forever.
-      const journalNonce = await this.readJournalField(journalPath, "nonce");
+      const journalNonce = this.journalStringField(journal.doc, "nonce");
       const treeNonce = await fsPromises
         .readFile(path.join(targetPath, PROMOTION_MARKER_FILE), "utf-8")
         .catch(() => undefined);
@@ -1804,7 +2016,7 @@ export class AgentPluginInstallService {
       // recreated directory. A mismatch or missing marker means our orphan
       // is already gone, so consume the journal WITHOUT touching the
       // replacement.
-      const journalNonce = await this.readJournalField(journalPath, "nonce");
+      const journalNonce = this.journalStringField(journal.doc, "nonce");
       const treeNonce = await fsPromises
         .readFile(path.join(targetPath, PROMOTION_MARKER_FILE), "utf-8")
         .catch(() => undefined);
@@ -1851,10 +2063,14 @@ export class AgentPluginInstallService {
     journalPath: string,
     registryNames: Set<string>
   ): Promise<boolean> {
+    const journal = await this.readJournalForRecovery(journalPath, name);
+    if (journal.unreadable) {
+      return false;
+    }
     const targetPath = this.targetPathFor(name);
-    const trashDir = await this.readJournalStagedPath(journalPath, "trashDir");
+    const trashDir = this.journalStagedPath(journal.doc, "trashDir");
     if (await pathExists(targetPath)) {
-      const journalNonce = await this.readJournalField(journalPath, "nonce");
+      const journalNonce = this.journalStringField(journal.doc, "nonce");
       const treeNonce = await fsPromises
         .readFile(path.join(targetPath, PROMOTION_MARKER_FILE), "utf-8")
         .catch(() => undefined);
@@ -1935,8 +2151,12 @@ export class AgentPluginInstallService {
     journalPath: string,
     registryNames: Set<string>
   ): Promise<boolean> {
-    const trashDir = await this.readJournalStagedPath(journalPath, "trashDir");
-    const dataTrashDir = await this.readJournalStagedPath(journalPath, "dataTrashDir");
+    const journal = await this.readJournalForRecovery(journalPath, name);
+    if (journal.unreadable) {
+      return false;
+    }
+    const trashDir = this.journalStagedPath(journal.doc, "trashDir");
+    const dataTrashDir = this.journalStagedPath(journal.doc, "dataTrashDir");
     if (!registryNames.has(name)) {
       // Committed: the staged assets are trash. Delete them now — the user
       // may have explicitly requested the data deletion, and stale-staging
@@ -2374,17 +2594,34 @@ export class AgentPluginInstallService {
       // pruning problems cannot skip the correctness-critical invalidation.
       await this.deps.mcpServerManager?.stopServersWithKeyPrefix(serverKeyPrefix);
 
+      // Workspaces registered AFTER the pre-commit enumeration escaped both
+      // the pessimistic tombstone and the prune list, yet until the tree
+      // removal + re-invalidation above their MCP dialogs could still save a
+      // valid enable for this plugin's servers (save-time validation saw the
+      // then-present tree). Re-enumerate now that no new valid enable can be
+      // saved and fold the delta in. A failed re-enumeration skips the
+      // tombstone shrink below, keeping the pessimistic record.
+      let pruneIds = workspaceIdsToPrune;
+      let deltaEnumerated = true;
+      try {
+        const postCommitIds = await this.listWorkspaceIdsForOverridePruning();
+        pruneIds = [...new Set([...workspaceIdsToPrune, ...postCommitIds])];
+      } catch (error) {
+        deltaEnumerated = false;
+        log.warn(
+          "Failed to re-enumerate workspaces after uninstall commit; keeping the pessimistic tombstone",
+          { error: getErrorMessage(error) }
+        );
+      }
+
       // Per-workspace failures are caught inside; the failure-prone
       // enumeration already happened pre-commit and the pessimistic
       // tombstone is already durable (commit write above). Shrink it to what
       // actually failed — best-effort: a failed shrink leaves the over-broad
       // tombstone, which self-heals on the next retry (section open or the
       // reinstall gate).
-      const failedPruneIds = await this.pruneWorkspaceOverrides(
-        serverKeyPrefix,
-        workspaceIdsToPrune
-      );
-      if (workspaceIdsToPrune.length > 0) {
+      const failedPruneIds = await this.pruneWorkspaceOverrides(serverKeyPrefix, pruneIds);
+      if (pruneIds.length > 0 && deltaEnumerated) {
         // STRICT re-read for the shrink: a lenient read degrading a transient
         // I/O error or corruption to an empty document would make this write
         // rewrite plugins.json with an empty plugin list, orphaning every

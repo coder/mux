@@ -650,7 +650,12 @@ export const PluginsSettingsSection: React.FC = () => {
             <p className="text-muted py-2 text-sm">No plugins installed yet.</p>
           ) : (
             items.map((item) => {
-              const check = updateChecks.get(item.name);
+              // Update checks are keyed by MANAGED-registry name: an
+              // unmanaged plugin in another container can share the manifest
+              // name, and rendering the managed install's check state on its
+              // read-only row would mislabel unrelated content ("update
+              // available" with no Update action).
+              const check = item.managed ? updateChecks.get(item.name) : undefined;
               const updateAvailable =
                 item.managed &&
                 (check?.status === "update-available" || check?.status === "tag-moved");
