@@ -436,7 +436,6 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             });
           }
 
-
           const rmCommand =
             legacyManifestPath == null
               ? `rm ${quoteRuntimeProbePath(resolvedPath)}`
