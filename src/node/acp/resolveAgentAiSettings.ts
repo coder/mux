@@ -1,6 +1,20 @@
+/**
+ * ACP adapter for the unified agent AI-settings resolver: gathers configured
+ * defaults and agent descriptors over ORPC, assembles the declared base chain
+ * (plus the implicit plan/exec fallback ancestor), and delegates precedence to
+ * the shared pure resolver.
+ */
+
 import assert from "node:assert/strict";
-import { DEFAULT_MODEL } from "@/common/constants/knownModels";
+import type {
+  AgentAiAncestorLayer,
+  AgentAiDefinitionDefaults,
+  AgentAiSettingsLayerValues,
+  ResolveAgentAiSettingsInput,
+  ResolvedAgentAiSettings,
+} from "@/common/types/agentAiSettings";
 import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
+import { resolveAgentAiSettings as resolveAgentAiSettingsShared } from "@/common/utils/ai/resolveAgentAiSettings";
 import type { ORPCClient } from "./serverConnection";
 
 export interface ResolvedAiSettings {
@@ -14,69 +28,43 @@ export interface ResolvedAiSettings {
   reasoningMode?: OpenAIReasoningMode;
 }
 
-const DEFAULT_PLAN_AGENT_ID = "plan";
-const DEFAULT_EXEC_AGENT_ID = "exec";
-const DEFAULT_THINKING_LEVEL: ThinkingLevel = "off";
-
-function getFallbackBaseAgentId(agentId: string): string {
-  return agentId === DEFAULT_PLAN_AGENT_ID ? DEFAULT_PLAN_AGENT_ID : DEFAULT_EXEC_AGENT_ID;
+interface AgentDescriptorForChain {
+  base?: string;
+  aiDefaults?: AgentAiDefinitionDefaults;
 }
 
-interface ConfigAiDefaultsEntry {
-  modelString?: string;
-  thinkingLevel?: ThinkingLevel;
-  reasoningMode?: OpenAIReasoningMode;
-}
-
-function resolveInheritedConfigDefaults(
+function buildAncestorLayers(
   agentId: string,
-  agentDefsById: ReadonlyMap<string, { base?: string }>,
-  agentAiDefaults: Record<string, ConfigAiDefaultsEntry>
-): ConfigAiDefaultsEntry | undefined {
+  agentDefsById: ReadonlyMap<string, AgentDescriptorForChain>
+): AgentAiAncestorLayer[] {
+  const ancestors: AgentAiAncestorLayer[] = [];
   const visited = new Set<string>([agentId]);
   let cursor = agentId;
 
-  let inheritedModel: string | undefined;
-  let inheritedThinkingLevel: ThinkingLevel | undefined;
-  let inheritedReasoningMode: OpenAIReasoningMode | undefined;
-
   while (true) {
-    const baseAgentId = agentDefsById.get(cursor)?.base ?? getFallbackBaseAgentId(cursor);
-    if (baseAgentId === cursor || visited.has(baseAgentId)) {
+    const baseAgentId = agentDefsById.get(cursor)?.base;
+    if (baseAgentId == null) {
       break;
     }
-
-    const inheritedDefaults = agentAiDefaults[baseAgentId];
-    if (inheritedDefaults != null) {
-      // Inheritance is field-wise across the full base chain. If an intermediate
-      // base defines only one field, continue traversing so deeper bases can
-      // still provide missing fields.
-      inheritedModel ??= inheritedDefaults.modelString;
-      inheritedThinkingLevel ??= inheritedDefaults.thinkingLevel;
-      inheritedReasoningMode ??= inheritedDefaults.reasoningMode;
-
-      if (
-        inheritedModel != null &&
-        inheritedThinkingLevel != null &&
-        inheritedReasoningMode != null
-      ) {
-        break;
-      }
+    if (baseAgentId === cursor || visited.has(baseAgentId)) {
+      return ancestors;
     }
-
     visited.add(baseAgentId);
+    ancestors.push({
+      agentId: baseAgentId,
+      declared: true,
+      definitionAiDefaults: agentDefsById.get(baseAgentId)?.aiDefaults,
+    });
     cursor = baseAgentId;
   }
 
-  if (inheritedModel == null && inheritedThinkingLevel == null && inheritedReasoningMode == null) {
-    return undefined;
+  // A chain terminus without a declared base still falls back to the default
+  // base (plan -> plan, otherwise exec), contributing reasoningMode only.
+  const fallback = cursor === "plan" ? "plan" : "exec";
+  if (fallback !== cursor && !visited.has(fallback)) {
+    ancestors.push({ agentId: fallback, declared: false });
   }
-
-  return {
-    modelString: inheritedModel,
-    thinkingLevel: inheritedThinkingLevel,
-    reasoningMode: inheritedReasoningMode,
-  };
+  return ancestors;
 }
 
 function buildAgentsListInput(
@@ -93,11 +81,23 @@ function buildAgentsListInput(
   return { projectPath: process.cwd(), includeDisabled: true };
 }
 
-export async function resolveAgentAiSettings(
+export interface AcpResolveExtras {
+  explicit?: ResolveAgentAiSettingsInput["explicit"];
+  targetWorkspaceSettings?: AgentAiSettingsLayerValues;
+  parentRuntime?: AgentAiSettingsLayerValues;
+}
+
+/**
+ * Detailed variant returning the full resolver result; callers such as ACP
+ * /compact supply additional tiers (explicit command flags, the workspace's
+ * compact bucket, the live session settings as parent runtime).
+ */
+export async function resolveAcpAgentAiSettings(
   client: ORPCClient,
   agentId: string,
-  workspaceId?: string
-): Promise<ResolvedAiSettings> {
+  workspaceId?: string,
+  extras?: AcpResolveExtras
+): Promise<ResolvedAgentAiSettings> {
   const trimmedAgentId = agentId.trim();
   assert(trimmedAgentId.length > 0, "resolveAgentAiSettings: agentId must be non-empty");
 
@@ -107,36 +107,33 @@ export async function resolveAgentAiSettings(
   ]);
 
   const agentDef = agents.find((agent) => agent.id === trimmedAgentId);
-  const agentDefsById = new Map<string, { base?: string }>(
-    agents.map((agent) => [agent.id, { base: agent.base }])
+  const agentDefsById = new Map<string, AgentDescriptorForChain>(
+    agents.map((agent) => [agent.id, { base: agent.base, aiDefaults: agent.aiDefaults }])
   );
 
-  const agentAiDefaults = config.agentAiDefaults ?? {};
-  const directDefaults = agentAiDefaults[trimmedAgentId];
-  const inheritedDefaults = resolveInheritedConfigDefaults(
-    trimmedAgentId,
-    agentDefsById,
-    agentAiDefaults
-  );
-  const descriptorDefaults = agentDef?.aiDefaults;
+  return resolveAgentAiSettingsShared({
+    targetAgentId: trimmedAgentId,
+    profile: "interactive",
+    explicit: extras?.explicit,
+    targetWorkspaceSettings: extras?.targetWorkspaceSettings,
+    agentAiDefaults: config.agentAiDefaults,
+    targetDefinitionAiDefaults: agentDef?.aiDefaults,
+    ancestors: buildAncestorLayers(trimmedAgentId, agentDefsById),
+    parentRuntime: extras?.parentRuntime,
+  });
+}
 
-  const model =
-    directDefaults?.modelString ??
-    inheritedDefaults?.modelString ??
-    descriptorDefaults?.model ??
-    DEFAULT_MODEL;
-
-  const thinkingLevel =
-    directDefaults?.thinkingLevel ??
-    inheritedDefaults?.thinkingLevel ??
-    descriptorDefaults?.thinkingLevel ??
-    DEFAULT_THINKING_LEVEL;
-
-  const reasoningMode = directDefaults?.reasoningMode ?? inheritedDefaults?.reasoningMode;
-
+export async function resolveAgentAiSettings(
+  client: ORPCClient,
+  agentId: string,
+  workspaceId?: string
+): Promise<ResolvedAiSettings> {
+  const resolved = await resolveAcpAgentAiSettings(client, agentId, workspaceId);
   return {
-    model,
-    thinkingLevel,
-    ...(reasoningMode != null ? { reasoningMode } : {}),
+    model: resolved.selected.model,
+    thinkingLevel: resolved.selected.thinkingLevel,
+    ...(resolved.selected.reasoningMode != null
+      ? { reasoningMode: resolved.selected.reasoningMode }
+      : {}),
   };
 }

@@ -54,7 +54,8 @@ import {
   formatGenericToolEnd,
   isMultilineResultTool,
 } from "./toolFormatters";
-import { defaultModel, resolveModelAlias } from "../common/utils/ai/models";
+import { defaultModel } from "../common/utils/ai/models";
+import { normalizeModelInput } from "../common/utils/ai/normalizeModelInput";
 import {
   buildProvidersFromEnv,
   hasAnyConfiguredProvider,
@@ -480,7 +481,14 @@ async function main(): Promise<number> {
   const projectDir = path.resolve(opts.dir);
   await ensureDirectory(projectDir);
 
-  const model: string = resolveModelAlias(opts.model);
+  // Shared normalization (alias resolution + gateway migration + format
+  // validation); an unrecognized -m value fails up front instead of failing
+  // later inside the stream.
+  const normalizedModel = normalizeModelInput(opts.model).model;
+  if (normalizedModel == null) {
+    throw new Error(`Invalid model "${opts.model}". Expected "provider:model-id" or a known alias`);
+  }
+  const model: string = normalizedModel;
   let runtimeConfig = parseRuntimeConfig(opts.runtime, config.srcDir);
   // Resolve thinking: numeric indices map to the model's allowed levels (0 = lowest)
   const thinkingLevel = resolveThinkingInput(parseThinkingLevel(opts.thinking), model);

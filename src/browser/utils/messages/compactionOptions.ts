@@ -6,13 +6,15 @@
  */
 
 import { readPersistedState } from "@/browser/hooks/usePersistedState";
-import { resolveConfiguredReasoningModeDefault } from "@/browser/utils/workspaceModeAi";
 import { AGENT_AI_DEFAULTS_KEY } from "@/common/constants/storage";
 import type { SendMessageOptions } from "@/common/orpc/types";
 import type { CompactionRequestData } from "@/common/types/message";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import { coerceOpenAIReasoningMode, coerceThinkingLevel } from "@/common/types/thinking";
-import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import {
+  InvalidExplicitAiSettingError,
+  resolveAgentAiSettings,
+} from "@/common/utils/ai/resolveAgentAiSettings";
 
 /**
  * Apply compaction-specific option overrides to base options.
@@ -30,24 +32,43 @@ export function applyCompactionOverrides(
   compactData: CompactionRequestData
 ): SendMessageOptions {
   const compactionModelOverride = compactData.model?.trim();
-  const compactionModel =
-    compactionModelOverride === undefined || compactionModelOverride === ""
-      ? baseOptions.model
-      : compactionModelOverride;
-
   const agentAiDefaults = readPersistedState<AgentAiDefaults>(AGENT_AI_DEFAULTS_KEY, {});
-  const preferredThinking = agentAiDefaults.compact?.thinkingLevel;
 
-  const requestedThinking =
-    coerceThinkingLevel(preferredThinking ?? baseOptions.thinkingLevel) ?? "off";
-  const thinkingLevel = enforceThinkingPolicy(compactionModel, requestedThinking);
-  // Same defaults-first order as thinkingLevel, but inherited through
-  // Compact's configured base chain (compact -> exec) so a saved Exec pro
-  // default reaches compaction as the Settings card displays; the send path
-  // re-gates per model/route so this is inert for models without pro mode.
-  const reasoningMode = coerceOpenAIReasoningMode(
-    resolveConfiguredReasoningModeDefault("compact", agentAiDefaults) ?? baseOptions.reasoningMode
-  );
+  // Unified resolution as agent "compact": the /compact -m flag is the
+  // explicit tier, configured compact defaults (and their base chain, so a
+  // saved Exec pro default reaches compaction) win over the workspace's live
+  // settings (parent runtime). The send path re-gates reasoning per
+  // model/route so pro is inert for unsupported models.
+  const resolveWith = (explicitModel: string | undefined) =>
+    resolveAgentAiSettings({
+      targetAgentId: "compact",
+      profile: "interactive",
+      explicit: { model: explicitModel },
+      agentAiDefaults,
+      // Compact's implicit base (exec) contributes reasoningMode only, so a
+      // saved Exec pro default reaches compaction as the Settings card shows.
+      ancestors: [{ agentId: "exec", declared: false }],
+      parentRuntime: {
+        model: baseOptions.model,
+        thinkingLevel: coerceThinkingLevel(baseOptions.thinkingLevel),
+        reasoningMode: coerceOpenAIReasoningMode(baseOptions.reasoningMode),
+      },
+    });
+
+  let resolved;
+  let compactionModel: string;
+  try {
+    resolved = resolveWith(compactionModelOverride || undefined);
+    compactionModel = resolved.selected.model;
+  } catch (error) {
+    if (!(error instanceof InvalidExplicitAiSettingError)) {
+      throw error;
+    }
+    // Preserve the legacy surface for an unrecognized -m value: send it
+    // verbatim and let the backend reject it visibly (model_not_found).
+    resolved = resolveWith(undefined);
+    compactionModel = compactionModelOverride ?? baseOptions.model;
+  }
 
   return {
     ...baseOptions,
@@ -55,8 +76,10 @@ export function applyCompactionOverrides(
     // Compaction shouldn't update persisted model/thinking defaults.
     skipAiSettingsPersistence: true,
     model: compactionModel,
-    thinkingLevel,
-    ...(reasoningMode != null ? { reasoningMode } : {}),
+    thinkingLevel: resolved.effective.thinkingLevel,
+    ...(resolved.selected.reasoningMode != null
+      ? { reasoningMode: resolved.selected.reasoningMode }
+      : {}),
     maxOutputTokens: compactData.maxOutputTokens,
     // Disable all tools during compaction - regex .* matches all tool names
     toolPolicy: [{ regex_match: ".*", action: "disable" }],
