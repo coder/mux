@@ -1315,6 +1315,11 @@ export class TaskService {
   // In-flight durable persistence of notify_on_terminal policy for backgrounded foreground waits.
   // Awaited at the start of handleStreamEnd so a just-detached wait is treated as non-blocking.
   private readonly pendingNotifyOnTerminalPersists = new Set<Promise<void>>();
+  // Serialize notification claims. A drain and a direct continuation must not own the same wake.
+  private readonly terminalAttentionLocks = new MutexMap<string>();
+  // Claims hide notifications while one path owns their delivery. The durable pending record remains
+  // available after a process restart because claims are intentionally in memory only.
+  private readonly claimedTerminalAttentionIdsByOwner = new Map<string, Set<string>>();
   // In-flight terminal attention drains (workspace-turn / sub-agent terminal wake-ups). Tracked so
   // tests and shutdown can await them; drains are idempotent and re-triggered on owner idle events.
   private readonly pendingTerminalAttentionDrainsByOwner = new Map<string, Promise<void>>();
@@ -5898,6 +5903,73 @@ export class TaskService {
     return execution?.record.handleId;
   }
 
+  private claimTerminalAttention(ownerWorkspaceId: string, notificationId: string): boolean {
+    const claimedIds = this.claimedTerminalAttentionIdsByOwner.get(ownerWorkspaceId) ?? new Set();
+    if (claimedIds.has(notificationId)) {
+      return false;
+    }
+    claimedIds.add(notificationId);
+    this.claimedTerminalAttentionIdsByOwner.set(ownerWorkspaceId, claimedIds);
+    return true;
+  }
+
+  private claimTerminalAttentionNotifications(
+    ownerWorkspaceId: string,
+    notifications: readonly TerminalAttentionNotification[]
+  ): boolean {
+    const claimedIds = this.claimedTerminalAttentionIdsByOwner.get(ownerWorkspaceId) ?? new Set();
+    if (notifications.some((notification) => claimedIds.has(notification.id))) {
+      return false;
+    }
+    for (const notification of notifications) {
+      claimedIds.add(notification.id);
+    }
+    this.claimedTerminalAttentionIdsByOwner.set(ownerWorkspaceId, claimedIds);
+    return true;
+  }
+
+  private releaseTerminalAttentionClaim(ownerWorkspaceId: string, notificationId: string): void {
+    const claimedIds = this.claimedTerminalAttentionIdsByOwner.get(ownerWorkspaceId);
+    if (claimedIds == null) {
+      return;
+    }
+    claimedIds.delete(notificationId);
+    if (claimedIds.size === 0) {
+      this.claimedTerminalAttentionIdsByOwner.delete(ownerWorkspaceId);
+    }
+  }
+
+  private async claimPendingTerminalAttention(
+    ownerWorkspaceId: string
+  ): Promise<TerminalAttentionNotification[]> {
+    return this.terminalAttentionLocks.withLock(ownerWorkspaceId, async () => {
+      const pending = await this.terminalAttentionStore.listPending(ownerWorkspaceId);
+      return pending.filter((notification) =>
+        this.claimTerminalAttention(ownerWorkspaceId, notification.id)
+      );
+    });
+  }
+
+  private releaseTerminalAttentionClaims(
+    ownerWorkspaceId: string,
+    notifications: readonly TerminalAttentionNotification[]
+  ): void {
+    for (const notification of notifications) {
+      this.releaseTerminalAttentionClaim(ownerWorkspaceId, notification.id);
+    }
+  }
+
+  private async supersedePendingTerminalAttention(ownerWorkspaceId: string): Promise<void> {
+    const pending = await this.claimPendingTerminalAttention(ownerWorkspaceId);
+    try {
+      for (const notification of pending) {
+        await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
+      }
+    } finally {
+      this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
+    }
+  }
+
   private async enqueueTerminalAttention(params: {
     ownerWorkspaceId: string;
     sourceKind: TerminalAttentionNotification["sourceKind"];
@@ -6196,8 +6268,8 @@ export class TaskService {
    * drained notifications delivered. Stale (deleted-workspace) notifications are marked superseded.
    */
   private async drainTerminalAttention(ownerWorkspaceId: string): Promise<void> {
-    const pending = await this.terminalAttentionStore.listPending(ownerWorkspaceId);
-    if (pending.length === 0) {
+    const pendingAtStart = await this.terminalAttentionStore.listPending(ownerWorkspaceId);
+    if (pendingAtStart.length === 0) {
       return;
     }
 
@@ -6205,16 +6277,12 @@ export class TaskService {
     const entry = findWorkspaceEntry(cfg, ownerWorkspaceId);
     if (entry == null) {
       // Owner workspace no longer exists: the terminal artifacts remain retrievable elsewhere.
-      for (const notification of pending) {
-        await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
-      }
+      await this.supersedePendingTerminalAttention(ownerWorkspaceId);
       return;
     }
 
     if (isWorkspaceArchived(entry.workspace.archivedAt, entry.workspace.unarchivedAt)) {
-      for (const notification of pending) {
-        await this.terminalAttentionStore.markSuperseded(ownerWorkspaceId, notification.id);
-      }
+      await this.supersedePendingTerminalAttention(ownerWorkspaceId);
       return;
     }
 
@@ -6240,6 +6308,20 @@ export class TaskService {
     if (await this.hasBlockingActiveWorkForTerminalDrain(ownerWorkspaceId, taskIndex)) {
       return;
     }
+
+    const pending = await this.claimPendingTerminalAttention(ownerWorkspaceId);
+    if (pending.length === 0) {
+      return;
+    }
+
+    let releasePendingClaimsOnReturn = true;
+    using _terminalAttentionClaims = {
+      [Symbol.dispose]: () => {
+        if (releasePendingClaimsOnReturn) {
+          this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
+        }
+      },
+    };
 
     const agentNotifications = pending.filter(
       (notification) => notification.sourceKind === "agent_task"
@@ -6390,6 +6472,7 @@ export class TaskService {
         !(await this.hasBlockingActiveWorkForTerminalDrain(ownerWorkspaceId, latestTaskIndex))
       ) {
         let fallbackAccepted = false;
+        let fallbackStartupFailed = false;
         sendResult = await this.workspaceService.sendMessage(
           ownerWorkspaceId,
           prompt,
@@ -6399,19 +6482,57 @@ export class TaskService {
             synthetic: true,
             agentInitiated: true,
             onCanceled: () => {
+              this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
               this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
             },
             onAcceptedPreStreamFailure: async () => {
-              await markPendingForRetry();
-              this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
+              fallbackStartupFailed = true;
+              const retryClaimed =
+                !fallbackAccepted ||
+                (await this.terminalAttentionLocks.withLock(ownerWorkspaceId, () =>
+                  Promise.resolve(
+                    this.claimTerminalAttentionNotifications(ownerWorkspaceId, pending)
+                  )
+                ));
+              if (!retryClaimed) {
+                return;
+              }
+              try {
+                await markPendingForRetry();
+              } finally {
+                this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
+                this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
+              }
             },
             onAccepted: async () => {
               fallbackAccepted = true;
-              await markPendingDelivered();
+              try {
+                await markPendingDelivered();
+              } finally {
+                this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
+              }
             },
           }
         );
+        if (!sendResult.success && fallbackAccepted && !fallbackStartupFailed) {
+          const retryClaimed = await this.terminalAttentionLocks.withLock(ownerWorkspaceId, () =>
+            Promise.resolve(this.claimTerminalAttentionNotifications(ownerWorkspaceId, pending))
+          );
+          if (retryClaimed) {
+            try {
+              await markPendingForRetry();
+            } finally {
+              this.releaseTerminalAttentionClaims(ownerWorkspaceId, pending);
+              this.scheduleTerminalAttentionDrainAfterIdle(ownerWorkspaceId);
+            }
+          }
+        }
+        if (sendResult.success && fallbackStartupFailed) {
+          return;
+        }
         if (sendResult.success && !fallbackAccepted) {
+          // The queued callbacks now own these claims until acceptance or cancellation.
+          releasePendingClaimsOnReturn = false;
           return;
         }
       }
@@ -13078,20 +13199,38 @@ export class TaskService {
   private async reserveAgentTerminalAttention(
     parentWorkspaceId: string,
     childWorkspaceId: string
-  ): Promise<{ id: string; created: boolean }> {
+  ): Promise<{ id: string; created: boolean; claimed: boolean }> {
     const generationId = await this.getAgentTerminalAttentionGenerationId(
       parentWorkspaceId,
       childWorkspaceId
     );
     const id = TerminalAttentionStore.notificationId("agent_task", childWorkspaceId, generationId);
-    const created = await this.terminalAttentionStore.enqueueIfAbsent({
-      ownerWorkspaceId: parentWorkspaceId,
-      sourceKind: "agent_task",
-      terminalOutcome: "completed",
-      sourceId: childWorkspaceId,
-      ...(generationId != null ? { generationId } : {}),
+    return this.terminalAttentionLocks.withLock(parentWorkspaceId, async () => {
+      if (!this.claimTerminalAttention(parentWorkspaceId, id)) {
+        return { id, created: false, claimed: false };
+      }
+      try {
+        const existing = await this.terminalAttentionStore.get(parentWorkspaceId, id);
+        if (existing != null && existing.status !== "pending") {
+          this.releaseTerminalAttentionClaim(parentWorkspaceId, id);
+          return { id, created: false, claimed: false };
+        }
+        const created =
+          existing == null
+            ? await this.terminalAttentionStore.enqueueIfAbsent({
+                ownerWorkspaceId: parentWorkspaceId,
+                sourceKind: "agent_task",
+                terminalOutcome: "completed",
+                sourceId: childWorkspaceId,
+                ...(generationId != null ? { generationId } : {}),
+              })
+            : null;
+        return { id, created: created != null, claimed: true };
+      } catch (error) {
+        this.releaseTerminalAttentionClaim(parentWorkspaceId, id);
+        throw error;
+      }
     });
-    return { id, created: created != null };
   }
 
   private removeQueuedAgentProgressAfterTerminalDelivery(
@@ -13211,7 +13350,9 @@ export class TaskService {
         childEntry
       );
       if (finalization.kind === "finalized") {
-        this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
+        for (const finalizedTaskId of finalization.taskIds) {
+          this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, finalizedTaskId);
+        }
         return finalization.taskIds.filter((taskId) => taskId !== childWorkspaceId);
       }
 
@@ -13275,15 +13416,20 @@ export class TaskService {
     if (workspaceTurnMuxMetadata != null) {
       const parentEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId);
       if (parentEntry != null) {
-        const terminalAttention = await this.reserveAgentTerminalAttention(
-          parentWorkspaceId,
-          childWorkspaceId
-        );
         const resumeOptions = await this.resolveParentAutoResumeOptions(
           parentWorkspaceId,
           parentEntry,
           defaultModel
         );
+        const terminalAttention = await this.reserveAgentTerminalAttention(
+          parentWorkspaceId,
+          childWorkspaceId
+        );
+        if (!terminalAttention.claimed) {
+          // Another path owns this durable report, or this generation already completed delivery.
+          return [];
+        }
+
         let terminalContinuationAccepted = false;
         const sendResult = await this.workspaceService.sendMessage(
           parentWorkspaceId,
@@ -13301,7 +13447,9 @@ export class TaskService {
             agentInitiated: true,
             startStreamInBackground: true,
             workspaceTurnContinuation: true,
-            queueDedupeKey: `agent-terminal-report:${childWorkspaceId}`,
+            // A persistent child can report multiple execution generations. Keep each durable
+            // attention record independent while an earlier generation is still queued.
+            queueDedupeKey: `agent-terminal-report:${terminalAttention.id}`,
             onAccepted: async () => {
               // Mark this wake consumed before the accepted continuation can end.
               // Its stream-end must not race a later terminal-attention drain.
@@ -13310,18 +13458,25 @@ export class TaskService {
                 terminalAttention.id
               );
               terminalContinuationAccepted = true;
+              this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
             },
             onCanceled: async (reason: string) => {
-              await this.terminalAttentionStore.markSuperseded(
-                parentWorkspaceId,
-                terminalAttention.id
-              );
               await this.settleWorkspaceTurnContinuationFailure(
                 parentWorkspaceId,
                 workspaceTurnMuxMetadata,
                 "interrupted",
                 reason
               );
+            },
+            onDeliveryCanceled: async () => {
+              try {
+                await this.terminalAttentionStore.markSuperseded(
+                  parentWorkspaceId,
+                  terminalAttention.id
+                );
+              } finally {
+                this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
+              }
             },
             onAcceptedPreStreamFailure: async (error: SendMessageError) => {
               await this.settleWorkspaceTurnContinuationFailure(
@@ -13330,6 +13485,29 @@ export class TaskService {
                 "error",
                 formatSendMessageError(error).message
               );
+            },
+            onDeliveryAcceptedPreStreamFailure: async () => {
+              const retryClaimed =
+                !terminalContinuationAccepted ||
+                (await this.terminalAttentionLocks.withLock(parentWorkspaceId, () =>
+                  Promise.resolve(
+                    this.claimTerminalAttention(parentWorkspaceId, terminalAttention.id)
+                  )
+                ));
+              if (!retryClaimed) {
+                return;
+              }
+              try {
+                // Acceptance consumes the reservation. Re-arm it when startup fails so the
+                // durable report remains eligible for the normal attention retry path.
+                await this.terminalAttentionStore.markPending(
+                  parentWorkspaceId,
+                  terminalAttention.id
+                );
+              } finally {
+                this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
+                this.scheduleTerminalAttentionDrainAfterIdle(parentWorkspaceId);
+              }
             },
           }
         );
@@ -13342,6 +13520,7 @@ export class TaskService {
         if (terminalContinuationAccepted) {
           return [];
         }
+        this.releaseTerminalAttentionClaim(parentWorkspaceId, terminalAttention.id);
         if (terminalAttention.created) {
           await this.terminalAttentionStore.delete(parentWorkspaceId, terminalAttention.id);
         } else {

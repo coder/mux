@@ -5530,6 +5530,8 @@ export class AgentSession {
       onAccepted?: () => Promise<void> | void;
       onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
       onCanceled?: (reason: string) => Promise<void> | void;
+      onDeliveryAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+      onDeliveryCanceled?: (reason: string) => Promise<void> | void;
       cancelState?: { canceledBeforeAcceptance: boolean };
       cancelSignal?: AbortSignal;
     }

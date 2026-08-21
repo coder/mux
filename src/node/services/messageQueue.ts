@@ -90,8 +90,14 @@ interface QueuedMessageInternalOptions {
   /** Dedupe-keyed maintenance sends are removable by prefix without changing global queue rules. */
   removableDedupeKey?: boolean;
   onAccepted?: () => Promise<void> | void;
+  /** Correlation callback. Queue reordering can remove it with workspace-turn metadata. */
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  /** Correlation callback. Queue reordering can remove it with workspace-turn metadata. */
   onCanceled?: (reason: string) => Promise<void> | void;
+  /** Delivery callback. It survives workspace-turn correlation removal. */
+  onDeliveryAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  /** Delivery callback. It survives workspace-turn correlation removal. */
+  onDeliveryCanceled?: (reason: string) => Promise<void> | void;
   /** Mutable dispatch outcome shared with sendQueuedMessages. */
   cancelState?: { canceledBeforeAcceptance: boolean };
   /** Cancels a queued entry even after it has been dequeued into PREPARING. */
@@ -136,8 +142,44 @@ interface QueueEntry {
   onCanceled?: (reason: string) => Promise<void> | void;
   onAccepted?: () => Promise<void> | void;
   onAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
+  onDeliveryCanceled?: (reason: string) => Promise<void> | void;
+  onDeliveryAcceptedPreStreamFailure?: (error: SendMessageError) => Promise<void> | void;
   cancelState?: { canceledBeforeAcceptance: boolean };
   cancelSignal?: AbortSignal;
+}
+
+function combineCallbacks<T>(
+  correlationCallback: ((value: T) => Promise<void> | void) | undefined,
+  deliveryCallback: ((value: T) => Promise<void> | void) | undefined
+): ((value: T) => Promise<void> | void) | undefined {
+  if (correlationCallback == null) {
+    return deliveryCallback;
+  }
+  if (deliveryCallback == null) {
+    return correlationCallback;
+  }
+  return async (value: T) => {
+    try {
+      await correlationCallback?.(value);
+    } finally {
+      await deliveryCallback?.(value);
+    }
+  };
+}
+
+function getQueueClearCallbacks(entry: QueueEntry): QueueClearCallbacks | null {
+  const onCanceled = combineCallbacks(entry.onCanceled, entry.onDeliveryCanceled);
+  const onAcceptedPreStreamFailure = combineCallbacks(
+    entry.onAcceptedPreStreamFailure,
+    entry.onDeliveryAcceptedPreStreamFailure
+  );
+  if (onCanceled == null && onAcceptedPreStreamFailure == null) {
+    return null;
+  }
+  return {
+    ...(onCanceled != null ? { onCanceled } : {}),
+    ...(onAcceptedPreStreamFailure != null ? { onAcceptedPreStreamFailure } : {}),
+  };
 }
 
 /**
@@ -396,6 +438,8 @@ export class MessageQueue {
       internal?.onAccepted != null ||
       internal?.onAcceptedPreStreamFailure != null ||
       internal?.onCanceled != null ||
+      internal?.onDeliveryAcceptedPreStreamFailure != null ||
+      internal?.onDeliveryCanceled != null ||
       internal?.cancelSignal != null;
     const incomingIsUserAuthored =
       internal?.synthetic !== true && internal?.agentInitiated !== true;
@@ -477,6 +521,13 @@ export class MessageQueue {
     }
     if (internal?.onAcceptedPreStreamFailure != null) {
       entry.onAcceptedPreStreamFailure = internal.onAcceptedPreStreamFailure;
+    }
+
+    if (internal?.onDeliveryCanceled != null) {
+      entry.onDeliveryCanceled = internal.onDeliveryCanceled;
+    }
+    if (internal?.onDeliveryAcceptedPreStreamFailure != null) {
+      entry.onDeliveryAcceptedPreStreamFailure = internal.onDeliveryAcceptedPreStreamFailure;
     }
 
     if (internal?.cancelState != null) {
@@ -590,14 +641,10 @@ export class MessageQueue {
    * Callers must notify each one when clearing the queue.
    */
   getClearCallbacks(): QueueClearCallbacks[] {
-    return this.entries
-      .filter((entry) => entry.onCanceled != null || entry.onAcceptedPreStreamFailure != null)
-      .map((entry) => ({
-        ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
-        ...(entry.onAcceptedPreStreamFailure != null
-          ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
-          : {}),
-      }));
+    return this.entries.flatMap((entry) => {
+      const callbacks = getQueueClearCallbacks(entry);
+      return callbacks == null ? [] : [callbacks];
+    });
   }
 
   /**
@@ -617,12 +664,7 @@ export class MessageQueue {
       return null;
     }
     const [entry] = this.entries.splice(index, 1);
-    return {
-      ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
-      ...(entry.onAcceptedPreStreamFailure != null
-        ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
-        : {}),
-    };
+    return getQueueClearCallbacks(entry);
   }
 
   /** Remove queued entries carrying a dedupe key with the given prefix. */
@@ -661,13 +703,9 @@ export class MessageQueue {
         entry.agentInitiatedCount = Math.min(entry.agentInitiatedCount, entry.addCount);
         return [entry];
       }
-      if (entry.onCanceled != null || entry.onAcceptedPreStreamFailure != null) {
-        removedCallbacks.push({
-          ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
-          ...(entry.onAcceptedPreStreamFailure != null
-            ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
-            : {}),
-        });
+      const callbacks = getQueueClearCallbacks(entry);
+      if (callbacks != null) {
+        removedCallbacks.push(callbacks);
       }
       return [];
     });
@@ -727,24 +765,27 @@ export class MessageQueue {
     const allAddsAreSynthetic = entry.addCount > 0 && entry.syntheticCount === entry.addCount;
     const allAddsAreAgentInitiated =
       entry.addCount > 0 && entry.agentInitiatedCount === entry.addCount;
+    const onCanceled = combineCallbacks(entry.onCanceled, entry.onDeliveryCanceled);
+    const onAcceptedPreStreamFailure = combineCallbacks(
+      entry.onAcceptedPreStreamFailure,
+      entry.onDeliveryAcceptedPreStreamFailure
+    );
     const hasInternalOptions =
       allAddsAreSynthetic ||
       allAddsAreAgentInitiated ||
       entry.onAccepted != null ||
-      entry.onAcceptedPreStreamFailure != null ||
-      entry.onCanceled != null ||
+      onAcceptedPreStreamFailure != null ||
+      onCanceled != null ||
       entry.cancelSignal != null;
     const internal = hasInternalOptions
       ? {
           ...(allAddsAreSynthetic ? { synthetic: true } : {}),
           ...(allAddsAreAgentInitiated ? { agentInitiated: true } : {}),
-          ...(entry.onCanceled != null ? { onCanceled: entry.onCanceled } : {}),
+          ...(onCanceled != null ? { onCanceled } : {}),
           ...(entry.cancelState != null ? { cancelState: entry.cancelState } : {}),
           ...(entry.cancelSignal != null ? { cancelSignal: entry.cancelSignal } : {}),
           ...(entry.onAccepted != null ? { onAccepted: entry.onAccepted } : {}),
-          ...(entry.onAcceptedPreStreamFailure != null
-            ? { onAcceptedPreStreamFailure: entry.onAcceptedPreStreamFailure }
-            : {}),
+          ...(onAcceptedPreStreamFailure != null ? { onAcceptedPreStreamFailure } : {}),
         }
       : undefined;
 
