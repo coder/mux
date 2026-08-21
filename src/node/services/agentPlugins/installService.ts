@@ -26,6 +26,7 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import type { Config } from "@/node/config";
+import { SkillNameSchema } from "@/common/orpc/schemas/agentSkill";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -580,6 +581,27 @@ export class AgentPluginInstallService {
     rawEntries: unknown[],
     mode: "lenient" | "strict" = "lenient"
   ): AgentPluginInstallEntry[] {
+    // Strict (mutation) mode must detect duplicate names across RAW entries,
+    // BEFORE schema filtering: a valid entry can collide with a same-name
+    // entry this build cannot parse (written by a newer version). Raw
+    // rewrites match by name — update() would patch and uninstall() would
+    // delete BOTH rows, silently destroying the newer version's metadata
+    // (upgrade↔downgrade rule).
+    if (mode === "strict") {
+      const seenRawNames = new Set<string>();
+      for (const rawEntry of rawEntries) {
+        const rawName = this.rawEntryName(rawEntry);
+        if (rawName === undefined) {
+          continue;
+        }
+        if (seenRawNames.has(rawName)) {
+          throw new Error(
+            `The plugin registry (${shortenHome(this.registryFile)}) contains duplicate entries for '${rawName}'. Repair the file, then retry.`
+          );
+        }
+        seenRawNames.add(rawName);
+      }
+    }
     const entries: AgentPluginInstallEntry[] = [];
     const seenNames = new Set<string>();
     for (const rawEntry of rawEntries) {
@@ -1383,9 +1405,24 @@ export class AgentPluginInstallService {
         continue;
       }
       if (!stat.isFile()) continue;
+      // Mirror runtime discovery's directory-name validation: an invalid dir
+      // name never loads, and a frontmatter name that mismatches the dir name
+      // is rejected at load time. Without both checks here the consent
+      // preview (and the update capability surface built from it) would
+      // promise a skill that disappears after installation — or classify a
+      // never-loading skill as a capability addition.
+      const dirNameParsed = SkillNameSchema.safeParse(dirName);
+      if (!dirNameParsed.success) {
+        warnings.push(`skills/${dirName}: invalid skill directory name; it will not load`);
+        continue;
+      }
       try {
         const content = await fsPromises.readFile(containedSkillPath, "utf8");
-        const parsed = parseSkillMarkdown({ content, byteSize: stat.size });
+        const parsed = parseSkillMarkdown({
+          content,
+          byteSize: stat.size,
+          directoryName: dirNameParsed.data,
+        });
         skills.push({
           name: parsed.frontmatter.name,
           ...(parsed.frontmatter.description !== undefined

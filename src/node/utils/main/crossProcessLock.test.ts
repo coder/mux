@@ -62,26 +62,28 @@ describe("acquireCrossProcessLock", () => {
 });
 
 describe("reclaimStaleLock", () => {
-  const staleHolder = { pid: 1, token: "stale-token", acquiredAt: 0 };
-
-  test("deletes the lock when it still holds the observed content", async () => {
+  test("takes ownership of a stale lock in place and confirms", async () => {
     const lockPath = await tempLockPath();
-    await fsPromises.writeFile(lockPath, JSON.stringify(staleHolder));
-    await reclaimStaleLock(lockPath, staleHolder);
-    expect(await pathExists(lockPath)).toBe(false);
-    // No quarantine leftovers.
-    expect(await fsPromises.readdir(path.dirname(lockPath))).toEqual([]);
+    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    expect(token).toBeDefined();
+    const holder = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as { token: string };
+    expect(holder.token).toBe(token!);
+    // Mutex and temp files are cleaned up.
+    expect(await fsPromises.readdir(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
   });
 
-  test("restores a lock that was replaced after the observation (new owner survives)", async () => {
-    // The Codex-flagged race: we read a stale holder, then a concurrent
-    // reclaimer completed its own reclaim AND acquired before our removal
-    // ran. A plain rm would delete the new owner's live lock; the atomic
-    // rename + verify must put it back instead.
+  test("never touches a lock that became live/fresh after the caller's observation", async () => {
+    // The Codex-flagged three-process race: a caller observed a stale
+    // holder, but a competitor completed its own reclaim-and-acquire before
+    // this reclaim ran. The fresh re-read inside the mutex must abandon
+    // WITHOUT modifying the new owner's confirmed lock (the old design's
+    // quarantine/restore could clobber it).
     const lockPath = await tempLockPath();
     const newOwner = { pid: process.pid, token: "new-owner", acquiredAt: Date.now() };
     await fsPromises.writeFile(lockPath, JSON.stringify(newOwner));
-    await reclaimStaleLock(lockPath, staleHolder);
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    expect(token).toBeUndefined();
     const surviving = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as {
       token: string;
     };
@@ -89,30 +91,69 @@ describe("reclaimStaleLock", () => {
     expect(await fsPromises.readdir(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
   });
 
-  test("restores a valid lock when the observation was a corrupt/partial read", async () => {
-    // A `wx` creator's content can land after a competitor read the file as
-    // empty/corrupt; the completed lock must survive the reclaim attempt.
-    const lockPath = await tempLockPath();
-    const newOwner = { pid: process.pid, token: "completed-write", acquiredAt: Date.now() };
-    await fsPromises.writeFile(lockPath, JSON.stringify(newOwner));
-    await reclaimStaleLock(lockPath, undefined);
-    const surviving = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as {
-      token: string;
-    };
-    expect(surviving.token).toBe("completed-write");
-  });
-
-  test("deletes a corrupt lock observed as corrupt", async () => {
+  test("reclaims a corrupt-but-present lock in place", async () => {
     const lockPath = await tempLockPath();
     await fsPromises.writeFile(lockPath, "not json");
-    await reclaimStaleLock(lockPath, undefined);
-    expect(await pathExists(lockPath)).toBe(false);
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    expect(token).toBeDefined();
+    const holder = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as { token: string };
+    expect(holder.token).toBe(token!);
   });
 
-  test("no-ops when a concurrent reclaimer already moved the lock", async () => {
+  test("abandons when the lock file is missing (the wx create path handles absence)", async () => {
     const lockPath = await tempLockPath();
-    await reclaimStaleLock(lockPath, staleHolder);
+    expect(await reclaimStaleLock(lockPath, 60_000)).toBeUndefined();
     expect(await pathExists(lockPath)).toBe(false);
     expect(await fsPromises.readdir(path.dirname(lockPath))).toEqual([]);
+  });
+
+  test("backs off while a competing reclaimer holds a fresh reclaim mutex", async () => {
+    const lockPath = await tempLockPath();
+    const stale = JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 });
+    await fsPromises.writeFile(lockPath, stale);
+    const mutexDir = `${lockPath}.reclaim`;
+    await fsPromises.mkdir(mutexDir);
+    await fsPromises.writeFile(path.join(mutexDir, "owner"), "competitor");
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    expect(token).toBeUndefined();
+    // The stale lock and the competitor's mutex are untouched.
+    expect(await fsPromises.readFile(lockPath, "utf-8")).toBe(stale);
+    expect(await fsPromises.readFile(path.join(mutexDir, "owner"), "utf-8")).toBe("competitor");
+  });
+
+  test("breaks a reclaim mutex abandoned by a crashed reclaimer", async () => {
+    const lockPath = await tempLockPath();
+    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    const mutexDir = `${lockPath}.reclaim`;
+    await fsPromises.mkdir(mutexDir);
+    // Age the mutex beyond RECLAIM_MUTEX_STALE_MS.
+    const old = new Date(Date.now() - 60_000);
+    await fsPromises.utimes(mutexDir, old, old);
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    expect(token).toBeDefined();
+    const holder = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as { token: string };
+    expect(holder.token).toBe(token!);
+  });
+
+  test("the lock path is never absent during a successful reclaim", async () => {
+    // Watch for absence with a tight poller while a reclaim runs. rename-over
+    // is atomic, so no observer may ever see ENOENT — the property that keeps
+    // a third process's wx-create from slipping in mid-reclaim.
+    const lockPath = await tempLockPath();
+    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "s", acquiredAt: 0 }));
+    let sawAbsent = false;
+    let stop = false;
+    const watcher = (async () => {
+      while (!stop) {
+        if (!(await pathExists(lockPath))) {
+          sawAbsent = true;
+        }
+      }
+    })();
+    const token = await reclaimStaleLock(lockPath, 60_000);
+    stop = true;
+    await watcher;
+    expect(token).toBeDefined();
+    expect(sawAbsent).toBe(false);
   });
 });

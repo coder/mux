@@ -292,6 +292,48 @@ describe("AgentPluginInstallService", () => {
     expect(await stagingLeftovers()).toEqual([]);
   });
 
+  test("mutations refuse when a raw registry entry duplicates a managed name (newer-version rows)", async () => {
+    // A newer build can write a same-name entry this build cannot parse.
+    // Raw rewrites match by name, so update()/uninstall() would silently
+    // patch or delete BOTH rows — destroying the newer version's metadata
+    // (upgrade↔downgrade rule). The duplicate must be detected across RAW
+    // entries, before schema filtering hides the unrecognized row.
+    const preview = await service.preview({ input: remoteDir });
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    const raw = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+      plugins: unknown[];
+    };
+    raw.plugins.push({ name: "demo-plugin", source: { kind: "future-source-kind" } });
+    await fsPromises.writeFile(registryFile(), JSON.stringify(raw));
+
+    await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(/duplicate entries/);
+    await expect(
+      service.uninstall({ name: "demo-plugin", deletePluginData: false })
+    ).rejects.toThrow(/duplicate entries/);
+    // Both raw rows survive untouched.
+    const after = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+      plugins: unknown[];
+    };
+    expect(after.plugins).toHaveLength(2);
+  });
+
+  test("preview validates skills against their directory names like runtime discovery", async () => {
+    // skills/wrong-dir/SKILL.md advertising a different name never loads at
+    // runtime (parseSkillMarkdown rejects the mismatch), so the preview must
+    // not promise it — and the update capability surface must not count it.
+    await fsPromises.mkdir(path.join(remoteDir, "skills", "wrong-dir"), { recursive: true });
+    await fsPromises.writeFile(
+      path.join(remoteDir, "skills", "wrong-dir", "SKILL.md"),
+      "---\nname: other-name\ndescription: Mismatched\n---\n\nBody.\n"
+    );
+    await commitAll(remoteDir, "adds a dir-name-mismatched skill");
+
+    const preview = await service.preview({ input: remoteDir });
+    expect(preview.skills.map((skill) => skill.name)).toEqual(["greet"]);
+    expect(preview.warnings.join("\n")).toContain("skills/wrong-dir");
+  });
+
   test("update rejects capability increases (new hook, expanded grants, new/changed MCP servers)", async () => {
     // Security gate: a compromised upstream must not auto-load new executable
     // capabilities through a routine update click. Additions/changes are

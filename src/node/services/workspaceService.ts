@@ -2841,7 +2841,7 @@ export class WorkspaceService extends EventEmitter {
       // Abort creation instead of proceeding with the stale file: continuing
       // would re-create the silent-activation path this sanitization exists
       // to close, with no durable record left to retry it.
-      return `The directory's existing MCP overrides file could not be sanitized: ${getErrorMessage(error)}. Fix or remove .mux/mcp.local.jsonc in ${workspacePath} and try again.`;
+      return `The directory's existing MCP overrides file could not be sanitized: ${getErrorMessage(error)}. Fix or remove the workspace MCP overrides file (.xum/mcp.local.jsonc, or legacy .mux/mcp.local.jsonc) in ${workspacePath} and try again.`;
     }
   }
 

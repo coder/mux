@@ -13,8 +13,17 @@ import { hasErrorCode } from "@/node/services/tools/skillFileUtils";
  * read-modify-write transactions on shared files can interleave and the last
  * writer silently drops the other's changes. Holders record `{pid, token,
  * acquiredAt}`; acquisition uses exclusive-create (`wx`) plus a post-create
- * ownership re-read so two processes that both reclaimed a dead holder
+ * ownership re-read so two processes that both observed the path absent
  * cannot both proceed — the clobbered one fails the token check and retries.
+ *
+ * STALE RECLAMATION never deletes or renames the lock file (a delayed
+ * unlink/rename could destroy a NEW owner's confirmed lock and let two
+ * transactions run concurrently). Instead, reclaimers serialize through a
+ * short-lived mkdir mutex and take ownership by atomically REPLACING the lock
+ * file's content in place (temp + rename). The lock path is therefore never
+ * absent during reclamation, so no third process can slip in a `wx` create
+ * mid-reclaim; the only competitors are other reclaimers, which the mutex
+ * serializes. See reclaimStaleLock.
  */
 export interface CrossProcessLockOptions {
   /** Absolute path of the lock file. Its parent directory must exist. */
@@ -55,51 +64,6 @@ async function readLockHolder(lockPath: string): Promise<LockHolder | undefined>
 }
 
 /**
- * Reclaim a lock we observed as stale/corrupt WITHOUT the read-then-unlink
- * race: between our read and a plain `rm`, a concurrent reclaimer can finish
- * its own reclaim AND acquire, so the delayed `rm` would delete the NEW
- * owner's live lock and let two transactions run concurrently. Instead,
- * atomically rename the file aside (exactly one reclaimer wins; the loser
- * gets ENOENT and simply retries the create loop) and verify we moved the
- * exact content we judged reclaimable:
- * - match → it really was the stale lock; delete the quarantined file.
- * - mismatch → we stole a lock that was replaced after our read (a new
- *   owner, or a creator whose `wx` write completed after we read a partial
- *   file); rename it back. A third party's `wx`-create inside that gap is
- *   clobbered by the restore, but its post-create ownership re-read detects
- *   the foreign token and retries.
- * Exported for tests.
- */
-export async function reclaimStaleLock(
-  lockPath: string,
-  observed: LockHolder | undefined
-): Promise<void> {
-  const quarantinePath = `${lockPath}.reclaim-${process.pid}-${randomBytes(8).toString("hex")}`;
-  try {
-    await fsPromises.rename(lockPath, quarantinePath);
-  } catch {
-    // ENOENT: a concurrent reclaimer moved it first. Nothing to do.
-    return;
-  }
-  const moved = await readLockHolder(quarantinePath);
-  const movedWhatWeObserved =
-    moved === undefined
-      ? observed === undefined
-      : observed !== undefined &&
-        moved.pid === observed.pid &&
-        moved.token === observed.token &&
-        moved.acquiredAt === observed.acquiredAt;
-  if (movedWhatWeObserved) {
-    await fsPromises.rm(quarantinePath, { force: true }).catch(() => undefined);
-    return;
-  }
-  // Restore failures propagate: leaving the new owner's lock quarantined
-  // would release mutual exclusion early, which is exactly the corruption
-  // this helper exists to prevent.
-  await fsPromises.rename(quarantinePath, lockPath);
-}
-
-/**
  * Liveness check for a competing holder. Reclaims dead pids immediately; the
  * stale ceiling guards pid reuse. A same-pid holder is NOT reclaimable: it is
  * another service instance in this very process (callers serialize their own
@@ -124,6 +88,128 @@ function holderAlive(holder: LockHolder, staleMs: number): boolean {
 }
 
 /**
+ * A reclaimer stuck longer than this inside the (tiny) reclaim critical
+ * section is presumed crashed and its mutex is broken. The section performs
+ * only a handful of filesystem operations, so seconds of margin is plenty.
+ */
+const RECLAIM_MUTEX_STALE_MS = 15_000;
+
+/**
+ * Take ownership of a stale/corrupt lock WITHOUT ever making the lock path
+ * absent. Returns the token that now owns the lock, or undefined when the
+ * reclaim was abandoned (competitor holds the reclaim mutex, the holder
+ * turned out live/fresh on re-read, or the file disappeared).
+ *
+ * Protocol:
+ * 1. mkdir `<lockPath>.reclaim` — the reclaim mutex. Atomic: exactly one
+ *    reclaimer enters; others back off and retry the main loop. A mutex dir
+ *    older than RECLAIM_MUTEX_STALE_MS (crashed reclaimer) is broken.
+ * 2. Inside the mutex, RE-READ the lock and re-evaluate staleness on the
+ *    fresh content. A lock that changed since the caller's observation
+ *    belongs to a new owner and is left untouched.
+ * 3. Take ownership by atomically REPLACING the file content (temp +
+ *    rename-over). The path never goes absent, so a competing `wx` create
+ *    cannot slip in between "remove stale" and "create ours" — the failure
+ *    mode the previous delete-based design had. Immediately before the
+ *    rename, re-verify we still own the reclaim mutex (a competitor may have
+ *    broken it during an arbitrary pause); abandon if not.
+ * 4. Confirm ownership with a post-rename re-read (same as the `wx` path).
+ *
+ * Exported for tests.
+ */
+export async function reclaimStaleLock(
+  lockPath: string,
+  staleMs: number
+): Promise<string | undefined> {
+  const mutexDir = `${lockPath}.reclaim`;
+  const mutexToken = randomBytes(16).toString("hex");
+  const mutexTokenFile = path.join(mutexDir, "owner");
+
+  const enterMutex = async (): Promise<boolean> => {
+    try {
+      await fsPromises.mkdir(mutexDir);
+    } catch (error) {
+      if (!hasErrorCode(error, "EEXIST")) {
+        throw error;
+      }
+      // Break a mutex abandoned by a crashed reclaimer, then retry ONCE.
+      // (A live reclaimer finishes in milliseconds; see the stale ceiling.)
+      try {
+        const stat = await fsPromises.stat(mutexDir);
+        if (Date.now() - stat.mtimeMs <= RECLAIM_MUTEX_STALE_MS) {
+          return false;
+        }
+        await fsPromises.rm(mutexDir, { recursive: true, force: true });
+      } catch {
+        return false;
+      }
+      try {
+        await fsPromises.mkdir(mutexDir);
+      } catch {
+        return false;
+      }
+    }
+    await fsPromises.writeFile(mutexTokenFile, mutexToken);
+    return true;
+  };
+
+  const ownsMutex = async (): Promise<boolean> => {
+    try {
+      return (await fsPromises.readFile(mutexTokenFile, "utf-8")) === mutexToken;
+    } catch {
+      return false;
+    }
+  };
+
+  if (!(await enterMutex())) {
+    return undefined;
+  }
+  try {
+    // Fresh re-read INSIDE the mutex: the caller's observation may predate a
+    // completed reclaim-and-acquire by a competitor. A live fresh holder is
+    // never touched. (Corrupt-but-present files re-read as undefined and stay
+    // reclaimable; a MISSING file aborts — the `wx` path handles absence.)
+    try {
+      await fsPromises.stat(lockPath);
+    } catch {
+      return undefined;
+    }
+    const current = await readLockHolder(lockPath);
+    if (current !== undefined && holderAlive(current, staleMs)) {
+      return undefined;
+    }
+
+    const token = randomBytes(16).toString("hex");
+    const tempPath = `${lockPath}.claim-${token}`;
+    await fsPromises.writeFile(
+      tempPath,
+      JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() })
+    );
+    // Last-instant mutex re-check: if we paused long enough for a competitor
+    // to break our mutex and reclaim, our rename would clobber ITS confirmed
+    // lock. (A pause landing exactly between this check and the rename is the
+    // residual window; it requires a >15s stall across two adjacent syscalls.)
+    if (!(await ownsMutex())) {
+      await fsPromises.rm(tempPath, { force: true }).catch(() => undefined);
+      return undefined;
+    }
+    try {
+      await fsPromises.rename(tempPath, lockPath);
+    } catch (error) {
+      await fsPromises.rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
+    const confirmed = await readLockHolder(lockPath);
+    return confirmed?.token === token ? token : undefined;
+  } finally {
+    // Release only OUR mutex: a competitor that broke ours owns the dir now.
+    if (await ownsMutex()) {
+      await fsPromises.rm(mutexDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+}
+
+/**
  * Acquire the lock; returns the release function, which deletes the lock file
  * only while it is still OURS (a reclaimer may have replaced it after the
  * stale ceiling).
@@ -133,9 +219,15 @@ export async function acquireCrossProcessLock(
 ): Promise<() => Promise<void>> {
   const { lockPath, acquireTimeoutMs, staleMs, timeoutMessage } = options;
   await fsPromises.mkdir(path.dirname(lockPath), { recursive: true });
-  const token = randomBytes(16).toString("hex");
   const deadline = Date.now() + acquireTimeoutMs;
+  const releaseFor = (token: string) => async () => {
+    const current = await readLockHolder(lockPath);
+    if (current?.token === token) {
+      await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+    }
+  };
   for (;;) {
+    const token = randomBytes(16).toString("hex");
     try {
       await fsPromises.writeFile(
         lockPath,
@@ -144,12 +236,7 @@ export async function acquireCrossProcessLock(
       );
       const confirmed = await readLockHolder(lockPath);
       if (confirmed?.token === token) {
-        return async () => {
-          const current = await readLockHolder(lockPath);
-          if (current?.token === token) {
-            await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
-          }
-        };
+        return releaseFor(token);
       }
       // Our create was clobbered by a concurrent reclaimer: retry.
     } catch (error) {
@@ -158,10 +245,12 @@ export async function acquireCrossProcessLock(
       }
       const holder = await readLockHolder(lockPath);
       if (holder === undefined || !holderAlive(holder, staleMs)) {
-        // Corrupt/unreadable or dead-owner lock: reclaim atomically (see
-        // reclaimStaleLock for why a plain rm is unsafe here) and retry.
-        await reclaimStaleLock(lockPath, holder);
-        continue;
+        // Corrupt/unreadable or dead-owner lock: take ownership in place via
+        // the serialized reclaim protocol (never deletes the path).
+        const reclaimedToken = await reclaimStaleLock(lockPath, staleMs);
+        if (reclaimedToken !== undefined) {
+          return releaseFor(reclaimedToken);
+        }
       }
     }
     if (Date.now() > deadline) {
