@@ -166,6 +166,65 @@ describe("Config", () => {
       expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
       errorSpy.mockRestore();
     });
+
+    it("retries the backup on the next load after a transient failure", () => {
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFilePath(), corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementationOnce(() => {
+        throw new Error("disk full");
+      });
+
+      const loaded = config.loadConfigOrDefault();
+      expect(loaded.projects.size).toBe(0);
+      expect(corruptBackups()).toHaveLength(0);
+
+      const retried = config.loadConfigOrDefault();
+      expect(retried.projects.size).toBe(0);
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+
+      writeSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it("never overwrites an existing sidecar on a timestamp collision", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const olderSnapshot = "older corrupt snapshot";
+      const nowSpy = spyOn(Date, "now").mockReturnValue(1234567890);
+      const collidingPath = `${configFile}.corrupt-1234567890`;
+      fs.writeFileSync(collidingPath, olderSnapshot);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+
+      expect(fs.readFileSync(collidingPath, "utf-8")).toBe(olderSnapshot);
+      expect(fs.readFileSync(`${collidingPath}-1`)).toEqual(Buffer.from(corruptData));
+      nowSpy.mockRestore();
+      errorSpy.mockRestore();
+    });
+
+    it("recovers from an unreadable config without creating a backup", () => {
+      const configFile = configFilePath();
+      // A directory at the config path makes readFileSync fail before any bytes exist.
+      fs.mkdirSync(configFile);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.size).toBe(0);
+      expect(corruptBackups()).toHaveLength(0);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain(configFile);
+
+      // Repeated loads of the same unreadable state stay deduped.
+      config.loadConfigOrDefault();
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      errorSpy.mockRestore();
+    });
   });
 
   describe("loadConfigOrDefault settingsBackup sanitizing", () => {

@@ -845,6 +845,8 @@ export class Config {
   /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
   private migrationPersist: Promise<void> | null = null;
   private lastConfigLoadFailureSignature: string | null = null;
+  /** Content hash of corrupt config bytes whose sidecar backup has been confirmed on disk. */
+  private lastConfigBackupSignature: string | null = null;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getXumHome();
@@ -941,61 +943,98 @@ export class Config {
     return priority.length > 1 ? priority : undefined;
   }
 
-  private handleConfigLoadFailure(rawData: string | undefined, error: unknown): void {
+  private handleConfigLoadFailure(rawBytes: Buffer | undefined, error: unknown): void {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const failureSignature = crypto
       .createHash("sha256")
-      .update(rawData ?? "<config unreadable>")
+      .update(rawBytes ?? "<config unreadable>")
       .update("\0")
       .update(errorMessage)
       .digest("hex");
-    if (failureSignature === this.lastConfigLoadFailureSignature) {
+    const alreadyLogged = failureSignature === this.lastConfigLoadFailureSignature;
+    // Backup confirmation is keyed on content alone: the same corrupt bytes need only one
+    // sidecar regardless of which error message they produced.
+    const contentSignature =
+      rawBytes !== undefined ? crypto.createHash("sha256").update(rawBytes).digest("hex") : null;
+    if (
+      alreadyLogged &&
+      (rawBytes === undefined || contentSignature === this.lastConfigBackupSignature)
+    ) {
+      return;
+    }
+
+    let backupStatus = "No backup was created because the file contents could not be read.";
+    let backupJustConfirmed = false;
+    if (rawBytes !== undefined) {
+      try {
+        const configDir = path.dirname(this.configFile);
+        const corruptPrefix = `${path.basename(this.configFile)}.corrupt-`;
+        const duplicate = fs.readdirSync(configDir, { withFileTypes: true }).find((entry) => {
+          if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
+            return false;
+          }
+          return fs.readFileSync(path.join(configDir, entry.name)).equals(rawBytes);
+        });
+
+        if (duplicate) {
+          backupStatus = `Backup skipped because identical bytes already exist at ${path.join(configDir, duplicate.name)}.`;
+        } else {
+          // Write the bytes that actually failed parsing (not a re-read of the file, which
+          // another process may have replaced), leaving the corrupt source in place so
+          // throwOnError cleanup guards continue to reject it. "wx" creates exclusively;
+          // on a same-millisecond collision retry with a suffix instead of overwriting an
+          // earlier snapshot.
+          const basePath = `${this.configFile}.corrupt-${Date.now()}`;
+          let backupPath = basePath;
+          for (let suffix = 1; ; suffix++) {
+            try {
+              fs.writeFileSync(backupPath, rawBytes, { flag: "wx" });
+              break;
+            } catch (writeError) {
+              if ((writeError as NodeJS.ErrnoException).code !== "EEXIST") {
+                throw writeError;
+              }
+              backupPath = `${basePath}-${suffix}`;
+            }
+          }
+          backupStatus = `The original bytes were backed up to ${backupPath}.`;
+        }
+        this.lastConfigBackupSignature = contentSignature;
+        backupJustConfirmed = true;
+      } catch (backupError) {
+        // Leave lastConfigBackupSignature unset so the next load retries the backup;
+        // without a confirmed sidecar a later defaults write would be permanent data loss.
+        const backupErrorMessage =
+          backupError instanceof Error ? backupError.message : String(backupError);
+        backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load.`;
+      }
+    }
+
+    // Log on a new failure, and once more when a previously failed backup finally lands so
+    // the sidecar path becomes visible; silent otherwise to avoid per-load spam.
+    if (alreadyLogged && !backupJustConfirmed) {
       return;
     }
     this.lastConfigLoadFailureSignature = failureSignature;
 
-    let backupStatus = "Backup skipped because the config contents could not be read.";
-    if (rawData !== undefined) {
-      try {
-        const sourceBytes = fs.readFileSync(this.configFile);
-        const corruptPrefix = `${path.basename(this.configFile)}.corrupt-`;
-        const duplicate = fs
-          .readdirSync(path.dirname(this.configFile), { withFileTypes: true })
-          .find((entry) => {
-            if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
-              return false;
-            }
-            return fs
-              .readFileSync(path.join(path.dirname(this.configFile), entry.name))
-              .equals(sourceBytes);
-          });
-
-        if (duplicate) {
-          backupStatus = `Backup skipped because identical bytes already exist at ${path.join(path.dirname(this.configFile), duplicate.name)}.`;
-        } else {
-          const backupPath = `${this.configFile}.corrupt-${Date.now()}`;
-          // Copy instead of moving so cleanup guards continue to reject the corrupt source file.
-          fs.copyFileSync(this.configFile, backupPath);
-          backupStatus = `The original bytes were backed up to ${backupPath}.`;
-        }
-      } catch (backupError) {
-        const backupErrorMessage =
-          backupError instanceof Error ? backupError.message : String(backupError);
-        backupStatus = `Backup failed: ${backupErrorMessage}.`;
-      }
-    }
-
+    const guidance =
+      rawBytes === undefined
+        ? `Check that ${this.configFile} is a regular file readable by this user.`
+        : `Fix the reported problem in ${this.configFile} or restore it from the backup.`;
     log.error(
-      `Failed to load config file ${this.configFile}: ${errorMessage}. ${backupStatus} Fix the JSON syntax in ${this.configFile} or restore it from the backup. Xum will continue with default settings and may rewrite config.json with defaults at any time, including at startup, so use the backup to recover your original settings.`
+      `Failed to load config file ${this.configFile}: ${errorMessage}. ${backupStatus} ${guidance} Xum will continue with default settings and may rewrite config.json with defaults at any time, including at startup, so use the backup to recover your original settings.`
     );
   }
 
   loadConfigOrDefault(options?: { throwOnError?: boolean }): ProjectsConfig {
-    let rawData: string | undefined;
+    // Read as a Buffer and hand the same snapshot to the failure handler: backing up via a
+    // second read could preserve a concurrent writer's replacement instead of the bytes that
+    // actually failed parsing.
+    let rawBytes: Buffer | undefined;
     try {
       if (fs.existsSync(this.configFile)) {
-        rawData = fs.readFileSync(this.configFile, "utf-8");
-        const parsedValue: unknown = JSON.parse(rawData);
+        rawBytes = fs.readFileSync(this.configFile);
+        const parsedValue: unknown = JSON.parse(rawBytes.toString("utf-8"));
         if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
           throw new Error("Config root must be a JSON object");
         }
@@ -1373,6 +1412,9 @@ export class Config {
           : layoutPresetsRaw;
 
         this.lastConfigLoadFailureSignature = null;
+        // Also forget the confirmed backup: after a healthy load the user may prune sidecars,
+        // so a later re-corruption must re-verify the backup on disk.
+        this.lastConfigBackupSignature = null;
         return {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -1429,9 +1471,10 @@ export class Config {
         };
       } else {
         this.lastConfigLoadFailureSignature = null;
+        this.lastConfigBackupSignature = null;
       }
     } catch (error) {
-      this.handleConfigLoadFailure(rawData, error);
+      this.handleConfigLoadFailure(rawBytes, error);
       if (options?.throwOnError) {
         throw error;
       }
