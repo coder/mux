@@ -8,6 +8,7 @@ import {
   EXIT_CODE_OUTSIDE_WORKSPACE,
   EXIT_CODE_TOO_LARGE,
   EXIT_CODE_TOO_MANY_LINES,
+  MAX_COPY_FILE_SIZE_BYTES,
   processFileContents,
 } from "./fileRead";
 
@@ -139,6 +140,38 @@ describe("buildReadFileScript", () => {
       rmSync(containerDir, { recursive: true, force: true });
       rmSync(projectDir, { recursive: true, force: true });
       rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects files above the copy size budget deterministically", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "big.txt"), "x".repeat(MAX_COPY_FILE_SIZE_BYTES + 1));
+      const result = spawnSync(
+        "bash",
+        ["-lc", buildReadFileScript("big.txt", { maxSizeBytes: MAX_COPY_FILE_SIZE_BYTES })],
+        { cwd: tempDir }
+      );
+      // The whole point of the copy budget: a deterministic too-large exit with no
+      // payload, never a truncated stream.
+      expect(result.status).toBe(EXIT_CODE_TOO_LARGE);
+      expect(result.stdout.toString()).toBe("");
+
+      writeFileSync(join(tempDir, "small.txt"), "fits\n");
+      const okResult = spawnSync(
+        "bash",
+        ["-lc", buildReadFileScript("small.txt", { maxSizeBytes: MAX_COPY_FILE_SIZE_BYTES })],
+        { cwd: tempDir }
+      );
+      expect(okResult.status).toBe(0);
+      expect(processFileContents(okResult.stdout.toString(), okResult.status ?? 0)).toEqual({
+        type: "text",
+        content: "fits\n",
+        size: 5,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

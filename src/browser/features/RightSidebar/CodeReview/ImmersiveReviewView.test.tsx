@@ -1418,9 +1418,10 @@ describe("ImmersiveReviewView", () => {
     expect(resolveRead).toBeTruthy();
   });
 
-  test("caps copy reads and reports a size-specific failure for oversized files", async () => {
-    // Copy reads carry no awk line budget; overlay full-file reads do.
-    const copyReadScripts: string[] = [];
+  test("reports a size-specific failure for oversized files", async () => {
+    // Copy reads carry no awk line budget; overlay full-file reads do. The copy read
+    // budget itself is exercised behaviorally in fileRead.test.ts; here the backend
+    // returns the deterministic too-large exit it produces for oversized files.
     mockApi.workspace.executeBash = mock((...args: unknown[]) => {
       const { script } = args[0] as { script: string };
       if (script.includes("awk 'NR >")) {
@@ -1429,8 +1430,6 @@ describe("ImmersiveReviewView", () => {
           data: { success: false, output: "", exitCode: 43 },
         });
       }
-      copyReadScripts.push(script);
-      // The size guard trips: deterministic too-large exit, not a truncated payload.
       return Promise.resolve({
         success: true as const,
         data: { success: false, output: "", exitCode: 42 },
@@ -1453,10 +1452,7 @@ describe("ImmersiveReviewView", () => {
       ).toBe("failed")
     );
     expect(clipboardWrites).toHaveLength(0);
-    // The copy read must carry the IPC-safe size budget so oversize files fail
-    // deterministically instead of arriving truncated.
-    expect(copyReadScripts[0]).toContain(`-gt ${750 * 1024}`);
-    // And the failure must tell the user it is a size problem.
+    // The failure must tell the user it is a size problem, not a generic error.
     expect(view.container.textContent ?? "").toContain("file is larger than 750 KB");
   });
 
