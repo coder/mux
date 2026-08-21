@@ -1138,6 +1138,116 @@ describe("ImmersiveReviewView", () => {
     expect(clipboardWrites).toHaveLength(0);
   });
 
+  test("multi-project copies anchor containment to the project symlink", async () => {
+    const fullContent = "multi project contents";
+    const copyReadCalls: Array<{ script: string; options?: { cwdMode?: string } }> = [];
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const input = args[0] as { script: string; options?: { cwdMode?: string } };
+      copyReadCalls.push(input);
+      return Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(fullContent), exitCode: 0 },
+      });
+    });
+
+    const view = renderImmersiveReview({ isMultiProjectWorkspace: true });
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+    const copyRead = copyReadCalls.find((call) => !call.script.includes("awk 'NR >"));
+    expect(copyRead).toBeTruthy();
+    // Container-root project entries are symlinks, so the read must anchor to the
+    // resolved project root and run in default (container-root) mode.
+    expect(copyRead!.script).toContain("anchor=$(realpath './src'");
+    expect(copyRead!.options).toBeUndefined();
+  });
+
+  test("serializes same-file copies and ignores key repeat", async () => {
+    // Copy reads carry no awk line budget; overlay full-file reads do.
+    let executeBashCalls = 0;
+    let resolveRead: ((value: unknown) => void) | undefined;
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      executeBashCalls += 1;
+      return new Promise((resolve) => {
+        resolveRead = resolve as (value: unknown) => void;
+      });
+    }) as unknown as MockApiClient["workspace"]["executeBash"];
+
+    renderImmersiveReview({ isTouchImmersive: false });
+
+    fireEvent.keyDown(globalThis.window as unknown as Element, { key: "y" });
+    await waitFor(() => expect(executeBashCalls).toBe(1));
+
+    // OS key repeat and a second same-file request while the read is pending
+    // must not fan out more backend reads.
+    fireEvent.keyDown(globalThis.window as unknown as Element, { key: "y", repeat: true });
+    fireEvent.keyDown(globalThis.window as unknown as Element, { key: "y" });
+    expect(executeBashCalls).toBe(1);
+
+    resolveRead!({
+      success: true as const,
+      data: { success: true, output: encodeFileReadOutput("contents"), exitCode: 0 },
+    });
+    await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+
+    // After completion the same file can be copied again.
+    fireEvent.keyDown(globalThis.window as unknown as Element, { key: "y" });
+    await waitFor(() => expect(executeBashCalls).toBe(2));
+  });
+
+  test("clears prior feedback while a new copy is pending", async () => {
+    // Copy reads carry no awk line budget; overlay full-file reads do.
+    let resolveRead: ((value: unknown) => void) | undefined;
+    let copyReadCount = 0;
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      copyReadCount += 1;
+      if (copyReadCount === 1) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: true, output: encodeFileReadOutput("contents"), exitCode: 0 },
+        });
+      }
+      return new Promise((resolve) => {
+        resolveRead = resolve as (value: unknown) => void;
+      });
+    }) as unknown as MockApiClient["workspace"]["executeBash"];
+
+    const view = renderImmersiveReview();
+
+    const findCopyButton = () =>
+      view.container.querySelector<HTMLButtonElement>('button[aria-label="Copy file contents"]');
+    fireEvent.click(findCopyButton()!);
+    await waitFor(() =>
+      expect(findCopyButton()?.getAttribute("data-copy-file-feedback")).toBe("copied")
+    );
+
+    // Starting a second copy must clear the stale success while the read hangs.
+    fireEvent.click(findCopyButton()!);
+    await waitFor(() =>
+      expect(findCopyButton()?.getAttribute("data-copy-file-feedback")).toBeNull()
+    );
+    expect(resolveRead).toBeTruthy();
+  });
+
   test("rejects partial payloads from unsuccessful script exits", async () => {
     // Simulates base64 dying after stat emitted the size: the script exits nonzero
     // but leaves parseable output that would decode to empty text.

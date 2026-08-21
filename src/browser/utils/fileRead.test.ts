@@ -75,6 +75,66 @@ describe("buildReadFileScript", () => {
     }
   });
 
+  test("first-segment anchor reads through xum-managed project symlinks", () => {
+    // Multi-project containers expose each project as a symlink to a checkout
+    // outside the container, so cwd containment would reject every project read.
+    const projectDir = mkdtempSync(join(tmpdir(), "mux-file-read-project-"));
+    const containerDir = mkdtempSync(join(tmpdir(), "mux-file-read-container-"));
+
+    try {
+      writeFileSync(join(projectDir, "file.txt"), "project contents\n");
+      symlinkSync(projectDir, join(containerDir, "project-a"));
+
+      const cwdAnchored = spawnSync("bash", ["-lc", buildReadFileScript("project-a/file.txt")], {
+        cwd: containerDir,
+      });
+      expect(cwdAnchored.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+
+      const projectAnchored = spawnSync(
+        "bash",
+        ["-lc", buildReadFileScript("project-a/file.txt", { containmentAnchor: "first-segment" })],
+        { cwd: containerDir }
+      );
+      expect(projectAnchored.status).toBe(0);
+      const processed = processFileContents(
+        projectAnchored.stdout.toString(),
+        projectAnchored.status ?? 0
+      );
+      expect(processed).toMatchObject({ type: "text", content: "project contents\n" });
+    } finally {
+      rmSync(containerDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("first-segment anchor still rejects repo symlinks escaping the project", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "mux-file-read-project-"));
+    const containerDir = mkdtempSync(join(tmpdir(), "mux-file-read-container-"));
+    const outsideDir = mkdtempSync(join(tmpdir(), "mux-file-read-outside-"));
+
+    try {
+      writeFileSync(join(outsideDir, "secret.txt"), "outside secret\n");
+      // Attacker-controlled symlink INSIDE the project escaping past the project root.
+      symlinkSync(join(outsideDir, "secret.txt"), join(projectDir, "escape.txt"));
+      symlinkSync(projectDir, join(containerDir, "project-a"));
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-lc",
+          buildReadFileScript("project-a/escape.txt", { containmentAnchor: "first-segment" }),
+        ],
+        { cwd: containerDir }
+      );
+      expect(result.status).toBe(EXIT_CODE_OUTSIDE_WORKSPACE);
+      expect(result.stdout.toString()).not.toContain("outside secret");
+    } finally {
+      rmSync(containerDir, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test("reads files whose names look like command options", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
 

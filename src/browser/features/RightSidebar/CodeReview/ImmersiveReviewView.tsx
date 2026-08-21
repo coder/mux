@@ -524,6 +524,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     selectedHunk,
     theme,
     fileContentVersion: activeFileContentVersion,
+    isMultiProjectWorkspace: props.isMultiProjectWorkspace,
     onRevealPending: setHunkJumpScroll,
   });
 
@@ -1388,6 +1389,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     filePath: string;
   } | null>(null);
   const copyFileRequestIdRef = useRef(0);
+  const pendingCopyFilePathRef = useRef<string | null>(null);
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
 
@@ -1427,7 +1429,16 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     if (!api || !filePath || isActiveFileDeleted) {
       return;
     }
+    // Serialize same-file copies so key repeat or double-clicks cannot fan out
+    // concurrent reads; navigating to another file still supersedes normally.
+    if (pendingCopyFilePathRef.current === filePath) {
+      return;
+    }
     const requestId = ++copyFileRequestIdRef.current;
+    pendingCopyFilePathRef.current = filePath;
+    // Clear the previous result so a slow re-copy cannot keep advertising success
+    // for clipboard contents this operation is about to replace.
+    setCopyFileFeedback(null);
     // Discard stale completions: the user may have navigated to another file or
     // started a newer copy while this read was in flight.
     const isStale = () =>
@@ -1435,9 +1446,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     try {
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
-        script: buildReadFileScript(filePath),
-        // Hunk paths are container-root-relative in multi-project workspaces (default
-        // mode's cwd) but repo-root-relative in single-project ones, where default
+        script: buildReadFileScript(
+          filePath,
+          // Hunk paths are container-root-relative in multi-project workspaces, where
+          // project entries are symlinks that containment must anchor to.
+          props.isMultiProjectWorkspace ? { containmentAnchor: "first-segment" } : {}
+        ),
+        // Multi-project default mode runs from the container root matching those
+        // paths; single-project hunk paths are repo-root-relative, where default
         // mode would run from a subproject cwd and miss the file.
         options: props.isMultiProjectWorkspace ? undefined : { cwdMode: "repo-root" },
       });
@@ -1472,6 +1488,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       console.error("Failed to copy file contents:", error);
       if (!isStale()) {
         showCopyFileFeedback("failed", filePath);
+      }
+    } finally {
+      // A superseding request owns the pending slot; only the current one releases it.
+      if (
+        pendingCopyFilePathRef.current === filePath &&
+        copyFileRequestIdRef.current === requestId
+      ) {
+        pendingCopyFilePathRef.current = null;
       }
     }
   };
@@ -1749,10 +1773,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      // Copy the active file's full contents to the clipboard.
+      // Copy the active file's full contents to the clipboard. Ignore OS key
+      // repeat so holding the key cannot fan out repeated backend reads.
       if (matchesKeybind(e, KEYBINDS.REVIEW_COPY_FILE)) {
         e.preventDefault();
-        void handleCopyFileRef.current();
+        if (!e.repeat) {
+          void handleCopyFileRef.current();
+        }
         return;
       }
     };

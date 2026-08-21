@@ -17,6 +17,15 @@ export const EXIT_CODE_OUTSIDE_WORKSPACE = 44;
 interface ReadFileScriptOptions {
   maxSizeBytes?: number;
   maxLineCount?: number;
+  /**
+   * Containment anchor for the symlink-escape check. "cwd" (default) requires the
+   * resolved path to stay under the execution root. Multi-project workspaces run
+   * from a shared container whose per-project entries are xum-managed symlinks to
+   * checkouts OUTSIDE the container, so they anchor containment to the resolved
+   * first path segment (the project root) instead. Repo-controlled symlinks deeper
+   * in the path still cannot escape that anchor.
+   */
+  containmentAnchor?: "cwd" | "first-segment";
 }
 
 /** Magic bytes for image type detection. */
@@ -137,16 +146,29 @@ awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' "$resolved"
 awk_status=$?
 [ "$awk_status" -ne 0 ] && exit "$awk_status"`;
 
+  // A first-segment anchor only makes sense for project-prefixed paths; bare
+  // container-root paths fall back to cwd containment (fail closed).
+  const firstSegment = relativePath.split("/")[0];
+  const useFirstSegmentAnchor =
+    options.containmentAnchor === "first-segment" &&
+    !relativePath.startsWith("/") &&
+    relativePath.includes("/") &&
+    firstSegment.length > 0;
+  const anchorScript = useFirstSegmentAnchor
+    ? `anchor=$(realpath ${shellEscapePath(firstSegment)} 2>/dev/null || readlink -f ${shellEscapePath(firstSegment)} 2>/dev/null)`
+    : `anchor=$(pwd -P)`;
+
   // SECURITY AUDIT: repo-controlled paths are attacker-controlled input. A changed
   // symlink pointing outside the workspace must not let the UI read (and copy) files
-  // beyond the execution root, so reject paths whose physical resolution escapes it.
-  // Fail closed: an unresolvable path (loop, missing resolver) also exits. All reads
-  // then use the validated physical path, not the original link, so swapping the
-  // symlink between validation and read cannot redirect the read outside the root.
-  return `root=$(pwd -P)
+  // beyond the containment anchor, so reject paths whose physical resolution escapes
+  // it. Fail closed: an unresolvable path or anchor (loop, missing resolver) also
+  // exits. All reads then use the validated physical path, not the original link, so
+  // swapping the symlink between validation and read cannot redirect the read.
+  return `${anchorScript}
+[ -n "$anchor" ] || exit ${EXIT_CODE_OUTSIDE_WORKSPACE}
 resolved=$(realpath ${file} 2>/dev/null || readlink -f ${file} 2>/dev/null)
 case "$resolved" in
-  "$root"/*) ;;
+  "$anchor"/*) ;;
   *) exit ${EXIT_CODE_OUTSIDE_WORKSPACE} ;;
 esac
 size=$(stat -c %s "$resolved" 2>/dev/null || stat -f %z "$resolved")
