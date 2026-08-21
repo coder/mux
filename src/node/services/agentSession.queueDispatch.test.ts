@@ -514,6 +514,41 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("intentional dedupe cleanup can remove a synthetic entry without canceling its owner", async () => {
+    const workspaceId = "queue-dispatch-silent-dedupe-removal";
+    const { session, cleanup } = await createAgentSessionHarness({ workspaceId });
+
+    try {
+      const canceledReasons: string[] = [];
+      session.queueMessage(
+        "Incremental report",
+        { model: TEST_MODEL, agentId: "exec" },
+        {
+          synthetic: true,
+          agentInitiated: true,
+          dedupeKey: "agent-report:child:progress",
+          removableDedupeKey: true,
+          onCanceled: (reason) => {
+            canceledReasons.push(reason);
+          },
+        }
+      );
+
+      expect(
+        session.removeQueuedMessagesByDedupeKeyPrefix(
+          "agent-report:child:",
+          "Terminal report replaced progress.",
+          { notifyCancellation: false }
+        )
+      ).toBe(1);
+      expect(canceledReasons).toEqual([]);
+      expect(session.hasQueuedMessages()).toBe(false);
+    } finally {
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("cancel signal retracts a synthetic entry after dequeue while history append is preparing", async () => {
     const workspaceId = "queue-dispatch-cancel-preparing";
     const { session, cleanup, historyService, events } = await createAgentSessionHarness({

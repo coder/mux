@@ -4391,6 +4391,103 @@ describe("TaskService", () => {
     });
   });
 
+  test("terminal nested report coalescing does not interrupt the outer workspace turn", async () => {
+    let progressCancellation: ((reason: string) => Promise<void> | void) | undefined;
+    const sendMessage = mock((...args: unknown[]): Promise<Result<void, SendMessageError>> => {
+      const internal = args[3] as { onCanceled?: (reason: string) => Promise<void> | void };
+      progressCancellation = internal?.onCanceled;
+      return Promise.resolve(Ok(undefined));
+    });
+    const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest({
+      sendMessage,
+    });
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-coalesced-report"),
+        id: "nested-coalesced-report",
+        name: "nested-coalesced-report",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+      });
+      return cfg;
+    });
+
+    await taskService.reportAgentProgress("nested-coalesced-report", "progress-call", {
+      reportMarkdown: "Progress before completion.",
+    });
+    expect(progressCancellation).toBeDefined();
+
+    let cancellationPromise: Promise<void> | undefined;
+    workspaceMocks.workspaceService.removeQueuedMessagesByDedupeKeyPrefix = mock(
+      (_workspaceId: string, _prefix: string, options?: { notifyCancellation?: boolean }) => {
+        if (options?.notifyCancellation !== false) {
+          const cancellationResult = progressCancellation?.("Queued progress was canceled");
+          cancellationPromise = Promise.resolve(cancellationResult);
+        }
+        return Ok(1);
+      }
+    ) as WorkspaceService["removeQueuedMessagesByDedupeKeyPrefix"];
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: "nested-coalesced-report",
+      messageId: "assistant-nested-coalesced-report",
+      metadata: { model: "anthropic:claude-opus-4-6", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "nested-report-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Nested work completed." },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "Nested work completed." },
+          },
+        },
+      ],
+    });
+
+    expect(cancellationPromise).toBeUndefined();
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+    });
+
+    const internal = taskService as unknown as {
+      finalizeWorkspaceTurnFromStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
+    };
+    expect(
+      await internal.finalizeWorkspaceTurnFromStreamEnd({
+        type: "stream-end",
+        workspaceId: "childworkspace",
+        messageId: "outer-final",
+        metadata: {
+          model: "anthropic:claude-opus-4-6",
+          agentId: "exec",
+          finishReason: "stop",
+          muxMetadata: {
+            type: "workspace-turn-task",
+            taskHandleId: "wst_handle",
+            ownerWorkspaceId: parentId,
+            turnId: "turn",
+          },
+        },
+        parts: [{ type: "text", text: "Outer turn completed." }],
+      })
+    ).toBe(true);
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "completed",
+      reportMarkdown: "Outer turn completed.",
+    });
+  });
+
   test("terminal nested agent report resumes a workspace turn with correlation", async () => {
     const { config, parentId, taskService, workspaceMocks, historyService } =
       await startWorkspaceTurnForTest();
@@ -7110,6 +7207,53 @@ describe("TaskService", () => {
       error: "Workspace turn superseded by an uncorrelated workspace stream-end",
     });
     expect(snapshot?.reportMarkdown).toBeUndefined();
+  });
+
+  test("a correlated final self-heals an uncorrelated stream-end interruption", async () => {
+    const { parentId, taskService } = await startWorkspaceTurnForTest();
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_uncorrelated_continuation",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Synthetic continuation output" }],
+    });
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "interrupted",
+      error: "Workspace turn superseded by an uncorrelated workspace stream-end",
+    });
+
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "msg_correlated_final",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      },
+      parts: [{ type: "text", text: "The delegated turn completed." }],
+    });
+
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "completed",
+      messageId: "msg_correlated_final",
+      reportMarkdown: "The delegated turn completed.",
+    });
   });
 
   test("workspace-turn stream errors mark the handle failed", async () => {
@@ -19994,7 +20138,10 @@ describe("TaskService", () => {
     expect(removeQueuedMessagesByDedupeKeyPrefix).toHaveBeenCalledWith(
       parentId,
       `agent-report:${childId}:`,
-      { cancelReason: "Incremental sub-agent update superseded by the terminal report." }
+      {
+        cancelReason: "Incremental sub-agent update superseded by the terminal report.",
+        notifyCancellation: false,
+      }
     );
   });
 

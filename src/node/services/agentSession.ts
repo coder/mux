@@ -49,6 +49,7 @@ import {
   createFileSnapshotMessageId,
   createAgentSkillSnapshotMessageId,
   createMcpPromptSnapshotMessageId,
+  FILE_CHANGE_NOTIFICATION_MESSAGE_ID_PREFIX,
 } from "@/node/services/utils/messageIds";
 import {
   FileChangeTracker,
@@ -346,12 +347,11 @@ function hasSameWorkspaceTurnCorrelation(
  * and the turn's real outcome can never settle the task handle (see
  * TaskService.finalizeWorkspaceTurnFromStreamEnd).
  *
- * Scans newest→oldest: interleaved monitor wakes keep the chain open; any
- * other user input (manual prompt, new workspace-turn prompt) supersedes the
- * turn, and only a correlated assistant message that ended with "tool-calls"
- * (a queue-dispatch cut) leaves the turn open. The inherited metadata is
- * persisted on each continuation's assistant message, so chains survive
- * restarts.
+ * Scans newest→oldest. Monitor wakes, file-change notices, and correlated
+ * nested reports keep the chain open. Manual prompts supersede the turn.
+ * Only a correlated assistant message that ended with "tool-calls" leaves the
+ * older chain open. Each continuation persists the inherited metadata, so the
+ * chain survives restarts.
  */
 export function inheritOpenWorkspaceTurnMetadata(
   messages: readonly MuxMessage[]
@@ -383,6 +383,19 @@ export function inheritOpenWorkspaceTurnMetadata(
     if (message.role === "user") {
       if (muxMetadata?.type === "bash-monitor-wake") {
         continue;
+      }
+      // File-change rows are machine context for the pending continuation.
+      // They do not replace the delegated request that caused the stream.
+      if (
+        message.metadata?.synthetic === true &&
+        message.id.startsWith(FILE_CHANGE_NOTIFICATION_MESSAGE_ID_PREFIX)
+      ) {
+        continue;
+      }
+      // A correlated nested report can queue before a monitor wake. It continues
+      // the same delegated turn and is stronger evidence than the older cut.
+      if (muxMetadata?.type === "workspace-turn-task") {
+        return muxMetadata;
       }
       return undefined;
     }
@@ -5590,7 +5603,11 @@ export class AgentSession {
     });
   }
 
-  removeQueuedMessagesByDedupeKeyPrefix(prefix: string, cancelReason: string): number {
+  removeQueuedMessagesByDedupeKeyPrefix(
+    prefix: string,
+    cancelReason: string,
+    options?: { notifyCancellation?: boolean }
+  ): number {
     this.assertNotDisposed("removeQueuedMessagesByDedupeKeyPrefix");
     assert(prefix.length > 0, "removeQueuedMessagesByDedupeKeyPrefix requires prefix");
     const removal = this.messageQueue.removeByDedupeKeyPrefix(prefix);
@@ -5602,8 +5619,10 @@ export class AgentSession {
       this.workspaceId,
       !this.messageQueue.isEmpty() && this.messageQueue.getNextQueueDispatchMode() === "tool-end"
     );
-    for (const callbacks of removal.callbacks) {
-      this.notifyQueuedMessageCleared(callbacks, cancelReason);
+    if (options?.notifyCancellation !== false) {
+      for (const callbacks of removal.callbacks) {
+        this.notifyQueuedMessageCleared(callbacks, cancelReason);
+      }
     }
     return removal.removedCount;
   }

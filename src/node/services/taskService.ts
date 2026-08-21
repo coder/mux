@@ -703,6 +703,10 @@ const WORKSPACE_TURN_RECOVERABLE_STREAM_ERRORS: ReadonlySet<StreamErrorType> = n
 /** Marker persisted by settleStaleWorkspaceTurn when restart recovery interrupts a handle. */
 const WORKSPACE_TURN_STALE_RESTART_ERROR = "Workspace turn interrupted after restart";
 
+/** Marker for an inferred interruption that later correlated evidence can correct. */
+const WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR =
+  "Workspace turn superseded by an uncorrelated workspace stream-end";
+
 /**
  * Reason persisted when other queued input (a manual user message, /compact)
  * cut a delegated turn at a tool boundary and superseded it. The target
@@ -745,6 +749,16 @@ function isSelfHealEligibleSettledWorkspaceTurn(
     record.status === "interrupted" &&
     (record.error === WORKSPACE_TURN_STALE_RESTART_ERROR ||
       record.error === WORKSPACE_TURN_SUPERSEDED_BY_NEW_INPUT_ERROR)
+  );
+}
+
+function isCorrelatedResettleEligibleWorkspaceTurn(
+  record: Pick<WorkspaceTurnTaskHandleRecord, "status" | "error">
+): boolean {
+  return (
+    isSelfHealEligibleSettledWorkspaceTurn(record) ||
+    (record.status === "interrupted" &&
+      record.error === WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR)
   );
 }
 
@@ -6851,7 +6865,7 @@ export class TaskService {
           params.allowTerminalResettle === true &&
           this.isTerminalWorkspaceTurnStatus(current.status) &&
           current.status !== "completed" &&
-          isSelfHealEligibleSettledWorkspaceTurn(current) &&
+          isCorrelatedResettleEligibleWorkspaceTurn(current) &&
           (params.next.status !== current.status || params.next.messageId !== current.messageId);
         if (this.isTerminalWorkspaceTurnStatus(current.status) && !resettleStaleTerminal) {
           const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
@@ -10521,7 +10535,7 @@ export class TaskService {
       return true;
     }
 
-    const error = "Workspace turn superseded by an uncorrelated workspace stream-end";
+    const error = WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR;
     const next: WorkspaceTurnTaskHandleRecord = {
       ...record,
       status: "interrupted",
@@ -12506,7 +12520,12 @@ export class TaskService {
     const queuedProgressRemoval = this.workspaceService.removeQueuedMessagesByDedupeKeyPrefix(
       parentWorkspaceId,
       `agent-report:${childWorkspaceId}:`,
-      { cancelReason: "Incremental sub-agent update superseded by the terminal report." }
+      {
+        cancelReason: "Incremental sub-agent update superseded by the terminal report.",
+        // The terminal report replaces this queued update. It does not cancel
+        // the parent workspace turn that owns the continuation.
+        notifyCancellation: false,
+      }
     );
     if (!queuedProgressRemoval.success) {
       log.warn("Failed to remove queued incremental sub-agent reports", {

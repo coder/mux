@@ -48,6 +48,30 @@ describe("inheritOpenWorkspaceTurnMetadata", () => {
     expect(inheritOpenWorkspaceTurnMetadata(messages)).toEqual(correlation);
   });
 
+  test("a file-change row after a monitor wake keeps the turn open", () => {
+    const messages = [
+      turnPrompt("prompt"),
+      cutAssistant("cut"),
+      wake("wake"),
+      createMuxMessage("file-change-1", "user", "<system-file-update />", {
+        synthetic: true,
+      }),
+    ];
+    expect(inheritOpenWorkspaceTurnMetadata(messages)).toEqual(correlation);
+  });
+
+  test("a correlated nested report before a monitor wake keeps the turn open", () => {
+    const messages = [
+      turnPrompt("prompt"),
+      cutAssistant("cut"),
+      createMuxMessage("nested-report", "user", "Nested task completed", {
+        muxMetadata: correlation,
+      }),
+      wake("wake"),
+    ];
+    expect(inheritOpenWorkspaceTurnMetadata(messages)).toEqual(correlation);
+  });
+
   test("a correlated assistant that finished with stop closes the turn", () => {
     const messages = [
       turnPrompt("prompt"),
