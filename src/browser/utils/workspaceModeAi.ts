@@ -1,4 +1,5 @@
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
+import type { AiSettingSource } from "@/common/types/agentAiSettings";
 import {
   coerceOpenAIReasoningMode,
   coerceThinkingLevel,
@@ -6,6 +7,8 @@ import {
   type ThinkingLevel,
 } from "@/common/types/thinking";
 import { normalizeAgentId as normalizeWorkspaceAgentId } from "@/common/utils/agentIds";
+import { collectDeclaredAncestorLayers } from "@/common/utils/ai/agentAncestorLayers";
+import { resolveAgentAiSettings } from "@/common/utils/ai/resolveAgentAiSettings";
 
 export type WorkspaceAISettingsCache = Partial<
   Record<
@@ -19,50 +22,40 @@ function normalizeAgentId(agentId: string): string {
 }
 
 /**
- * Field-wise configured defaults for an agent, walking the base chain like
- * the backend's resolveAgentAiSettings so custom agents (base: exec) inherit
- * an ancestor's model/thinking/pro defaults together (persisting an inherited
- * pro without its pro-capable model would let request gating drop it).
- *
- * Model/thinking inherit only through DECLARED bases: the implicit fallback
- * for unknown agents (plan -> plan, otherwise exec) contributes reasoningMode
- * alone, so desktop mode switches to unconfigured agents keep the workspace's
- * current model instead of yanking it to exec's configured default.
+ * Field-wise configured defaults for an agent through its declared base chain,
+ * delegating precedence to the shared resolver. Values are "configured" only
+ * when the resolver sourced them from a config tier, so system defaults and
+ * the resolver's built-in fallbacks never masquerade as configured values.
+ * Custom agents (base: exec) inherit an ancestor's model/thinking/pro defaults
+ * together (persisting an inherited pro without its pro-capable model would
+ * let request gating drop it), while the implicit fallback for unknown agents
+ * contributes reasoningMode alone, so desktop mode switches to unconfigured
+ * agents keep the workspace's current model instead of yanking it to exec's
+ * configured default.
  */
 export function resolveConfiguredAiDefaults(
   agentId: string,
   agentAiDefaults: AgentAiDefaults,
   agentBaseById?: ReadonlyMap<string, string | undefined>
 ): { modelString?: string; thinkingLevel?: ThinkingLevel; reasoningMode?: OpenAIReasoningMode } {
-  const visited = new Set<string>();
-  let cursor = agentId;
-  let declaredChain = true;
-  let modelString: string | undefined;
-  let thinkingLevel: ThinkingLevel | undefined;
-  let reasoningMode: OpenAIReasoningMode | undefined;
-  while (!visited.has(cursor)) {
-    visited.add(cursor);
-    const entry = agentAiDefaults[cursor];
-    if (declaredChain) {
-      if (modelString === undefined) {
-        const candidate = typeof entry?.modelString === "string" ? entry.modelString.trim() : "";
-        if (candidate.length > 0) {
-          modelString = candidate;
-        }
-      }
-      thinkingLevel ??= coerceThinkingLevel(entry?.thinkingLevel) ?? undefined;
-    }
-    reasoningMode ??= coerceOpenAIReasoningMode(entry?.reasoningMode) ?? undefined;
-    if (modelString !== undefined && thinkingLevel !== undefined && reasoningMode !== undefined) {
-      break;
-    }
-    const declaredBase = agentBaseById?.get(cursor);
-    if (declaredBase == null) {
-      declaredChain = false;
-    }
-    cursor = declaredBase ?? (cursor === "plan" ? "plan" : "exec");
-  }
-  return { modelString, thinkingLevel, reasoningMode };
+  const normalizedAgentId = normalizeAgentId(agentId);
+  const descriptorsById = new Map([...(agentBaseById ?? [])].map(([id, base]) => [id, { base }]));
+  const resolved = resolveAgentAiSettings({
+    targetAgentId: normalizedAgentId,
+    profile: "interactive",
+    agentAiDefaults,
+    ancestors: collectDeclaredAncestorLayers(normalizedAgentId, descriptorsById),
+  });
+  const fromConfig = (source: AiSettingSource | undefined) => source?.tier === "config";
+  return {
+    modelString: fromConfig(resolved.sources.model) ? resolved.selected.model : undefined,
+    thinkingLevel: fromConfig(resolved.sources.thinkingLevel)
+      ? resolved.selected.thinkingLevel
+      : undefined,
+    reasoningMode: fromConfig(resolved.sources.reasoningMode)
+      ? resolved.selected.reasoningMode
+      : undefined,
+  };
 }
 
 /** Reasoning-mode-only view of resolveConfiguredAiDefaults. */
