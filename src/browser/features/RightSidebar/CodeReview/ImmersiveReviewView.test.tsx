@@ -1122,8 +1122,42 @@ describe("ImmersiveReviewView", () => {
     expect(copyButton).toBeTruthy();
     fireEvent.click(copyButton!);
 
-    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The rejection must be user-visible, not just a console log.
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('button[aria-label="Copy file contents"]')
+          ?.getAttribute("data-copy-file-feedback")
+      ).toBe("failed")
+    );
+    expect(clipboardWrites).toHaveLength(0);
+  });
+
+  test("shows a visible failure when copying a binary file", async () => {
+    // NUL bytes make processFileContents classify the payload as binary.
+    const binaryOutput = `4\n${Buffer.from([0x00, 0x01, 0x02, 0x03]).toString("base64")}`;
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { success: true, output: binaryOutput, exitCode: 0 },
+      })
+    );
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('button[aria-label="Copy file contents"]')
+          ?.getAttribute("data-copy-file-feedback")
+      ).toBe("failed")
+    );
     expect(clipboardWrites).toHaveLength(0);
   });
 
@@ -1135,6 +1169,25 @@ describe("ImmersiveReviewView", () => {
       allHunks: [deletedHunk],
     });
 
+    expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
+  });
+
+  test("no copy affordance for a hunk-less deleted file known only to the file tree", () => {
+    // Deleting an empty or binary file yields no hunks; the active file then comes
+    // from the file tree, whose numstat entry still carries the deletion status.
+    const tree = createFileTree("src/gone.bin");
+    const leaf = tree.children[0]?.children[0];
+    expect(leaf?.path).toBe("src/gone.bin");
+    leaf.stats = { filePath: "src/gone.bin", additions: 0, deletions: 0, changeType: "deleted" };
+
+    const view = renderImmersiveReview({
+      fileTree: tree,
+      hunks: [],
+      allHunks: [],
+      selectedHunkId: null,
+    });
+
+    expect(view.container.textContent ?? "").toContain("gone.bin");
     expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
   });
 

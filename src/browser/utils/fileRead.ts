@@ -31,6 +31,14 @@ function shellEscape(s: string): string {
   return "'" + s.replaceAll("'", "'\"'\"'") + "'";
 }
 
+/**
+ * Quoting does not stop `stat`/`awk` from parsing a leading `-` as an option
+ * (e.g. a root-level file named `-n`), so anchor relative paths with `./`.
+ */
+function shellEscapePath(relativePath: string): string {
+  return shellEscape(relativePath.startsWith("/") ? relativePath : `./${relativePath}`);
+}
+
 /** Decode a base64 payload (e.g. an SVG classified as an image) back to UTF-8 text. */
 export function decodeBase64Utf8(base64: string): string {
   return new TextDecoder("utf-8", { fatal: false }).decode(base64ToUint8Array(base64));
@@ -114,7 +122,7 @@ export function buildReadFileScript(
   relativePath: string,
   options: ReadFileScriptOptions = {}
 ): string {
-  const file = shellEscape(relativePath);
+  const file = shellEscapePath(relativePath);
   const maxSizeBytes = Math.max(0, Math.trunc(options.maxSizeBytes ?? MAX_FILE_SIZE));
   const maxLineCount =
     options.maxLineCount == null ? null : Math.max(0, Math.trunc(options.maxLineCount));

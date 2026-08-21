@@ -13,26 +13,44 @@ import {
 describe("buildReadFileScript", () => {
   test("generates script with size check", () => {
     const script = buildReadFileScript("test.txt");
-    expect(script).toContain("stat -c %s 'test.txt'");
-    expect(script).toContain("base64 < 'test.txt'");
+    expect(script).toContain("stat -c %s './test.txt'");
+    expect(script).toContain("base64 < './test.txt'");
   });
 
   test("escapes paths with spaces", () => {
     const script = buildReadFileScript("path/to/my file.txt");
-    expect(script).toContain("'path/to/my file.txt'");
+    expect(script).toContain("'./path/to/my file.txt'");
   });
 
   test("escapes single quotes", () => {
     const script = buildReadFileScript("file'with'quotes.txt");
-    expect(script).toContain("'file'\"'\"'with'\"'\"'quotes.txt'");
+    expect(script).toContain("'./file'\"'\"'with'\"'\"'quotes.txt'");
   });
 
   test("supports smaller caller-specific size and line budgets", () => {
     const script = buildReadFileScript("test.txt", { maxSizeBytes: 1234, maxLineCount: 99 });
 
     expect(script).toContain('[ "$size" -gt 1234 ] && exit 42');
-    expect(script).toContain("awk 'NR > 99 { exit 43 }' 'test.txt'");
+    expect(script).toContain("awk 'NR > 99 { exit 43 }' './test.txt'");
     expect(script).toContain('exit "$awk_status"');
+  });
+
+  test("reads files whose names look like command options", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "-n"), "dash file contents\n");
+      const result = spawnSync("bash", ["-lc", buildReadFileScript("-n")], { cwd: tempDir });
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      expect(processed).toEqual({
+        type: "text",
+        content: "dash file contents\n",
+        size: 19,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("preserves non-budget awk failures while keeping line-budget exits", () => {

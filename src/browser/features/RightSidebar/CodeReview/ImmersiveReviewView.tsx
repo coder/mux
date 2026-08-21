@@ -19,6 +19,7 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  TriangleAlert,
 } from "lucide-react";
 import { cn } from "@/common/lib/utils";
 import { SelectableDiffRenderer } from "../../Shared/DiffRenderer";
@@ -57,12 +58,13 @@ import {
 } from "@/browser/utils/ui/keybinds";
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
-import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
+import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   buildReadFileScript,
   decodeBase64Utf8,
   processFileContents,
 } from "@/browser/utils/fileRead";
+import { COPY_FEEDBACK_DURATION_MS } from "@/common/constants/ui";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { getReviewSelectedHunkKey } from "@/common/constants/storage";
 import {
@@ -71,7 +73,7 @@ import {
   type Review,
   type ReviewNoteData,
 } from "@/common/types/review";
-import type { FileTreeNode } from "@/common/utils/git/numstatParser";
+import type { FileStats, FileTreeNode } from "@/common/utils/git/numstatParser";
 import type { ReviewActionCallbacks } from "../../Shared/InlineReviewNote";
 
 interface ImmersiveReviewViewProps {
@@ -230,6 +232,23 @@ export function shouldPreserveImmersiveContextCursor(input: {
     input.cursorLineIndex < input.previousRange.startIndex ||
     input.cursorLineIndex > input.previousRange.endIndex
   );
+}
+
+/** Find the numstat entry for a file leaf; carries change status even for hunk-less files. */
+function findFileTreeStats(node: FileTreeNode | null, filePath: string): FileStats | undefined {
+  if (!node) {
+    return undefined;
+  }
+  if (!node.isDirectory && node.path === filePath) {
+    return node.stats;
+  }
+  for (const child of node.children) {
+    const found = findFileTreeStats(child, filePath);
+    if (found) {
+      return found;
+    }
+  }
+  return undefined;
 }
 
 /** Resolve the hunk that contains a given overlay line index using the lineHunkIds lookup. */
@@ -1359,18 +1378,48 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     }
   }, [resetViewCursorForHunk]);
 
-  const { copied: copiedFile, copyToClipboard: copyFileToClipboard } = useCopyToClipboard();
-  const [lastCopiedFilePath, setLastCopiedFilePath] = useState<string | null>(null);
+  const [copyFileFeedback, setCopyFileFeedback] = useState<{
+    kind: "copied" | "failed";
+    filePath: string;
+  } | null>(null);
+  const copyFileFeedbackTimeoutRef = useRef<number | null>(null);
   const copyFileRequestIdRef = useRef(0);
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
 
+  useEffect(() => {
+    return () => {
+      if (copyFileFeedbackTimeoutRef.current != null) {
+        clearTimeout(copyFileFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const showCopyFileFeedback = useCallback((kind: "copied" | "failed", filePath: string) => {
+    if (copyFileFeedbackTimeoutRef.current != null) {
+      clearTimeout(copyFileFeedbackTimeoutRef.current);
+    }
+    setCopyFileFeedback({ kind, filePath });
+    copyFileFeedbackTimeoutRef.current = window.setTimeout(() => {
+      setCopyFileFeedback(null);
+      copyFileFeedbackTimeoutRef.current = null;
+    }, COPY_FEEDBACK_DURATION_MS);
+  }, []);
+
   // Deleted files no longer exist on disk, so a copy read would always fail;
-  // hide the affordance instead of offering a broken action. Derive deletion from
-  // the UNFILTERED hunk set: search/assisted/read filters can empty the visible
-  // hunk list while the active file falls back to a deleted file.
-  const isActiveFileDeleted =
-    activeFilePath != null && getFileHunks(allHunks, activeFilePath)[0]?.changeType === "deleted";
+  // hide the affordance instead of offering a broken action. The file tree keeps
+  // deletion status even when the file contributes no hunks (empty/binary files),
+  // and the UNFILTERED hunk set covers trees without status while search/assisted
+  // filters empty the visible hunk list.
+  const isActiveFileDeleted = useMemo(() => {
+    if (!activeFilePath) {
+      return false;
+    }
+    return (
+      findFileTreeStats(props.fileTree, activeFilePath)?.changeType === "deleted" ||
+      getFileHunks(allHunks, activeFilePath)[0]?.changeType === "deleted"
+    );
+  }, [props.fileTree, allHunks, activeFilePath]);
 
   // Copy the entire on-disk file, not the overlay content: the overlay may hold only
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
@@ -1380,23 +1429,26 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       return;
     }
     const requestId = ++copyFileRequestIdRef.current;
+    // Discard stale completions: the user may have navigated to another file or
+    // started a newer copy while this read was in flight.
+    const isStale = () =>
+      requestId !== copyFileRequestIdRef.current || activeFilePathRef.current !== filePath;
     try {
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
         script: buildReadFileScript(filePath),
       });
-      // Discard stale completions: the user may have navigated to another file or
-      // started a newer copy while this read was in flight.
-      if (requestId !== copyFileRequestIdRef.current || activeFilePathRef.current !== filePath) {
+      if (isStale()) {
         return;
       }
       if (!result.success) {
+        showCopyFileFeedback("failed", filePath);
         return;
       }
       // The IPC bash transport caps output at 1MB; a truncated read would silently
       // copy only the beginning of the file, so reject it outright.
       if (result.data.truncated) {
-        console.error("Cannot copy file contents: file is too large to read in full");
+        showCopyFileFeedback("failed", filePath);
         return;
       }
       const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
@@ -1409,22 +1461,25 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             ? decodeBase64Utf8(contents.base64)
             : null;
       if (text == null) {
-        console.error(
-          "Cannot copy file contents:",
-          contents.type === "error" ? contents.message : "not a text file"
-        );
+        showCopyFileFeedback("failed", filePath);
         return;
       }
-      await copyFileToClipboard(text);
-      setLastCopiedFilePath(filePath);
+      await copyToClipboard(text);
+      if (!isStale()) {
+        showCopyFileFeedback("copied", filePath);
+      }
     } catch (error) {
       console.error("Failed to copy file contents:", error);
+      if (!isStale()) {
+        showCopyFileFeedback("failed", filePath);
+      }
     }
-  }, [api, activeFilePath, isActiveFileDeleted, props.workspaceId, copyFileToClipboard]);
+  }, [api, activeFilePath, isActiveFileDeleted, props.workspaceId, showCopyFileFeedback]);
 
-  // Only surface copied feedback against the file that was actually copied, so
-  // navigating away within the feedback window cannot show a check on another file.
-  const showCopiedFileFeedback = copiedFile && lastCopiedFilePath === activeFilePath;
+  // Only surface feedback against the file the copy actually targeted, so navigating
+  // away within the feedback window cannot show it against another file.
+  const activeCopyFileFeedback =
+    copyFileFeedback?.filePath === activeFilePath ? copyFileFeedback.kind : null;
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
@@ -1986,8 +2041,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           {!isReviewComplete && activeFilePath && !isActiveFileDeleted && (
             <TooltipIfPresent
               tooltip={
-                showCopiedFileFeedback ? (
+                activeCopyFileFeedback === "copied" ? (
                   "Copied!"
+                ) : activeCopyFileFeedback === "failed" ? (
+                  "Copy failed: not a copyable text file"
                 ) : (
                   <span>
                     Copy file{" "}
@@ -2004,12 +2061,19 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 onClick={() => void handleCopyFile()}
                 className={cn(
                   "flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors",
-                  showCopiedFileFeedback ? "text-read" : "text-muted hover:text-foreground"
+                  activeCopyFileFeedback === "copied"
+                    ? "text-read"
+                    : activeCopyFileFeedback === "failed"
+                      ? "text-danger-soft"
+                      : "text-muted hover:text-foreground"
                 )}
                 aria-label="Copy file contents"
+                data-copy-file-feedback={activeCopyFileFeedback ?? undefined}
               >
-                {showCopiedFileFeedback ? (
+                {activeCopyFileFeedback === "copied" ? (
                   <Check aria-hidden="true" className="h-3.5 w-3.5" />
+                ) : activeCopyFileFeedback === "failed" ? (
+                  <TriangleAlert aria-hidden="true" className="h-3.5 w-3.5" />
                 ) : (
                   <Copy aria-hidden="true" className="h-3.5 w-3.5" />
                 )}
