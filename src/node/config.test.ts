@@ -207,6 +207,50 @@ describe("Config", () => {
       errorSpy.mockRestore();
     });
 
+    it("does not overwrite the corrupt config through edits until a backup is confirmed", async () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      const origWrite = fs.writeFileSync.bind(fs);
+      const writeSpy = spyOn(fs, "writeFileSync").mockImplementation((file, data, options) => {
+        if (typeof file === "string" && file.includes(".corrupt-")) {
+          throw new Error("disk full");
+        }
+        origWrite(file, data, options);
+      });
+
+      await config.setUpdateChannel("nightly");
+
+      expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptData);
+      expect(corruptBackups()).toHaveLength(0);
+
+      writeSpy.mockRestore();
+
+      await config.setUpdateChannel("nightly");
+
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+      const rewritten = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(rewritten.updateChannel).toBe("nightly");
+      errorSpy.mockRestore();
+    });
+
+    it("logs a corrupt config once across Config instances on the same path", () => {
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFilePath(), corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+      new Config(tempDir).loadConfigOrDefault();
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      errorSpy.mockRestore();
+    });
+
     it("recovers from an unreadable config without creating a backup", () => {
       const configFile = configFilePath();
       // A directory at the config path makes readFileSync fail before any bytes exist.

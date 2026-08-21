@@ -820,6 +820,27 @@ function removeLegacyMuxChatEntries(projects: Map<string, ProjectConfig>): boole
   return modified;
 }
 
+interface ConfigLoadFailureState {
+  /** Signature (content + error) of the last logged load failure, for log dedupe. */
+  failureSignature: string | null;
+  /** Content hash of corrupt config bytes whose sidecar backup has been confirmed on disk. */
+  backupSignature: string | null;
+}
+
+// Process-scoped, keyed by config file path: production creates short-lived Config
+// instances (e.g. runtimeFactory per runtime check), so instance-local dedupe would
+// re-log the same corrupt-config error once per instance.
+const configLoadFailureStates = new Map<string, ConfigLoadFailureState>();
+
+function configLoadFailureState(configFile: string): ConfigLoadFailureState {
+  let state = configLoadFailureStates.get(configFile);
+  if (!state) {
+    state = { failureSignature: null, backupSignature: null };
+    configLoadFailureStates.set(configFile, state);
+  }
+  return state;
+}
+
 /**
  * Config - Centralized configuration management
  *
@@ -844,9 +865,6 @@ export class Config {
   private editConfigQueue: Promise<void> = Promise.resolve();
   /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
   private migrationPersist: Promise<void> | null = null;
-  private lastConfigLoadFailureSignature: string | null = null;
-  /** Content hash of corrupt config bytes whose sidecar backup has been confirmed on disk. */
-  private lastConfigBackupSignature: string | null = null;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getXumHome();
@@ -944,6 +962,7 @@ export class Config {
   }
 
   private handleConfigLoadFailure(rawBytes: Buffer | undefined, error: unknown): void {
+    const state = configLoadFailureState(this.configFile);
     const errorMessage = error instanceof Error ? error.message : String(error);
     const failureSignature = crypto
       .createHash("sha256")
@@ -951,15 +970,12 @@ export class Config {
       .update("\0")
       .update(errorMessage)
       .digest("hex");
-    const alreadyLogged = failureSignature === this.lastConfigLoadFailureSignature;
+    const alreadyLogged = failureSignature === state.failureSignature;
     // Backup confirmation is keyed on content alone: the same corrupt bytes need only one
     // sidecar regardless of which error message they produced.
     const contentSignature =
       rawBytes !== undefined ? crypto.createHash("sha256").update(rawBytes).digest("hex") : null;
-    if (
-      alreadyLogged &&
-      (rawBytes === undefined || contentSignature === this.lastConfigBackupSignature)
-    ) {
+    if (alreadyLogged && (rawBytes === undefined || contentSignature === state.backupSignature)) {
       return;
     }
 
@@ -999,14 +1015,14 @@ export class Config {
           }
           backupStatus = `The original bytes were backed up to ${backupPath}.`;
         }
-        this.lastConfigBackupSignature = contentSignature;
+        state.backupSignature = contentSignature;
         backupJustConfirmed = true;
       } catch (backupError) {
-        // Leave lastConfigBackupSignature unset so the next load retries the backup;
-        // without a confirmed sidecar a later defaults write would be permanent data loss.
+        // Leave backupSignature unset so the next load retries the backup; until a sidecar
+        // is confirmed, enqueueConfigEdit refuses to overwrite the corrupt source.
         const backupErrorMessage =
           backupError instanceof Error ? backupError.message : String(backupError);
-        backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load.`;
+        backupStatus = `Backup failed (${backupErrorMessage}); it will be retried on the next load, and settings changes will not overwrite config.json until a backup succeeds.`;
       }
     }
 
@@ -1015,7 +1031,7 @@ export class Config {
     if (alreadyLogged && !backupJustConfirmed) {
       return;
     }
-    this.lastConfigLoadFailureSignature = failureSignature;
+    state.failureSignature = failureSignature;
 
     const guidance =
       rawBytes === undefined
@@ -1411,10 +1427,9 @@ export class Config {
           ? undefined
           : layoutPresetsRaw;
 
-        this.lastConfigLoadFailureSignature = null;
         // Also forget the confirmed backup: after a healthy load the user may prune sidecars,
         // so a later re-corruption must re-verify the backup on disk.
-        this.lastConfigBackupSignature = null;
+        configLoadFailureStates.delete(this.configFile);
         return {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -1470,8 +1485,7 @@ export class Config {
           legacyOnePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
       } else {
-        this.lastConfigLoadFailureSignature = null;
-        this.lastConfigBackupSignature = null;
+        configLoadFailureStates.delete(this.configFile);
       }
     } catch (error) {
       this.handleConfigLoadFailure(rawBytes, error);
@@ -1827,6 +1841,16 @@ export class Config {
   private enqueueConfigEdit(fn: (config: ProjectsConfig) => ProjectsConfig): Promise<void> {
     const run = this.editConfigQueue.then(async () => {
       const config = this.loadConfigOrDefault();
+      // If that load just failed and no sidecar backup is confirmed for the corrupt bytes,
+      // writing would permanently destroy the only copy of the user's settings. Skip the
+      // write (matching saveConfig's log-and-swallow contract) until a backup lands.
+      const failureState = configLoadFailureStates.get(this.configFile);
+      if (failureState?.backupSignature === null) {
+        log.error(
+          `Skipping config write to ${this.configFile}: the existing corrupt config has no confirmed backup yet. Fix the reported backup failure or move the corrupt file aside, then retry.`
+        );
+        return;
+      }
       const newConfig = fn(config);
       await this.saveConfig(newConfig);
       // Backend-initiated config edits (for example gateway auth changes) use this signal
