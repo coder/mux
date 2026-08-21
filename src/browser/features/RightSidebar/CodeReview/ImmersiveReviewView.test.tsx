@@ -1112,6 +1112,91 @@ describe("ImmersiveReviewView", () => {
     expect(clipboardWrites).toHaveLength(0);
   });
 
+  test("discards a copy that completes after navigating away and back (ABA)", async () => {
+    const fileAHunk = createHunk({ id: "hunk-a", filePath: "src/a.ts" });
+    const fileBHunk = createHunk({ id: "hunk-b", filePath: "src/b.ts" });
+
+    // Copy reads carry no awk line budget; overlay full-file reads do.
+    const pendingReads: Array<(value: unknown) => void> = [];
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      return new Promise((resolve) => {
+        pendingReads.push(resolve as (value: unknown) => void);
+      });
+    }) as unknown as MockApiClient["workspace"]["executeBash"];
+
+    function NavigationHarness() {
+      const [selectedHunkId, setSelectedHunkId] = useState<string | null>(fileAHunk.id);
+      return (
+        <ThemeProvider forcedTheme="dark">
+          <ImmersiveReviewView
+            workspaceId="workspace-1"
+            fileTree={createFileTreeForPaths([fileAHunk.filePath, fileBHunk.filePath])}
+            hunks={[fileAHunk, fileBHunk]}
+            allHunks={[fileAHunk, fileBHunk]}
+            isRead={() => false}
+            onToggleRead={mock(() => undefined)}
+            onMarkFileAsRead={mock(() => undefined)}
+            selectedHunkId={selectedHunkId}
+            onSelectHunk={setSelectedHunkId}
+            onExit={mock(() => undefined)}
+            isTouchImmersive={true}
+            reviewsByFilePath={new Map()}
+            firstSeenMap={{}}
+          />
+        </ThemeProvider>
+      );
+    }
+
+    const view = render(<NavigationHarness />);
+
+    const clickCopy = () => {
+      const button = view.container.querySelector<HTMLButtonElement>(
+        'button[aria-label="Copy file contents"]'
+      );
+      expect(button).toBeTruthy();
+      fireEvent.click(button!);
+    };
+    const navigate = (label: "Next file" | "Previous file", expectText: string) => {
+      const button = view.container.querySelector<HTMLButtonElement>(
+        `button[aria-label="${label}"]`
+      );
+      expect(button).toBeTruthy();
+      fireEvent.click(button!);
+      return waitFor(() => expect(view.container.textContent ?? "").toContain(expectText));
+    };
+
+    clickCopy();
+    await waitFor(() => expect(pendingReads).toHaveLength(1));
+
+    // A -> B -> A while the read for A is still pending.
+    await navigate("Next file", "b.ts");
+    await navigate("Previous file", "a.ts");
+
+    // The stale read for A resolves after returning to A: it must be discarded even
+    // though the active path matches again.
+    pendingReads[0]({
+      success: true as const,
+      data: { success: true, output: encodeFileReadOutput("stale A contents"), exitCode: 0 },
+    });
+    await act(async () => {
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+    });
+    expect(clipboardWrites).toHaveLength(0);
+
+    // Navigation freed the pending slot, so a replacement copy of A can start.
+    clickCopy();
+    await waitFor(() => expect(pendingReads).toHaveLength(2));
+  });
+
   test("rejects truncated reads instead of copying a partial file", async () => {
     mockApi.workspace.executeBash = mock(() =>
       Promise.resolve({

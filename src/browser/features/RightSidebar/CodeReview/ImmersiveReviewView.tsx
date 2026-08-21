@@ -1401,6 +1401,14 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, []);
 
+  // Every file navigation invalidates in-flight copies and frees the pending slot.
+  // The request-id bump also covers the A -> B -> A case, where the path check alone
+  // would wrongly treat the stale read for A as current again.
+  useEffect(() => {
+    copyFileRequestIdRef.current += 1;
+    pendingCopyFilePathRef.current = null;
+  }, [activeFilePath]);
+
   // Feedback persists until a deterministic event (file navigation or the next copy)
   // instead of a wall-clock timer, and never shows against a file the copy did not
   // target. Render-time adjustment per the React docs pattern.
