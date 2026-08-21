@@ -407,6 +407,19 @@ function renderLabeledTaskMessage(label: string, message: string): string {
   return `${label}:\n\n${message}`;
 }
 
+/**
+ * Budget charge for one family-message trigger (r22): when the target is
+ * already streaming, MessageQueue batches synthetic triggers into ONE entry
+ * and dequeueNext() joins them with "\n" — one uncharged separator per
+ * trigger after the first, so exact-length payload picking could exceed the
+ * ceilings by the accumulated newlines. Charged unconditionally per send as
+ * a SAFE UPPER BOUND: accounting may over-charge by one byte on unbatched
+ * sends, which only refuses marginally earlier — never later.
+ */
+function familyMessageTriggerCharge(renderedTrigger: string): number {
+  return renderedTrigger.length + "\n".length;
+}
+
 function formatStructuredOutputValidationMessage(params: {
   workflowTask: NonNullable<WorkspaceConfigEntry["workflowTask"]>;
   errors: Array<{ path: string; message: string }>;
@@ -7550,7 +7563,7 @@ export class TaskService {
     const refundBudget = this.reserveFamilyMessageBudget(
       childWorkspaceId,
       parentWorkspaceId,
-      payloadContent.length + triggerContent.length
+      payloadContent.length + familyMessageTriggerCharge(triggerContent)
     );
     if (refundBudget === null) {
       return Err(this.familyMessageBudgetExhaustedError());
@@ -7684,7 +7697,7 @@ export class TaskService {
     const refundBudget = this.reserveFamilyMessageBudget(
       senderWorkspaceId,
       targetTaskId,
-      payloadContent.length + renderedTrigger.length
+      payloadContent.length + familyMessageTriggerCharge(renderedTrigger)
     );
     if (refundBudget === null) {
       return Err(this.familyMessageBudgetExhaustedError());

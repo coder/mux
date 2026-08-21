@@ -13390,6 +13390,114 @@ describe("TaskService", () => {
     );
   });
 
+  test("exact-length sends never exceed the ceiling once queue-join separators are counted", async () => {
+    // r22: triggers batched into one MessageQueue entry are joined with "\n"
+    // — one separator per trigger after the first. A sender picking payload
+    // lengths that consume the chars budget EXACTLY made the joined durable
+    // row exceed the ceiling by those uncharged newlines; the trigger charge
+    // is now a safe upper bound (+1/send).
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-joined-budget";
+    const probeChildId = "child-joined-probee";
+    const attackChildId = "child-joined-attack";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "probee", probeChildId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+        projectWorkspace(projectPath, "attack", attackChildId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService, historyService } = createTaskServiceHarness(config, {
+      workspaceService,
+    });
+
+    // Probe: measure the per-send framing overhead and trigger length (IDs
+    // and names are deliberately equal-length across the two children so the
+    // measured numbers transfer exactly).
+    const probeChars = 100;
+    const probed = await taskService.sendMessageToParentFromAgentTask(
+      probeChildId,
+      "p".repeat(probeChars),
+      "tool-end"
+    );
+    expect(probed.success).toBe(true);
+    const probeHistory = await historyService.getHistoryFromLatestBoundary(parentWorkspaceId);
+    expect(probeHistory.success).toBe(true);
+    if (!probeHistory.success) return;
+    const probeRow = probeHistory.data.find(
+      (m) => m.metadata?.muxMetadata?.type === "family-message"
+    );
+    expect(probeRow).toBeDefined();
+    const probePayloadLength = probeRow!.parts.reduce(
+      (s, part) => s + (part.type === "text" ? part.text.length : 0),
+      0
+    );
+    const framingOverhead = probePayloadLength - probeChars;
+    const triggerLength = String(sendMessage.mock.calls[0][1]).length;
+    sendMessage.mockClear();
+
+    // Attack: size messages so payload+trigger divides the pair ceiling
+    // exactly across the 32-message count budget (32 × 8192 = 256KiB — the
+    // chars ceiling is filled to the last byte pre-fix).
+    const perSendRendered =
+      TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS / TASK_FAMILY_MESSAGE_MAX_TOTAL_MESSAGES;
+    const messageChars = perSendRendered - framingOverhead - triggerLength;
+    expect(messageChars).toBeGreaterThan(0);
+    let delivered = 0;
+    for (let i = 0; i < TASK_FAMILY_MESSAGE_MAX_TOTAL_MESSAGES; i++) {
+      const sent = await taskService.sendMessageToParentFromAgentTask(
+        attackChildId,
+        "y".repeat(messageChars),
+        "tool-end"
+      );
+      if (!sent.success) break;
+      delivered += 1;
+    }
+    expect(delivered).toBeGreaterThan(0);
+
+    // Worst-case durable bytes: every trigger of this sender batched into
+    // one queue entry → payload rows + joined trigger row incl. separators.
+    const history = await historyService.getHistoryFromLatestBoundary(parentWorkspaceId);
+    expect(history.success).toBe(true);
+    if (!history.success) return;
+    const attackPayloadTotal = history.data
+      .filter(
+        (m) =>
+          m.metadata?.muxMetadata?.type === "family-message" &&
+          m.parts.some((part) => part.type === "text" && part.text.includes(attackChildId))
+      )
+      .reduce(
+        (sum, m) =>
+          sum + m.parts.reduce((s, part) => s + (part.type === "text" ? part.text.length : 0), 0),
+        0
+      );
+    const triggerTotal = sendMessage.mock.calls.reduce(
+      (sum, call) => sum + String(call[1]).length,
+      0
+    );
+    const joinedSeparators = Math.max(0, delivered - 1);
+    expect(attackPayloadTotal + triggerTotal + joinedSeparators).toBeLessThanOrEqual(
+      TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS
+    );
+  });
+
   test("wake failures retain the budget charge for persisted payload rows", async () => {
     // Codex round 18: refunding on wake failure let a child that catches the
     // tool error retry unlimited max-size payload rows while the wake path
