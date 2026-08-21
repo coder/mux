@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { GlobalWindow } from "happy-dom";
 import { useEffect, useState, type ComponentProps } from "react";
 
@@ -1101,8 +1101,14 @@ describe("ImmersiveReviewView", () => {
       data: { success: true, output: encodeFileReadOutput("file A contents"), exitCode: 0 },
     });
 
-    // The stale completion must not reach the clipboard.
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    // The stale completion must not reach the clipboard. The handler continuation
+    // (including any would-be clipboard write) is a bounded microtask chain after the
+    // resolved read, so drain microtasks deterministically instead of sleeping.
+    await act(async () => {
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+    });
     expect(clipboardWrites).toHaveLength(0);
   });
 
@@ -1159,11 +1165,12 @@ describe("ImmersiveReviewView", () => {
     fireEvent.click(copyButton!);
 
     await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+    expect(clipboardWrites[0]).toBe(fullContent);
     const copyRead = copyReadCalls.find((call) => !call.script.includes("awk 'NR >"));
     expect(copyRead).toBeTruthy();
-    // Container-root project entries are symlinks, so the read must anchor to the
-    // resolved project root and run in default (container-root) mode.
-    expect(copyRead!.script).toContain("anchor=$(realpath './src'");
+    // Multi-project hunk paths are container-root-relative, so the read must run in
+    // default (container-root) mode; the project-symlink containment invariant itself
+    // is covered behaviorally by the real-bash tests in fileRead.test.ts.
     expect(copyRead!.options).toBeUndefined();
   });
 
