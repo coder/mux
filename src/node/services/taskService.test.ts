@@ -669,7 +669,7 @@ describe("TaskService", () => {
           parentMeta: Record<string, never>;
           agentId: string;
           modelString?: string;
-        }) => { taskModelString: string; canonicalModel: string };
+        }) => Promise<{ taskModelString: string; canonicalModel: string }>;
       }
     ).resolveTaskAISettings.bind(taskService);
 
@@ -677,7 +677,7 @@ describe("TaskService", () => {
     // type anthropic) must stay gateway-scoped in the PERSISTED settings:
     // name canonicalization would rewrite it to openai:<claude>, sending
     // queued follow-ups and plan→exec continuations to direct OpenAI.
-    const gateway = resolver({
+    const gateway = await resolver({
       cfg: config.loadConfigOrDefault(),
       parentMeta: {},
       agentId: "exec",
@@ -686,7 +686,7 @@ describe("TaskService", () => {
     expect(gateway.canonicalModel).toBe("coder:openai/claude-sonnet-4-20250514");
 
     // Non-gateway strings keep canonical normalization.
-    const direct = resolver({
+    const direct = await resolver({
       cfg: config.loadConfigOrDefault(),
       parentMeta: {},
       agentId: "exec",
@@ -1192,7 +1192,9 @@ describe("TaskService", () => {
     });
     expect(second.success).toBe(true);
     const secondSend = sendMessage.mock.calls[1];
-    expect(secondSend[2]).not.toHaveProperty("reasoningMode");
+    // The bucket's absent reasoning resolves to explicit standard; the owner's
+    // pro must not leak through.
+    expect((secondSend[2] as { reasoningMode?: string }).reasoningMode).not.toBe("pro");
   });
 
   test("createWorkspaceTurn rejects multi-project owners instead of dropping secondary repos", async () => {
@@ -10372,7 +10374,10 @@ describe("TaskService", () => {
       {
         model: "google:gemini-3-pro",
         agentId: "exec",
-        thinkingLevel: "low",
+        // Floor-aware clamp (matching what the send path enforces at request
+        // time): "off" is unsupported and below the model's medium floor, so
+        // it lands on the nearest allowed level.
+        thinkingLevel: "high",
         experiments: undefined,
       },
       { agentInitiated: true }
@@ -22638,7 +22643,9 @@ describe("TaskService", () => {
       expect.objectContaining({
         agentId: "exec",
         model: "openai:gpt-4o-mini",
-        thinkingLevel: "off",
+        // Thinking inherits field-wise from the plan workspace's persisted
+        // settings ("max"), clamped by the resolved kickoff model's policy.
+        thinkingLevel: "high",
       }),
       expect.objectContaining({ synthetic: true })
     );
@@ -22781,7 +22788,7 @@ describe("TaskService", () => {
     expect(updatedTask?.taskThinkingLevel).toBe("xhigh");
   });
 
-  test("stream-end handoff falls back to default model when inherited task model is whitespace", async () => {
+  test("stream-end handoff ignores a whitespace inherited task model", async () => {
     const { config, childId, sendMessage, internal } = await setupPlanModeStreamEndHarness();
 
     const preCfg = config.loadConfigOrDefault();
@@ -22796,13 +22803,15 @@ describe("TaskService", () => {
 
     await internal.handleStreamEnd(makeSuccessfulProposePlanStreamEndEvent(childId));
 
+    // The whitespace frozen model must not be used verbatim; resolution falls
+    // through to the plan workspace's own persisted settings.
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       childId,
       expect.stringContaining("Implement the plan"),
       expect.objectContaining({
         agentId: "exec",
-        model: defaultModel,
+        model: "anthropic:claude-opus-4-6",
       }),
       expect.objectContaining({ synthetic: true })
     );
@@ -22812,7 +22821,7 @@ describe("TaskService", () => {
       .flatMap((project) => project.workspaces)
       .find((workspace) => workspace.id === childId);
 
-    expect(updatedTask?.taskModelString).toBe(defaultModel);
+    expect(updatedTask?.taskModelString).toBe("anthropic:claude-opus-4-6");
   });
 
   test("stream-end with propose_plan success triggers handoff for custom plan-like agents", async () => {
