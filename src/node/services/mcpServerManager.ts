@@ -1105,6 +1105,8 @@ export class MCPServerManager {
   private readonly pluginInvalidation?: MCPServerManagerOptions["pluginInvalidation"];
   private pluginInvalidationTokenSeen = false;
   private lastPluginInvalidationToken: string | undefined;
+  /** Serializes cross-process invalidation checks (see retireCrossProcessPluginInstances). */
+  private pluginInvalidationQueue: Promise<unknown> = Promise.resolve();
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
   private readonly policyService: PolicyService | null;
@@ -1145,21 +1147,34 @@ export class MCPServerManager {
    * because this method guards every serve path.
    */
   private async retireCrossProcessPluginInstances(): Promise<void> {
-    if (this.pluginInvalidation === undefined) {
+    const invalidation = this.pluginInvalidation;
+    if (invalidation === undefined) {
       return;
     }
-    const token = await this.pluginInvalidation.readToken();
-    if (!this.pluginInvalidationTokenSeen) {
-      this.pluginInvalidationTokenSeen = true;
+    // Serialize the whole check+sweep AND publish the observed token only
+    // AFTER the sweep finishes: a concurrent serve that merely compared the
+    // token could otherwise observe it as handled while the sweep is still
+    // closing instances sequentially, and return a server running from the
+    // replaced tree. Queued serves wait for the in-flight sweep, then see the
+    // published token and proceed; a failed sweep leaves the token
+    // unpublished so the next serve retries it.
+    const run = async (): Promise<void> => {
+      const token = await invalidation.readToken();
+      if (!this.pluginInvalidationTokenSeen) {
+        this.pluginInvalidationTokenSeen = true;
+        this.lastPluginInvalidationToken = token;
+        return;
+      }
+      if (token === this.lastPluginInvalidationToken) {
+        return;
+      }
+      log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
+      await this.stopServersWithKeyPrefix(invalidation.keyPrefix);
       this.lastPluginInvalidationToken = token;
-      return;
-    }
-    if (token === this.lastPluginInvalidationToken) {
-      return;
-    }
-    this.lastPluginInvalidationToken = token;
-    log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
-    await this.stopServersWithKeyPrefix(this.pluginInvalidation.keyPrefix);
+    };
+    const next = this.pluginInvalidationQueue.then(run, run);
+    this.pluginInvalidationQueue = next.catch(() => undefined);
+    return next;
   }
 
   /**

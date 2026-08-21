@@ -26,7 +26,11 @@ import assert from "@/common/utils/assert";
 import { getErrorMessage } from "@/common/utils/errors";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import type { Config } from "@/node/config";
-import { SkillNameSchema } from "@/common/orpc/schemas/agentSkill";
+import {
+  SkillNameSchema,
+  resolveSkillAdvertise,
+  resolveSkillWhenToUse,
+} from "@/common/orpc/schemas/agentSkill";
 import { parseSkillMarkdown } from "@/node/services/agentSkills/parseSkillMarkdown";
 import { log } from "@/node/services/log";
 import type { MCPServerManager } from "@/node/services/mcpServerManager";
@@ -148,6 +152,12 @@ const MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
 
 const LS_REMOTE_TIMEOUT_MS = 30_000;
 const CLONE_TIMEOUT_MS = 120_000;
+
+/** Preview skill row plus the extra model-visible fields (see collectSkills). */
+type CollectedPluginSkill = AgentPluginPreviewSkill & {
+  whenToUse?: string;
+  advertise?: boolean;
+};
 
 /** Result of resolving a user-supplied ref against the remote. */
 interface ResolvedRemoteRef {
@@ -1213,7 +1223,19 @@ export class AgentPluginInstallService {
     const hook = this.collectHook(plugin);
     const skills = new Map<string, string>();
     for (const skill of await this.collectSkills(plugin, [])) {
-      skills.set(skill.name, JSON.stringify({ description: skill.description ?? null }));
+      // EVERY model-visible advertisement field: description, whenToUse
+      // (both interpolate into the agent_skill_read tool description on each
+      // request), and advertise (a flip from hidden to visible surfaces a
+      // previously invisible skill). Changing any of them is re-consent
+      // territory, same as adding a skill.
+      skills.set(
+        skill.name,
+        JSON.stringify({
+          description: skill.description ?? null,
+          whenToUse: skill.whenToUse ?? null,
+          advertise: skill.advertise ?? null,
+        })
+      );
     }
     const components = new Set<string>([
       ...(await this.collectComponentFiles(plugin.agentsDir, ".md")).map((f) => `agent ${f}`),
@@ -1312,7 +1334,7 @@ export class AgentPluginInstallService {
       if (currentFingerprint === undefined) {
         changes.push(`adds skill '${skillName}'`);
       } else if (currentFingerprint !== fingerprint) {
-        changes.push(`changes the advertised description of skill '${skillName}'`);
+        changes.push(`changes the model-visible advertisement of skill '${skillName}'`);
       }
     }
     // Consent covered a specific component set; additions need a new preview.
@@ -1357,15 +1379,21 @@ export class AgentPluginInstallService {
     }
   }
 
+  /**
+   * Preview skill rows enriched with the remaining MODEL-VISIBLE frontmatter:
+   * whenToUse interpolates into the agent_skill_read tool description and
+   * advertise gates that visibility entirely, so the update capability
+   * fingerprint must cover them (the oRPC preview schema strips the extras).
+   */
   private async collectSkills(
     plugin: Pick<AgentPluginInfo, "rootPath" | "skillsDir">,
     warnings: string[]
-  ): Promise<AgentPluginPreviewSkill[]> {
+  ): Promise<CollectedPluginSkill[]> {
     const skillsDir = plugin.skillsDir;
     if (skillsDir === undefined) {
       return [];
     }
-    const skills: AgentPluginPreviewSkill[] = [];
+    const skills: CollectedPluginSkill[] = [];
     let entries: string[] = [];
     try {
       // Include symlinked skill dirs, matching runtime discovery
@@ -1428,6 +1456,13 @@ export class AgentPluginInstallService {
           ...(parsed.frontmatter.description !== undefined
             ? { description: parsed.frontmatter.description }
             : {}),
+          // Model-visible beyond name/description: whenToUse interpolates
+          // into the agent_skill_read tool description, and advertise
+          // controls whether the skill appears there at all. Both feed the
+          // update capability fingerprint (capabilitySurface), resolved with
+          // the same helpers the runtime uses.
+          whenToUse: resolveSkillWhenToUse(parsed.frontmatter),
+          advertise: resolveSkillAdvertise(parsed.frontmatter),
         });
       } catch (error) {
         warnings.push(`skills/${dirName}: ${getErrorMessage(error)}`);

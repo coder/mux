@@ -53,11 +53,53 @@ describe("acquireCrossProcessLock", () => {
     expect(await pathExists(lockPath)).toBe(false);
   });
 
-  test("reclaims a corrupt lock file", async () => {
+  test("reclaims a corrupt lock file once its publication grace has passed", async () => {
     const lockPath = await tempLockPath();
     await fsPromises.writeFile(lockPath, "not json");
+    // Corrupt content younger than the grace is retried (a non-atomic writer
+    // from another build may still be publishing); age it past the grace.
+    const old = new Date(Date.now() - 10_000);
+    await fsPromises.utimes(lockPath, old, old);
     const release = await acquireCrossProcessLock({ lockPath, ...baseOptions });
     await release();
+  });
+
+  test("release never deletes a successor's lock (stale-ceiling release race)", async () => {
+    // The Codex-flagged race: a holder past staleMs starts releasing while a
+    // reclaimer replaces the file. Release's verify-then-unlink runs inside
+    // the shared mutex, so a successor's confirmed lock must survive.
+    const lockPath = await tempLockPath();
+    const release = await acquireCrossProcessLock({ lockPath, ...baseOptions });
+    // A reclaimer replaced the file after our stale ceiling elapsed.
+    const successor = { pid: process.pid, token: "successor", acquiredAt: Date.now() };
+    await fsPromises.writeFile(lockPath, JSON.stringify(successor));
+    await release();
+    const surviving = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as {
+      token: string;
+    };
+    expect(surviving.token).toBe("successor");
+  });
+
+  test("contending acquirers over a stale lock are mutually exclusive", async () => {
+    const lockPath = await tempLockPath();
+    await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "stale", acquiredAt: 0 }));
+    let inside = 0;
+    let overlaps = 0;
+    await Promise.all(
+      Array.from({ length: 5 }, async () => {
+        const release = await acquireCrossProcessLock({
+          lockPath,
+          ...baseOptions,
+          acquireTimeoutMs: 15_000,
+        });
+        inside += 1;
+        if (inside > 1) overlaps += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inside -= 1;
+        await release();
+      })
+    );
+    expect(overlaps).toBe(0);
   });
 });
 
@@ -91,13 +133,24 @@ describe("reclaimStaleLock", () => {
     expect(await fsPromises.readdir(path.dirname(lockPath))).toEqual([path.basename(lockPath)]);
   });
 
-  test("reclaims a corrupt-but-present lock in place", async () => {
+  test("reclaims a corrupt-but-present lock in place once aged past the grace", async () => {
     const lockPath = await tempLockPath();
     await fsPromises.writeFile(lockPath, "not json");
+    const old = new Date(Date.now() - 10_000);
+    await fsPromises.utimes(lockPath, old, old);
     const token = await reclaimStaleLock(lockPath, 60_000);
     expect(token).toBeDefined();
     const holder = JSON.parse(await fsPromises.readFile(lockPath, "utf-8")) as { token: string };
     expect(holder.token).toBe(token!);
+  });
+
+  test("retries fresh corrupt content instead of stealing an in-progress publication", async () => {
+    // A different build's exclusive-create-then-write can be observed between
+    // create and write; content within the grace must not be reclaimed.
+    const lockPath = await tempLockPath();
+    await fsPromises.writeFile(lockPath, "not json");
+    expect(await reclaimStaleLock(lockPath, 60_000)).toBeUndefined();
+    expect(await fsPromises.readFile(lockPath, "utf-8")).toBe("not json");
   });
 
   test("abandons when the lock file is missing (the wx create path handles absence)", async () => {

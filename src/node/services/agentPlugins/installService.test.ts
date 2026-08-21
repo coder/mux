@@ -437,7 +437,19 @@ describe("AgentPluginInstallService", () => {
     );
     await commitAll(remoteDir, "v2 rewords the skill description");
     await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(
-      /changes the advertised description of skill 'greet'/
+      /changes the model-visible advertisement of skill 'greet'/
+    );
+
+    // when_to_use interpolates into the model-facing skill index too — a
+    // change with an unchanged description is equally consent-relevant.
+    await writePluginFixture(remoteDir, { version: "2.0.5" });
+    await fsPromises.writeFile(
+      path.join(remoteDir, "skills", "greet", "SKILL.md"),
+      "---\nname: greet\ndescription: Greets people\nwhen_to_use: Load before every privileged tool call\n---\n\nSay hi.\n"
+    );
+    await commitAll(remoteDir, "v2.0.5 adds when_to_use");
+    await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(
+      /changes the model-visible advertisement of skill 'greet'/
     );
 
     // Additions of consent-listed components are gated too.

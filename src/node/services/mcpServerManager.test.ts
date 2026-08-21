@@ -190,6 +190,63 @@ describe("MCPServerManager", () => {
     expect(close2).toHaveBeenCalledTimes(0);
   });
 
+  test("concurrent serves await an in-flight cross-process sweep before returning", async () => {
+    // The observed token must publish only AFTER the sweep completes: a
+    // concurrent serve that merely compared the token could otherwise return
+    // an instance the sweep has not yet retired.
+    manager.dispose();
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-sweep-order";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    // First serve: cache an instance whose close is GATED, so the sweep
+    // triggered by the token bump blocks mid-retire.
+    let releaseClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const close = mock(() => closeGate);
+    access.startServers = () =>
+      Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close }]]));
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    token = "epoch-2";
+    const restarted = mock(() => Promise.resolve(undefined));
+    access.startServers = () =>
+      Promise.resolve(
+        startResult([[pluginKey, { tools: { echo: testTool() }, close: restarted }]])
+      );
+    let firstDone = false;
+    let secondDone = false;
+    const first = manager.getToolsForWorkspace(workspaceRequest(workspaceId)).then((result) => {
+      firstDone = true;
+      return result;
+    });
+    const second = manager.getToolsForWorkspace(workspaceRequest(workspaceId)).then((result) => {
+      secondDone = true;
+      return result;
+    });
+    // Both serves are queued behind the gated sweep: neither may resolve.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(firstDone).toBe(false);
+    expect(secondDone).toBe(false);
+
+    releaseClose();
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    // Neither serve returned the stale instance; both see the restarted tree.
+    expect(Object.keys(firstResult.tools)).toHaveLength(1);
+    expect(Object.keys(secondResult.tools)).toHaveLength(1);
+    expect(restarted).toHaveBeenCalledTimes(0);
+  });
+
   test("stopServersWithKeyPrefix invalidates instances published by an in-flight startup, then retries them", async () => {
     const workspaceId = "ws-swap-race";
     const pluginKey = "plugin:abc123:echo";
