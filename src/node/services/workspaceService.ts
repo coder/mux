@@ -2755,6 +2755,32 @@ export class WorkspaceService extends EventEmitter {
   private readonly pendingPluginSanitizations = new Set<string>();
 
   /**
+   * TaskService entry point: task worktrees are REGISTERED before their
+   * checkout exists (queued/reserved launches persist the entry with a future
+   * path), so creation-time sanitization cannot cover them and an uninstall's
+   * override pruning enumerates a path with nothing to prune — the later
+   * materialization then restores a committed stale `plugin:` enable. Call
+   * this after the checkout materializes and BEFORE the first send. Off-host
+   * runtimes are skipped (plugin servers never spawn there in v1); shared
+   * parent checkouts are skipped by the live-sibling scan inside.
+   * Returns an error string (the launch must fail) or undefined on success.
+   */
+  async sanitizeMaterializedTaskWorkspace(
+    workspaceId: string,
+    workspacePath: string,
+    runtimeConfig: RuntimeConfig | undefined
+  ): Promise<string | undefined> {
+    const hostLocal =
+      runtimeConfig === undefined ||
+      runtimeConfig.type === "local" ||
+      runtimeConfig.type === "worktree";
+    if (!hostLocal) {
+      return undefined;
+    }
+    return this.sanitizeStalePluginOverridesForNewWorkspace(workspaceId, workspacePath);
+  }
+
+  /**
    * Registration-time sanitization of stale Agent Plugin override keys.
    *
    * A host-local workspace's `.mux/mcp.local.jsonc` lives in the checkout,

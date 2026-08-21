@@ -3453,6 +3453,23 @@ export class TaskService {
       return;
     }
 
+    if (!sharesParentCheckout) {
+      // SECURITY: task worktrees materialize AFTER their workspace entry is
+      // registered, so creation-time plugin-override sanitization never saw
+      // this checkout — a tracked stale `plugin:` enable would re-activate a
+      // same-name reinstall's default-disabled MCP server on the first send.
+      // Same contract as WorkspaceService.create/fork: sanitize or fail.
+      const sanitizeError = await this.workspaceService.sanitizeMaterializedTaskWorkspace(
+        plan.taskId,
+        workspacePath,
+        forkedRuntimeConfig
+      );
+      if (sanitizeError !== undefined) {
+        initLogger.logComplete(-1);
+        throw new Error(sanitizeError);
+      }
+    }
+
     if (sharesParentCheckout) {
       // The parent's checkout is already initialized and live; re-running init would redundantly
       // (and possibly disruptively) mutate it. Skip init entirely.
@@ -4415,6 +4432,28 @@ export class TaskService {
 
     // Emit metadata update so the UI sees the workspace immediately.
     await this.emitWorkspaceMetadata(taskId);
+
+    if (!useSharedWorkspace) {
+      // SECURITY: this checkout materialized outside WorkspaceService.create/
+      // fork, so registration-time plugin-override sanitization never saw it —
+      // a tracked stale `plugin:` enable would re-activate a same-name
+      // reinstall's default-disabled MCP server on the send below.
+      const sanitizeError = await this.workspaceService.sanitizeMaterializedTaskWorkspace(
+        taskId,
+        workspacePath,
+        forkedRuntimeConfig
+      );
+      if (sanitizeError !== undefined) {
+        await this.rollbackFailedTaskCreate(
+          runtimeForTaskWorkspace,
+          parentMeta.projectPath,
+          workspaceName,
+          taskId
+        );
+        initLogger.logComplete(-1);
+        return Err(sanitizeError);
+      }
+    }
 
     // Kick init (best-effort, async). Shared-workspace (isolation: "none") tasks reuse the parent's
     // already-initialized checkout, so re-running init would redundantly (and possibly disruptively)

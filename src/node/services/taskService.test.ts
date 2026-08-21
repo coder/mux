@@ -541,6 +541,10 @@ function createWorkspaceServiceMocks(
   return {
     workspaceService: {
       create,
+      // No-op by default: task-create tests exercise launch flow, not the
+      // registration-time plugin-override sanitizer (workspaceService.test.ts
+      // covers it). Returning undefined means "clean".
+      sanitizeMaterializedTaskWorkspace: mock(() => Promise.resolve(undefined)),
       sendMessage,
       resumeStream,
       clearQueue,
