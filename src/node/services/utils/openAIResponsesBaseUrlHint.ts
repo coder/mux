@@ -1,6 +1,6 @@
 import { APICallError, RetryError } from "ai";
 
-import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
+import { CODEX_ENDPOINT, CODEX_OAUTH_ROUTED_HEADER } from "@/common/constants/codexOAuth";
 
 export const OPENAI_RESPONSES_BASE_URL_HINT =
   "Your custom OpenAI base URL may not support the Responses API. In Settings -> Providers -> OpenAI set Wire format to 'chat completions', or add the endpoint as a custom OpenAI-compatible provider instead.";
@@ -30,6 +30,14 @@ export function getOpenAIResponsesBaseUrlHint(options: {
   const apiCallError = getApiCallError(options.error);
   const statusCode = apiCallError?.statusCode;
   if (!apiCallError || (statusCode !== 400 && statusCode !== 404 && statusCode !== 405)) {
+    return undefined;
+  }
+
+  // Codex OAuth reroutes happen inside the provider fetch wrapper AFTER the
+  // SDK fixes the URL it reports on errors, so the URL alone cannot prove the
+  // bytes came from the configured endpoint. The wrapper marks rerouted error
+  // responses explicitly.
+  if (apiCallError.responseHeaders?.[CODEX_OAUTH_ROUTED_HEADER] != null) {
     return undefined;
   }
 

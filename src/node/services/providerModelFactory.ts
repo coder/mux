@@ -14,6 +14,7 @@ import {
 } from "@/common/constants/providers";
 import {
   CODEX_ENDPOINT,
+  CODEX_OAUTH_ROUTED_HEADER,
   isCodexOauthAllowedModel,
   isCodexOauthRequiredModel,
 } from "@/common/constants/codexOAuth";
@@ -571,22 +572,46 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
 }
 
 export function normalizeOpenAICompatibleBaseURL(baseURL: string): string {
+  // Trim first: new URL() tolerates surrounding whitespace, which would defeat
+  // the raw-string trailing-slash check below for values like "http://x/ ".
+  const trimmed = baseURL.trim();
   try {
-    const url = new URL(baseURL);
+    const url = new URL(trimmed);
     // An explicit trailing slash ("http://host:8080/") opts out for servers that
     // mount /chat/completions at the origin root. The URL API normalizes both
     // spellings to pathname "/", so the raw string is the only place the intent
     // survives.
-    if (url.pathname !== "/" || baseURL.endsWith("/")) {
-      return baseURL;
+    if (url.pathname !== "/" || trimmed.endsWith("/")) {
+      return trimmed;
     }
 
     // Most compatible servers mount their API under /v1, but explicit proxy paths must remain intact.
     url.pathname = "/v1";
     return url.toString();
   } catch {
-    return baseURL;
+    return trimmed;
   }
+}
+
+/**
+ * Mark a Codex-OAuth-rerouted error response so error consumers (e.g. the
+ * Responses base-URL hint) can tell the bytes came from the Codex backend,
+ * not the configured base URL. Success responses pass through untouched to
+ * keep streaming bodies unwrapped.
+ *
+ * Exported for testing.
+ */
+export function markCodexOauthRoutedResponse(response: Response): Response {
+  if (response.ok) {
+    return response;
+  }
+  const headers = new Headers(response.headers);
+  headers.set(CODEX_OAUTH_ROUTED_HEADER, "1");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 import { getErrorMessage } from "@/common/utils/errors";
@@ -1443,6 +1468,7 @@ export class ProviderModelFactory {
 
               let nextInput: Parameters<typeof fetch>[0] = input;
               let nextInit: Parameters<typeof fetch>[1] | undefined = init;
+              let reroutedThroughCodexOauth = false;
 
               const body = init?.body;
               // Only parse the JSON body when routing through Codex OAuth, since Codex
@@ -1489,9 +1515,11 @@ export class ProviderModelFactory {
 
                 nextInput = CODEX_ENDPOINT;
                 nextInit = { ...(nextInit ?? {}), headers };
+                reroutedThroughCodexOauth = true;
               }
 
-              return baseFetch(nextInput, nextInit);
+              const response = await baseFetch(nextInput, nextInit);
+              return reroutedThroughCodexOauth ? markCodexOauthRoutedResponse(response) : response;
             } catch (error) {
               // For normal OpenAI (API key) requests, fall back to the original fetch on unexpected errors.
               // For Codex OAuth routing, failures should surface (falling back would hit api.openai.com).

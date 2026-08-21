@@ -1,17 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { APICallError } from "ai";
 
-import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
+import { CODEX_ENDPOINT, CODEX_OAUTH_ROUTED_HEADER } from "@/common/constants/codexOAuth";
 
 import { getOpenAIResponsesBaseUrlHint } from "./openAIResponsesBaseUrlHint";
 
-function createApiCallError(statusCode: number, url: string): APICallError {
+function createApiCallError(
+  statusCode: number,
+  url: string,
+  responseHeaders: Record<string, string> = {}
+): APICallError {
   return new APICallError({
     message: "request failed",
     url,
     requestBodyValues: {},
     statusCode,
-    responseHeaders: {},
+    responseHeaders,
     responseBody: "{}",
     isRetryable: false,
   });
@@ -72,6 +76,16 @@ describe("getOpenAIResponsesBaseUrlHint", () => {
     expect(
       getOpenAIResponsesBaseUrlHint({ providerId: "openai", error: new Error("boom") })
     ).toBeUndefined();
+  });
+
+  test("omits the hint for responses marked as Codex-OAuth rerouted", () => {
+    // The fetch wrapper reroutes AFTER the SDK fixes the error URL, so the
+    // error still carries the custom base URL; only the marker reveals it.
+    const error = createApiCallError(400, "http://localhost:8080/v1/responses", {
+      [CODEX_OAUTH_ROUTED_HEADER]: "1",
+    });
+
+    expect(getOpenAIResponsesBaseUrlHint({ providerId: "openai", error })).toBeUndefined();
   });
 
   test.each([400, 404, 405])("returns a hint for HTTP %s", (statusCode) => {
