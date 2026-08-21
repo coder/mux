@@ -294,7 +294,9 @@ describeOpenAICompatible("custom OpenAI-compatible providers", () => {
     const workspace = await createConfiguredWorkspace({
       openai: {
         apiKey: "test-key",
-        baseUrl: mock.baseUrl,
+        // Origin-only URL: the built-in provider must gain /v1 like custom
+        // providers do, or following the hint to chatCompletions still fails.
+        baseUrl: mock.origin,
         wireFormat: "chatCompletions",
       },
     });

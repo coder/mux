@@ -1377,13 +1377,22 @@ export class ProviderModelFactory {
           return Err({ type: "api_key_not_found", provider: providerName });
         }
 
+        // Origin-only custom base URLs get /v1 appended (same rule and
+        // trailing-slash opt-out as custom openai-compatible providers) so both
+        // wire formats produce /v1/... endpoint paths instead of always failing.
+        const effectiveOpenAIBaseURL =
+          (typeof providerConfig.baseURL === "string" ? providerConfig.baseURL : undefined) ??
+          creds.baseUrl;
+
         // Merge resolved credentials into config
         const configWithCreds = {
           ...providerConfig,
           // When using Codex OAuth, we overwrite auth headers in fetch(), so the OpenAI API key
           // isn't required. Still pass a placeholder to ensure the SDK never reads env vars.
           apiKey: shouldRouteThroughCodexOauth ? "codex-oauth" : resolvedApiKey,
-          ...(creds.baseUrl && !providerConfig.baseURL && { baseURL: creds.baseUrl }),
+          ...(effectiveOpenAIBaseURL && {
+            baseURL: normalizeOpenAICompatibleBaseURL(effectiveOpenAIBaseURL),
+          }),
           ...(creds.organization && { organization: creds.organization }),
         };
 

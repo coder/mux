@@ -2170,6 +2170,9 @@ export function ProvidersSection() {
                           fieldConfig.key === "baseUrl" &&
                           provider === "openai" &&
                           !isCustomOpenAICompatible &&
+                          // The hint's advice is already applied once Chat
+                          // Completions is selected.
+                          config?.openai?.wireFormat !== "chatCompletions" &&
                           ((fieldDisplayValue?.trim().length ?? 0) > 0 ||
                             (isEditing && editValue.trim().length > 0));
 
