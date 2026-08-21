@@ -1174,6 +1174,39 @@ describe("createCodeExecutionTool", () => {
       await host.disposeScope("ws-store-fail");
     });
 
+    it("truncates unserializable returns (BigInt bypass of the offload tiers)", async () => {
+      // r22: an unserializable return made offloadValue's JSON.stringify
+      // throw, and the catch left the value inline — bypassing the r14
+      // offload/retention tiers and then breaking HistoryService's plain
+      // stringify at persistence. On this runtime's dump implementation a
+      // bare BigInt is the vector that reaches the catch (objects containing
+      // BigInts collapse to "[object Object]" and arrays to a join string in
+      // dump's own JSON fallback — both flow through the normal tiers).
+      using tmp = new DisposableTempDir("code-exec-offload");
+      const host = new SandboxHostService();
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge({}),
+        undefined,
+        persistentRunner(host, "ws-bigint-return", tmp.path)
+      );
+
+      const result = (await tool.execute!(
+        { code: `return 10n ** 20n;` },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+
+      const record = result.result as { truncated?: boolean; handle?: string; note?: string };
+      expect(record.truncated).toBe(true);
+      expect(record.handle).toBeUndefined();
+      expect(record.note).toContain("not JSON-serializable");
+      // The whole model-visible/durable result is bounded AND persistable
+      // (a plain stringify must not throw — that is what broke persistence).
+      expect(JSON.stringify(result).length).toBeLessThan(16 * 1024);
+      await host.disposeScope("ws-bigint-return");
+    });
+
     it("rewrites an advertised handle to a truncated record when the snapshot budget rejects it", async () => {
       // Pre-existing unmanaged guest vars can push the FULL snapshot over
       // budget even when the new handle itself is under the retention cap;

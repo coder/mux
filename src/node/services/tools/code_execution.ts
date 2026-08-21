@@ -144,8 +144,9 @@ function buildTruncatedRecord(preview: string, size: number, note?: string): Tru
 /**
  * Offload one oversized value to the persistent kernel. Returns the
  * model-visible replacement record, or null only when the value is
- * sub-threshold or non-JSON (in which case it stays inline). Over-threshold
- * JSON values NEVER stay inline: store failures and over-cap sizes both
+ * sub-threshold or serializes to undefined (bare function/symbol — no bytes
+ * reach the transcript, so inline is harmless). Everything else NEVER stays
+ * inline: store failures, over-cap sizes, AND unserializable values all
  * degrade to a bounded truncated record.
  */
 async function offloadValue(
@@ -156,8 +157,24 @@ async function offloadValue(
   try {
     serialized = JSON.stringify(value);
   } catch {
-    // Non-JSON values cannot live in vars (data-only contract); keep inline.
-    return null;
+    // A THROWING stringify (bare BigInt anywhere in the value) is treated as
+    // unretainable, same class as the r17 console fix: the value cannot live
+    // in vars (data-only contract), cannot be measured, and can hide an
+    // arbitrarily large sibling payload ({payload: 10MB, bad: 1n}) — keeping
+    // it inline bypassed the r14 offload/retention tiers entirely and then
+    // broke HistoryService's plain stringify at persistence (r22). No
+    // preview either: rendering one would require the very serialization
+    // that just failed, and String() can also explode on large arrays.
+    log.warn(
+      "code_execution: return value is not JSON-serializable; truncating to a bounded record"
+    );
+    return buildTruncatedRecord(
+      "",
+      0,
+      `Return value is not JSON-serializable (e.g. contains a BigInt) and was NOT stored or ` +
+        `returned. Convert to JSON-safe data (String(bigint), plain objects/arrays) and return ` +
+        `only what you need to see; keep working data in vars.`
+    );
   }
   if (typeof serialized !== "string") return null;
   const size = Buffer.byteLength(serialized, "utf8");
