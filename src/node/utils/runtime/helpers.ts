@@ -124,6 +124,23 @@ export interface ReadPlanResult {
 }
 
 /**
+ * Canonical (per-project) and legacy (by workspaceId) plan paths for a workspace.
+ * Both readers must agree on these locations, so resolve them in one place.
+ */
+function getPlanFilePaths(
+  runtime: Runtime,
+  workspaceName: string,
+  projectName: string,
+  workspaceId: string
+): { planPath: string; legacyPath: string } {
+  const xumHome = runtime.getXumHome();
+  return {
+    planPath: getPlanFilePath(workspaceName, projectName, xumHome),
+    legacyPath: getLegacyPlanFilePath(workspaceId, xumHome),
+  };
+}
+
+/**
  * Read plan file content, checking new path first then legacy, migrating if needed.
  * This handles the transparent migration from {runtimeHome}/plans/{id}.md to
  * {runtimeHome}/plans/{projectName}/{workspaceName}.md
@@ -134,9 +151,12 @@ export async function readPlanFile(
   projectName: string,
   workspaceId: string
 ): Promise<ReadPlanResult> {
-  const xumHome = runtime.getXumHome();
-  const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
-  const legacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
+  const { planPath, legacyPath } = getPlanFilePaths(
+    runtime,
+    workspaceName,
+    projectName,
+    workspaceId
+  );
 
   // Resolve tilde to absolute path for client use (editor deep links, etc.)
   // For local runtimes this expands ~ to /home/user; for SSH it resolves remotely
@@ -190,9 +210,12 @@ export async function hasNonEmptyPlanFile(
     return false;
   }
 
-  const xumHome = runtime.getXumHome();
-  const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
-  const legacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
+  const { planPath, legacyPath } = getPlanFilePaths(
+    runtime,
+    workspaceName,
+    projectName,
+    workspaceId
+  );
 
   for (const candidatePath of [planPath, legacyPath]) {
     try {
