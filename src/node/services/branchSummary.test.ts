@@ -22,6 +22,7 @@ import {
   buildAbandonedBranchSummaryPrompt,
   buildAbandonedBranchTranscript,
   clearPendingBranchSummary,
+  getSideChannelModelCandidates,
   isRlmModeEnabled,
   maybeAppendAbandonedBranchSummary,
   startAbandonedBranchSummaryInBackground,
@@ -74,8 +75,13 @@ function promptText(options: LanguageModelV3CallOptions): string {
 /** Fake AIService: returns the given model, or an api-key error when null. */
 function fakeAiService(
   model: MockLanguageModelV3 | null,
-  opts?: { onCreateModel?: () => void }
+  opts?: { onCreateModel?: () => void; workspaceModel?: string | null }
 ): BranchSummaryAiService {
+  // r23: candidates derive STRICTLY from workspace settings, so the fake
+  // must expose a configured model or no summary is even attempted
+  // (workspaceModel: null simulates the metadata-less degrade path).
+  const workspaceModel =
+    opts?.workspaceModel === undefined ? "anthropic:claude-haiku-4-5" : opts.workspaceModel;
   return {
     createModelWithPinnedMetadata: ((modelString: string) => {
       opts?.onCreateModel?.();
@@ -86,7 +92,9 @@ function fakeAiService(
     }) as BranchSummaryAiService["createModelWithPinnedMetadata"],
     getWorkspaceMetadata: (() =>
       Promise.resolve(
-        Err("workspace not found")
+        workspaceModel === null
+          ? Err("workspace not found")
+          : Ok({ aiSettings: { model: workspaceModel } })
       )) as BranchSummaryAiService["getWorkspaceMetadata"],
   };
 }
@@ -204,6 +212,57 @@ describe("buildAbandonedBranchTranscript", () => {
     expect(transcript.length).toBe(BRANCH_SUMMARY_MAX_TRANSCRIPT_CHARS);
     // Clamped from the end: the newest content survives.
     expect(transcript.endsWith("TAIL-MARKER")).toBe(true);
+  });
+});
+
+describe("getSideChannelModelCandidates (r23: provider confinement)", () => {
+  test("a workspace on provider X never produces candidates from provider Y", async () => {
+    // Security: the old order tried Anthropic Haiku / OpenAI GPT Mini FIRST,
+    // shipping up to 160K chars of history to third-party providers even
+    // when the workspace deliberately used a local/private route.
+    const candidates = await getSideChannelModelCandidates(
+      fakeAiService(null, { workspaceModel: "ollama:llama-private" }),
+      "ws-private"
+    );
+    expect(candidates[0]).toBe("ollama:llama-private");
+    for (const candidate of candidates) {
+      expect(candidate.startsWith("ollama:")).toBe(true);
+    }
+  });
+
+  test("same-provider cheap siblings follow the workspace's current model", async () => {
+    const candidates = await getSideChannelModelCandidates(
+      fakeAiService(null, { workspaceModel: "anthropic:claude-opus-5" }),
+      "ws-anthropic"
+    );
+    expect(candidates[0]).toBe("anthropic:claude-opus-5");
+    expect(candidates).toContain("anthropic:claude-haiku-4-5");
+    for (const candidate of candidates) {
+      expect(candidate.startsWith("anthropic:")).toBe(true);
+    }
+  });
+
+  test("no workspace metadata means no candidates (degrades to no summary)", async () => {
+    expect(
+      await getSideChannelModelCandidates(fakeAiService(null, { workspaceModel: null }), "ws-x")
+    ).toEqual([]);
+
+    // End-to-end: the degrade path appends nothing and never throws.
+    const { historyService, cleanup } = await createTestHistoryService();
+    try {
+      const appended = await maybeAppendAbandonedBranchSummary({
+        historyService,
+        aiService: fakeAiService(summaryModel("Must never be generated."), {
+          workspaceModel: null,
+        }),
+        workspaceId: "ws-no-metadata",
+        abandonedMessages: meatyExchange("no-metadata"),
+        experiments: RLM_ON,
+      });
+      expect(appended).toBeNull();
+    } finally {
+      await cleanup();
+    }
   });
 });
 

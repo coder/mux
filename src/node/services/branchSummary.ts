@@ -177,29 +177,56 @@ export function buildAbandonedBranchSummaryPrompt(transcript: string): string {
   ].join("\n");
 }
 
+/** Provider prefix of a `provider:model` string ("" when malformed). */
+function modelProvider(modelString: string): string {
+  const sep = modelString.indexOf(":");
+  return sep > 0 ? modelString.slice(0, sep) : "";
+}
+
 /**
- * Cheap side-channel model candidates: preferred small models first, then the
- * workspace's configured models as fallbacks (mirrors
- * WorkspaceService.getWorkspaceTitleModelCandidates, which is not reachable
- * from AgentSession).
+ * Side-channel model candidates, derived STRICTLY from workspace settings
+ * (r23 security): the old order tried Anthropic Haiku / OpenAI GPT Mini
+ * before workspace models, shipping up to 160K chars of user + repo-derived
+ * history to third-party providers even when the workspace deliberately used
+ * a local/private route. Candidates are now (1) the workspace's current
+ * model, (2) known cheap models of a provider the workspace already uses
+ * (cost fallback with zero new data exposure), (3) the workspace's per-agent
+ * models — and nothing else. No workspace metadata means the provider set is
+ * unknown, so NO candidates: summaries are best-effort and every caller
+ * already degrades cleanly on an empty list / failed generation.
+ *
+ * Exported for tests (provider-confinement assertions need the raw list).
  */
-async function getSideChannelModelCandidates(
+export async function getSideChannelModelCandidates(
   aiService: BranchSummaryAiService,
   workspaceId: string
 ): Promise<string[]> {
-  const candidates: string[] = [...NAME_GEN_PREFERRED_MODELS];
   const metadataResult = await aiService.getWorkspaceMetadata(workspaceId);
   if (!metadataResult.success) {
-    return candidates;
+    return [];
   }
-  const fallbackModels = [
+  const workspaceModels = [
     metadataResult.data.aiSettings?.model,
     ...Object.values(metadataResult.data.aiSettingsByAgent ?? {}).map((settings) => settings.model),
-  ];
-  for (const model of fallbackModels) {
-    if (model && !candidates.includes(model)) {
-      candidates.push(model);
-    }
+  ].filter((model): model is string => typeof model === "string" && model.length > 0);
+  if (workspaceModels.length === 0) {
+    return [];
+  }
+  const allowedProviders = new Set(
+    workspaceModels.map(modelProvider).filter((provider) => provider.length > 0)
+  );
+  const candidates: string[] = [];
+  const push = (model: string): void => {
+    if (!candidates.includes(model)) candidates.push(model);
+  };
+  // Current model first, then same-provider cheap siblings, then the other
+  // workspace-configured (user-consented) models as fallbacks.
+  push(workspaceModels[0]);
+  for (const model of NAME_GEN_PREFERRED_MODELS) {
+    if (allowedProviders.has(modelProvider(model))) push(model);
+  }
+  for (const model of workspaceModels.slice(1)) {
+    push(model);
   }
   return candidates;
 }
