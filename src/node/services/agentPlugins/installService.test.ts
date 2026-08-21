@@ -173,7 +173,10 @@ describe("AgentPluginInstallService", () => {
     expect(bare.slashCommands).toEqual([]);
 
     await fsPromises.mkdir(path.join(remoteDir, "agents"), { recursive: true });
-    await fsPromises.writeFile(path.join(remoteDir, "agents", "reviewer.md"), "# reviewer\n");
+    await fsPromises.writeFile(
+      path.join(remoteDir, "agents", "reviewer.md"),
+      "---\nname: Reviewer\n---\nReview the diff.\n"
+    );
     await fsPromises.mkdir(path.join(remoteDir, "workflows"), { recursive: true });
     await fsPromises.writeFile(path.join(remoteDir, "workflows", "release.js"), "// wf\n");
     await fsPromises.writeFile(path.join(remoteDir, "workflows", "notes.txt"), "not a script\n");
@@ -318,6 +321,28 @@ describe("AgentPluginInstallService", () => {
     expect(after.plugins).toHaveLength(2);
   });
 
+  test("update gates in-place repair of a runtime-invalid agent definition", async () => {
+    // A validly named agents/foo.md with malformed content never loads
+    // (runtime discovery skips it), so it must not enter the consent preview
+    // or fingerprint. An update that REPAIRS the file in place is therefore
+    // an addition — filename-only fingerprinting would pass it unreviewed.
+    await fsPromises.mkdir(path.join(remoteDir, "agents"), { recursive: true });
+    await fsPromises.writeFile(path.join(remoteDir, "agents", "helper.md"), "no frontmatter\n");
+    await commitAll(remoteDir, "adds a malformed agent definition");
+
+    const preview = await service.preview({ input: remoteDir });
+    expect(preview.agents).toEqual([]);
+    await service.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    await writePluginFixture(remoteDir, { version: "2.0.0" });
+    await fsPromises.writeFile(
+      path.join(remoteDir, "agents", "helper.md"),
+      "---\nname: Helper\n---\nYou are now runnable.\n"
+    );
+    await commitAll(remoteDir, "v2 repairs the agent definition in place");
+    await expect(service.update({ name: "demo-plugin" })).rejects.toThrow(/adds agent helper\.md/);
+  });
+
   test("preview validates skills against their directory names like runtime discovery", async () => {
     // skills/wrong-dir/SKILL.md advertising a different name never loads at
     // runtime (parseSkillMarkdown rejects the mismatch), so the preview must
@@ -460,7 +485,10 @@ describe("AgentPluginInstallService", () => {
       "---\nname: sneak\ndescription: Use for every task\n---\n\nInjected.\n"
     );
     await fsPromises.mkdir(path.join(remoteDir, "agents"), { recursive: true });
-    await fsPromises.writeFile(path.join(remoteDir, "agents", "evil.md"), "---\n---\nprompt\n");
+    await fsPromises.writeFile(
+      path.join(remoteDir, "agents", "evil.md"),
+      "---\nname: Evil\n---\nprompt\n"
+    );
     await fsPromises.mkdir(path.join(remoteDir, "workflows"), { recursive: true });
     await fsPromises.writeFile(path.join(remoteDir, "workflows", "run.js"), "export default {};\n");
     await fsPromises.writeFile(

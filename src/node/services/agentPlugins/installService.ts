@@ -27,6 +27,7 @@ import { getErrorMessage } from "@/common/utils/errors";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import type { Config } from "@/node/config";
 import { AgentIdSchema } from "@/common/schemas/ids";
+import { parseAgentDefinitionMarkdown } from "@/node/services/agentDefinitions/parseAgentDefinitionMarkdown";
 import {
   SkillNameSchema,
   resolveSkillAdvertise,
@@ -1391,30 +1392,46 @@ export class AgentPluginInstallService {
 
   /**
    * Agent definition files (agents/*.md) for the consent preview, mirroring
-   * the runtime lister exactly (agentDefinitionsService): only REGULAR files
-   * (symlinks never load) whose basename parses as a valid agent ID. A more
-   * permissive filter would promise a selectable agent that never loads —
-   * and the update capability surface built on this list would reject
-   * updates over a nonexistent capability.
+   * runtime discovery exactly (agentDefinitionsService): only REGULAR files
+   * (symlinks never load) whose basename parses as a valid agent ID AND
+   * whose CONTENT parses as a runtime-valid definition (size cap included).
+   * Filename-only fingerprinting would let an update repair a malformed
+   * agents/foo.md in place — identical component sets on both sides — and
+   * introduce a runnable agent without re-consent; the preview could
+   * likewise advertise an agent that never loads.
    */
   private async collectAgentFiles(dir: string | undefined): Promise<string[]> {
     if (dir === undefined) {
       return [];
     }
+    let entries;
     try {
-      const entries = await fsPromises.readdir(dir, { withFileTypes: true });
-      return entries
-        .filter(
-          (entry) =>
-            entry.isFile() &&
-            entry.name.toLowerCase().endsWith(".md") &&
-            AgentIdSchema.safeParse(path.parse(entry.name).name.trim().toLowerCase()).success
-        )
-        .map((entry) => entry.name)
-        .sort((a, b) => a.localeCompare(b));
+      entries = await fsPromises.readdir(dir, { withFileTypes: true });
     } catch {
       return [];
     }
+    const agents: string[] = [];
+    for (const entry of entries) {
+      if (
+        !entry.isFile() ||
+        !entry.name.toLowerCase().endsWith(".md") ||
+        !AgentIdSchema.safeParse(path.parse(entry.name).name.trim().toLowerCase()).success
+      ) {
+        continue;
+      }
+      try {
+        const filePath = path.join(dir, entry.name);
+        const stat = await fsPromises.stat(filePath);
+        const content = await fsPromises.readFile(filePath, "utf8");
+        // Throws on malformed frontmatter or oversized content — exactly the
+        // definitions runtime discovery would skip.
+        parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
+      } catch {
+        continue;
+      }
+      agents.push(entry.name);
+    }
+    return agents.sort((a, b) => a.localeCompare(b));
   }
 
   /**
