@@ -3834,7 +3834,10 @@ export class StreamManager extends EventEmitter {
     const openAIConfig = this.getProvidersConfig()?.openai;
     const openAIResponsesBaseUrlHint = getOpenAIResponsesBaseUrlHint({
       providerId: canonicalModel.split(":", 1)[0] ?? "",
-      baseUrlConfigured: openAIConfig?.baseUrl,
+      // baseUrlResolved covers both config spellings and the OPENAI_BASE_URL /
+      // OPENAI_API_BASE env fallbacks, and is absent when policy forces the URL
+      // (the user cannot act on the hint in that case).
+      baseUrlResolved: openAIConfig?.baseUrlResolved ?? undefined,
       wireFormat: openAIConfig?.wireFormat === "chatCompletions" ? "chatCompletions" : "responses",
       error: actualError,
     });

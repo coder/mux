@@ -573,7 +573,11 @@ export function normalizeAnthropicBaseURL(baseURL: string): string {
 export function normalizeOpenAICompatibleBaseURL(baseURL: string): string {
   try {
     const url = new URL(baseURL);
-    if (url.pathname !== "/") {
+    // An explicit trailing slash ("http://host:8080/") opts out for servers that
+    // mount /chat/completions at the origin root. The URL API normalizes both
+    // spellings to pathname "/", so the raw string is the only place the intent
+    // survives.
+    if (url.pathname !== "/" || baseURL.endsWith("/")) {
       return baseURL;
     }
 

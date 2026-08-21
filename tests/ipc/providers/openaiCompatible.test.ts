@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 
 import type { ProvidersConfig } from "@/common/config/schemas/providersConfig";
 import type { WorkspaceChatMessage } from "@/common/orpc/types";
+import { OPENAI_RESPONSES_BASE_URL_HINT } from "@/node/services/utils/openAIResponsesBaseUrlHint";
 import { loadTokenizerModules } from "@/node/utils/main/tokenizer";
 import {
   assertStreamSuccess,
@@ -230,10 +231,51 @@ describeOpenAICompatible("custom OpenAI-compatible providers", () => {
       if (!errorEvent || errorEvent.type !== "stream-error") {
         throw new Error("Expected a stream-error event");
       }
-      expect(errorEvent.error).toContain("Wire format to 'chat completions'");
+      expect(errorEvent.error).toContain(OPENAI_RESPONSES_BASE_URL_HINT);
       expect(mock.requests[0]?.path).toBe("/v1/responses");
       expect(mock.errors).toEqual([]);
     } finally {
+      collector.stop();
+      await workspace.cleanup();
+      await mock.close();
+    }
+  }, 45000);
+
+  test("guides built-in OpenAI users when the custom endpoint comes from OPENAI_BASE_URL", async () => {
+    const mock = await createMockServer([]);
+    const previousEnvBaseUrl = process.env.OPENAI_BASE_URL;
+    process.env.OPENAI_BASE_URL = mock.baseUrl;
+    const workspace = await createConfiguredWorkspace({
+      openai: {
+        apiKey: "test-key",
+      },
+    });
+    const collector = createStreamCollector(workspace.env.orpc, workspace.workspaceId);
+    collector.start();
+
+    try {
+      await collector.waitForSubscription();
+      const result = await sendMessageWithModel(
+        workspace.env,
+        workspace.workspaceId,
+        "Say hello",
+        `openai:${MOCK_MODEL}`
+      );
+      expect(result.success).toBe(true);
+
+      const errorEvent = await collector.waitForEvent("stream-error", 30000);
+      if (!errorEvent || errorEvent.type !== "stream-error") {
+        throw new Error("Expected a stream-error event");
+      }
+      expect(errorEvent.error).toContain(OPENAI_RESPONSES_BASE_URL_HINT);
+      expect(mock.requests[0]?.path).toBe("/v1/responses");
+      expect(mock.errors).toEqual([]);
+    } finally {
+      if (previousEnvBaseUrl === undefined) {
+        delete process.env.OPENAI_BASE_URL;
+      } else {
+        process.env.OPENAI_BASE_URL = previousEnvBaseUrl;
+      }
       collector.stop();
       await workspace.cleanup();
       await mock.close();

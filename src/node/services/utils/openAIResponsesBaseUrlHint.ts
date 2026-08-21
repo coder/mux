@@ -1,6 +1,6 @@
 import { APICallError, RetryError } from "ai";
 
-const OPENAI_RESPONSES_BASE_URL_HINT =
+export const OPENAI_RESPONSES_BASE_URL_HINT =
   "Your custom OpenAI base URL may not support the Responses API. In Settings -> Providers -> OpenAI set Wire format to 'chat completions', or add the endpoint as a custom OpenAI-compatible provider instead.";
 
 function getApiCallError(error: unknown): APICallError | undefined {
@@ -17,7 +17,8 @@ function getApiCallError(error: unknown): APICallError | undefined {
 
 export function getOpenAIResponsesBaseUrlHint(options: {
   providerId: string;
-  baseUrlConfigured: string | undefined;
+  /** Effective base URL (config or env fallback), not just the persisted config field. */
+  baseUrlResolved: string | undefined;
   wireFormat: "responses" | "chatCompletions";
   error: unknown;
 }): string | undefined {
@@ -25,7 +26,7 @@ export function getOpenAIResponsesBaseUrlHint(options: {
     return undefined;
   }
 
-  const baseUrl = options.baseUrlConfigured?.trim();
+  const baseUrl = options.baseUrlResolved?.trim();
   if (!baseUrl) {
     return undefined;
   }

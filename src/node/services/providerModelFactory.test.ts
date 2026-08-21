@@ -180,7 +180,8 @@ describe("resolveOpenAIWebSocketResponsesUrl", () => {
 describe("normalizeOpenAICompatibleBaseURL", () => {
   it.each([
     ["http://localhost:8080", "http://localhost:8080/v1"],
-    ["http://localhost:8080/", "http://localhost:8080/v1"],
+    // Explicit trailing slash opts out for APIs mounted at the origin root.
+    ["http://localhost:8080/", "http://localhost:8080/"],
     ["http://localhost:8080/v1", "http://localhost:8080/v1"],
     ["http://localhost:8080/custom/prefix", "http://localhost:8080/custom/prefix"],
   ])("normalizes %s", (baseURL, expected) => {
