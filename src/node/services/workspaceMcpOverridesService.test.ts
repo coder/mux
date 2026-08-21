@@ -348,6 +348,69 @@ describe("WorkspaceMcpOverridesService", () => {
     await service.prunePluginOverrideKeys(workspaceId, "plugin:0123456789abcdef:");
   });
 
+  it("prunePluginOverrideKeys refuses symlinked override files", async () => {
+    const projectPath = "/fake/project";
+    const workspaceId = "ws-id";
+    const workspaceName = "branch";
+
+    const workspacePath = getWorkspacePath({
+      srcDir: config.srcDir,
+      projectName: "project",
+      workspaceName,
+    });
+    // A contributor branch can TRACK .mux/mcp.local.jsonc as a symlink; the
+    // prune write resolves links, so following one would redirect the rewrite
+    // into an attacker-chosen file (e.g. a sibling workspace's overrides).
+    const victimPath = path.join(workspacePath, "..", "victim.jsonc");
+    await fs.mkdir(path.join(workspacePath, ".mux"), { recursive: true });
+    await fs.writeFile(
+      victimPath,
+      JSON.stringify({ enabledServers: ["plugin:0123456789abcdef:echo"] })
+    );
+    const filePath = path.join(workspacePath, ".mux", "mcp.local.jsonc");
+    await fs.symlink(victimPath, filePath);
+
+    await config.editConfig((cfg) => {
+      cfg.projects.set(projectPath, {
+        workspaces: [
+          {
+            path: workspacePath,
+            id: workspaceId,
+            name: workspaceName,
+            runtimeConfig: { type: "worktree", srcBaseDir: config.srcDir },
+          },
+        ],
+      });
+      return cfg;
+    });
+
+    const service = new WorkspaceMcpOverridesService(config);
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(
+      service.prunePluginOverrideKeys(workspaceId, "plugin:0123456789abcdef:")
+    ).rejects.toThrow(/symbolic link/);
+    // The link target is untouched.
+    expect(JSON.parse(await fs.readFile(victimPath, "utf-8"))).toEqual({
+      enabledServers: ["plugin:0123456789abcdef:echo"],
+    });
+
+    // A symlinked PARENT segment (.mux -> elsewhere) is rejected by the
+    // containment check even though the file itself is a regular file.
+    await fs.rm(filePath);
+    await fs.rm(path.join(workspacePath, ".mux"), { recursive: true, force: true });
+    const outsideDir = path.join(workspacePath, "..", "outside-mux");
+    await fs.mkdir(outsideDir, { recursive: true });
+    await fs.writeFile(
+      path.join(outsideDir, "mcp.local.jsonc"),
+      JSON.stringify({ enabledServers: [] })
+    );
+    await fs.symlink(outsideDir, path.join(workspacePath, ".mux"));
+    // eslint-disable-next-line @typescript-eslint/await-thenable -- bun-types mistype .rejects.toThrow as void
+    await expect(
+      service.prunePluginOverrideKeys(workspaceId, "plugin:0123456789abcdef:")
+    ).rejects.toThrow(/resolves outside the workspace/);
+  });
+
   it("prunePluginOverrideKeys matches only canonical plugin keys", async () => {
     const projectPath = "/fake/project";
     const workspaceId = "ws-id";

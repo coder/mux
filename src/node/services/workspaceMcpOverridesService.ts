@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import * as fsPromises from "node:fs/promises";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
 import assert from "@/common/utils/assert";
@@ -133,6 +134,32 @@ function hasFsCode(error: unknown, code: string): boolean {
   }
   const cause = error instanceof Error ? error.cause : undefined;
   return hasErrorCode(cause, code);
+}
+
+/**
+ * SECURITY: prune writes must land inside the checkout they intend to edit.
+ * Rejects a symlink at the override file itself and any resolved location
+ * escaping the (canonicalized) workspace root, which covers symlinked parent
+ * segments like a tracked `.mux -> /elsewhere` link. See the call site for
+ * the threat model.
+ */
+async function assertPruneTargetNotSymlinked(
+  filePath: string,
+  workspacePath: string
+): Promise<void> {
+  const lstat = await fsPromises.lstat(filePath);
+  if (lstat.isSymbolicLink()) {
+    throw new Error(
+      `Workspace MCP overrides file is a symbolic link, refusing to modify it: ${filePath}`
+    );
+  }
+  const resolvedFile = await fsPromises.realpath(filePath);
+  const resolvedRoot = await fsPromises.realpath(workspacePath);
+  if (!resolvedFile.startsWith(resolvedRoot + path.sep)) {
+    throw new Error(
+      `Workspace MCP overrides file resolves outside the workspace, refusing to modify it: ${filePath}`
+    );
+  }
 }
 
 async function statIsFile(
@@ -594,6 +621,17 @@ export class WorkspaceMcpOverridesService {
         if (!(await statIsFile(runtime, filePath, "strict"))) {
           continue;
         }
+        // SECURITY: refuse to prune through a symlinked override file. A
+        // contributor-controlled branch can track `.mux/mcp.local.jsonc` as
+        // a symlink (or symlink a parent segment); the write below resolves
+        // links (LocalBaseRuntime.writeFile writes the TARGET), so following
+        // one would let repo content redirect this rewrite into another
+        // predictable file — e.g. silently stripping a sibling workspace's
+        // plugin enables. Pruning only ever targets host-local (local/
+        // worktree) workspaces, so node fs semantics apply directly. Throwing
+        // keeps the caller's retry semantics (creation aborts / tombstone
+        // survives) until the link is removed.
+        await assertPruneTargetNotSymlinked(filePath, workspacePath);
         // Strict read: unreadable/unparseable content must throw so the
         // caller keeps its retry tombstone (mirrors readOverridesFile).
         const original = await readFileString(runtime, filePath);

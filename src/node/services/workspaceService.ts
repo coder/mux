@@ -4511,6 +4511,34 @@ export class WorkspaceService extends EventEmitter {
           );
           if (sanitizeError !== undefined) {
             const rolledBack = await this.rollbackUnsanitizedWorkspaceRegistration(workspaceId);
+            // WORKTREE runtimes created a fresh checkout above; without
+            // deleting it, retrying the same branch collides with the
+            // orphaned worktree and leaks a suffixed checkout per attempt.
+            // LocalRuntime registered an EXISTING user directory, which must
+            // be preserved (its deleteWorkspace is a no-op by design, but we
+            // never call it here to keep that contract explicit). Only after
+            // a successful config rollback: while the entry persists, the
+            // checkout is still referenced.
+            if (rolledBack && isWorktreeRuntime(finalRuntimeConfig)) {
+              const deleteResult = await runtime
+                .deleteWorkspace(
+                  owningProjectPath,
+                  finalBranchName,
+                  false,
+                  undefined,
+                  projectConfig.trusted ?? false
+                )
+                .catch((error: unknown) => ({
+                  success: false as const,
+                  error: getErrorMessage(error),
+                }));
+              if (!deleteResult.success) {
+                log.warn("Failed to remove created worktree after sanitization aborted creation", {
+                  workspaceId,
+                  error: deleteResult.error,
+                });
+              }
+            }
             // Tear down the in-memory state registered earlier in this
             // creation (session, init record, abort controller) exactly like
             // workspace removal would; without this every aborted retry
