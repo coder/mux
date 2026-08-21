@@ -744,20 +744,28 @@ export class CompactionHandler {
    * Detects when a compaction stream finishes, extracts the summary,
    * and appends a durable compaction boundary message.
    */
-  async handleCompletion(event: StreamEndEvent): Promise<boolean> {
-    // Check if the last user message is a compaction-request.
-    // Only need recent messages — the compaction-request is always near the tail.
-    const historyResult = await this.historyService.getLastMessages(this.workspaceId, 10);
+  async handleCompletion(
+    event: StreamEndEvent,
+    compactionRequestMessageId?: string
+  ): Promise<boolean> {
+    // The current stream identifies its request when available. Synthetic prompt snapshots can
+    // follow that request in history, so the last user row is not always the compaction request.
+    const historyResult = compactionRequestMessageId
+      ? await this.historyService.getHistoryFromLatestBoundary(this.workspaceId)
+      : await this.historyService.getLastMessages(this.workspaceId, 10);
     if (!historyResult.success) {
       return false;
     }
 
     const messages = historyResult.data;
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
-    const muxMeta = lastUserMsg?.metadata?.muxMetadata;
-    const isCompaction = muxMeta?.type === "compaction-request";
+    const compactionRequestMessage = compactionRequestMessageId
+      ? messages.find((message) => message.id === compactionRequestMessageId)
+      : [...messages].reverse().find((message) => message.role === "user");
+    const muxMeta = compactionRequestMessage?.metadata?.muxMetadata;
+    const isCompaction =
+      compactionRequestMessage?.role === "user" && muxMeta?.type === "compaction-request";
 
-    if (!isCompaction || !lastUserMsg) {
+    if (!isCompaction || !compactionRequestMessage) {
       return false;
     }
 
@@ -767,7 +775,7 @@ export class CompactionHandler {
       muxMeta?.type === "compaction-request" && muxMeta.source === "idle-compaction";
 
     // Dedupe: If we've already processed this compaction-request, skip
-    if (this.processedCompactionRequestIds.has(lastUserMsg.id)) {
+    if (this.processedCompactionRequestIds.has(compactionRequestMessage.id)) {
       return true;
     }
 
@@ -815,23 +823,26 @@ export class CompactionHandler {
     const pendingFollowUp = getCompactionFollowUpContent(muxMeta);
 
     // Mark as processed before performing compaction
-    this.processedCompactionRequestIds.add(lastUserMsg.id);
+    this.processedCompactionRequestIds.add(compactionRequestMessage.id);
 
-    // Use boundary-aware read so getNextCompactionEpoch (called inside performCompaction)
-    // sees the prior boundary's epoch even if it's beyond the last-10 messages window.
-    const boundaryHistoryResult = await this.historyService.getHistoryFromLatestBoundary(
-      this.workspaceId
-    );
-    const messagesForCompaction = boundaryHistoryResult.success
-      ? boundaryHistoryResult.data
-      : messages; // fallback to last-10 if boundary read fails
+    // Use boundary-aware history so getNextCompactionEpoch sees the prior boundary's epoch.
+    // The correlated path already loaded that history to find the exact request.
+    let messagesForCompaction = messages;
+    if (!compactionRequestMessageId) {
+      const boundaryHistoryResult = await this.historyService.getHistoryFromLatestBoundary(
+        this.workspaceId
+      );
+      if (boundaryHistoryResult.success) {
+        messagesForCompaction = boundaryHistoryResult.data;
+      }
+    }
 
     const result = await this.performCompaction(
       summary,
       event.metadata,
       messagesForCompaction,
       event.messageId,
-      lastUserMsg.id,
+      compactionRequestMessage.id,
       isIdleCompaction,
       pendingFollowUp
     );
