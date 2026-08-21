@@ -467,6 +467,12 @@ jobs:
           context: .
           load: true
           tags: mux-server:test
+          # The coder/shux -> coder/xum repo rename broke Depot's OIDC trust
+          # policy (matches owner/repo as a string), so `depot build` fails with
+          # "permission_denied: Invalid token" and blocks the merge queue. Fall
+          # back to plain buildx until the Depot project trust policy is updated
+          # for the new repo name; Depot acceleration resumes automatically then.
+          buildx-fallback: true
       - name: Test container
         run: |
           docker run -d --name mux-test -p 3000:3000 mux-server:test
