@@ -152,6 +152,44 @@ describe("MCPServerManager", () => {
     manager.dispose();
   });
 
+  test("cross-process plugin mutation token retires cached plugin instances before serving", async () => {
+    // A sibling process's update/uninstall recycles only its OWN manager;
+    // this manager must notice the bumped on-disk mutation token and retire
+    // matching cached instances instead of serving stale-tree servers forever.
+    manager.dispose();
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-cross-process";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    const close = mock(() => Promise.resolve(undefined));
+    access.startServers = () =>
+      Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close }]]));
+
+    const first = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(Object.keys(first.tools)).toHaveLength(1);
+
+    // Unchanged token: the cached instance is served untouched.
+    await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(close).toHaveBeenCalledTimes(0);
+
+    // The sibling's mutation bumps the token: retire and restart.
+    token = "epoch-2";
+    const close2 = mock(() => Promise.resolve(undefined));
+    access.startServers = () =>
+      Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close: close2 }]]));
+    const third = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(Object.keys(third.tools)).toHaveLength(1);
+    expect(close2).toHaveBeenCalledTimes(0);
+  });
+
   test("stopServersWithKeyPrefix invalidates instances published by an in-flight startup, then retries them", async () => {
     const workspaceId = "ws-swap-race";
     const pluginKey = "plugin:abc123:echo";

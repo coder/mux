@@ -1038,6 +1038,20 @@ export interface MCPServerManagerOptions {
   inlineServers?: Record<string, string>;
   /** If true, ignore config file servers and use only inline servers */
   ignoreConfigFile?: boolean;
+  /**
+   * Cross-process Agent Plugin invalidation. stopServersWithKeyPrefix only
+   * recycles THIS process's instances; a sibling process sharing the same
+   * home (ALLOW_MULTIPLE_INSTANCES, desktop app alongside `xum server`) would
+   * otherwise keep serving servers launched from a plugin tree that an
+   * update/uninstall replaced — the key and command signature are unchanged,
+   * so nothing else notices. `readToken` reads the installer's on-disk
+   * mutation epoch; when it changes between serves, every cached instance
+   * whose key starts with `keyPrefix` is retired before being served again.
+   */
+  pluginInvalidation?: {
+    keyPrefix: string;
+    readToken: () => Promise<string | undefined>;
+  };
 }
 
 export class MCPServerManager {
@@ -1087,6 +1101,10 @@ export class MCPServerManager {
   private prefixInvalidationClock = 0;
   /** Latest invalidation epoch per key prefix. */
   private readonly prefixInvalidations = new Map<string, number>();
+  /** See MCPServerManagerOptions.pluginInvalidation. */
+  private readonly pluginInvalidation?: MCPServerManagerOptions["pluginInvalidation"];
+  private pluginInvalidationTokenSeen = false;
+  private lastPluginInvalidationToken: string | undefined;
   private readonly idleCheckInterval: ReturnType<typeof setInterval>;
   private inlineServers: Record<string, string> = {};
   private readonly policyService: PolicyService | null;
@@ -1115,6 +1133,33 @@ export class MCPServerManager {
     if (options?.ignoreConfigFile) {
       this.ignoreConfigFile = options.ignoreConfigFile;
     }
+    this.pluginInvalidation = options?.pluginInvalidation;
+  }
+
+  /**
+   * Retire cached plugin instances when a SIBLING process mutated a plugin
+   * (see MCPServerManagerOptions.pluginInvalidation). Runs before every
+   * serve; must precede the caller's prefixInvalidationClock snapshot so
+   * in-flight startups integrate with the existing invalidation machinery.
+   * The first read only records the token: no plugin instance can predate it
+   * because this method guards every serve path.
+   */
+  private async retireCrossProcessPluginInstances(): Promise<void> {
+    if (this.pluginInvalidation === undefined) {
+      return;
+    }
+    const token = await this.pluginInvalidation.readToken();
+    if (!this.pluginInvalidationTokenSeen) {
+      this.pluginInvalidationTokenSeen = true;
+      this.lastPluginInvalidationToken = token;
+      return;
+    }
+    if (token === this.lastPluginInvalidationToken) {
+      return;
+    }
+    this.lastPluginInvalidationToken = token;
+    log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
+    await this.stopServersWithKeyPrefix(this.pluginInvalidation.keyPrefix);
   }
 
   /**
@@ -1535,6 +1580,11 @@ export class MCPServerManager {
     // generation without replacing recorded options; capture it before config
     // reads so enablement repair can detect them.
     const configGenerationUsed = this.configService.configGeneration;
+
+    // A sibling process's plugin mutation must retire cached plugin
+    // instances BEFORE this serve returns them (and before the epoch
+    // snapshot below, so the recycle is visible to this startup).
+    await this.retireCrossProcessPluginInstances();
 
     // Snapshot BEFORE reading config: a plugin swap that lands after this
     // point may invalidate instances this call starts (see

@@ -1156,19 +1156,42 @@ export class AgentPluginInstallService {
   }
 
   /**
-   * Security-relevant capability surface of a plugin tree: the auto-loading
-   * hook (entry path + tool grants) and MCP servers (transport + exact
-   * argv/env/url, root-path-normalized so staged and installed trees compare
-   * equal). Skills, agents, workflows, and slash commands are excluded: they
-   * stay inert until the user explicitly invokes them and are listed in
-   * Settings, whereas a hook auto-executes on requests and an enabled MCP
-   * server's command changes silently behind its stable server key.
+   * Security-relevant capability surface of a plugin tree, mirroring what the
+   * install consent preview disclosed:
+   * - the auto-loading hook (entry path + tool grants) and MCP servers
+   *   (transport + exact argv/env/url, root-path-normalized so staged and
+   *   installed trees compare equal) — any change is gated, because both
+   *   auto-execute behind stable identities;
+   * - skill advertisements (name + description): these are NOT inert — every
+   *   request interpolates them into the model-visible skill index
+   *   (agent_skill_read's tool description), so a new or reworded skill can
+   *   steer the agent without any user action;
+   * - agent, workflow, and slash-command NAMES: the preview consented to a
+   *   specific component set, so additions are gated. Their bodies were never
+   *   part of the preview (they load on explicit invocation), so content
+   *   changes ride the normal tree replacement.
    */
   private async capabilitySurface(
     plugin: AgentPluginInfo,
     instanceId: string
-  ): Promise<{ hook: AgentPluginPreviewHook | undefined; servers: Map<string, string> }> {
+  ): Promise<{
+    hook: AgentPluginPreviewHook | undefined;
+    servers: Map<string, string>;
+    skills: Map<string, string>;
+    components: Set<string>;
+  }> {
     const hook = this.collectHook(plugin);
+    const skills = new Map<string, string>();
+    for (const skill of await this.collectSkills(plugin, [])) {
+      skills.set(skill.name, JSON.stringify({ description: skill.description ?? null }));
+    }
+    const components = new Set<string>([
+      ...(await this.collectComponentFiles(plugin.agentsDir, ".md")).map((f) => `agent ${f}`),
+      ...(await this.collectComponentFiles(plugin.workflowsDir, ".js")).map((f) => `workflow ${f}`),
+      ...(plugin.manifest.contributes?.slashCommands ?? []).map(
+        (command) => `slash command /${command.name}`
+      ),
+    ]);
     const servers = new Map<string, string>();
     if (plugin.mcpConfigPath !== undefined) {
       const { servers: infos } = await loadPluginMcpServers(plugin, {
@@ -1198,7 +1221,7 @@ export class AgentPluginInstallService {
         servers.set(info.plugin.serverName, fingerprint);
       }
     }
-    return { hook, servers };
+    return { hook, servers, skills, components };
   }
 
   /**
@@ -1249,6 +1272,23 @@ export class AgentPluginInstallService {
         changes.push(`adds MCP server '${serverName}'`);
       } else if (currentFingerprint !== fingerprint) {
         changes.push(`changes MCP server '${serverName}'`);
+      }
+    }
+    // Skill advertisements interpolate into the model-visible skill index on
+    // every request, so a new skill — or a reworded description — can inject
+    // instructions without the user ever invoking it. Gate both.
+    for (const [skillName, fingerprint] of staged.skills) {
+      const currentFingerprint = current?.skills.get(skillName);
+      if (currentFingerprint === undefined) {
+        changes.push(`adds skill '${skillName}'`);
+      } else if (currentFingerprint !== fingerprint) {
+        changes.push(`changes the advertised description of skill '${skillName}'`);
+      }
+    }
+    // Consent covered a specific component set; additions need a new preview.
+    for (const component of staged.components) {
+      if (!(current?.components.has(component) ?? false)) {
+        changes.push(`adds ${component}`);
       }
     }
     if (changes.length > 0) {
@@ -3128,6 +3168,19 @@ export class AgentPluginInstallService {
               );
             });
           }
+        }
+        if (!hadOldTree) {
+          // No journal was written (no old tree to restore), so nothing
+          // above bumped the mutation epoch. Bump it explicitly: sibling
+          // processes' MCPServerManagers key their cross-process plugin
+          // invalidation off this token, and a server launched before the
+          // old tree went missing may still be running there.
+          await bumpContainerMutationEpoch(this.stagingRoot).catch((error: unknown) => {
+            log.warn("Failed to bump the plugin mutation epoch after update", {
+              name: entry.name,
+              error: getErrorMessage(error),
+            });
+          });
         }
 
         const updated: AgentPluginInstallEntry = {

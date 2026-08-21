@@ -78,21 +78,30 @@ export interface ContainerMutationState {
   epoch: string | undefined;
 }
 
+/**
+ * Read the current mutation epoch token; `undefined` when never written. An
+ * unreadable file yields a UNIQUE token so it can never compare equal across
+ * two reads (fail toward invalidation/suppression). Also consumed by
+ * MCPServerManager as its cross-process plugin invalidation signal: a sibling
+ * process's install/update/uninstall bumps this token, telling every manager
+ * to retire cached plugin server instances before serving them again.
+ */
+export async function readMutationEpochToken(stagingRoot: string): Promise<string | undefined> {
+  try {
+    return await fsPromises.readFile(path.join(stagingRoot, MUTATION_EPOCH_FILE), "utf-8");
+  } catch (error) {
+    return error instanceof Error && "code" in error && error.code === "ENOENT"
+      ? undefined
+      : `unreadable-${randomUUID()}`;
+  }
+}
+
 export async function readContainerMutationState(
   containerPath: string
 ): Promise<ContainerMutationState> {
   const stagingRoot = path.join(path.dirname(containerPath), STAGING_DIR_NAME);
   const hasJournals = await containerHasUnreconciledJournals(containerPath);
-  let epoch: string | undefined;
-  try {
-    epoch = await fsPromises.readFile(path.join(stagingRoot, MUTATION_EPOCH_FILE), "utf-8");
-  } catch (error) {
-    epoch =
-      error instanceof Error && "code" in error && error.code === "ENOENT"
-        ? undefined
-        : `unreadable-${randomUUID()}`;
-  }
-  return { hasJournals, epoch };
+  return { hasJournals, epoch: await readMutationEpochToken(stagingRoot) };
 }
 
 /**

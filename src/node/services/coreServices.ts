@@ -19,7 +19,11 @@ import {
   type WorkspaceGoalServiceOptions,
 } from "@/node/services/workspaceGoalService";
 import { EXPERIMENT_IDS } from "@/common/constants/experiments";
-import { createAgentPluginsMcpProvider } from "@/node/services/agentPlugins/mcpConfig";
+import { STAGING_DIR_NAME, readMutationEpochToken } from "@/node/services/agentPlugins/journals";
+import {
+  PLUGIN_SERVER_KEY_PREFIX,
+  createAgentPluginsMcpProvider,
+} from "@/node/services/agentPlugins/mcpConfig";
 import { MCPConfigService } from "@/node/services/mcpConfigService";
 import { MCPServerManager, type MCPServerManagerOptions } from "@/node/services/mcpServerManager";
 import { mergeMultiProjectSecrets } from "@/node/services/utils/multiProjectSecrets";
@@ -148,7 +152,16 @@ export function createCoreServices(opts: CoreServicesOptions): CoreServices {
   });
   const mcpServerManager = new MCPServerManager(
     mcpConfigService,
-    opts.mcpServerManagerOptions,
+    {
+      // A plugin update/uninstall in a sibling process (desktop app alongside
+      // `xum server`) bumps the installer's mutation epoch; managers retire
+      // cached plugin instances before serving them again.
+      pluginInvalidation: {
+        keyPrefix: PLUGIN_SERVER_KEY_PREFIX,
+        readToken: () => readMutationEpochToken(path.join(mcpConfig.rootDir, STAGING_DIR_NAME)),
+      },
+      ...opts.mcpServerManagerOptions,
+    },
     opts.policyService
   );
   aiService.setMCPServerManager(mcpServerManager);

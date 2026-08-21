@@ -31,7 +31,7 @@ export interface CrossProcessLockOptions {
   timeoutMessage: string;
 }
 
-interface LockHolder {
+export interface LockHolder {
   pid: number;
   token: string;
   acquiredAt: number;
@@ -52,6 +52,51 @@ async function readLockHolder(lockPath: string): Promise<LockHolder | undefined>
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Reclaim a lock we observed as stale/corrupt WITHOUT the read-then-unlink
+ * race: between our read and a plain `rm`, a concurrent reclaimer can finish
+ * its own reclaim AND acquire, so the delayed `rm` would delete the NEW
+ * owner's live lock and let two transactions run concurrently. Instead,
+ * atomically rename the file aside (exactly one reclaimer wins; the loser
+ * gets ENOENT and simply retries the create loop) and verify we moved the
+ * exact content we judged reclaimable:
+ * - match → it really was the stale lock; delete the quarantined file.
+ * - mismatch → we stole a lock that was replaced after our read (a new
+ *   owner, or a creator whose `wx` write completed after we read a partial
+ *   file); rename it back. A third party's `wx`-create inside that gap is
+ *   clobbered by the restore, but its post-create ownership re-read detects
+ *   the foreign token and retries.
+ * Exported for tests.
+ */
+export async function reclaimStaleLock(
+  lockPath: string,
+  observed: LockHolder | undefined
+): Promise<void> {
+  const quarantinePath = `${lockPath}.reclaim-${process.pid}-${randomBytes(8).toString("hex")}`;
+  try {
+    await fsPromises.rename(lockPath, quarantinePath);
+  } catch {
+    // ENOENT: a concurrent reclaimer moved it first. Nothing to do.
+    return;
+  }
+  const moved = await readLockHolder(quarantinePath);
+  const movedWhatWeObserved =
+    moved === undefined
+      ? observed === undefined
+      : observed !== undefined &&
+        moved.pid === observed.pid &&
+        moved.token === observed.token &&
+        moved.acquiredAt === observed.acquiredAt;
+  if (movedWhatWeObserved) {
+    await fsPromises.rm(quarantinePath, { force: true }).catch(() => undefined);
+    return;
+  }
+  // Restore failures propagate: leaving the new owner's lock quarantined
+  // would release mutual exclusion early, which is exactly the corruption
+  // this helper exists to prevent.
+  await fsPromises.rename(quarantinePath, lockPath);
 }
 
 /**
@@ -113,10 +158,9 @@ export async function acquireCrossProcessLock(
       }
       const holder = await readLockHolder(lockPath);
       if (holder === undefined || !holderAlive(holder, staleMs)) {
-        // Corrupt/unreadable or dead-owner lock: reclaim and retry. The
-        // unlink-then-create race between two reclaimers is compensated by
-        // the ownership re-read above.
-        await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+        // Corrupt/unreadable or dead-owner lock: reclaim atomically (see
+        // reclaimStaleLock for why a plain rm is unsafe here) and retry.
+        await reclaimStaleLock(lockPath, holder);
         continue;
       }
     }

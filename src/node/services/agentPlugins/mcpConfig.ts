@@ -25,7 +25,7 @@ import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expans
 export const AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0 =
   "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json";
 
-const PLUGIN_SERVER_KEY_PREFIX = "plugin:";
+export const PLUGIN_SERVER_KEY_PREFIX = "plugin:";
 
 /**
  * Stable plugin-instance identity. Global plugins hash their LEXICAL
