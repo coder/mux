@@ -12,11 +12,18 @@ import {
 } from "./fileRead";
 
 describe("buildReadFileScript", () => {
-  test("generates script with size check", () => {
-    const script = buildReadFileScript("test.txt");
-    expect(script).toContain("realpath './test.txt'");
-    expect(script).toContain('stat -c %s "$resolved"');
-    expect(script).toContain('base64 < "$resolved"');
+  test("reads a plain file end to end", () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "test.txt"), "plain contents\n");
+      const result = spawnSync("bash", ["-lc", buildReadFileScript("test.txt")], { cwd: tempDir });
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      expect(processed).toEqual({ type: "text", content: "plain contents\n", size: 15 });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("escapes paths with spaces", () => {
