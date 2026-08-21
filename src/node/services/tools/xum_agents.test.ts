@@ -8,12 +8,12 @@ import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 const GLOBAL_WORKSPACE_ID = "workspace-global";
 const GLOBAL_WORKSPACE_NAME = "global-scope";
 const GLOBAL_WORKSPACE_TITLE = "Global Scope";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 
-import { resolveAgentsPathOnRuntime } from "./mux_agents_path";
-import { createMuxAgentsReadTool } from "./mux_agents_read";
-import { createMuxAgentsWriteTool } from "./mux_agents_write";
+import { resolveAgentsPathOnRuntime } from "./xum_agents_path";
+import { createXumAgentsReadTool } from "./xum_agents_read";
+import { createXumAgentsWriteTool } from "./xum_agents_write";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions<unknown> = {
@@ -22,38 +22,38 @@ const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   context: undefined,
 };
 
-function createGlobalMuxAgentsToolConfig(muxHome: string, workspaceSessionDir: string) {
+function createGlobalXumAgentsToolConfig(xumHome: string, workspaceSessionDir: string) {
   return {
-    ...createTestToolConfig(muxHome, {
+    ...createTestToolConfig(xumHome, {
       workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     }),
-    muxScope: {
+    xumScope: {
       type: "global" as const,
-      muxHome,
+      xumHome,
     },
   };
 }
 
-function createProjectMuxAgentsToolConfig(
-  muxHome: string,
+function createProjectXumAgentsToolConfig(
+  xumHome: string,
   workspaceSessionDir: string,
   projectRoot: string
 ) {
-  const muxScope: MuxToolScope = {
+  const xumScope: XumToolScope = {
     type: "project",
-    muxHome,
+    xumHome,
     projectRoot,
     projectStorageAuthority: "host-local",
   };
 
   return {
-    ...createTestToolConfig(muxHome, {
+    ...createTestToolConfig(xumHome, {
       workspaceId: GLOBAL_WORKSPACE_ID,
       sessionsDir: workspaceSessionDir,
     }),
     cwd: projectRoot,
-    muxScope,
+    xumScope,
   };
 }
 const REMOTE_WORKSPACE_ROOT = "/remote/workspace";
@@ -258,40 +258,40 @@ class NoReadlinkFRemoteRuntime extends RemotePathMappedRuntime {
   }
 }
 
-function createRemoteProjectMuxAgentsToolConfig(
-  muxHome: string,
+function createRemoteProjectXumAgentsToolConfig(
+  xumHome: string,
   workspaceSessionDir: string,
   localProjectRoot: string
 ) {
   const runtime = new RemotePathMappedRuntime(localProjectRoot, REMOTE_WORKSPACE_ROOT);
-  const muxScope: MuxToolScope = {
+  const xumScope: XumToolScope = {
     type: "project",
-    muxHome,
+    xumHome,
     projectRoot: localProjectRoot,
     projectStorageAuthority: "runtime",
   };
 
   return {
-    ...createTestToolConfig(muxHome, {
+    ...createTestToolConfig(xumHome, {
       workspaceId: "ssh-workspace",
       sessionsDir: workspaceSessionDir,
       runtime,
     }),
     cwd: REMOTE_WORKSPACE_ROOT,
-    muxScope,
+    xumScope,
   };
 }
 
-describe("mux_agents_* tools", () => {
+describe("xum_agents_* tools", () => {
   it("reads ~/.mux/AGENTS.md (returns empty string if missing)", async () => {
-    using muxHome = new TestTempDir("mux-global-agents");
+    using xumHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
+    const config = createGlobalXumAgentsToolConfig(xumHome.path, workspaceSessionDir);
 
-    const tool = createMuxAgentsReadTool(config);
+    const tool = createXumAgentsReadTool(config);
 
     // Missing file -> empty
     const missing = (await tool.execute!({}, mockToolCallOptions)) as {
@@ -304,7 +304,7 @@ describe("mux_agents_* tools", () => {
     }
 
     // Present file -> contents
-    const agentsPath = path.join(muxHome.path, "AGENTS.md");
+    const agentsPath = path.join(xumHome.path, "AGENTS.md");
     await fs.writeFile(
       agentsPath,
       `# ${GLOBAL_WORKSPACE_TITLE}\n${GLOBAL_WORKSPACE_NAME}\n`,
@@ -323,17 +323,17 @@ describe("mux_agents_* tools", () => {
   });
 
   it("reads project AGENTS.md when scope is project", async () => {
-    using muxHome = new TestTempDir("mux-project-agents-read");
+    using xumHome = new TestTempDir("mux-project-agents-read");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const projectRoot = path.join(muxHome.path, "my-project");
+    const projectRoot = path.join(xumHome.path, "my-project");
     await fs.mkdir(projectRoot, { recursive: true });
     await fs.writeFile(path.join(projectRoot, "AGENTS.md"), "# Project agents\n", "utf-8");
 
-    const config = createProjectMuxAgentsToolConfig(muxHome.path, workspaceSessionDir, projectRoot);
-    const tool = createMuxAgentsReadTool(config);
+    const config = createProjectXumAgentsToolConfig(xumHome.path, workspaceSessionDir, projectRoot);
+    const tool = createXumAgentsReadTool(config);
 
     const result = (await tool.execute!({}, mockToolCallOptions)) as {
       success: boolean;
@@ -346,16 +346,16 @@ describe("mux_agents_* tools", () => {
     }
   });
   it("refuses to write without explicit confirmation", async () => {
-    using muxHome = new TestTempDir("mux-global-agents");
+    using xumHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
+    const config = createGlobalXumAgentsToolConfig(xumHome.path, workspaceSessionDir);
 
-    const tool = createMuxAgentsWriteTool(config);
+    const tool = createXumAgentsWriteTool(config);
 
-    const agentsPath = path.join(muxHome.path, "AGENTS.md");
+    const agentsPath = path.join(xumHome.path, "AGENTS.md");
 
     const result = (await tool.execute!(
       { newContent: "test", confirm: false },
@@ -378,14 +378,14 @@ describe("mux_agents_* tools", () => {
   });
 
   it("writes ~/.mux/AGENTS.md and returns a diff", async () => {
-    using muxHome = new TestTempDir("mux-global-agents");
+    using xumHome = new TestTempDir("mux-global-agents");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
+    const config = createGlobalXumAgentsToolConfig(xumHome.path, workspaceSessionDir);
 
-    const tool = createMuxAgentsWriteTool(config);
+    const tool = createXumAgentsWriteTool(config);
 
     const newContent = "# Global agents\n\nHello\n";
 
@@ -401,21 +401,21 @@ describe("mux_agents_* tools", () => {
       expect(result.ui_only?.file_edit?.diff).toContain("AGENTS.md");
     }
 
-    const written = await fs.readFile(path.join(muxHome.path, "AGENTS.md"), "utf-8");
+    const written = await fs.readFile(path.join(xumHome.path, "AGENTS.md"), "utf-8");
     expect(written).toBe(newContent);
   });
 
   it("writes project AGENTS.md when scope is project", async () => {
-    using muxHome = new TestTempDir("mux-project-agents-write");
+    using xumHome = new TestTempDir("mux-project-agents-write");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const projectRoot = path.join(muxHome.path, "my-project");
+    const projectRoot = path.join(xumHome.path, "my-project");
     await fs.mkdir(projectRoot, { recursive: true });
 
-    const config = createProjectMuxAgentsToolConfig(muxHome.path, workspaceSessionDir, projectRoot);
-    const tool = createMuxAgentsWriteTool(config);
+    const config = createProjectXumAgentsToolConfig(xumHome.path, workspaceSessionDir, projectRoot);
+    const tool = createXumAgentsWriteTool(config);
 
     const newContent = "# Project agents\n\nProject scoped\n";
     const result = (await tool.execute!({ newContent, confirm: true }, mockToolCallOptions)) as {
@@ -434,12 +434,12 @@ describe("mux_agents_* tools", () => {
     expect(written).toBe(newContent);
   });
   it("reads and writes project AGENTS.md through an in-root symlink", async () => {
-    using muxHome = new TestTempDir("mux-project-agents-symlink");
+    using xumHome = new TestTempDir("mux-project-agents-symlink");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const projectRoot = path.join(muxHome.path, "my-project");
+    const projectRoot = path.join(xumHome.path, "my-project");
     const docsDir = path.join(projectRoot, "docs");
     await fs.mkdir(docsDir, { recursive: true });
 
@@ -447,9 +447,9 @@ describe("mux_agents_* tools", () => {
     await fs.writeFile(targetPath, "# Project agents\n\nOriginal\n", "utf-8");
     await fs.symlink(path.join("docs", "AGENTS.md"), path.join(projectRoot, "AGENTS.md"));
 
-    const config = createProjectMuxAgentsToolConfig(muxHome.path, workspaceSessionDir, projectRoot);
-    const readTool = createMuxAgentsReadTool(config);
-    const writeTool = createMuxAgentsWriteTool(config);
+    const config = createProjectXumAgentsToolConfig(xumHome.path, workspaceSessionDir, projectRoot);
+    const readTool = createXumAgentsReadTool(config);
+    const writeTool = createXumAgentsWriteTool(config);
 
     const readResult = (await readTool.execute!({}, mockToolCallOptions)) as {
       success: boolean;
@@ -481,22 +481,22 @@ describe("mux_agents_* tools", () => {
   });
 
   it("rejects dangling AGENTS.md symlinks for read and write", async () => {
-    using muxHome = new TestTempDir("mux-project-agents-dangling-symlink");
+    using xumHome = new TestTempDir("mux-project-agents-dangling-symlink");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const projectRoot = path.join(muxHome.path, "my-project");
-    const outsideDir = path.join(muxHome.path, "outside");
+    const projectRoot = path.join(xumHome.path, "my-project");
+    const outsideDir = path.join(xumHome.path, "outside");
     await fs.mkdir(projectRoot, { recursive: true });
     await fs.mkdir(outsideDir, { recursive: true });
 
     const danglingTarget = path.join(outsideDir, "AGENTS.md");
     await fs.symlink(danglingTarget, path.join(projectRoot, "AGENTS.md"));
 
-    const config = createProjectMuxAgentsToolConfig(muxHome.path, workspaceSessionDir, projectRoot);
-    const readTool = createMuxAgentsReadTool(config);
-    const writeTool = createMuxAgentsWriteTool(config);
+    const config = createProjectXumAgentsToolConfig(xumHome.path, workspaceSessionDir, projectRoot);
+    const readTool = createXumAgentsReadTool(config);
+    const writeTool = createXumAgentsWriteTool(config);
 
     const writeResult = (await writeTool.execute!(
       { newContent: "# should fail\n", confirm: true },
@@ -521,18 +521,18 @@ describe("mux_agents_* tools", () => {
   });
 
   it("rejects AGENTS.md symlink targets that escape the expected root", async () => {
-    using muxHome = new TestTempDir("mux-global-agents");
+    using xumHome = new TestTempDir("mux-global-agents");
     using outsideRoot = new TestTempDir("mux-global-agents-outside-root");
 
-    const workspaceSessionDir = path.join(muxHome.path, "sessions", GLOBAL_WORKSPACE_ID);
+    const workspaceSessionDir = path.join(xumHome.path, "sessions", GLOBAL_WORKSPACE_ID);
     await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-    const config = createGlobalMuxAgentsToolConfig(muxHome.path, workspaceSessionDir);
+    const config = createGlobalXumAgentsToolConfig(xumHome.path, workspaceSessionDir);
 
-    const readTool = createMuxAgentsReadTool(config);
-    const writeTool = createMuxAgentsWriteTool(config);
+    const readTool = createXumAgentsReadTool(config);
+    const writeTool = createXumAgentsWriteTool(config);
 
-    const agentsPath = path.join(muxHome.path, "AGENTS.md");
+    const agentsPath = path.join(xumHome.path, "AGENTS.md");
     const targetPath = path.join(outsideRoot.path, "target.txt");
     await fs.writeFile(targetPath, "secret", "utf-8");
     await fs.symlink(targetPath, agentsPath);
@@ -571,13 +571,13 @@ describe("mux_agents_* tools", () => {
           sessionsDir: workspaceSessionDir,
         }),
         cwd: nonexistentMuxHome,
-        muxScope: {
+        xumScope: {
           type: "global" as const,
-          muxHome: nonexistentMuxHome,
+          xumHome: nonexistentMuxHome,
         },
       };
 
-      const readTool = createMuxAgentsReadTool(config);
+      const readTool = createXumAgentsReadTool(config);
       const result = (await readTool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -603,13 +603,13 @@ describe("mux_agents_* tools", () => {
           sessionsDir: workspaceSessionDir,
         }),
         cwd: nonexistentMuxHome,
-        muxScope: {
+        xumScope: {
           type: "global" as const,
-          muxHome: nonexistentMuxHome,
+          xumHome: nonexistentMuxHome,
         },
       };
 
-      const writeTool = createMuxAgentsWriteTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
       const newContent = "# Test AGENTS";
       const result = (await writeTool.execute!(
         { newContent, confirm: true },
@@ -636,14 +636,14 @@ describe("mux_agents_* tools", () => {
           sessionsDir: workspaceSessionDir,
         }),
         cwd: nonexistentMuxHome,
-        muxScope: {
+        xumScope: {
           type: "global" as const,
-          muxHome: nonexistentMuxHome,
+          xumHome: nonexistentMuxHome,
         },
       };
 
-      const writeTool = createMuxAgentsWriteTool(config);
-      const readTool = createMuxAgentsReadTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
+      const readTool = createXumAgentsReadTool(config);
       const newContent = "# Test AGENTS\n\nRound trip\n";
 
       const writeResult = (await writeTool.execute!(
@@ -669,13 +669,13 @@ describe("mux_agents_* tools", () => {
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
       const nonexistentProjectRoot = path.join(tempDir.path, "nonexistent-project");
-      const config = createProjectMuxAgentsToolConfig(
+      const config = createProjectXumAgentsToolConfig(
         tempDir.path,
         workspaceSessionDir,
         nonexistentProjectRoot
       );
 
-      const writeTool = createMuxAgentsWriteTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
       const result = (await writeTool.execute!(
         { newContent: "# Test AGENTS", confirm: true },
         mockToolCallOptions
@@ -692,13 +692,13 @@ describe("mux_agents_* tools", () => {
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
       const nonexistentProjectRoot = path.join(tempDir.path, "nonexistent-project");
-      const config = createProjectMuxAgentsToolConfig(
+      const config = createProjectXumAgentsToolConfig(
         tempDir.path,
         workspaceSessionDir,
         nonexistentProjectRoot
       );
 
-      const readTool = createMuxAgentsReadTool(config);
+      const readTool = createXumAgentsReadTool(config);
       const result = (await readTool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -714,13 +714,13 @@ describe("mux_agents_* tools", () => {
 
   describe("split-root (SSH/Docker) project workspaces", () => {
     it("reads AGENTS.md from runtime workspace (not host project root)", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-read");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-read");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
 
@@ -731,14 +731,14 @@ describe("mux_agents_* tools", () => {
         "utf-8"
       );
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, REMOTE_WORKSPACE_ROOT);
 
-      const tool = createMuxAgentsReadTool(config);
+      const tool = createXumAgentsReadTool(config);
       const result = (await tool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -751,13 +751,13 @@ describe("mux_agents_* tools", () => {
     });
 
     it("reads AGENTS.md from tilde-prefixed runtime workspace", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-read-tilde");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-read-tilde");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeHomeRoot = path.join(muxHome.path, "remote-home");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeHomeRoot = path.join(xumHome.path, "remote-home");
       const runtimeWorkspaceRoot = path.join(runtimeHomeRoot, "mux", "project", "main");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
@@ -768,15 +768,15 @@ describe("mux_agents_* tools", () => {
         "utf-8"
       );
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       config.cwd = TILDE_WORKSPACE_ROOT;
 
-      const tool = createMuxAgentsReadTool(config);
+      const tool = createXumAgentsReadTool(config);
       const result = (await tool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -789,13 +789,13 @@ describe("mux_agents_* tools", () => {
     });
 
     it("reads AGENTS.md through symlink in tilde-prefixed runtime workspace", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-read-tilde-symlink");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-read-tilde-symlink");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeHomeRoot = path.join(muxHome.path, "remote-home");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeHomeRoot = path.join(xumHome.path, "remote-home");
       const runtimeWorkspaceRoot = path.join(runtimeHomeRoot, "mux", "project", "main");
       const docsDir = path.join(runtimeWorkspaceRoot, "docs");
       await fs.mkdir(hostProjectRoot, { recursive: true });
@@ -811,15 +811,15 @@ describe("mux_agents_* tools", () => {
         path.join(runtimeWorkspaceRoot, "AGENTS.md")
       );
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       config.cwd = TILDE_WORKSPACE_ROOT;
 
-      const tool = createMuxAgentsReadTool(config);
+      const tool = createXumAgentsReadTool(config);
       const result = (await tool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -832,30 +832,30 @@ describe("mux_agents_* tools", () => {
     });
 
     it("rejects AGENTS.md symlink escape in tilde-prefixed runtime workspace", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-tilde-symlink-escape");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-tilde-symlink-escape");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeHomeRoot = path.join(muxHome.path, "remote-home");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeHomeRoot = path.join(xumHome.path, "remote-home");
       const runtimeWorkspaceRoot = path.join(runtimeHomeRoot, "mux", "project", "main");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
 
-      const escapeTarget = path.join(muxHome.path, "secret.md");
+      const escapeTarget = path.join(xumHome.path, "secret.md");
       await fs.writeFile(escapeTarget, "secret content", "utf-8");
       await fs.symlink(escapeTarget, path.join(runtimeWorkspaceRoot, "AGENTS.md"));
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       config.cwd = TILDE_WORKSPACE_ROOT;
 
-      const tool = createMuxAgentsReadTool(config);
+      const tool = createXumAgentsReadTool(config);
       const result = (await tool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         error?: string;
@@ -866,24 +866,24 @@ describe("mux_agents_* tools", () => {
     });
 
     it("reads empty string when AGENTS.md missing in runtime workspace", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-read-missing");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-read-missing");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, REMOTE_WORKSPACE_ROOT);
 
-      const tool = createMuxAgentsReadTool(config);
+      const tool = createXumAgentsReadTool(config);
       const result = (await tool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -893,13 +893,13 @@ describe("mux_agents_* tools", () => {
     });
 
     it("returns an error when the runtime AGENTS probe exits non-zero during read", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-read-probe-error");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-read-probe-error");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
       await fs.writeFile(
@@ -908,8 +908,8 @@ describe("mux_agents_* tools", () => {
         "utf-8"
       );
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
@@ -922,7 +922,7 @@ describe("mux_agents_* tools", () => {
       });
 
       try {
-        const tool = createMuxAgentsReadTool(config);
+        const tool = createXumAgentsReadTool(config);
         const result = (await tool.execute!({}, mockToolCallOptions)) as {
           success: boolean;
           error?: string;
@@ -937,13 +937,13 @@ describe("mux_agents_* tools", () => {
     });
 
     it("returns an error when the runtime AGENTS probe exits non-zero during write", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-write-probe-error");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-write-probe-error");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
       await fs.writeFile(
@@ -952,8 +952,8 @@ describe("mux_agents_* tools", () => {
         "utf-8"
       );
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
@@ -966,7 +966,7 @@ describe("mux_agents_* tools", () => {
       });
 
       try {
-        const tool = createMuxAgentsWriteTool(config);
+        const tool = createXumAgentsWriteTool(config);
         const result = (await tool.execute!(
           { newContent: "# Updated Runtime AGENTS", confirm: true },
           mockToolCallOptions
@@ -985,9 +985,9 @@ describe("mux_agents_* tools", () => {
     });
 
     it("returns an error when the runtime AGENTS probe prints unexpected stdout", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-unexpected-probe-stdout");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-unexpected-probe-stdout");
 
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
 
       const runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, REMOTE_WORKSPACE_ROOT);
@@ -1009,27 +1009,27 @@ describe("mux_agents_* tools", () => {
     });
 
     it("writes AGENTS.md to runtime workspace (leaves host project root unchanged)", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-write");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-write");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(runtimeWorkspaceRoot, { recursive: true });
 
       const hostAgentsPath = path.join(hostProjectRoot, "AGENTS.md");
       await fs.writeFile(hostAgentsPath, "# Host AGENTS\n", "utf-8");
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
       config.runtime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, REMOTE_WORKSPACE_ROOT);
 
-      const tool = createMuxAgentsWriteTool(config);
+      const tool = createXumAgentsWriteTool(config);
       const result = (await tool.execute!(
         { newContent: "# Remote AGENTS", confirm: true },
         mockToolCallOptions
@@ -1053,13 +1053,13 @@ describe("mux_agents_* tools", () => {
       expect(hostContent).toBe("# Host AGENTS\n");
     });
     it("writes through runtime AGENTS.md symlinks without replacing them", async () => {
-      using muxHome = new TestTempDir("mux-project-agents-split-root-write-symlink");
+      using xumHome = new TestTempDir("mux-project-agents-split-root-write-symlink");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const hostProjectRoot = path.join(muxHome.path, "host-project");
-      const runtimeWorkspaceRoot = path.join(muxHome.path, "runtime-project");
+      const hostProjectRoot = path.join(xumHome.path, "host-project");
+      const runtimeWorkspaceRoot = path.join(xumHome.path, "runtime-project");
       const docsDir = path.join(runtimeWorkspaceRoot, "docs");
       await fs.mkdir(hostProjectRoot, { recursive: true });
       await fs.mkdir(docsDir, { recursive: true });
@@ -1070,8 +1070,8 @@ describe("mux_agents_* tools", () => {
       await fs.writeFile(targetPath, "# Runtime Symlink AGENTS\n", "utf-8");
       await fs.symlink(symlinkTarget, agentsPath);
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         hostProjectRoot
       );
@@ -1084,7 +1084,7 @@ describe("mux_agents_* tools", () => {
         expect(resolved.realPath).toBe(runtime.normalizePath(symlinkTarget, REMOTE_WORKSPACE_ROOT));
       }
 
-      const tool = createMuxAgentsWriteTool(config);
+      const tool = createXumAgentsWriteTool(config);
       const newContent = "# Updated Runtime Symlink AGENTS\n";
       const result = (await tool.execute!({ newContent, confirm: true }, mockToolCallOptions)) as {
         success: boolean;
@@ -1100,30 +1100,30 @@ describe("mux_agents_* tools", () => {
     });
 
     it("rejects AGENTS.md symlink targets that escape runtime workspace root", async () => {
-      using muxHome = new TestTempDir("mux-remote-agents-symlink-escape");
+      using xumHome = new TestTempDir("mux-remote-agents-symlink-escape");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
       // Create a project root with workspace backing dir
-      const projectRoot = path.join(muxHome.path, "my-project");
+      const projectRoot = path.join(xumHome.path, "my-project");
       await fs.mkdir(projectRoot, { recursive: true });
 
       // Create an escape target outside the workspace root
-      const escapeTarget = path.join(muxHome.path, "secret.md");
+      const escapeTarget = path.join(xumHome.path, "secret.md");
       await fs.writeFile(escapeTarget, "secret content", "utf-8");
 
       // Create AGENTS.md as symlink pointing outside workspace root
       await fs.symlink(escapeTarget, path.join(projectRoot, "AGENTS.md"));
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         projectRoot
       );
 
-      const readTool = createMuxAgentsReadTool(config);
-      const writeTool = createMuxAgentsWriteTool(config);
+      const readTool = createXumAgentsReadTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
 
       // Read should reject the symlink escape
       const readResult = (await readTool.execute!({}, mockToolCallOptions)) as {
@@ -1147,22 +1147,22 @@ describe("mux_agents_* tools", () => {
     });
 
     it("rejects dangling symlinks in runtime workspace", async () => {
-      using muxHome = new TestTempDir("mux-remote-agents-dangling-symlink");
+      using xumHome = new TestTempDir("mux-remote-agents-dangling-symlink");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const projectRoot = path.join(muxHome.path, "my-project");
+      const projectRoot = path.join(xumHome.path, "my-project");
       await fs.mkdir(projectRoot, { recursive: true });
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         projectRoot
       );
 
-      const readTool = createMuxAgentsReadTool(config);
-      const writeTool = createMuxAgentsWriteTool(config);
+      const readTool = createXumAgentsReadTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
 
       const externalTarget = path.join(projectRoot, "..", "outside", "missing.md");
       const agentsPath = path.join(projectRoot, "AGENTS.md");
@@ -1190,24 +1190,24 @@ describe("mux_agents_* tools", () => {
     });
 
     it("works on BSD-like runtimes without GNU readlink -f", async () => {
-      using muxHome = new TestTempDir("mux-remote-agents-bsd-compat");
+      using xumHome = new TestTempDir("mux-remote-agents-bsd-compat");
 
-      const workspaceSessionDir = path.join(muxHome.path, "sessions", "ssh-workspace");
+      const workspaceSessionDir = path.join(xumHome.path, "sessions", "ssh-workspace");
       await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-      const projectRoot = path.join(muxHome.path, "my-project");
+      const projectRoot = path.join(xumHome.path, "my-project");
       await fs.mkdir(projectRoot, { recursive: true });
       await fs.writeFile(path.join(projectRoot, "AGENTS.md"), "# BSD Test\n", "utf-8");
 
-      const config = createRemoteProjectMuxAgentsToolConfig(
-        muxHome.path,
+      const config = createRemoteProjectXumAgentsToolConfig(
+        xumHome.path,
         workspaceSessionDir,
         projectRoot
       );
       // Replace runtime with one that rejects readlink -f
       config.runtime = new NoReadlinkFRemoteRuntime(projectRoot, REMOTE_WORKSPACE_ROOT);
 
-      const readTool = createMuxAgentsReadTool(config);
+      const readTool = createXumAgentsReadTool(config);
       const readResult = (await readTool.execute!({}, mockToolCallOptions)) as {
         success: boolean;
         content?: string;
@@ -1215,7 +1215,7 @@ describe("mux_agents_* tools", () => {
       expect(readResult.success).toBe(true);
       expect(readResult.content).toContain("BSD Test");
 
-      const writeTool = createMuxAgentsWriteTool(config);
+      const writeTool = createXumAgentsWriteTool(config);
       const writeResult = (await writeTool.execute!(
         { newContent: "# Updated BSD", confirm: true },
         mockToolCallOptions

@@ -5,7 +5,7 @@ import { shellQuote } from "@/common/utils/shell";
 import { copyPlanFileAcrossRuntimes, movePlanFile, readPlanFile } from "./helpers";
 
 interface MockRuntimeState {
-  muxHome: string;
+  xumHome: string;
   files: Map<string, string>;
   readAttempts: string[];
   writes: Array<{ path: string; content: string }>;
@@ -14,11 +14,11 @@ interface MockRuntimeState {
 }
 
 function createRuntimeState(
-  muxHome: string,
+  xumHome: string,
   initialFiles: Record<string, string> = {}
 ): MockRuntimeState {
   return {
-    muxHome,
+    xumHome,
     files: new Map(Object.entries(initialFiles)),
     readAttempts: [],
     writes: [],
@@ -63,7 +63,7 @@ function toFileStat(content: string): FileStat {
 
 function createMockRuntime(state: MockRuntimeState): Runtime {
   return {
-    getXumHome: () => state.muxHome,
+    getXumHome: () => state.xumHome,
     readFile: (path: string) => {
       state.readAttempts.push(path);
       const content = state.files.get(path);
@@ -198,18 +198,18 @@ describe("readPlanFile", () => {
     const workspaceName = "workspace-a1b2";
     const projectName = "demo-project";
     const workspaceId = "legacy-workspace-id";
-    const muxHome = "~/.mux";
+    const xumHome = "~/.mux";
     const legacyContent = "# legacy plan\n";
 
-    const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
-    const legacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
+    const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
+    const legacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
     const planDir = planPath.substring(0, planPath.lastIndexOf("/"));
 
     const resolvedPlanPath = "/home/dev/.mux/plans/demo-project/workspace-a1b2.md";
     const resolvedPlanDir = "/home/dev/.mux/plans/demo-project";
     const resolvedLegacyPath = "/home/dev/.mux/plans/legacy-workspace-id.md";
 
-    const state = createRuntimeState(muxHome, {
+    const state = createRuntimeState(xumHome, {
       [legacyPath]: legacyContent,
     });
 
@@ -239,21 +239,21 @@ describe("readPlanFile", () => {
   });
 
   it.each([
-    { label: "local canonical", muxHome: "~/.xum" },
-    { label: "SSH legacy", muxHome: "~/.mux" },
-    { label: "Docker", muxHome: "/var/mux" },
+    { label: "local canonical", xumHome: "~/.xum" },
+    { label: "SSH legacy", xumHome: "~/.mux" },
+    { label: "Docker", xumHome: "/var/mux" },
   ])(
     "falls back to $label runtime-home legacy path, not a hardcoded ~/.xum root",
-    async ({ muxHome }) => {
+    async ({ xumHome }) => {
       const workspaceName = "workspace-a1b2";
       const projectName = "demo-project";
       const workspaceId = "legacy-workspace-id";
       const localCanonicalLegacyPath = getLegacyPlanFilePath(workspaceId, "~/.xum");
-      const runtimeLegacyPath = getLegacyPlanFilePath(workspaceId, muxHome);
-      const planPath = getPlanFilePath(workspaceName, projectName, muxHome);
+      const runtimeLegacyPath = getLegacyPlanFilePath(workspaceId, xumHome);
+      const planPath = getPlanFilePath(workspaceName, projectName, xumHome);
       const legacyContent = "# runtime-home legacy plan\n";
 
-      const state = createRuntimeState(muxHome, {
+      const state = createRuntimeState(xumHome, {
         [localCanonicalLegacyPath]: "# local-canonical leftover\n",
         [runtimeLegacyPath]: legacyContent,
       });
@@ -269,7 +269,7 @@ describe("readPlanFile", () => {
 
       expect(result.content).toBe(legacyContent);
       expect(state.readAttempts).toEqual([planPath, runtimeLegacyPath]);
-      if (muxHome !== "~/.xum") {
+      if (xumHome !== "~/.xum") {
         expect(state.readAttempts).not.toContain(localCanonicalLegacyPath);
       }
     }
@@ -281,14 +281,14 @@ describe("movePlanFile", () => {
     const oldWorkspaceName = "old-workspace";
     const newWorkspaceName = "new-workspace";
     const projectName = "demo-project";
-    const muxHome = "~/.mux";
+    const xumHome = "~/.mux";
 
-    const oldPath = getPlanFilePath(oldWorkspaceName, projectName, muxHome);
-    const newPath = getPlanFilePath(newWorkspaceName, projectName, muxHome);
+    const oldPath = getPlanFilePath(oldWorkspaceName, projectName, xumHome);
+    const newPath = getPlanFilePath(newWorkspaceName, projectName, xumHome);
     const resolvedOldPath = "/home/dev/.mux/plans/demo-project/old-workspace.md";
     const resolvedNewPath = "/home/dev/.mux/plans/demo-project/new-workspace.md";
 
-    const state = createRuntimeState(muxHome, {
+    const state = createRuntimeState(xumHome, {
       [oldPath]: "# old plan\n",
     });
 

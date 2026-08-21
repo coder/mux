@@ -874,7 +874,7 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
         <>
           <p>
             Agents are file-based definitions (system prompt + tool policy). You can create
-            project-local agents in <code className="text-accent">.mux/agents/*.md</code> or global
+            project-local agents in <code className="text-accent">.xum/agents/*.md</code> or global
             agents in <code className="text-accent">~/.xum/agents/*.md</code>.
           </p>
 
@@ -953,10 +953,10 @@ export function OnboardingWizardSplash(props: { onDismiss: () => void }) {
               <code className="text-accent">~/.xum/mcp.jsonc</code>
             </Card>
             <Card icon={<Server className="h-4 w-4" />} title="Repo overrides">
-              <code className="text-accent">./.mux/mcp.jsonc</code>
+              <code className="text-accent">./.xum/mcp.jsonc</code>
             </Card>
             <Card icon={<Server className="h-4 w-4" />} title="Workspace overrides">
-              <code className="text-accent">.mux/mcp.local.jsonc</code>
+              <code className="text-accent">.xum/mcp.local.jsonc</code>
             </Card>
           </div>
 

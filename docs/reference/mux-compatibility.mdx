@@ -16,6 +16,8 @@ Xum is the canonical product, package, command, protocol, and local data-directo
 | Development data      | `~/.xum-dev`                      | `~/.mux-dev` link                                         |
 | Electron user data    | platform app-data directory `xum` | sibling `mux` link                                        |
 | Environment variables | `XUM_*`                           | `MUX_*`; `CMUX_ALLOW_MULTIPLE_INSTANCES` is also accepted |
+| Project metadata      | `.xum/`                           | `.mux/` read fallback                                     |
+| Worktree ignore file  | `.xumignore`                      | `.muxignore` read fallback                                |
 | Deep links            | `xum://`                          | `mux://`                                                  |
 | Release artifacts     | `xum-*`                           | matching `mux-*` aliases                                  |
 
@@ -47,6 +49,12 @@ Xum leaves that entry unchanged and falls back to the first healthy leftover tre
 
 Explicit `XUM_ROOT` or `MUX_ROOT` locations are never moved. Xum makes both variable names resolve to the same configured path instead.
 
+## Project metadata migration
+
+New project-local configuration is written under `.xum/`, including agents, skills, plugins, hooks, workflows, MCP overrides, and staged attachments. Xum still reads the corresponding `.mux/` locations when no canonical file or directory exists, but it does not dual-write project metadata. When both names exist, `.xum/` wins. The same preference applies to `.xumignore` over `.muxignore`.
+
+This forward-only fallback keeps existing repositories working without carrying a second canonical configuration tree. Move committed project metadata to `.xum/` when updating a repository.
+
 ## Desktop state and downgrades
 
 Electron state such as window position, browser storage, and local preferences is moved from the platform `mux` app-data directory to `xum`, then the old directory name points forward. The stable application identifier remains `com.mux.app` during the transition so operating-system updater and uninstall identity does not fork.
@@ -59,7 +67,6 @@ A manual macOS DMG downgrade may replace or coexist with `xum.app` as `Mux.app`,
 
 Some names are persisted protocols or externally managed infrastructure rather than display branding:
 
-- Project-controlled `.mux/` hooks, agents, skills, plugins, and `.muxignore`
 - Provider/config identifiers such as `mux-gateway`
 - Internal persisted keys and extension IDs under `mux.*`
 - The VS Code Marketplace extension identity `coder.mux`

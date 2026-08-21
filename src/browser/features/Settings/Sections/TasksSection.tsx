@@ -58,7 +58,7 @@ const INHERIT = "__inherit__";
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
   switch (agent.scope) {
     case "project":
-      return `.mux/agents/${agent.id}.md`;
+      return `.xum/agents/${agent.id}.md`;
     case "global":
       return `~/.xum/agents/${agent.id}.md`;
     default:

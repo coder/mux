@@ -8,7 +8,7 @@ import { RemoteRuntime, type SpawnResult } from "@/node/runtime/RemoteRuntime";
 import { InitStateManager } from "@/node/services/initStateManager";
 import { Config } from "@/node/config";
 import type { ToolConfiguration } from "@/common/utils/tools/tools";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import type { Runtime } from "@/node/runtime/Runtime";
 
 export class TestTempDir implements Disposable {
@@ -50,6 +50,15 @@ interface SkillFixtureOptions {
   files?: Record<string, string>;
 }
 
+export function restoreXumRoot(previousXumRoot: string | undefined): void {
+  if (previousXumRoot === undefined) {
+    delete process.env.XUM_ROOT;
+    return;
+  }
+
+  process.env.XUM_ROOT = previousXumRoot;
+}
+
 export function restoreMuxRoot(previousMuxRoot: string | undefined): void {
   if (previousMuxRoot === undefined) {
     delete process.env.MUX_ROOT;
@@ -71,10 +80,10 @@ export async function withMuxRoot(muxRoot: string, callback: () => Promise<void>
 }
 
 export async function createWorkspaceSessionDir(
-  muxHome: string,
+  xumHome: string,
   workspaceId: string
 ): Promise<string> {
-  const workspaceSessionDir = path.join(muxHome, "sessions", workspaceId);
+  const workspaceSessionDir = path.join(xumHome, "sessions", workspaceId);
   await fsPromises.mkdir(workspaceSessionDir, { recursive: true });
   return workspaceSessionDir;
 }
@@ -127,11 +136,11 @@ export async function writeSkill(
 }
 
 export async function writeGlobalSkill(
-  muxHome: string,
+  xumHome: string,
   name: string,
   options?: SkillFixtureOptions
 ): Promise<void> {
-  await writeSkill(path.join(muxHome, "skills"), name, options);
+  await writeSkill(path.join(xumHome, "skills"), name, options);
 }
 
 export async function writeProjectSkill(
@@ -139,18 +148,18 @@ export async function writeProjectSkill(
   name: string,
   options?: SkillFixtureOptions
 ): Promise<void> {
-  await writeSkill(path.join(projectRoot, ".mux", "skills"), name, options);
+  await writeSkill(path.join(projectRoot, ".xum", "skills"), name, options);
 }
 
-export async function writeSkillWithReference(muxHome: string, name: string): Promise<void> {
-  await writeGlobalSkill(muxHome, name, {
+export async function writeSkillWithReference(xumHome: string, name: string): Promise<void> {
+  await writeGlobalSkill(xumHome, name, {
     description: "fixture",
     files: { "references/foo.txt": "fixture" },
   });
 }
 
 interface RemotePathMappedRuntimeOptions {
-  muxHome?: string;
+  xumHome?: string;
   resolveToRemotePath?: boolean;
 }
 
@@ -158,7 +167,7 @@ export class RemotePathMappedRuntime extends LocalRuntime {
   private readonly localBase: string;
   private readonly remoteBase: string;
   private readonly localHomeForTildeRoot: string | null;
-  private readonly muxHomeOverride: string | null;
+  private readonly xumHomeOverride: string | null;
   private readonly resolveToRemotePath: boolean;
   public resolvePathCallCount = 0;
 
@@ -166,7 +175,7 @@ export class RemotePathMappedRuntime extends LocalRuntime {
     super(localBase);
     this.localBase = path.resolve(localBase);
     this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-    this.muxHomeOverride = options?.muxHome ?? null;
+    this.xumHomeOverride = options?.xumHome ?? null;
     this.resolveToRemotePath = options?.resolveToRemotePath ?? true;
 
     if (this.remoteBase === "~") {
@@ -232,7 +241,7 @@ export class RemotePathMappedRuntime extends LocalRuntime {
   }
 
   override getXumHome(): string {
-    return this.muxHomeOverride ?? super.getXumHome();
+    return this.xumHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -415,7 +424,7 @@ export function createTestToolConfig(
     workspaceId?: string;
     sessionsDir?: string;
     runtime?: Runtime;
-    muxScope?: MuxToolScope;
+    xumScope?: XumToolScope;
   }
 ): ToolConfiguration {
   return {
@@ -424,9 +433,9 @@ export function createTestToolConfig(
     runtime: options?.runtime ?? new LocalRuntime(tempDir),
     runtimeTempDir: tempDir,
     workspaceId: options?.workspaceId ?? "test-workspace",
-    muxScope: options?.muxScope ?? {
+    xumScope: options?.xumScope ?? {
       type: "global",
-      muxHome: tempDir,
+      xumHome: tempDir,
     },
   };
 }

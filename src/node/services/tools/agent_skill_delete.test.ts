@@ -1,33 +1,36 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, it, expect } from "bun:test";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import { describe, it, expect, spyOn } from "bun:test";
+import type { XumToolScope } from "@/common/types/toolScope";
 import type { AgentSkillDeleteToolResult } from "@/common/types/tools";
+import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
+import { SKILL_FILENAME } from "./skillFileUtils";
 import { createAgentSkillDeleteTool } from "./agent_skill_delete";
 import {
   createTestToolConfig,
   createWorkspaceSessionDir,
   mockToolCallOptions,
   RemotePathMappedRuntime,
-  restoreMuxRoot,
+  restoreXumRoot,
   TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
   TestTempDir,
+  writeSkill,
   writeSkillWithReference,
 } from "./testHelpers";
 
-const TILDE_WORKSPACE_ROOT = "~/mux/project/main";
+const TILDE_WORKSPACE_ROOT = "~/xum/project/main";
 
 async function createDeleteTool(
-  muxHome: string,
+  xumHome: string,
   workspaceId: string = GLOBAL_WORKSPACE_ID,
-  muxScope?: MuxToolScope
+  xumScope?: XumToolScope
 ) {
-  const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
-  const config = createTestToolConfig(muxHome, {
+  const workspaceSessionDir = await createWorkspaceSessionDir(xumHome, workspaceId);
+  const config = createTestToolConfig(xumHome, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
-    muxScope,
+    xumScope,
   });
 
   return createAgentSkillDeleteTool(config);
@@ -58,12 +61,12 @@ describe("agent_skill_delete", () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-project-scope");
 
     const projectRoot = path.join(tempDir.path, "my-project");
-    await fs.mkdir(path.join(projectRoot, ".mux", "skills"), { recursive: true });
-    await writeSkillWithReference(path.join(projectRoot, ".mux"), "demo-skill");
+    await fs.mkdir(path.join(projectRoot, ".xum", "skills"), { recursive: true });
+    await writeSkillWithReference(path.join(projectRoot, ".xum"), "demo-skill");
 
-    const projectScope: MuxToolScope = {
+    const projectScope: XumToolScope = {
       type: "project",
-      muxHome: tempDir.path,
+      xumHome: tempDir.path,
       projectRoot,
       projectStorageAuthority: "host-local",
     };
@@ -81,25 +84,167 @@ describe("agent_skill_delete", () => {
     expect(result).toMatchObject({ success: true, deleted: "skill" });
 
     const statErr = await fs
-      .stat(path.join(projectRoot, ".mux", "skills", "demo-skill"))
+      .stat(path.join(projectRoot, ".xum", "skills", "demo-skill"))
       .catch((error: NodeJS.ErrnoException) => error);
     expect(statErr).toMatchObject({ code: "ENOENT" });
   });
+  it("deletes legacy-only and shadowed project packages without reappearing", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-legacy");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalRoot = path.join(projectRoot, ".xum", "skills");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await writeSkill(legacyRoot, "legacy-only");
+    await writeSkill(canonicalRoot, "shadowed");
+    await writeSkill(legacyRoot, "shadowed");
+
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    for (const name of ["legacy-only", "shadowed"]) {
+      const result = (await tool.execute!(
+        { name, target: "skill", confirm: true },
+        mockToolCallOptions
+      )) as AgentSkillDeleteToolResult;
+      expect(result).toMatchObject({ success: true, deleted: "skill" });
+      expect(fs.stat(path.join(canonicalRoot, name))).rejects.toThrow();
+      expect(fs.stat(path.join(legacyRoot, name))).rejects.toThrow();
+    }
+  });
+
+  it("deletes canonical and legacy manifests so fallback skills stay hidden", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-manifest-shadow");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalRoot = path.join(projectRoot, ".xum", "skills");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await writeSkill(canonicalRoot, "demo-skill");
+    await writeSkill(legacyRoot, "demo-skill");
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/../SKILL.md", confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result).toMatchObject({ success: true, deleted: "file" });
+    expect(fs.stat(path.join(canonicalRoot, "demo-skill", SKILL_FILENAME))).rejects.toThrow();
+    expect(fs.stat(path.join(legacyRoot, "demo-skill", SKILL_FILENAME))).rejects.toThrow();
+  });
+
+  it("migrates an incomplete canonical package before deleting its fallback manifest", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-partial-canonical-manifest");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyDir = path.join(projectRoot, ".mux", "skills", "demo-skill");
+    await fs.mkdir(path.join(canonicalDir, "references"), { recursive: true });
+    await fs.writeFile(
+      path.join(canonicalDir, "references", "canonical.txt"),
+      "canonical",
+      "utf-8"
+    );
+    await writeSkill(path.dirname(legacyDir), "demo-skill");
+
+    const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result).toMatchObject({ success: true, deleted: "file" });
+    expect(fs.stat(path.join(canonicalDir, SKILL_FILENAME))).rejects.toThrow();
+    expect(fs.stat(path.join(legacyDir, SKILL_FILENAME))).rejects.toThrow();
+    expect(await fs.readFile(path.join(canonicalDir, "references", "canonical.txt"), "utf-8")).toBe(
+      "canonical"
+    );
+  });
+
+  it("keeps the canonical manifest when legacy manifest deletion fails", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-manifest-failure");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalManifest = path.join(
+      projectRoot,
+      ".xum",
+      "skills",
+      "demo-skill",
+      SKILL_FILENAME
+    );
+    const legacyManifest = path.join(projectRoot, ".mux", "skills", "demo-skill", SKILL_FILENAME);
+    await writeSkill(path.dirname(path.dirname(canonicalManifest)), "demo-skill");
+    await writeSkill(path.dirname(path.dirname(legacyManifest)), "demo-skill");
+    const rmSpy = spyOn(fs, "rm").mockRejectedValueOnce(new Error("permission denied"));
+    try {
+      const tool = await createDeleteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+        type: "project",
+        xumHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      });
+      const result = (await tool.execute!(
+        { name: "demo-skill", filePath: SKILL_FILENAME, confirm: true },
+        mockToolCallOptions
+      )) as AgentSkillDeleteToolResult;
+      expect(result.success).toBe(false);
+      expect(await fs.readFile(canonicalManifest, "utf-8")).toContain("name: demo-skill");
+      expect(await fs.readFile(legacyManifest, "utf-8")).toContain("name: demo-skill");
+    } finally {
+      rmSpy.mockRestore();
+    }
+  });
+
+  it("deletes host-local project skills through the host runtime for Devcontainers", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-devcontainer-host");
+    const projectRoot = path.join(tempDir.path, "project");
+    await writeSkill(path.join(projectRoot, ".xum", "skills"), "demo-skill");
+    const runtime = new DevcontainerRuntime({
+      srcBaseDir: path.join(tempDir.path, "src"),
+      configPath: path.join(projectRoot, ".devcontainer", "devcontainer.json"),
+    });
+    const config = createTestToolConfig(tempDir.path, {
+      runtime,
+      xumScope: {
+        type: "project",
+        xumHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      },
+    });
+
+    const result = (await createAgentSkillDeleteTool(config).execute!(
+      { name: "demo-skill", target: "skill", confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    expect(result).toMatchObject({ success: true, deleted: "skill" });
+    expect(fs.stat(path.join(projectRoot, ".xum", "skills", "demo-skill"))).rejects.toThrow();
+  });
+
   describe("split-root (project-runtime)", () => {
     it("deletes project skill via runtime in split-root context", async () => {
       using tempDir = new TestTempDir("test-agent-skill-delete-split-root-project-runtime");
       const skillName = "my-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      await writeSkillWithReference(path.join(tempDir.path, ".mux"), skillName);
+      await writeSkillWithReference(path.join(tempDir.path, ".xum"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -117,7 +262,7 @@ describe("agent_skill_delete", () => {
 
       expect(result).toMatchObject({ success: true, deleted: "skill" });
 
-      const skillDir = path.join(tempDir.path, ".mux", "skills", skillName);
+      const skillDir = path.join(tempDir.path, ".xum", "skills", skillName);
       const statErr = await fs.stat(skillDir).catch((error: NodeJS.ErrnoException) => error);
       expect(statErr).toMatchObject({ code: "ENOENT" });
     });
@@ -127,17 +272,17 @@ describe("agent_skill_delete", () => {
         "test-agent-skill-delete-split-root-project-runtime-tilde-skill"
       );
       const skillName = "my-skill";
-      const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "mux", "project", "main");
+      const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "xum", "project", "main");
 
-      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
+      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".xum"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -155,7 +300,7 @@ describe("agent_skill_delete", () => {
 
       expect(result).toMatchObject({ success: true, deleted: "skill" });
 
-      const skillDir = path.join(runtimeWorkspaceRoot, ".mux", "skills", skillName);
+      const skillDir = path.join(runtimeWorkspaceRoot, ".xum", "skills", skillName);
       const statErr = await fs.stat(skillDir).catch((error: NodeJS.ErrnoException) => error);
       expect(statErr).toMatchObject({ code: "ENOENT" });
     });
@@ -169,9 +314,9 @@ describe("agent_skill_delete", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -198,15 +343,15 @@ describe("agent_skill_delete", () => {
       const skillName = "my-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      await writeSkillWithReference(path.join(tempDir.path, ".mux"), skillName);
+      await writeSkillWithReference(path.join(tempDir.path, ".xum"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -230,7 +375,7 @@ describe("agent_skill_delete", () => {
 
       const deletedFilePath = path.join(
         tempDir.path,
-        ".mux",
+        ".xum",
         "skills",
         skillName,
         "references",
@@ -242,7 +387,7 @@ describe("agent_skill_delete", () => {
       expect(deletedFileStatErr).toMatchObject({ code: "ENOENT" });
 
       const skillStat = await fs.stat(
-        path.join(tempDir.path, ".mux", "skills", skillName, "SKILL.md")
+        path.join(tempDir.path, ".xum", "skills", skillName, "SKILL.md")
       );
       expect(skillStat.isFile()).toBe(true);
     });
@@ -252,17 +397,17 @@ describe("agent_skill_delete", () => {
         "test-agent-skill-delete-split-root-project-runtime-tilde-file"
       );
       const skillName = "my-skill";
-      const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "mux", "project", "main");
+      const runtimeWorkspaceRoot = path.join(tempDir.path, "remote-home", "xum", "project", "main");
 
-      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".mux"), skillName);
+      await writeSkillWithReference(path.join(runtimeWorkspaceRoot, ".xum"), skillName);
 
       const remoteRuntime = new RemotePathMappedRuntime(runtimeWorkspaceRoot, TILDE_WORKSPACE_ROOT);
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -286,7 +431,7 @@ describe("agent_skill_delete", () => {
 
       const deletedFilePath = path.join(
         runtimeWorkspaceRoot,
-        ".mux",
+        ".xum",
         "skills",
         skillName,
         "references",
@@ -298,12 +443,12 @@ describe("agent_skill_delete", () => {
       expect(deletedFileStatErr).toMatchObject({ code: "ENOENT" });
 
       const skillStat = await fs.stat(
-        path.join(runtimeWorkspaceRoot, ".mux", "skills", skillName, "SKILL.md")
+        path.join(runtimeWorkspaceRoot, ".xum", "skills", skillName, "SKILL.md")
       );
       expect(skillStat.isFile()).toBe(true);
     });
 
-    it("rejects delete when .mux is symlinked outside workspace in split-root runtime context", async () => {
+    it("rejects delete when .xum is symlinked outside workspace in split-root runtime context", async () => {
       using tempDir = new TestTempDir("test-agent-skill-delete-split-root-runtime-symlink-escape");
       using externalDir = new TestTempDir(
         "test-agent-skill-delete-split-root-runtime-symlink-target"
@@ -311,8 +456,8 @@ describe("agent_skill_delete", () => {
       const skillName = "demo-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      const externalMuxDir = externalDir.path;
-      const externalSkillDir = path.join(externalMuxDir, "skills", skillName);
+      const externalXumDir = externalDir.path;
+      const externalSkillDir = path.join(externalXumDir, "skills", skillName);
       await fs.mkdir(externalSkillDir, { recursive: true });
       await fs.writeFile(
         path.join(externalSkillDir, "SKILL.md"),
@@ -321,8 +466,8 @@ describe("agent_skill_delete", () => {
       );
 
       await fs.symlink(
-        externalMuxDir,
-        path.join(tempDir.path, ".mux"),
+        externalXumDir,
+        path.join(tempDir.path, ".xum"),
         process.platform === "win32" ? "junction" : "dir"
       );
 
@@ -330,9 +475,9 @@ describe("agent_skill_delete", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: tempDir.path,
+          xumHome: tempDir.path,
           projectRoot: "/host/project",
           projectStorageAuthority: "runtime",
         },
@@ -437,8 +582,8 @@ describe("agent_skill_delete", () => {
 
   it("rejects deletes when skills root is a symlink", async () => {
     using tempDir = new TestTempDir("test-agent-skill-delete-symlinked-root");
-    const previousMuxRoot = process.env.MUX_ROOT;
-    process.env.MUX_ROOT = tempDir.path;
+    const previousXumRoot = process.env.XUM_ROOT;
+    process.env.XUM_ROOT = tempDir.path;
 
     try {
       const externalDir = path.join(tempDir.path, "external-skills-tree");
@@ -450,20 +595,20 @@ describe("agent_skill_delete", () => {
         "utf-8"
       );
 
-      const muxDir = path.join(tempDir.path, ".mux");
-      await fs.mkdir(muxDir, { recursive: true });
+      const xumDir = path.join(tempDir.path, ".xum");
+      await fs.mkdir(xumDir, { recursive: true });
       await fs.symlink(
         externalDir,
-        path.join(muxDir, "skills"),
+        path.join(xumDir, "skills"),
         process.platform === "win32" ? "junction" : "dir"
       );
 
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: GLOBAL_WORKSPACE_ID,
-        sessionsDir: path.join(muxDir, "sessions", GLOBAL_WORKSPACE_ID),
-        muxScope: {
+        sessionsDir: path.join(xumDir, "sessions", GLOBAL_WORKSPACE_ID),
+        xumScope: {
           type: "global",
-          muxHome: muxDir,
+          xumHome: xumDir,
         },
       });
 
@@ -488,7 +633,7 @@ describe("agent_skill_delete", () => {
         .catch(() => false);
       expect(externalStillExists).toBe(true);
     } finally {
-      restoreMuxRoot(previousMuxRoot);
+      restoreXumRoot(previousXumRoot);
     }
   });
 
@@ -645,15 +790,15 @@ describe("agent_skill_delete", () => {
     }
   });
 
-  it("returns a clear not-found error when global mux home is missing", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-delete-missing-global-mux-home");
+  it("returns a clear not-found error when global xum home is missing", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-missing-global-xum-home");
 
-    const missingMuxHome = path.join(tempDir.path, "missing-mux-home");
+    const missingXumHome = path.join(tempDir.path, "missing-xum-home");
     const tool = createAgentSkillDeleteTool(
       createTestToolConfig(tempDir.path, {
-        muxScope: {
+        xumScope: {
           type: "global",
-          muxHome: missingMuxHome,
+          xumHome: missingXumHome,
         },
       })
     );
@@ -690,8 +835,8 @@ describe("agent_skill_delete", () => {
     }
   });
 
-  it("rejects project deletes when .mux is a symlink to external directory", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-delete-project-mux-symlink");
+  it("rejects project deletes when .xum is a symlink to external directory", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-project-xum-symlink");
 
     const projectRoot = path.join(tempDir.path, "project");
     await fs.mkdir(projectRoot, { recursive: true });
@@ -705,12 +850,12 @@ describe("agent_skill_delete", () => {
       "utf-8"
     );
 
-    // Symlink .mux to external
-    await fs.symlink(externalDir, path.join(projectRoot, ".mux"));
+    // Symlink .xum to external
+    await fs.symlink(externalDir, path.join(projectRoot, ".xum"));
 
-    const projectScope: MuxToolScope = {
+    const projectScope: XumToolScope = {
       type: "project",
-      muxHome: tempDir.path,
+      xumHome: tempDir.path,
       projectRoot,
       projectStorageAuthority: "host-local",
     };
@@ -723,7 +868,7 @@ describe("agent_skill_delete", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toMatch(/outside containment root|symbolic link/i);
+      expect(result.error).toMatch(/outside (?:containment|workspace) root|symbolic link/i);
     }
 
     // Verify external content is still intact

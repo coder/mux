@@ -27,8 +27,8 @@ export type ServerLockData = z.infer<typeof ServerLockDataSchema>;
 export class ServerLockfile {
   private readonly lockPath: string;
 
-  constructor(muxHome: string) {
-    this.lockPath = path.join(muxHome, "server.lock");
+  constructor(xumHome: string) {
+    this.lockPath = path.join(xumHome, "server.lock");
   }
 
   /**

@@ -6518,17 +6518,17 @@ export class AgentSession {
         // skill tools so subprojects inherit checkout-level skills and plugins
         // across host-local and runtime-backed workspaces. disableWorkspaceAgents
         // keeps default projectPath discovery.
-        const muxScope =
+        const xumScope =
           !disableWorkspaceAgents &&
-          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
-            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
+          typeof this.aiService.resolveXumToolScopeForWorkspace === "function"
+            ? this.aiService.resolveXumToolScopeForWorkspace(metadata, runtime, workspacePath)
             : null;
         const skillCtx =
-          muxScope?.type === "project"
+          xumScope?.type === "project"
             ? resolveSkillStorageContext({
                 runtime,
                 workspacePath: skillDiscoveryPath,
-                muxScope,
+                xumScope,
                 includeClaudeSkills,
                 includeAgentPlugins,
               })
@@ -6665,7 +6665,7 @@ export class AgentSession {
         // this path — so each execution traces to a deliberate user action on a skill
         // they chose, the same trust level as the user running the command themselves.
         // Commands run non-interactively (no stdin) in the workspace directory with
-        // the runtime's default environment; the bash tool's `.mux/tool_env` sourcing
+        // the runtime's default environment; the bash tool's `.xum/tool_env` sourcing
         // lives behind hook/trust plumbing that is not reachable here, and directive
         // commands should not depend on tool-specific env anyway.
         execute: async (command) => {

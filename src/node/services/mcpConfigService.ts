@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
 import writeFileAtomic from "write-file-atomic";
+import { listProjectMetadataRelativePaths } from "@/common/compat/legacyMux";
 import type {
   MCPConfig,
   MCPHeaderValue,
@@ -43,8 +44,10 @@ export class MCPConfigService {
     return path.join(this.config.rootDir, "mcp.jsonc");
   }
 
-  private getRepoOverridePath(projectPath: string): string {
-    return path.join(projectPath, ".mux", "mcp.jsonc");
+  private getRepoOverridePaths(projectPath: string): string[] {
+    return listProjectMetadataRelativePaths("mcp.jsonc").map((relativePath) =>
+      path.join(projectPath, relativePath)
+    );
   }
 
   private async pathExists(targetPath: string): Promise<boolean> {
@@ -172,7 +175,10 @@ export class MCPConfigService {
   }
 
   private async getRepoOverrideConfig(projectPath: string): Promise<MCPConfig> {
-    return this.readConfigFile(this.getRepoOverridePath(projectPath));
+    for (const filePath of this.getRepoOverridePaths(projectPath)) {
+      if (await this.pathExists(filePath)) return this.readConfigFile(filePath);
+    }
+    return { servers: {} };
   }
 
   private async saveGlobalConfig(config: MCPConfig): Promise<void> {
@@ -239,9 +245,9 @@ export class MCPConfigService {
   /**
    * List configured servers.
    *
-   * - When no projectPath is provided: returns global servers from <muxHome>/mcp.jsonc
+   * - When no projectPath is provided: returns global servers from <xumHome>/mcp.jsonc
    * - When projectPath is provided and trusted=false: returns only global servers
-   * - When projectPath is provided and trusted=true: merges global + <projectPath>/.mux/mcp.jsonc
+   * - When projectPath is provided and trusted=true: merges global + <projectPath>/.xum/mcp.jsonc
    * - Agent Plugins servers (when the experiment provider is wired) are merged
    *   at the lowest precedence: user config always wins on key collisions.
    *

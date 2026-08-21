@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { XUM_HOME_DIR_NAME } from "@/common/constants/product";
 import {
+  getCanonicalProjectMetadataRelativePath,
   getLocalProductHomeTildeSuffix,
   getXumHomeLegacyFallbackMarkerPath,
   installLegacyMuxEnvironmentAliases,
   LEGACY_CMUX_HOME_DIR_NAME,
   LEGACY_MUX_HOME_DIR_NAME,
+  listProjectMetadataRelativePaths,
+  normalizeProjectMetadataIdentityPath,
   parseXumHomeLegacyFallbackDirName,
   resolveLegacyMuxBuiltInSkillName,
   resolveXumEnvironmentValue,
@@ -39,6 +42,18 @@ describe("legacy mux environment compatibility", () => {
 
     expect(env.XUM_ALLOW_MULTIPLE_INSTANCES).toBe("1");
     expect(env.MUX_ALLOW_MULTIPLE_INSTANCES).toBe("1");
+  });
+});
+
+describe("project metadata compatibility", () => {
+  test("keeps one canonical path ahead of the legacy read fallback", () => {
+    expect(listProjectMetadataRelativePaths("skills/demo")).toEqual([
+      ".xum/skills/demo",
+      ".mux/skills/demo",
+    ]);
+    expect(normalizeProjectMetadataIdentityPath(".xum/plugins/demo")).toBe(".mux/plugins/demo");
+    expect(normalizeProjectMetadataIdentityPath(".xum\\plugins\\demo")).toBe(".mux\\plugins\\demo");
+    expect(getCanonicalProjectMetadataRelativePath("skills/demo")).toBe(".xum/skills/demo");
   });
 });
 

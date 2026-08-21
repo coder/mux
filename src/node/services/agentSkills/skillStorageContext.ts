@@ -1,6 +1,10 @@
 import path from "node:path";
 
-import type { MuxToolScope } from "@/common/types/toolScope";
+import {
+  getCanonicalProjectMetadataRelativePath,
+  listProjectMetadataRelativePaths,
+} from "@/common/compat/legacyMux";
+import type { XumToolScope } from "@/common/types/toolScope";
 import { DevcontainerRuntime } from "@/node/runtime/DevcontainerRuntime";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
 import type { Runtime } from "@/node/runtime/Runtime";
@@ -28,33 +32,20 @@ export interface SkillStorageContext {
 
 function buildProjectLocalRoots(
   runtime: Runtime,
-  muxScope: Extract<MuxToolScope, { type: "project" }>,
+  xumScope: Extract<XumToolScope, { type: "project" }>,
   options?: { includeClaudeSkills?: boolean; includeAgentPlugins?: boolean }
 ): AgentSkillsRoots {
-  const projectSearchRoot = muxScope.checkoutRoot ?? muxScope.projectRoot;
+  const projectSearchRoot = xumScope.checkoutRoot ?? xumScope.projectRoot;
 
   return {
-    projectRoot: path.join(muxScope.projectRoot, ".mux", "skills"),
-    projectUniversalRoot: path.join(muxScope.projectRoot, ".agents", "skills"),
-    ...(projectSearchRoot !== muxScope.projectRoot
-      ? {
-          // Subprojects inherit skills from every ancestor through the checkout
-          // root. The ordered list keeps the nearest definition authoritative.
-          projectSearchRoot,
-          projectRoots: buildProjectSkillRoots(runtime, muxScope.projectRoot, projectSearchRoot, {
-            includeClaudeSkills: options?.includeClaudeSkills,
-          }),
-        }
-      : {}),
-    globalRoot: path.join(muxScope.muxHome, "skills"),
+    projectRoot: path.join(xumScope.projectRoot, getCanonicalProjectMetadataRelativePath("skills")),
+    projectSearchRoot,
+    projectRoots: buildProjectSkillRoots(runtime, xumScope.projectRoot, projectSearchRoot, {
+      includeClaudeSkills: options?.includeClaudeSkills,
+    }),
+    globalRoot: path.join(xumScope.xumHome, "skills"),
     universalRoot: "~/.agents/skills",
-    // claude-skills-compat experiment: read-only roots at lowest precedence within each scope.
-    ...(options?.includeClaudeSkills
-      ? {
-          projectClaudeRoot: path.join(muxScope.projectRoot, ".claude", "skills"),
-          globalClaudeRoot: "~/.claude/skills",
-        }
-      : {}),
+    ...(options?.includeClaudeSkills ? { globalClaudeRoot: "~/.claude/skills" } : {}),
     // agent-plugins experiment: read-only plugin containers at lowest precedence within each scope.
     // Containers anchor at the CHECKOUT root: for subProjectPath workspaces
     // `projectRoot` is the execution subdirectory, but plugins live (and are
@@ -62,10 +53,12 @@ function buildProjectLocalRoots(
     ...(options?.includeAgentPlugins
       ? {
           projectPluginRoots: [
-            path.join(muxScope.checkoutRoot ?? muxScope.projectRoot, ".mux", "plugins"),
-            path.join(muxScope.checkoutRoot ?? muxScope.projectRoot, ".agents", "plugins"),
+            ...listProjectMetadataRelativePaths("plugins").map((relativePath) =>
+              path.join(projectSearchRoot, relativePath)
+            ),
+            path.join(projectSearchRoot, ".agents", "plugins"),
           ],
-          globalPluginRoots: [path.join(muxScope.muxHome, "plugins"), "~/.agents/plugins"],
+          globalPluginRoots: [path.join(xumScope.xumHome, "plugins"), "~/.agents/plugins"],
         }
       : {}),
   };
@@ -73,33 +66,33 @@ function buildProjectLocalRoots(
 
 function buildGlobalLocalRoots(input: {
   runtime: Runtime;
-  muxScope?: MuxToolScope | null;
+  xumScope?: XumToolScope | null;
   includeClaudeSkills?: boolean;
   includeAgentPlugins?: boolean;
 }): AgentSkillsRoots {
-  const muxHome = input.muxScope?.muxHome ?? input.runtime.getXumHome();
+  const xumHome = input.xumScope?.xumHome ?? input.runtime.getXumHome();
 
   return {
     projectRoot: "",
-    globalRoot: path.join(muxHome, "skills"),
+    globalRoot: path.join(xumHome, "skills"),
     universalRoot: "~/.agents/skills",
     // claude-skills-compat experiment: read-only root at lowest global precedence.
     ...(input.includeClaudeSkills ? { globalClaudeRoot: "~/.claude/skills" } : {}),
     // agent-plugins experiment: read-only plugin containers at lowest global precedence.
     ...(input.includeAgentPlugins
-      ? { globalPluginRoots: [path.join(muxHome, "plugins"), "~/.agents/plugins"] }
+      ? { globalPluginRoots: [path.join(xumHome, "plugins"), "~/.agents/plugins"] }
       : {}),
   };
 }
 
 function resolveProjectLocalRuntime(input: {
   runtime: Runtime;
-  muxScope: Extract<MuxToolScope, { type: "project" }>;
+  xumScope: Extract<XumToolScope, { type: "project" }>;
 }): Runtime {
   if (input.runtime instanceof DevcontainerRuntime) {
     // Devcontainer commands run in the container, but project-local skill roots point at
     // host paths. Use host-local I/O here so discovery can still reach host-global skills.
-    return new LocalRuntime(input.muxScope.projectRoot);
+    return new LocalRuntime(input.xumScope.projectRoot);
   }
 
   return input.runtime;
@@ -112,13 +105,13 @@ function resolveProjectLocalRuntime(input: {
 export function resolveSkillStorageContext(input: {
   runtime: Runtime;
   workspacePath: string;
-  muxScope?: MuxToolScope | null;
+  xumScope?: XumToolScope | null;
   /** claude-skills-compat experiment: include read-only .claude/skills roots in discovery. */
   includeClaudeSkills?: boolean;
   /** agent-plugins experiment: include read-only Agent Plugins skill roots in discovery. */
   includeAgentPlugins?: boolean;
 }): SkillStorageContext {
-  if (input.muxScope?.type !== "project") {
+  if (input.xumScope?.type !== "project") {
     return {
       kind: "global-local",
       runtime: input.runtime,
@@ -127,7 +120,7 @@ export function resolveSkillStorageContext(input: {
       // fall back to workspace-local roots when the caller targets ~/.xum.
       roots: buildGlobalLocalRoots({
         runtime: input.runtime,
-        muxScope: input.muxScope,
+        xumScope: input.xumScope,
         includeClaudeSkills: input.includeClaudeSkills,
         includeAgentPlugins: input.includeAgentPlugins,
       }),
@@ -135,8 +128,8 @@ export function resolveSkillStorageContext(input: {
     };
   }
 
-  const projectSearchRoot = input.muxScope.checkoutRoot ?? input.workspacePath;
-  if (input.muxScope.projectStorageAuthority === "runtime") {
+  const projectSearchRoot = input.xumScope.checkoutRoot ?? input.workspacePath;
+  if (input.xumScope.projectStorageAuthority === "runtime") {
     return {
       kind: "project-runtime",
       runtime: input.runtime,
@@ -155,13 +148,13 @@ export function resolveSkillStorageContext(input: {
 
   const projectRuntime = resolveProjectLocalRuntime({
     runtime: input.runtime,
-    muxScope: input.muxScope,
+    xumScope: input.xumScope,
   });
   return {
     kind: "project-local",
     runtime: projectRuntime,
     workspacePath: input.workspacePath,
-    roots: buildProjectLocalRoots(projectRuntime, input.muxScope, {
+    roots: buildProjectLocalRoots(projectRuntime, input.xumScope, {
       includeClaudeSkills: input.includeClaudeSkills,
       includeAgentPlugins: input.includeAgentPlugins,
     }),
@@ -169,7 +162,7 @@ export function resolveSkillStorageContext(input: {
       kind: "local",
       // The checkout root (when present) contains projectRoot, so this stays a
       // correct repo boundary while also covering inherited and plugin roots.
-      root: input.muxScope.checkoutRoot ?? input.muxScope.projectRoot,
+      root: input.xumScope.checkoutRoot ?? input.xumScope.projectRoot,
     },
   };
 }

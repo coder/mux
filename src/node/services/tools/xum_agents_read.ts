@@ -1,21 +1,21 @@
 import * as fsPromises from "fs/promises";
 import { tool } from "ai";
 
-import type { MuxAgentsReadToolResult } from "@/common/types/tools";
+import type { XumAgentsReadToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { readFileString } from "@/node/utils/runtime/helpers";
-import { resolveAgentsPathOnRuntime, resolveAgentsPathWithinRoot } from "./mux_agents_path";
-import { resolveMuxAgentsStorageContext } from "./mux_agents_storage_context";
+import { resolveAgentsPathOnRuntime, resolveAgentsPathWithinRoot } from "./xum_agents_path";
+import { resolveXumAgentsStorageContext } from "./xum_agents_storage_context";
 
-export const createMuxAgentsReadTool: ToolFactory = (config: ToolConfiguration) => {
+export const createXumAgentsReadTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.mux_agents_read.description,
     inputSchema: TOOL_DEFINITIONS.mux_agents_read.schema,
-    execute: async (_args, { abortSignal: _abortSignal }): Promise<MuxAgentsReadToolResult> => {
+    execute: async (_args, { abortSignal: _abortSignal }): Promise<XumAgentsReadToolResult> => {
       try {
-        const ctx = resolveMuxAgentsStorageContext(config);
+        const ctx = resolveXumAgentsStorageContext(config);
 
         if (ctx.kind === "project-runtime") {
           // Resolve with symlink containment — mirrors resolveAgentsPathWithinRoot for local paths.

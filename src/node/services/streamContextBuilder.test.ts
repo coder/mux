@@ -18,13 +18,13 @@ import { buildPlanInstructions, buildStreamSystemContext } from "./streamContext
 class TestRuntime extends LocalRuntime {
   constructor(
     projectPath: string,
-    private readonly muxHomePath: string
+    private readonly xumHomePath: string
   ) {
     super(projectPath);
   }
 
   override getXumHome(): string {
-    return this.muxHomePath;
+    return this.xumHomePath;
   }
 }
 
@@ -108,9 +108,9 @@ describe("buildPlanInstructions", () => {
     using tempRoot = new DisposableTempDir("stream-context-builder");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata: WorkspaceMetadata = {
       id: "ws-1",
@@ -120,11 +120,11 @@ describe("buildPlanInstructions", () => {
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     };
 
-    const runtime = new TestRuntime(projectPath, muxHome);
+    const runtime = new TestRuntime(projectPath, xumHome);
     const requestPayloadMessages = [createMuxMessage("u1", "user", "plan the fix")];
     const callerInstructions = "Caller-specific plan note";
 
-    const expectedPlanFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    const expectedPlanFilePath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
 
     const result = await buildPlanInstructions({
       runtime,
@@ -160,9 +160,9 @@ describe("buildPlanInstructions", () => {
     using tempRoot = new DisposableTempDir("stream-context-builder");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata: WorkspaceMetadata = {
       id: "ws-1",
@@ -172,9 +172,9 @@ describe("buildPlanInstructions", () => {
       runtimeConfig: DEFAULT_RUNTIME_CONFIG,
     };
 
-    const runtime = new TestRuntime(projectPath, muxHome);
+    const runtime = new TestRuntime(projectPath, xumHome);
 
-    const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
     await fs.mkdir(path.dirname(planFilePath), { recursive: true });
     await fs.writeFile(planFilePath, "# Plan\n\n- Keep implementing", "utf-8");
 
@@ -245,10 +245,10 @@ describe("buildPlanInstructions", () => {
 class RestrictedTestRuntime extends TestRuntime {
   constructor(
     projectPath: string,
-    muxHomePath: string,
+    xumHomePath: string,
     private readonly readableRoot: string
   ) {
-    super(projectPath, muxHomePath);
+    super(projectPath, xumHomePath);
   }
 
   override readFile(filePath: string, abortSignal?: AbortSignal): ReadableStream<Uint8Array> {
@@ -266,9 +266,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context-memory-guidance");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "memory-guidance-ws",
@@ -281,7 +281,7 @@ describe("buildStreamSystemContext", () => {
       workspaces: [{ id: metadata.id, name: metadata.name }],
     });
     const buildArgs = {
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -306,11 +306,11 @@ describe("buildStreamSystemContext", () => {
     const projectPath = path.join(tempRoot.path, "project");
     const parentPath = path.join(projectPath, "parent");
     const childPath = path.join(projectPath, "child");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     const customAgentId = "parent-only-reviewer";
     await fs.mkdir(path.join(parentPath, ".mux", "agents"), { recursive: true });
     await fs.mkdir(childPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
     await fs.writeFile(
       path.join(parentPath, ".mux", "agents", `${customAgentId}.md`),
       [
@@ -340,13 +340,13 @@ describe("buildStreamSystemContext", () => {
     });
 
     const result = await buildStreamSystemContext({
-      runtime: new RestrictedTestRuntime(childPath, muxHome, childPath),
+      runtime: new RestrictedTestRuntime(childPath, xumHome, childPath),
       metadata,
       workspacePath: childPath,
       workspaceId: metadata.id,
       agentDefinition: { id: customAgentId, scope: "project" },
       effectiveMode: "exec",
-      agentDiscoveryRuntime: new RestrictedTestRuntime(parentPath, muxHome, parentPath),
+      agentDiscoveryRuntime: new RestrictedTestRuntime(parentPath, xumHome, parentPath),
       agentDiscoveryPath: parentPath,
       isSubagentWorkspace: true,
       effectiveAdditionalInstructions: undefined,
@@ -365,9 +365,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "child-ws",
@@ -384,9 +384,9 @@ describe("buildStreamSystemContext", () => {
       ],
     });
 
-    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", xumHome);
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -410,9 +410,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "grandchild-ws",
@@ -430,10 +430,10 @@ describe("buildStreamSystemContext", () => {
       ],
     });
 
-    const childPlanPath = getPlanFilePath("child-workspace", "project", muxHome);
-    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const childPlanPath = getPlanFilePath("child-workspace", "project", xumHome);
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", xumHome);
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -452,9 +452,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "top-level-ws",
@@ -468,7 +468,7 @@ describe("buildStreamSystemContext", () => {
     });
 
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -485,9 +485,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "child-ws",
@@ -504,7 +504,7 @@ describe("buildStreamSystemContext", () => {
     });
 
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -521,9 +521,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "child-ws",
@@ -540,9 +540,9 @@ describe("buildStreamSystemContext", () => {
       ],
     });
 
-    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", xumHome);
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -559,9 +559,9 @@ describe("buildStreamSystemContext", () => {
     using tempRoot = new DisposableTempDir("stream-system-context");
 
     const projectPath = path.join(tempRoot.path, "project");
-    const muxHome = path.join(tempRoot.path, "mux-home");
+    const xumHome = path.join(tempRoot.path, "mux-home");
     await fs.mkdir(projectPath, { recursive: true });
-    await fs.mkdir(muxHome, { recursive: true });
+    await fs.mkdir(xumHome, { recursive: true });
 
     const metadata = createWorkspaceMetadata({
       id: "child-ws",
@@ -578,9 +578,9 @@ describe("buildStreamSystemContext", () => {
       ],
     });
 
-    const parentPlanPath = getPlanFilePath("parent-workspace", "project", muxHome);
+    const parentPlanPath = getPlanFilePath("parent-workspace", "project", xumHome);
     const result = await buildSystemContextForTest({
-      runtime: new TestRuntime(projectPath, muxHome),
+      runtime: new TestRuntime(projectPath, xumHome),
       metadata,
       workspacePath: projectPath,
       cfg,
@@ -591,7 +591,7 @@ describe("buildStreamSystemContext", () => {
     expect(result.systemMessage).toContain("Ancestor plan file paths (nearest parent first):");
     expect(result.systemMessage).toContain(`- parent-workspace: ${parentPlanPath}`);
     expect(result.systemMessage).not.toContain(
-      `- child-workspace: ${getPlanFilePath(metadata.name, "project", muxHome)}`
+      `- child-workspace: ${getPlanFilePath(metadata.name, "project", xumHome)}`
     );
   });
 });

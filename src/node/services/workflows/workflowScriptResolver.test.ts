@@ -66,7 +66,7 @@ describe("resolveWorkflowScript", () => {
 
     expect(resolved.source).toContain("RemoteResearch");
     expect(resolved.scope).toBe("project");
-    expect(resolved.resolvedPath).toBe(`${remoteWorkspacePath}/.mux/skills/research/workflow.js`);
+    expect(resolved.resolvedPath).toBe(`${remoteWorkspacePath}/.xum/skills/research/workflow.js`);
   });
 
   test("resolves an inherited skill workflow through a remote checkout boundary", async () => {
@@ -88,7 +88,7 @@ describe("resolveWorkflowScript", () => {
     });
 
     expect(resolved.source).toContain("ParentFlow");
-    expect(resolved.resolvedPath).toBe("/remote/workspace/.mux/skills/parent-flow/workflow.js");
+    expect(resolved.resolvedPath).toBe("/remote/workspace/.xum/skills/parent-flow/workflow.js");
   });
 
   test("uses host-local skill storage for devcontainer workflow skills", async () => {
@@ -107,9 +107,9 @@ describe("resolveWorkflowScript", () => {
     const skillStorageContext = resolveSkillStorageContext({
       runtime,
       workspacePath: "/workspace/packages/app",
-      muxScope: {
+      xumScope: {
         type: "project",
-        muxHome: path.join(tempDir.path, "mux-home"),
+        xumHome: path.join(tempDir.path, "mux-home"),
         projectRoot: subprojectRoot,
         projectStorageAuthority: "host-local",
         checkoutRoot,
@@ -126,7 +126,7 @@ describe("resolveWorkflowScript", () => {
 
     expect(resolved.source).toContain("HostParentFlow");
     expect(resolved.resolvedPath).toBe(
-      path.join(checkoutRoot, ".mux", "skills", "parent-flow", "workflow.js")
+      path.join(checkoutRoot, ".xum", "skills", "parent-flow", "workflow.js")
     );
   });
 
@@ -148,8 +148,8 @@ describe("resolveWorkflowScript", () => {
 
   test("resolves a global skill workflow when no project skill shadows it", async () => {
     using tempDir = new TestTempDir("workflow-script-global-skill");
-    const muxHome = path.join(tempDir.path, "mux-home");
-    await writeGlobalSkill(muxHome, "research", {
+    const xumHome = path.join(tempDir.path, "mux-home");
+    await writeGlobalSkill(xumHome, "research", {
       files: { "workflow.js": "export default function workflow() { return 'global'; }" },
     });
 
@@ -160,7 +160,7 @@ describe("resolveWorkflowScript", () => {
       projectTrusted: false,
       roots: {
         projectRoot: path.join(tempDir.path, ".mux", "skills"),
-        globalRoot: path.join(muxHome, "skills"),
+        globalRoot: path.join(xumHome, "skills"),
       },
     });
 

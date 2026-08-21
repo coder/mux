@@ -264,7 +264,7 @@ export async function discoverWorkflowPlugins(input: {
   const { plugins } = await discoverAgentPlugins(containers);
 
   // Project plugin roots keep the repo-symlink posture: a committed
-  // .mux/plugins/<name> symlink must not resolve outside the checkout.
+  // .xum/plugins/<name> symlink must not resolve outside the checkout.
   const eligible: AgentPluginInfo[] = [];
   for (const plugin of plugins) {
     if (plugin.scope === "project") {

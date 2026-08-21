@@ -153,7 +153,7 @@ export class ServiceContainer {
     this.telemetryService = new TelemetryService(config.rootDir);
     this.experimentsService = new ExperimentsService({
       telemetryService: this.telemetryService,
-      muxHome: config.rootDir,
+      xumHome: config.rootDir,
     });
     this.backupService = new BackupService(config, {
       gitRepo: createBackupGitRepo({

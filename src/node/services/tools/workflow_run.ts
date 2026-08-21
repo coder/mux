@@ -89,15 +89,14 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
       const toolCallId = options.toolCallId;
 
       const skillCtx =
-        config.muxScope?.type === "project"
+        config.xumScope?.type === "project"
           ? resolveSkillStorageContext({
               runtime: config.runtime,
               workspacePath: config.cwd,
-              muxScope: config.muxScope,
+              xumScope: config.xumScope,
               includeAgentPlugins: config.experiments?.agentPlugins === true,
             })
           : null;
-      const roots = config.agentSkillsRoots ?? skillCtx?.roots;
       const script = await resolveWorkflowScript({
         scriptPath: args.script_path,
         scriptSource: args.script_source,
@@ -105,7 +104,6 @@ export const createWorkflowRunTool: ToolFactory = (config: ToolConfiguration) =>
         workspacePath: config.cwd,
         projectTrusted: config.trusted === true,
         includeAgentPlugins: config.experiments?.agentPlugins === true,
-        ...(roots != null ? { roots } : {}),
         ...(skillCtx != null ? { skillStorageContext: skillCtx } : {}),
       });
       const createdRun: { id: string | null } = { id: null };

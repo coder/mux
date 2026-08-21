@@ -1,7 +1,7 @@
 import { tool } from "ai";
 
 import { getErrorMessage } from "@/common/utils/errors";
-import type { MuxConfigReadToolArgs, MuxConfigReadToolResult } from "@/common/types/tools";
+import type { XumConfigReadToolArgs, XumConfigReadToolResult } from "@/common/types/tools";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import {
@@ -14,17 +14,17 @@ import { redactConfigDocument } from "@/node/services/tools/shared/configRedacti
 // so callers can inspect schema-invalid configs before repair.
 import { readConfigDocumentUnvalidated } from "@/node/services/tools/shared/configReadWrite";
 
-export const createMuxConfigReadTool: ToolFactory = (config: ToolConfiguration) => {
+export const createXumConfigReadTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.mux_config_read.description,
     inputSchema: TOOL_DEFINITIONS.mux_config_read.schema,
     execute: async (
-      args: MuxConfigReadToolArgs,
+      args: XumConfigReadToolArgs,
       { abortSignal: _abortSignal }
-    ): Promise<MuxConfigReadToolResult> => {
+    ): Promise<XumConfigReadToolResult> => {
       try {
-        const muxHome = config.muxScope!.muxHome;
-        const rawDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
+        const xumHome = config.xumScope!.xumHome;
+        const rawDocument = await readConfigDocumentUnvalidated(xumHome, args.file);
         const redactedDocument = redactConfigDocument(args.file, rawDocument);
         const data = args.path != null ? getAtPath(redactedDocument, args.path) : redactedDocument;
 

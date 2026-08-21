@@ -1,7 +1,7 @@
 import { tool } from "ai";
 
 import { CONFIG_FILE_REGISTRY } from "@/common/config/schemaRegistry";
-import type { MuxConfigWriteToolArgs, MuxConfigWriteToolResult } from "@/common/types/tools";
+import type { XumConfigWriteToolArgs, XumConfigWriteToolResult } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
@@ -22,14 +22,14 @@ function containsRedactedSentinel(value: unknown): boolean {
   return false;
 }
 
-export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration) => {
+export const createXumConfigWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.mux_config_write.description,
     inputSchema: TOOL_DEFINITIONS.mux_config_write.schema,
     execute: async (
-      args: MuxConfigWriteToolArgs,
+      args: XumConfigWriteToolArgs,
       { abortSignal: _abortSignal }
-    ): Promise<MuxConfigWriteToolResult> => {
+    ): Promise<XumConfigWriteToolResult> => {
       try {
         if (!args.confirm) {
           return {
@@ -48,8 +48,8 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        const muxHome = config.muxScope!.muxHome;
-        const currentDocument = await readConfigDocumentUnvalidated(muxHome, args.file);
+        const xumHome = config.xumScope!.xumHome;
+        const currentDocument = await readConfigDocumentUnvalidated(xumHome, args.file);
         const registryEntry = CONFIG_FILE_REGISTRY[args.file];
         const mutationResult = applyMutations(
           currentDocument,
@@ -71,7 +71,7 @@ export const createMuxConfigWriteTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        await writeConfigDocument(muxHome, args.file, mutationResult.document);
+        await writeConfigDocument(xumHome, args.file, mutationResult.document);
 
         // Notify services that config has changed (triggers hot-reload for providers)
         config.onConfigChanged?.();

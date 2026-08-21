@@ -82,7 +82,7 @@ export interface EnsureWorkspaceHooksArgs {
   /** agent-plugins experiment gate; false tears down any registered hooks. */
   enabled: boolean;
   /** `~/.mux` root anchoring the global plugin container. */
-  muxHome: string;
+  xumHome: string;
   /** Host checkout root for project containers; omit for off-host workspaces. */
   projectRoot?: string;
   projectTrusted: boolean;
@@ -300,7 +300,7 @@ export class AgentPluginHookService {
     args: EnsureWorkspaceHooksArgs
   ): Promise<DiscoveredHookPlugin[]> {
     const containers: AgentPluginContainer[] = this.computeContainers({
-      muxHome: args.muxHome,
+      xumHome: args.xumHome,
       projectRoot: args.projectRoot,
       projectTrusted: args.projectTrusted,
     });

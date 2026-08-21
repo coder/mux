@@ -4,8 +4,8 @@
  *
  * Why:
  * - `make dev-server` starts the mux backend server which uses a lockfile at:
- *     <muxHome>/server.lock
- *   (default muxHome is ~/.mux-dev in development)
+ *     <xumHome>/server.lock
+ *   (default xumHome is ~/.mux-dev in development)
  * - This prevents running multiple dev servers concurrently.
  *
  * This script creates a fresh temporary mux root dir, copies over the user's

@@ -784,7 +784,7 @@ function normalizeProjectRuntimeSettings(projectConfig: ProjectConfig): ProjectC
 }
 /**
  * The built-in Chat with Mux workspace (removed in #3123) lived in a hidden
- * `<muxHome>/system/Mux` project. Real upgraded installs still carry that
+ * `<xumHome>/system/Mux` project. Real upgraded installs still carry that
  * shipped path/title; later xum-branded leftovers use system/Xum and
  * "Chat with Xum". The removal shipped no config migration, so upgraded
  * installs kept the entry: invisible in the UI (system projects are filtered
@@ -3420,7 +3420,7 @@ ${jsonString}`;
   /**
    * Get global secrets (not project-scoped).
    *
-   * Stored in <muxHome>/secrets.json under a sentinel key for backwards compatibility.
+   * Stored in <xumHome>/secrets.json under a sentinel key for backwards compatibility.
    */
   getGlobalSecrets(): Secret[] {
     const config = this.loadSecretsConfig();

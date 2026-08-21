@@ -20,7 +20,7 @@ import { TestTempDir, mockToolCallOptions } from "./tools/testHelpers";
  */
 
 interface Fixture extends Disposable {
-  muxHome: string;
+  xumHome: string;
   metaService: MemoryMetaService;
   memoryService: MemoryService;
   ctx: MemoryScopeContext;
@@ -36,16 +36,16 @@ async function createFixture(options?: {
   projectPath?: string;
 }): Promise<Fixture> {
   const tempDir = new TestTempDir("test-memory-consolidation");
-  const muxHome = path.join(tempDir.path, "mux-home");
-  const globalMemoryDir = path.join(muxHome, "memory", "global");
+  const xumHome = path.join(tempDir.path, "mux-home");
+  const globalMemoryDir = path.join(xumHome, "memory", "global");
   const projectMemoryDir =
     options?.projectPath != null && options.projectPath !== ""
-      ? path.join(muxHome, "memory", "project", projectMemoryDirName(options.projectPath))
+      ? path.join(xumHome, "memory", "project", projectMemoryDirName(options.projectPath))
       : "";
   await fsPromises.mkdir(globalMemoryDir, { recursive: true });
 
-  const metaService = new MemoryMetaService(muxHome);
-  const memoryService = new MemoryService(new Config(muxHome), metaService);
+  const metaService = new MemoryMetaService(xumHome);
+  const memoryService = new MemoryService(new Config(xumHome), metaService);
   const ctx: MemoryScopeContext = {
     runtime: null,
     checkoutCwd: "",
@@ -61,7 +61,7 @@ async function createFixture(options?: {
     journal,
   });
   return {
-    muxHome,
+    xumHome,
     metaService,
     memoryService,
     ctx,

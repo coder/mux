@@ -34,7 +34,7 @@ import type {
 import { WORKSPACE_REPO_MISSING_ERROR } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
 import { log } from "@/node/services/log";
-import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
+import { findInitHookRelativePath, runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { expandTildeForSSH, cdCommandForSSH } from "./tildeExpansion";
 import { sleepWithAbort } from "@/node/utils/abort";
 import { execBuffered } from "@/node/utils/runtime/helpers";
@@ -2505,13 +2505,13 @@ export class SSHRuntime extends RemoteRuntime {
     return runWorkspaceInitHook({
       params,
       runtimeType: "ssh",
-      hookCheckPath: params.projectPath,
+      findHookRelativePath: () => findInitHookRelativePath(this, params.workspacePath),
       beforeHook: async () => {
         await this.prepareWorkspaceCheckout(params, nhp);
       },
-      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
+      runHook: async ({ hookRelativePath, xumEnv, initLogger, abortSignal }) => {
         // Expand tilde in hook path (quoted paths don't auto-expand on remote).
-        const hookPath = expandTildeForSSH(`${params.workspacePath}/.mux/init`);
+        const hookPath = expandTildeForSSH(`${params.workspacePath}/${hookRelativePath}`);
         await runInitHookOnRuntime(
           this,
           hookPath,

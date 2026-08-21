@@ -1,15 +1,15 @@
 ---
-title: .muxignore
+title: .xumignore
 description: Sync gitignored files to worktree workspaces
 ---
 
 Git worktrees share the `.git` directory but **not** untracked or gitignored files. This means files like `.env` that are in your `.gitignore` won't be available in worktree-based workspaces.
 
-A `.muxignore` file lets you declare which gitignored files should be copied into new worktree workspaces.
+A `.xumignore` file lets you declare which gitignored files should be copied into new worktree workspaces. Existing `.muxignore` files remain readable when `.xumignore` is absent, but new repositories should use the canonical name.
 
 ## Setup
 
-Create a `.muxignore` file in your project root (alongside `.gitignore`):
+Create a `.xumignore` file in your project root (alongside `.gitignore`):
 
 ```gitignore
 # Sync these gitignored files to worktree workspaces
@@ -32,4 +32,4 @@ Only lines prefixed with `!` (negation) are actionable — they identify gitigno
 
 ## Where to place it
 
-Place `.muxignore` in the project root, next to your `.gitignore`. You may want to commit it to your repo so all collaborators share the same sync rules.
+Place `.xumignore` in the project root, next to your `.gitignore`. You may want to commit it to your repo so all collaborators share the same sync rules.

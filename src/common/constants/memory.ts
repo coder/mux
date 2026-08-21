@@ -4,8 +4,8 @@
  * Models only ever see virtual paths under the virtual root (e.g.
  * /memories/global/preferences.md). The MemoryService maps each scope to a
  * physical root:
- * - global    -> <muxHome>/memory/global/ (host-local, permanent, shared across projects)
- * - project   -> <muxHome>/memory/project/<project dir>/ (host-local, private
+ * - global    -> <xumHome>/memory/global/ (host-local, permanent, shared across projects)
+ * - project   -> <xumHome>/memory/project/<project dir>/ (host-local, private
  *                per-project notes; never committed, survives workspaces)
  * - workspace -> <sessionDir>/memory/ (host-local, deleted with the workspace)
  */

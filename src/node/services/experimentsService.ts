@@ -65,7 +65,7 @@ async function readOverridesFile(filePath: string): Promise<Map<ExperimentId, bo
  */
 export async function readPersistedExperimentEnabled(
   experimentId: ExperimentId,
-  options?: { muxHome?: string; platform?: NodeJS.Platform }
+  options?: { xumHome?: string; platform?: NodeJS.Platform }
 ): Promise<boolean> {
   assert(experimentId in EXPERIMENTS, `Unknown experimentId: ${experimentId}`);
 
@@ -73,8 +73,8 @@ export async function readPersistedExperimentEnabled(
     return false;
   }
 
-  const muxHome = options?.muxHome ?? getXumHome();
-  const overrides = await readOverridesFile(path.join(muxHome, OVERRIDES_FILE_NAME));
+  const xumHome = options?.xumHome ?? getXumHome();
+  const overrides = await readOverridesFile(path.join(xumHome, OVERRIDES_FILE_NAME));
   return overrides.get(experimentId) === true;
 }
 
@@ -87,7 +87,7 @@ export async function readPersistedExperimentEnabled(
  */
 export class ExperimentsService {
   private readonly telemetryService: TelemetryService;
-  private readonly muxHome: string;
+  private readonly xumHome: string;
   private readonly overridesFilePath: string;
   private readonly platform: NodeJS.Platform;
 
@@ -97,12 +97,12 @@ export class ExperimentsService {
 
   constructor(options: {
     telemetryService: TelemetryService;
-    muxHome?: string;
+    xumHome?: string;
     platform?: NodeJS.Platform;
   }) {
     this.telemetryService = options.telemetryService;
-    this.muxHome = options.muxHome ?? getXumHome();
-    this.overridesFilePath = path.join(this.muxHome, OVERRIDES_FILE_NAME);
+    this.xumHome = options.xumHome ?? getXumHome();
+    this.overridesFilePath = path.join(this.xumHome, OVERRIDES_FILE_NAME);
     this.platform = options.platform ?? process.platform;
   }
 
@@ -210,7 +210,7 @@ export class ExperimentsService {
         overrides,
       };
 
-      await fs.mkdir(this.muxHome, { recursive: true });
+      await fs.mkdir(this.xumHome, { recursive: true });
       await writeFileAtomic(this.overridesFilePath, JSON.stringify(payload, null, 2), "utf-8");
     } catch {
       // Ignore persistence failures

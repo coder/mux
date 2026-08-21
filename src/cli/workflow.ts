@@ -452,7 +452,7 @@ function createWorkflowService(input: {
           workspaceId: input.ctx.workspaceId,
           cwd: input.ctx.workspacePath,
           runtime,
-          runtimeTempDir: runtime.normalizePath(".mux/tmp", input.ctx.workspacePath),
+          runtimeTempDir: runtime.normalizePath(".xum/tmp", input.ctx.workspacePath),
           workspaceSessionDir,
           trusted: input.ctx.projectTrusted,
         },

@@ -19,7 +19,7 @@ An agent definition is a Markdown file: YAML frontmatter declares metadata, poli
 
 ## Quick Start
 
-Drop a Markdown file in `.mux/agents/` (project) or `~/.xum/agents/` (global):
+Drop a Markdown file in `.xum/agents/` (project) or `~/.xum/agents/` (global):
 
 ```md
 ---
@@ -49,7 +49,7 @@ Xum scans three roots, **non-recursive** (only direct `.md` children):
 
 | Location             | Scope   | Priority |
 | -------------------- | ------- | -------- |
-| `.mux/agents/*.md`   | Project | Highest  |
+| `.xum/agents/*.md`   | Project | Highest  |
 | `~/.xum/agents/*.md` | Global  | Medium   |
 | Built-in             | System  | Lowest   |
 
@@ -85,7 +85,7 @@ prompt:
   append: true # Default.
 
 # Subagent behavior (consulted only when spawned via the task tool).
-# skip_init_hook only skips the .mux/init hook; runtime provisioning
+# skip_init_hook only skips the .xum/init hook; runtime provisioning
 # (SSH sync, Docker setup) still runs.
 subagent:
   runnable: false # Required for task({ agentId: ... }) to spawn this.

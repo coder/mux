@@ -216,7 +216,7 @@ export class InitStateManager extends EventEmitter {
   }
 
   /**
-   * Signal that the .mux/init hook is starting.
+   * Signal that the .xum/init hook is starting.
    * This marks the transition from runtime provisioning to hook execution so
    * waitForInit() can start the 5-minute timeout at the right time.
    */
@@ -465,7 +465,7 @@ export class InitStateManager extends EventEmitter {
       });
 
       // Intentional: provisioning (Coder/devcontainer/etc.) can be long-running, so we
-      // avoid timeouts until .mux/init begins. The wait is still interruptible via
+      // avoid timeouts until .xum/init begins. The wait is still interruptible via
       // abortSignal or workspace deletion (clearInMemoryState).
       const phase = state.phase ?? "runtime_setup";
       if (phase === "runtime_setup") {

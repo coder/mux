@@ -37,6 +37,7 @@ import {
   AgentDefinitionParseError,
   parseAgentDefinitionMarkdown,
 } from "./parseAgentDefinitionMarkdown";
+import { listProjectMetadataRelativePaths } from "@/common/compat/legacyMux";
 
 export const MAX_INHERITANCE_DEPTH = 10;
 
@@ -91,11 +92,11 @@ export function computeBaseSkipScope(
 const GLOBAL_AGENTS_ROOT = "~/.xum/agents";
 
 export interface AgentDefinitionsRoots {
-  projectRoot: string;
+  projectRoots: string[];
   globalRoot: string;
-  /** Agent Plugins container dirs, e.g. <projectRoot>/.mux/plugins (agent-plugins experiment; read-only). */
+  /** Agent Plugins container dirs, e.g. <projectRoot>/.xum/plugins (agent-plugins experiment; read-only). */
   projectPluginRoots?: string[];
-  /** Agent Plugins container dirs, e.g. ~/.mux/plugins (agent-plugins experiment; read-only). */
+  /** Agent Plugins container dirs, e.g. ~/.xum/plugins (agent-plugins experiment; read-only). */
   globalPluginRoots?: string[];
 }
 
@@ -109,14 +110,18 @@ export function getDefaultAgentDefinitionsRoots(
   }
 
   return {
-    projectRoot: runtime.normalizePath(".mux/agents", workspacePath),
+    projectRoots: listProjectMetadataRelativePaths("agents").map((relativePath) =>
+      runtime.normalizePath(relativePath, workspacePath)
+    ),
     globalRoot: GLOBAL_AGENTS_ROOT,
     // Agent Plugins discovery is host-filesystem-only (v1), so remote runtimes
     // never get plugin containers (mirrors agentSkillsService).
     ...(options?.includeAgentPlugins && !(runtime instanceof RemoteRuntime)
       ? {
           projectPluginRoots: [
-            runtime.normalizePath(".mux/plugins", workspacePath),
+            ...listProjectMetadataRelativePaths("plugins").map((relativePath) =>
+              runtime.normalizePath(relativePath, workspacePath)
+            ),
             runtime.normalizePath(".agents/plugins", workspacePath),
           ],
           globalPluginRoots: [`${runtime.getXumHome()}/plugins`, UNIVERSAL_AGENT_PLUGINS_CONTAINER],
@@ -218,7 +223,11 @@ async function buildScanCandidates(
   });
 
   return [
-    { scope: "project", root: roots.projectRoot, runtime },
+    ...roots.projectRoots.map((root) => ({
+      scope: "project" as const,
+      root,
+      runtime,
+    })),
     ...projectPluginCandidates,
     {
       scope: "global",

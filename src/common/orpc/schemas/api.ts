@@ -957,7 +957,7 @@ export const projects = {
 /**
  * MCP server configuration.
  *
- * Global config lives in <muxHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.mux/mcp.jsonc.
+ * Global config lives in <xumHome>/mcp.jsonc, with optional repo overrides in <projectPath>/.xum/mcp.jsonc.
  */
 export const mcp = {
   list: {
@@ -1934,8 +1934,8 @@ export const tasks = {
 
 // Agent definitions (unifies UI modes + subagents)
 // Agents can be discovered from either the PROJECT path or the WORKSPACE path.
-// - Project path: <projectPath>/.mux/agents - shared across all workspaces
-// - Workspace path: <worktree>/.mux/agents - workspace-specific (useful for iterating)
+// - Project path: <projectPath>/.xum/agents - shared across all workspaces
+// - Workspace path: <worktree>/.xum/agents - workspace-specific (useful for iterating)
 // Default is workspace path when workspaceId is provided.
 // Use disableWorkspaceAgents in SendMessageOptions to skip workspace agents during message sending.
 

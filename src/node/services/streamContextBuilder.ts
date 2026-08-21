@@ -20,7 +20,7 @@ import { ADVISOR_USAGE_GUIDANCE } from "@/common/constants/advisor";
 import type { MuxMessage } from "@/common/types/message";
 import type { DesktopCapability } from "@/common/types/desktop";
 import type { ProjectsConfig } from "@/common/types/project";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import type { AgentDefinitionScope } from "@/common/types/agentDefinition";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import type { ProvidersConfigMap } from "@/common/orpc/types";
@@ -124,8 +124,8 @@ export async function buildPlanInstructions(
   // Construct plan mode instruction if in plan mode
   // This is done backend-side because we have access to the plan file path
   let effectiveAdditionalInstructions = additionalSystemInstructions;
-  const muxHome = runtime.getXumHome();
-  const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+  const xumHome = runtime.getXumHome();
+  const planFilePath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
 
   // Read plan file (handles legacy migration transparently)
   const planResult = await readPlanFile(runtime, metadata.name, metadata.projectName, workspaceId);
@@ -250,7 +250,7 @@ export interface BuildStreamSystemContextOptions {
   cfg: ProjectsConfig;
   providersConfig?: ProvidersConfigMap | null;
   mcpServers: Parameters<typeof buildSystemMessage>[5];
-  muxScope?: MuxToolScope;
+  xumScope?: XumToolScope;
   loadDesktopCapability?: () => Promise<DesktopCapability>;
   /** Whether the advisor tool is available for the current agent */
   advisorToolAvailable?: boolean;
@@ -521,7 +521,7 @@ export async function buildStreamSystemContext(
     cfg,
     providersConfig,
     mcpServers,
-    muxScope,
+    xumScope,
     loadDesktopCapability,
     advisorToolAvailable,
   } = opts;
@@ -594,7 +594,7 @@ export async function buildStreamSystemContext(
   const skillCtx = resolveSkillStorageContext({
     runtime,
     workspacePath,
-    muxScope,
+    xumScope,
     includeClaudeSkills: opts.claudeSkillsCompatEnabled,
     includeAgentPlugins: opts.agentPluginsEnabled,
   });
@@ -748,7 +748,7 @@ export async function discoverAvailableSubagentsForToolContext(args: {
 
         // The built-in `desktop` agent is the only definition whose subagent menu visibility
         // depends on runtime capability. Limit the gate to the built-in scope so a user
-        // override at `.mux/agents/desktop.md` (or the global equivalent) replaces the built-in
+        // override at `.xum/agents/desktop.md` (or the global equivalent) replaces the built-in
         // semantics entirely and is not silently hidden when the workspace lacks a desktop
         // session.
         if (

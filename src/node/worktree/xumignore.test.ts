@@ -3,41 +3,41 @@ import * as os from "os";
 import * as path from "path";
 import * as fsPromises from "fs/promises";
 import { execSync } from "node:child_process";
-import { parseMuxignorePatterns, syncMuxignoreFiles } from "./muxignore";
+import { parseXumignorePatterns, syncXumignoreFiles } from "./xumignore";
 
-describe("parseMuxignorePatterns", () => {
+describe("parseXumignorePatterns", () => {
   it("extracts negation patterns and strips the ! prefix", () => {
     const content = "# comment\n!.env\n!config/secrets.json\n";
-    expect(parseMuxignorePatterns(content)).toEqual([".env", "config/secrets.json"]);
+    expect(parseXumignorePatterns(content)).toEqual([".env", "config/secrets.json"]);
   });
 
   it("ignores blank lines, comments, and plain patterns", () => {
     const content = "# sync env\n\nnode_modules\n!.env.local\n  \n";
-    expect(parseMuxignorePatterns(content)).toEqual([".env.local"]);
+    expect(parseXumignorePatterns(content)).toEqual([".env.local"]);
   });
 
   it("returns empty array for empty or comment-only content", () => {
-    expect(parseMuxignorePatterns("")).toEqual([]);
-    expect(parseMuxignorePatterns("# nothing here\n")).toEqual([]);
+    expect(parseXumignorePatterns("")).toEqual([]);
+    expect(parseXumignorePatterns("# nothing here\n")).toEqual([]);
   });
 
   it("handles lone ! without crashing", () => {
-    expect(parseMuxignorePatterns("!\n!.env")).toEqual([".env"]);
+    expect(parseXumignorePatterns("!\n!.env")).toEqual([".env"]);
   });
 
   it("preserves negative patterns produced by double-bang entries", () => {
     const content = "!.env*\n!!.env.example\n";
-    expect(parseMuxignorePatterns(content)).toEqual([".env*", "!.env.example"]);
+    expect(parseXumignorePatterns(content)).toEqual([".env*", "!.env.example"]);
   });
 });
 
-describe("syncMuxignoreFiles", () => {
+describe("syncXumignoreFiles", () => {
   let tmpDir: string;
   let projectPath: string;
   let worktreePath: string;
 
   beforeEach(async () => {
-    tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "muxignore-test-"));
+    tmpDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "xumignore-test-"));
     projectPath = path.join(tmpDir, "project");
     worktreePath = path.join(tmpDir, "worktree");
 
@@ -64,20 +64,44 @@ describe("syncMuxignoreFiles", () => {
     await fsPromises.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("copies gitignored files matched by .muxignore patterns", async () => {
-    // Write .muxignore with !.env pattern
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env\n");
+  it("copies gitignored files matched by .xumignore patterns", async () => {
+    // Write .xumignore with !.env pattern
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!.env\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const copied = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
     expect(copied).toBe("SECRET=abc\n");
   });
 
-  it("supports root-anchored include patterns", async () => {
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!/.env\n");
+  it("falls back to .muxignore when the canonical file is absent", async () => {
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
+
+    expect(await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8")).toBe(
+      "SECRET=abc\n"
+    );
+  });
+
+  it("prefers .xumignore without merging legacy patterns", async () => {
+    await fsPromises.appendFile(path.join(projectPath, ".gitignore"), "legacy.env\n");
+    await fsPromises.writeFile(path.join(projectPath, "legacy.env"), "LEGACY=true\n");
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!.env\n");
+    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!legacy.env\n");
+
+    await syncXumignoreFiles(projectPath, worktreePath);
+
+    expect(await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8")).toBe(
+      "SECRET=abc\n"
+    );
+    expect(fsPromises.stat(path.join(worktreePath, "legacy.env"))).rejects.toThrow();
+  });
+
+  it("supports root-anchored include patterns", async () => {
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!/.env\n");
+
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const copied = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
     expect(copied).toBe("SECRET=abc\n");
@@ -89,28 +113,28 @@ describe("syncMuxignoreFiles", () => {
         " && "
       )
     );
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env\n");
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!.env\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const nested = await fsPromises.readFile(path.join(worktreePath, "packages/api/.env"), "utf-8");
     expect(nested).toBe("NESTED=true\n");
   });
 
-  it("does nothing when .muxignore is missing", async () => {
-    // No .muxignore — should silently return
-    await syncMuxignoreFiles(projectPath, worktreePath);
+  it("does nothing when .xumignore is missing", async () => {
+    // No .xumignore — should silently return
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const files = await fsPromises.readdir(worktreePath);
     expect(files).toEqual([]);
   });
 
   it("does not overwrite existing files in worktree", async () => {
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env\n");
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!.env\n");
     // Pre-populate .env in worktree with different content
     await fsPromises.writeFile(path.join(worktreePath, ".env"), "EXISTING=true\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const content = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
     expect(content).toBe("EXISTING=true\n");
@@ -127,11 +151,11 @@ describe("syncMuxignoreFiles", () => {
       ].join(" && ")
     );
     await fsPromises.writeFile(
-      path.join(projectPath, ".muxignore"),
+      path.join(projectPath, ".xumignore"),
       "!.env\n!config/secrets.json\n"
     );
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const envContent = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
     expect(envContent).toBe("SECRET=abc\n");
@@ -154,9 +178,9 @@ describe("syncMuxignoreFiles", () => {
         'echo "deep=true" > packages/api/config/local.env',
       ].join(" && ")
     );
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!config/\n");
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!config/\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const topLevel = await fsPromises.readFile(
       path.join(worktreePath, "config/secrets.json"),
@@ -185,9 +209,9 @@ describe("syncMuxignoreFiles", () => {
         'echo "EXAMPLE=true" > .env.example',
       ].join(" && ")
     );
-    await fsPromises.writeFile(path.join(projectPath, ".muxignore"), "!.env*\n!!.env.example\n");
+    await fsPromises.writeFile(path.join(projectPath, ".xumignore"), "!.env*\n!!.env.example\n");
 
-    await syncMuxignoreFiles(projectPath, worktreePath);
+    await syncXumignoreFiles(projectPath, worktreePath);
 
     const envContent = await fsPromises.readFile(path.join(worktreePath, ".env"), "utf-8");
     expect(envContent).toBe("SECRET=abc\n");

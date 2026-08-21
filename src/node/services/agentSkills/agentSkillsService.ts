@@ -36,6 +36,10 @@ import {
   UNIVERSAL_AGENT_PLUGINS_CONTAINER,
 } from "@/node/services/agentPlugins/discovery";
 import { LocalRuntime } from "@/node/runtime/LocalRuntime";
+import {
+  getCanonicalProjectMetadataRelativePath,
+  listProjectMetadataRelativePaths,
+} from "@/common/compat/legacyMux";
 
 const UNIVERSAL_SKILLS_ROOT = "~/.agents/skills";
 // Claude Code compatibility roots (claude-skills-compat experiment): discovery-only,
@@ -47,9 +51,6 @@ const UNIVERSAL_PLUGINS_ROOT = UNIVERSAL_AGENT_PLUGINS_CONTAINER;
 
 export interface AgentSkillsRoots {
   projectRoot: string;
-  projectUniversalRoot?: string;
-  /** Workspace .claude/skills (claude-skills-compat experiment; read-only). */
-  projectClaudeRoot?: string;
   /**
    * Ordered project roots for subprojects: nearest directory first, then each
    * ancestor through the checkout root. When present, this replaces the three
@@ -62,7 +63,7 @@ export interface AgentSkillsRoots {
   universalRoot?: string;
   /** ~/.claude/skills (claude-skills-compat experiment; read-only). */
   globalClaudeRoot?: string;
-  /** Agent Plugins container dirs, e.g. <projectRoot>/.mux/plugins (agent-plugins experiment; read-only). */
+  /** Agent Plugins container dirs, e.g. <projectRoot>/.xum/plugins (agent-plugins experiment; read-only). */
   projectPluginRoots?: string[];
   /** Agent Plugins container dirs, e.g. ~/.xum/plugins (agent-plugins experiment; read-only). */
   globalPluginRoots?: string[];
@@ -113,9 +114,11 @@ export function buildProjectSkillRoots(
   options?: { includeClaudeSkills?: boolean }
 ): string[] {
   // Directory distance wins before root convention, so a subproject's
-  // .agents/skill overrides a checkout-level .mux/skill with the same name.
+  // .agents/skill overrides a checkout-level Xum skill with the same name.
   return getProjectDirectories(runtime, projectPath, projectSearchRoot).flatMap((directory) => [
-    runtime.normalizePath(".mux/skills", directory),
+    ...listProjectMetadataRelativePaths("skills").map((relativePath) =>
+      runtime.normalizePath(relativePath, directory)
+    ),
     runtime.normalizePath(".agents/skills", directory),
     ...(options?.includeClaudeSkills ? [runtime.normalizePath(".claude/skills", directory)] : []),
   ]);
@@ -135,34 +138,30 @@ export function getDefaultAgentSkillsRoots(
     throw new Error("getDefaultAgentSkillsRoots: workspacePath is required");
   }
 
+  const projectSearchRoot = options?.projectSearchRoot ?? workspacePath;
   return {
-    projectRoot: runtime.normalizePath(".mux/skills", workspacePath),
-    projectUniversalRoot: runtime.normalizePath(".agents/skills", workspacePath),
-    ...(options?.projectSearchRoot != null
-      ? {
-          projectSearchRoot: options.projectSearchRoot,
-          projectRoots: buildProjectSkillRoots(runtime, workspacePath, options.projectSearchRoot, {
-            includeClaudeSkills: options.includeClaudeSkills,
-          }),
-        }
-      : {}),
+    projectRoot: runtime.normalizePath(
+      getCanonicalProjectMetadataRelativePath("skills"),
+      workspacePath
+    ),
+    projectSearchRoot,
+    projectRoots: buildProjectSkillRoots(runtime, workspacePath, projectSearchRoot, {
+      includeClaudeSkills: options?.includeClaudeSkills,
+    }),
     globalRoot: `${runtime.getXumHome()}/skills`,
     universalRoot: UNIVERSAL_SKILLS_ROOT,
     // Claude roots are added only when the experiment is enabled so the default
     // (off) behavior stays byte-identical to the pre-experiment scan order.
-    ...(options?.includeClaudeSkills
-      ? {
-          projectClaudeRoot: runtime.normalizePath(".claude/skills", workspacePath),
-          globalClaudeRoot: CLAUDE_SKILLS_ROOT,
-        }
-      : {}),
+    ...(options?.includeClaudeSkills ? { globalClaudeRoot: CLAUDE_SKILLS_ROOT } : {}),
     // Agent Plugins discovery is host-filesystem-only (v1), so remote runtimes
     // never get plugin containers.
     ...(options?.includeAgentPlugins && !(runtime instanceof RemoteRuntime)
       ? {
           projectPluginRoots: [
-            runtime.normalizePath(".mux/plugins", options.projectSearchRoot ?? workspacePath),
-            runtime.normalizePath(".agents/plugins", options.projectSearchRoot ?? workspacePath),
+            ...listProjectMetadataRelativePaths("plugins").map((relativePath) =>
+              runtime.normalizePath(relativePath, projectSearchRoot)
+            ),
+            runtime.normalizePath(".agents/plugins", projectSearchRoot),
           ],
           globalPluginRoots: [`${runtime.getXumHome()}/plugins`, UNIVERSAL_PLUGINS_ROOT],
         }
@@ -171,14 +170,8 @@ export function getDefaultAgentSkillsRoots(
 }
 
 export function getProjectSkillRoots(roots: AgentSkillsRoots): string[] {
-  // Precedence: nearest directory first, then .mux > .agents > .claude.
-  const orderedRoots =
-    roots.projectRoots ??
-    [roots.projectRoot, roots.projectUniversalRoot, roots.projectClaudeRoot].filter(
-      (root): root is string => root != null && root.length > 0
-    );
-
-  return Array.from(new Set(orderedRoots));
+  // Precedence: nearest directory first, then .xum > .mux > .agents > .claude.
+  return Array.from(new Set(roots.projectRoots ?? [roots.projectRoot]));
 }
 
 function getGlobalSkillRoots(roots: AgentSkillsRoots): string[] {
@@ -213,8 +206,8 @@ async function buildPluginScanCandidates(args: {
   workspacePath: string;
   /**
    * Project scope: plugin roots must additionally stay inside the project
-   * containment root so repo-controlled symlinks under .mux/plugins keep the
-   * same escape posture as .mux/skills.
+   * containment root so repo-controlled symlinks under .xum/plugins keep the
+   * same escape posture as .xum/skills.
    */
   projectContainmentRoot?: string;
 }): Promise<AgentSkillScanCandidate[]> {
@@ -283,7 +276,7 @@ async function buildScanCandidates(
     workspacePath,
     // Project plugin roots ALWAYS keep the repo-symlink posture: even callers
     // without project containment (UI list/get default discovery) must not
-    // resolve a committed .mux/plugins/<name> symlink outside the checkout —
+    // resolve a committed .xum/plugins/<name> symlink outside the checkout —
     // otherwise the UI would offer plugin skills that stream discovery and
     // the skill tools reject. Inherited discovery anchors containers and
     // containment at the same checkout boundary.

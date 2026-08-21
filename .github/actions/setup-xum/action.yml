@@ -1,4 +1,4 @@
-name: "Setup Mux"
+name: "Setup Xum"
 description: "Setup Bun and install dependencies with caching"
 inputs:
   skip-build-caches:

@@ -26,7 +26,7 @@ function pathExists(target: string): Promise<boolean> {
 }
 
 interface MemoryFixture extends Disposable {
-  muxHome: string;
+  xumHome: string;
   checkout: string;
   service: MemoryService;
   metaService: MemoryMetaService;
@@ -43,15 +43,15 @@ const FIXTURE_PROJECT_PATH = "/stable/project-id";
 
 async function createFixture(workspaceId = "ws-1"): Promise<MemoryFixture> {
   const tempDir = new TestTempDir("test-memory");
-  const muxHome = path.join(tempDir.path, "mux-home");
+  const xumHome = path.join(tempDir.path, "mux-home");
   const checkout = path.join(tempDir.path, "checkout");
-  await fsPromises.mkdir(muxHome, { recursive: true });
+  await fsPromises.mkdir(xumHome, { recursive: true });
   await fsPromises.mkdir(checkout, { recursive: true });
-  const config = new Config(muxHome);
-  const metaService = new MemoryMetaService(muxHome);
+  const config = new Config(xumHome);
+  const metaService = new MemoryMetaService(xumHome);
   const service = new MemoryService(config, metaService);
   return {
-    muxHome,
+    xumHome,
     checkout,
     config,
     service,
@@ -70,7 +70,7 @@ async function createFixture(workspaceId = "ws-1"): Promise<MemoryFixture> {
 
 function projectMemoryRoot(fixture: MemoryFixture): string {
   return path.join(
-    fixture.muxHome,
+    fixture.xumHome,
     "memory",
     "project",
     projectMemoryDirName(FIXTURE_PROJECT_PATH)
@@ -79,7 +79,7 @@ function projectMemoryRoot(fixture: MemoryFixture): string {
 
 describe("MemoryService", () => {
   describe("create + view round-trip", () => {
-    it("creates and views a global memory file at <muxHome>/memory/global", async () => {
+    it("creates and views a global memory file at <xumHome>/memory/global", async () => {
       using fixture = await createFixture();
       const created = await fixture.service.create(
         fixture.ctx,
@@ -92,7 +92,7 @@ describe("MemoryService", () => {
         output: "Created /memories/global/prefs.md",
       });
 
-      const physical = path.join(fixture.muxHome, "memory", "global", "prefs.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "prefs.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("likes minimal diffs");
 
       const viewed = await fixture.service.view(fixture.ctx, "/memories/global/prefs.md");
@@ -102,7 +102,7 @@ describe("MemoryService", () => {
       }
     });
 
-    it("creates a project memory file under <muxHome>/memory/project, never the checkout", async () => {
+    it("creates a project memory file under <xumHome>/memory/project, never the checkout", async () => {
       using fixture = await createFixture();
       const created = await fixture.service.create(
         fixture.ctx,
@@ -113,7 +113,7 @@ describe("MemoryService", () => {
       expect(created.success).toBe(true);
 
       const physical = path.join(
-        fixture.muxHome,
+        fixture.xumHome,
         "memory",
         "project",
         projectMemoryDirName(FIXTURE_PROJECT_PATH),
@@ -166,7 +166,7 @@ describe("MemoryService", () => {
         error:
           "Project memory is unavailable: multi-project workspaces have no single project identity",
       });
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "project"))).toBe(false);
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "project"))).toBe(false);
     });
 
     it("supports nested paths, creating parent directories", async () => {
@@ -178,7 +178,7 @@ describe("MemoryService", () => {
         "agent"
       );
       expect(created.success).toBe(true);
-      const physical = path.join(fixture.muxHome, "memory", "global", "notes", "deep", "topic.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "notes", "deep", "topic.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("nested");
     });
 
@@ -196,7 +196,7 @@ describe("MemoryService", () => {
         expect(second.error).toContain("already exists");
       }
       // Original content untouched.
-      const physical = path.join(fixture.muxHome, "memory", "global", "a.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "a.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("v1");
     });
   });
@@ -284,7 +284,7 @@ describe("MemoryService", () => {
       await fixture.service.create(fixture.ctx, "/memories/global/sub/inner.md", "x", "agent");
       await fixture.service.create(fixture.ctx, "/memories/global/sub/deep/below.md", "x", "agent");
       await fsPromises.writeFile(
-        path.join(fixture.muxHome, "memory", "global", ".hidden"),
+        path.join(fixture.xumHome, "memory", "global", ".hidden"),
         "secret"
       );
 
@@ -347,7 +347,7 @@ describe("MemoryService", () => {
         "agent"
       );
       expect(result.success).toBe(true);
-      const physical = path.join(fixture.muxHome, "memory", "global", "s.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "s.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("alpha BETA gamma");
     });
 
@@ -387,7 +387,7 @@ describe("MemoryService", () => {
         expect(result.error).toContain("lines 1, 3");
       }
       // File unchanged on ambiguity.
-      const physical = path.join(fixture.muxHome, "memory", "global", "s.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "s.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("dup\nother\ndup\nmore");
     });
   });
@@ -404,7 +404,7 @@ describe("MemoryService", () => {
         "agent"
       );
       expect(result.success).toBe(true);
-      const physical = path.join(fixture.muxHome, "memory", "global", "i.md");
+      const physical = path.join(fixture.xumHome, "memory", "global", "i.md");
       expect(await fsPromises.readFile(physical, "utf-8")).toBe("one\ninserted\ntwo");
     });
 
@@ -429,7 +429,7 @@ describe("MemoryService", () => {
       await fixture.service.create(fixture.ctx, "/memories/global/dir/b.md", "x", "agent");
       const result = await fixture.service.deletePath(fixture.ctx, "/memories/global/dir", "agent");
       expect(result.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "dir"))).toBe(false);
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "global", "dir"))).toBe(false);
     });
 
     it("errors when deleting a missing path", async () => {
@@ -452,12 +452,12 @@ describe("MemoryService", () => {
         "agent"
       );
       expect(result.success).toBe(true);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "global", "old.md"))).toBe(
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "global", "old.md"))).toBe(
         false
       );
       expect(
         await fsPromises.readFile(
-          path.join(fixture.muxHome, "memory", "global", "sub", "new.md"),
+          path.join(fixture.xumHome, "memory", "global", "sub", "new.md"),
           "utf-8"
         )
       ).toBe("content");
@@ -492,9 +492,9 @@ describe("MemoryService", () => {
   describe("symlink escape prevention", () => {
     it("rejects writes through a symlinked directory pointing outside the root", async () => {
       using fixture = await createFixture();
-      const outside = path.join(fixture.muxHome, "outside");
+      const outside = path.join(fixture.xumHome, "outside");
       await fsPromises.mkdir(outside, { recursive: true });
-      const memoryRoot = path.join(fixture.muxHome, "memory", "global");
+      const memoryRoot = path.join(fixture.xumHome, "memory", "global");
       await fsPromises.mkdir(memoryRoot, { recursive: true });
       await fsPromises.symlink(outside, path.join(memoryRoot, "link"));
 
@@ -510,9 +510,9 @@ describe("MemoryService", () => {
 
     it("rejects reads through a symlinked file pointing outside the root", async () => {
       using fixture = await createFixture();
-      const secret = path.join(fixture.muxHome, "secret.txt");
+      const secret = path.join(fixture.xumHome, "secret.txt");
       await fsPromises.writeFile(secret, "secret");
-      const memoryRoot = path.join(fixture.muxHome, "memory", "global");
+      const memoryRoot = path.join(fixture.xumHome, "memory", "global");
       await fsPromises.mkdir(memoryRoot, { recursive: true });
       await fsPromises.symlink(secret, path.join(memoryRoot, "leak.md"));
 
@@ -634,7 +634,7 @@ describe("MemoryService", () => {
       );
       expect(saved).toEqual({ success: true, data: { sha256: sha("v2") } });
       const onDisk = await fsPromises.readFile(
-        path.join(fixture.muxHome, "memory", "global", "a.md"),
+        path.join(fixture.xumHome, "memory", "global", "a.md"),
         "utf-8"
       );
       expect(onDisk).toBe("v2");
@@ -655,7 +655,7 @@ describe("MemoryService", () => {
         expect(result.error.kind).toBe("conflict");
       }
       const onDisk = await fsPromises.readFile(
-        path.join(fixture.muxHome, "memory", "global", "a.md"),
+        path.join(fixture.xumHome, "memory", "global", "a.md"),
         "utf-8"
       );
       expect(onDisk).toBe("v1");
@@ -731,7 +731,7 @@ describe("MemoryService", () => {
       ]);
       expect(results.every((result) => result.success)).toBe(true);
       const content = await fsPromises.readFile(
-        path.join(fixture.muxHome, "memory", "global", "c.md"),
+        path.join(fixture.xumHome, "memory", "global", "c.md"),
         "utf-8"
       );
       // Both inserts must survive (no lost update).
@@ -752,7 +752,7 @@ describe("MemoryService", () => {
       );
 
       // A second workspace with a different checkout, same mux home.
-      const otherCheckout = path.join(fixture.muxHome, "other-checkout");
+      const otherCheckout = path.join(fixture.xumHome, "other-checkout");
       await fsPromises.mkdir(otherCheckout, { recursive: true });
       const otherCtx: MemoryScopeContext = {
         runtime: new LocalRuntime(otherCheckout),
@@ -868,7 +868,7 @@ describe("MemoryService", () => {
       }
 
       expect(await pathExists(path.join(fixture.checkout, ".mux"))).toBe(false);
-      expect(await pathExists(path.join(fixture.muxHome, "memory", "global"))).toBe(false);
+      expect(await pathExists(path.join(fixture.xumHome, "memory", "global"))).toBe(false);
     });
 
     it("excludes files whose names would not pass memory path validation", async () => {
@@ -1108,11 +1108,11 @@ describe("MemoryService", () => {
       );
       // Written directly to disk => exists but has zero recorded usage.
       await fsPromises.writeFile(
-        path.join(fixture.muxHome, "memory", "global", "cold.md"),
+        path.join(fixture.xumHome, "memory", "global", "cold.md"),
         "cold facts"
       );
       await fsPromises.writeFile(
-        path.join(fixture.muxHome, "memory", "global", "pinned.md"),
+        path.join(fixture.xumHome, "memory", "global", "pinned.md"),
         "pinned facts"
       );
       await fixture.metaService.setPinned("global:pinned.md", true);

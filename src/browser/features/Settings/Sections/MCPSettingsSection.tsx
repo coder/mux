@@ -1128,8 +1128,8 @@ export const MCPSettingsSection: React.FC = () => {
         <p className="text-muted mb-4 text-xs">
           Configure global MCP servers. Global config lives in{" "}
           <code className="text-accent">~/.xum/mcp.jsonc</code>, with optional repo overrides in{" "}
-          <code className="text-accent">./.mux/mcp.jsonc</code> and workspace overrides in{" "}
-          <code className="text-accent">.mux/mcp.local.jsonc</code>.
+          <code className="text-accent">./.xum/mcp.jsonc</code> and workspace overrides in{" "}
+          <code className="text-accent">.xum/mcp.local.jsonc</code>.
         </p>
       </div>
 

@@ -1,11 +1,11 @@
 ---
 name: dev-server-sandbox
-description: Run multiple isolated mux dev-server instances (temp XUM_ROOT + free ports)
+description: Run multiple isolated xum dev-server instances (temp XUM_ROOT + free ports)
 ---
 
 # `dev-server` sandbox instances
 
-`make dev-server` starts the mux backend server, which uses a lockfile at:
+`make dev-server` starts the xum backend server, which uses a lockfile at:
 
 - `<XUM_ROOT>/server.lock` (defaults to `~/.xum-dev/server.lock` in development)
 
@@ -27,7 +27,7 @@ make dev-server-sandbox
   - `config.json` (project list)
   - Each file is seeded independently from the first root that has it
     (`$XUM_ROOT`, then leftover `$MUX_ROOT`, then `~/.xum[-dev]`, then
-    leftover `~/.mux[-dev]` / `.cmux`), so a root with only `config.json`
+    leftover `~/.mux[-dev]` / `~/.cmux`), so a root with only `config.json`
     doesn't drop provider config
 - Provider credential env vars are stripped from the server's env when they
   could silently override or mismatch the intended setup: all of them with
@@ -73,7 +73,7 @@ make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-providers"
 # Clear projects from config.json (preserves other config)
 make dev-server-sandbox DEV_SERVER_SANDBOX_ARGS="--clean-projects"
 
-# Use a specific root to seed from (default: per-file from $XUM_ROOT, leftover $MUX_ROOT, ~/.xum[-dev], leftover ~/.mux[-dev]/.cmux)
+# Use a specific root to seed from (default: per-file from $XUM_ROOT, leftover $MUX_ROOT, ~/.xum[-dev], leftover ~/.mux[-dev] / ~/.cmux)
 SEED_XUM_ROOT=~/.xum-dev make dev-server-sandbox
 
 # Keep the sandbox root directory after exit (useful for debugging)

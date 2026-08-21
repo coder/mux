@@ -10,11 +10,11 @@
  */
 export type ProjectStorageAuthority = "host-local" | "runtime";
 
-export type MuxToolScope =
-  | { readonly type: "global"; readonly muxHome: string }
+export type XumToolScope =
+  | { readonly type: "global"; readonly xumHome: string }
   | {
       readonly type: "project";
-      readonly muxHome: string;
+      readonly xumHome: string;
       readonly projectRoot: string;
       readonly projectStorageAuthority: ProjectStorageAuthority;
       /**

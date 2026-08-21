@@ -82,7 +82,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: ./scripts/generate-version.sh
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -180,7 +180,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: make build-main
       # workflow_dispatch inputs are only triggerable by repo members, so direct
       # interpolation is acceptable and preserves shell quoting in the filter.
@@ -271,7 +271,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: make build-main
       # workflow_dispatch inputs are only triggerable by repo members, so direct
       # interpolation is acceptable and preserves shell quoting in the filter.
@@ -322,7 +322,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - uses: ./.github/actions/setup-playwright
         timeout-minutes: 10
       - run: make storybook-build
@@ -357,7 +357,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Install xvfb
         if: matrix.os == 'linux'
         run: |
@@ -387,7 +387,7 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
         with:
           skip-build-caches: true
       - name: Generate version.ts
@@ -423,7 +423,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: ./scripts/generate-npm-shrinkwrap.sh
       - run: make build
       - name: Pack npm package
@@ -492,7 +492,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - run: bun run build
       - run: make dist-linux
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
@@ -514,7 +514,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Setup code signing
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         run: ./scripts/setup-macos-signing.sh
@@ -556,7 +556,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - name: Add MSYS2 make to PATH
         shell: pwsh
         run: |
@@ -604,7 +604,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
       - uses: ./.github/actions/build-vscode-extension
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:

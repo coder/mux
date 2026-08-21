@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
 import { describe, it, expect } from "bun:test";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
 import type { AgentSkillReadToolResult, AgentSkillWriteToolResult } from "@/common/types/tools";
 import { createAgentSkillReadTool } from "./agent_skill_read";
@@ -13,22 +13,23 @@ import {
   createWorkspaceSessionDir,
   mockToolCallOptions,
   RemotePathMappedRuntime,
-  restoreMuxRoot,
+  restoreXumRoot,
   skillMarkdown,
   TEST_GLOBAL_WORKSPACE_ID as GLOBAL_WORKSPACE_ID,
   TestTempDir,
+  writeSkill,
 } from "./testHelpers";
 
 async function createWriteTool(
-  muxHome: string,
+  xumHome: string,
   workspaceId: string = GLOBAL_WORKSPACE_ID,
-  muxScope?: MuxToolScope
+  xumScope?: XumToolScope
 ) {
-  const workspaceSessionDir = await createWorkspaceSessionDir(muxHome, workspaceId);
-  const config = createTestToolConfig(muxHome, {
+  const workspaceSessionDir = await createWorkspaceSessionDir(xumHome, workspaceId);
+  const config = createTestToolConfig(xumHome, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
-    muxScope,
+    xumScope,
   });
 
   return createAgentSkillWriteTool(config);
@@ -55,8 +56,8 @@ describe("agent_skill_write", () => {
     expect(stored).toBe(content);
   });
 
-  it("recreates deleted global mux home before validating skill writes", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-write-recreate-mux-home");
+  it("recreates deleted global xum home before validating skill writes", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-recreate-xum-home");
 
     const tool = await createWriteTool(tempDir.path);
     const content = skillMarkdown("demo-skill", { body: "Recovered body" });
@@ -81,11 +82,11 @@ describe("agent_skill_write", () => {
     using tempDir = new TestTempDir("test-agent-skill-write-project-scope");
 
     const projectRoot = path.join(tempDir.path, "my-project");
-    await fs.mkdir(path.join(projectRoot, ".mux", "skills"), { recursive: true });
+    await fs.mkdir(path.join(projectRoot, ".xum", "skills"), { recursive: true });
 
-    const projectScope: MuxToolScope = {
+    const projectScope: XumToolScope = {
       type: "project",
-      muxHome: tempDir.path,
+      xumHome: tempDir.path,
       projectRoot,
       projectStorageAuthority: "host-local",
     };
@@ -100,10 +101,398 @@ describe("agent_skill_write", () => {
 
     expect(result.success).toBe(true);
 
-    const projectSkillPath = path.join(projectRoot, ".mux", "skills", "demo-skill", "SKILL.md");
+    const projectSkillPath = path.join(projectRoot, ".xum", "skills", "demo-skill", "SKILL.md");
     const stored = await fs.readFile(projectSkillPath, "utf-8");
     expect(stored).toBe(content);
   });
+  it("migrates a legacy project package before writing an auxiliary file", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-migration");
+    const projectRoot = path.join(tempDir.path, "project");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    const containedStore = path.join(projectRoot, ".skill-store");
+    await writeSkill(containedStore, "demo-skill", {
+      files: { "references/existing.txt": "existing" },
+    });
+    await fs.mkdir(legacyRoot, { recursive: true });
+    await fs.symlink(
+      path.join(containedStore, "demo-skill"),
+      path.join(legacyRoot, "demo-skill"),
+      process.platform === "win32" ? "junction" : "dir"
+    );
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    expect(await fs.readFile(path.join(canonicalDir, "references/existing.txt"), "utf-8")).toBe(
+      "existing"
+    );
+    expect(await fs.readFile(path.join(canonicalDir, "references/new.txt"), "utf-8")).toBe("new");
+    expect((await fs.lstat(path.join(legacyRoot, "demo-skill"))).isSymbolicLink()).toBe(true);
+  });
+
+  it("merges a legacy package into an incomplete canonical package before writing", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-partial-canonical");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalRoot = path.join(projectRoot, ".xum", "skills");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(path.join(canonicalRoot, "demo-skill", "references"), { recursive: true });
+    await fs.writeFile(
+      path.join(canonicalRoot, "demo-skill", SKILL_FILENAME),
+      "---\nname: wrong-name\ndescription: Invalid canonical manifest\n---\n",
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(canonicalRoot, "demo-skill", "references", "canonical.txt"),
+      "canonical",
+      "utf-8"
+    );
+    await writeSkill(legacyRoot, "demo-skill", {
+      files: { "references/legacy.txt": "legacy" },
+    });
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    const canonicalDir = path.join(canonicalRoot, "demo-skill");
+    expect(await fs.readFile(path.join(canonicalDir, SKILL_FILENAME), "utf-8")).toContain(
+      "name: demo-skill"
+    );
+    expect(await fs.readFile(path.join(canonicalDir, "references/canonical.txt"), "utf-8")).toBe(
+      "canonical"
+    );
+    expect(await fs.readFile(path.join(canonicalDir, "references/legacy.txt"), "utf-8")).toBe(
+      "legacy"
+    );
+    expect(await fs.readFile(path.join(canonicalDir, "references/new.txt"), "utf-8")).toBe("new");
+  });
+
+  it("lets canonical files replace conflicting legacy node types", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-type-conflicts");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await writeSkill(legacyRoot, "demo-skill", {
+      files: { "canonical-file/legacy.txt": "legacy", "canonical-directory": "legacy" },
+    });
+    await fs.mkdir(path.join(canonicalDir, "canonical-directory"), { recursive: true });
+    await fs.writeFile(path.join(canonicalDir, "canonical-file"), "canonical", "utf-8");
+    await fs.writeFile(
+      path.join(canonicalDir, "canonical-directory", "canonical.txt"),
+      "canonical",
+      "utf-8"
+    );
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(path.join(canonicalDir, "canonical-file"), "utf-8")).toBe("canonical");
+    expect(
+      await fs.readFile(path.join(canonicalDir, "canonical-directory", "canonical.txt"), "utf-8")
+    ).toBe("canonical");
+  });
+
+  it("does not follow legacy symlinks while overlaying canonical files", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-overlay-symlink");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyDir = path.join(projectRoot, ".mux", "skills", "demo-skill");
+    const externalFile = path.join(tempDir.path, "external.txt");
+    await writeSkill(path.dirname(legacyDir), "demo-skill");
+    await fs.writeFile(externalFile, "external", "utf-8");
+    await fs.symlink(externalFile, path.join(legacyDir, "shared.txt"), "file");
+    await fs.mkdir(canonicalDir, { recursive: true });
+    await fs.writeFile(path.join(canonicalDir, "shared.txt"), "canonical", "utf-8");
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(externalFile, "utf-8")).toBe("external");
+    expect((await fs.lstat(path.join(canonicalDir, "shared.txt"))).isSymbolicLink()).toBe(false);
+    expect(await fs.readFile(path.join(canonicalDir, "shared.txt"), "utf-8")).toBe("canonical");
+  });
+
+  it("repairs a dangling canonical package symlink from the legacy fallback", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-dangling-canonical");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalRoot = path.join(projectRoot, ".xum", "skills");
+    const canonicalDir = path.join(canonicalRoot, "demo-skill");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(canonicalRoot, { recursive: true });
+    await fs.symlink(path.join(projectRoot, "missing-skill"), canonicalDir, "dir");
+    await writeSkill(legacyRoot, "demo-skill");
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    expect((await fs.lstat(canonicalDir)).isSymbolicLink()).toBe(false);
+    expect(await fs.readFile(path.join(canonicalDir, SKILL_FILENAME), "utf-8")).toContain(
+      "name: demo-skill"
+    );
+  });
+
+  it("drops invalid canonical manifest casing aliases during migration", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-manifest-casing-alias");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(canonicalDir, { recursive: true });
+    await fs.writeFile(path.join(canonicalDir, "skill.md"), "invalid", "utf-8");
+    await writeSkill(legacyRoot, "demo-skill");
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(path.join(canonicalDir, SKILL_FILENAME), "utf-8")).toContain(
+      "name: demo-skill"
+    );
+  });
+
+  it("preserves canonical metadata when the legacy manifest is invalid", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-invalid-legacy-manifest");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyDir = path.join(projectRoot, ".mux", "skills", "demo-skill");
+    await fs.mkdir(canonicalDir, { recursive: true });
+    await fs.writeFile(path.join(canonicalDir, SKILL_FILENAME), "canonical-invalid", "utf-8");
+    await fs.mkdir(legacyDir, { recursive: true });
+    await fs.writeFile(path.join(legacyDir, SKILL_FILENAME), "legacy-invalid", "utf-8");
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    expect(await fs.readFile(path.join(canonicalDir, SKILL_FILENAME), "utf-8")).toBe(
+      "canonical-invalid"
+    );
+    expect(await fs.readFile(path.join(legacyDir, SKILL_FILENAME), "utf-8")).toBe("legacy-invalid");
+  });
+
+  it("rebases relative links from a symlinked legacy package", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-relative-link-migration");
+    const projectRoot = path.join(tempDir.path, "project");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    const sourceRoot = path.join(projectRoot, ".skill-store");
+    const sourceDir = path.join(sourceRoot, "demo-skill");
+    await writeSkill(sourceRoot, "demo-skill");
+    await fs.rename(path.join(sourceDir, SKILL_FILENAME), path.join(sourceDir, "manifest.md"));
+    await fs.symlink("manifest.md", path.join(sourceDir, SKILL_FILENAME), "file");
+    await fs.mkdir(legacyRoot, { recursive: true });
+    await fs.symlink(sourceDir, path.join(legacyRoot, "demo-skill"), "dir");
+
+    const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome: tempDir.path,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", filePath: "new.txt", content: "new" },
+      mockToolCallOptions
+    )) as AgentSkillWriteToolResult;
+
+    expect(result.success).toBe(true);
+    const canonicalManifest = path.join(
+      projectRoot,
+      ".xum",
+      "skills",
+      "demo-skill",
+      SKILL_FILENAME
+    );
+    expect((await fs.lstat(canonicalManifest)).isSymbolicLink()).toBe(true);
+    expect(path.isAbsolute(await fs.readlink(canonicalManifest))).toBe(true);
+    expect(await fs.readFile(canonicalManifest, "utf-8")).toContain("name: demo-skill");
+  });
+
+  it("removes partial canonical copies when legacy migration fails", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-atomic");
+    const projectRoot = path.join(tempDir.path, "project");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await writeSkill(legacyRoot, "demo-skill");
+
+    const fakeBin = path.join(tempDir.path, "bin");
+    await fs.mkdir(fakeBin);
+    await fs.writeFile(
+      path.join(fakeBin, "cp"),
+      '#!/bin/sh\nmkdir -p "$3"\nprintf partial > "$3/partial"\nexit 1\n',
+      { mode: 0o755 }
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+    try {
+      const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+        type: "project",
+        xumHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      });
+      const result = (await tool.execute!(
+        { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+      expect(result.success).toBe(false);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+
+    const canonicalRoot = path.join(projectRoot, ".xum", "skills");
+    expect(await fs.readdir(canonicalRoot)).toEqual([]);
+    expect(
+      await fs.readFile(path.join(legacyRoot, "demo-skill", SKILL_FILENAME), "utf-8")
+    ).toContain("name: demo-skill");
+  });
+
+  it("rejects a symlink returned as the migration temp directory", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-temp-symlink");
+    const projectRoot = path.join(tempDir.path, "project");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await writeSkill(legacyRoot, "demo-skill");
+    const externalDir = path.join(tempDir.path, "external");
+    await fs.mkdir(externalDir);
+
+    const fakeBin = path.join(tempDir.path, "bin");
+    await fs.mkdir(fakeBin);
+    await fs.writeFile(
+      path.join(fakeBin, "mktemp"),
+      `#!/bin/sh\ntmp="\${2%XXXXXX}AAAAAA"\nln -s '${externalDir}' "$tmp"\nprintf '%s\\n' "$tmp"\n`,
+      { mode: 0o755 }
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+    try {
+      const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+        type: "project",
+        xumHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      });
+      const result = (await tool.execute!(
+        { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+      expect(result.success).toBe(false);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+
+    expect(await fs.readdir(externalDir)).toEqual([]);
+    expect(
+      await fs.readFile(path.join(legacyRoot, "demo-skill", SKILL_FILENAME), "utf-8")
+    ).toContain("name: demo-skill");
+  });
+
+  it("rejects a symlink returned as the migration backup directory", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-legacy-backup-symlink");
+    const projectRoot = path.join(tempDir.path, "project");
+    const canonicalDir = path.join(projectRoot, ".xum", "skills", "demo-skill");
+    const legacyRoot = path.join(projectRoot, ".mux", "skills");
+    await fs.mkdir(canonicalDir, { recursive: true });
+    await fs.writeFile(path.join(canonicalDir, "canonical.txt"), "canonical", "utf-8");
+    await writeSkill(legacyRoot, "demo-skill");
+    const externalDir = path.join(tempDir.path, "external");
+    await fs.mkdir(externalDir);
+
+    const fakeBin = path.join(tempDir.path, "bin");
+    const counterPath = path.join(tempDir.path, "mktemp-count");
+    await fs.mkdir(fakeBin);
+    await fs.writeFile(
+      path.join(fakeBin, "mktemp"),
+      `#!/bin/sh
+count=0
+[ ! -f '${counterPath}' ] || count=$(cat '${counterPath}')
+count=$((count + 1))
+printf '%s' "$count" > '${counterPath}'
+tmp="\${2%XXXXXX}$count$count$count$count$count$count"
+if [ "$count" -eq 1 ]; then mkdir "$tmp"; else ln -s '${externalDir}' "$tmp"; fi
+printf '%s\\n' "$tmp"
+`,
+      { mode: 0o755 }
+    );
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${fakeBin}:${previousPath ?? ""}`;
+    try {
+      const tool = await createWriteTool(tempDir.path, GLOBAL_WORKSPACE_ID, {
+        type: "project",
+        xumHome: tempDir.path,
+        projectRoot,
+        projectStorageAuthority: "host-local",
+      });
+      const result = (await tool.execute!(
+        { name: "demo-skill", filePath: "references/new.txt", content: "new" },
+        mockToolCallOptions
+      )) as AgentSkillWriteToolResult;
+      expect(result.success).toBe(false);
+    } finally {
+      process.env.PATH = previousPath;
+    }
+
+    expect(await fs.readFile(path.join(canonicalDir, "canonical.txt"), "utf-8")).toBe("canonical");
+    expect(fs.stat(path.join(canonicalDir, SKILL_FILENAME))).rejects.toThrow();
+    expect(await fs.readdir(externalDir)).toEqual([]);
+  });
+
   describe("split-root (project-runtime)", () => {
     it("writes project skill via runtime APIs in split-root context", async () => {
       using tempDir = new TestTempDir("test-agent-skill-write-split-root-project-runtime");
@@ -111,9 +500,9 @@ describe("agent_skill_write", () => {
       const remoteWorkspaceRoot = "/remote/workspace";
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
 
-      const projectScope: MuxToolScope = {
+      const projectScope: XumToolScope = {
         type: "project",
-        muxHome: tempDir.path,
+        xumHome: tempDir.path,
         projectRoot: "/host/project",
         projectStorageAuthority: "runtime",
       };
@@ -121,7 +510,7 @@ describe("agent_skill_write", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: projectScope,
+        xumScope: projectScope,
       });
       const config = {
         ...baseConfig,
@@ -137,7 +526,7 @@ describe("agent_skill_write", () => {
       )) as AgentSkillWriteToolResult;
       expect(writeResult.success).toBe(true);
 
-      const localSkillFile = path.join(tempDir.path, ".mux", "skills", skillName, "SKILL.md");
+      const localSkillFile = path.join(tempDir.path, ".xum", "skills", skillName, "SKILL.md");
       const stored = await fs.readFile(localSkillFile, "utf-8");
       expect(stored).toBe(content);
 
@@ -153,7 +542,7 @@ describe("agent_skill_write", () => {
       }
     });
 
-    it("rejects write when .mux is symlinked outside workspace in split-root runtime context", async () => {
+    it("rejects write when .xum is symlinked outside workspace in split-root runtime context", async () => {
       using tempDir = new TestTempDir("test-agent-skill-write-split-root-runtime-symlink-escape");
       using externalDir = new TestTempDir(
         "test-agent-skill-write-split-root-runtime-symlink-target"
@@ -161,18 +550,18 @@ describe("agent_skill_write", () => {
       const skillName = "split-root-runtime-write-skill";
       const remoteWorkspaceRoot = "/remote/workspace";
 
-      const externalMuxDir = externalDir.path;
-      await fs.mkdir(path.join(externalMuxDir, "skills"), { recursive: true });
+      const externalXumDir = externalDir.path;
+      await fs.mkdir(path.join(externalXumDir, "skills"), { recursive: true });
       await fs.symlink(
-        externalMuxDir,
-        path.join(tempDir.path, ".mux"),
+        externalXumDir,
+        path.join(tempDir.path, ".xum"),
         process.platform === "win32" ? "junction" : "dir"
       );
 
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
-      const projectScope: MuxToolScope = {
+      const projectScope: XumToolScope = {
         type: "project",
-        muxHome: tempDir.path,
+        xumHome: tempDir.path,
         projectRoot: "/host/project",
         projectStorageAuthority: "runtime",
       };
@@ -180,7 +569,7 @@ describe("agent_skill_write", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: projectScope,
+        xumScope: projectScope,
       });
       const config = {
         ...baseConfig,
@@ -200,14 +589,14 @@ describe("agent_skill_write", () => {
         expect(writeResult.error).toMatch(/outside workspace root|escape|symlink/i);
       }
 
-      const externalSkillFile = path.join(externalMuxDir, "skills", skillName, "SKILL.md");
+      const externalSkillFile = path.join(externalXumDir, "skills", skillName, "SKILL.md");
       const externalSkillExists = await fs
         .stat(externalSkillFile)
         .then(() => true)
         .catch(() => false);
       expect(externalSkillExists).toBe(false);
 
-      const externalSkillEntries = await fs.readdir(path.join(externalMuxDir, "skills"));
+      const externalSkillEntries = await fs.readdir(path.join(externalXumDir, "skills"));
       expect(externalSkillEntries).toEqual([]);
     });
 
@@ -219,9 +608,9 @@ describe("agent_skill_write", () => {
       const remoteWorkspaceRoot = "/remote/workspace";
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
 
-      const projectScope: MuxToolScope = {
+      const projectScope: XumToolScope = {
         type: "project",
-        muxHome: tempDir.path,
+        xumHome: tempDir.path,
         projectRoot: "/host/project",
         projectStorageAuthority: "runtime",
       };
@@ -229,14 +618,14 @@ describe("agent_skill_write", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: projectScope,
+        xumScope: projectScope,
       });
       const config = {
         ...baseConfig,
         cwd: remoteWorkspaceRoot,
       };
 
-      const localSkillDir = path.join(tempDir.path, ".mux", "skills", skillName);
+      const localSkillDir = path.join(tempDir.path, ".xum", "skills", skillName);
       await fs.mkdir(localSkillDir, { recursive: true });
 
       const symlinkTargetPath = path.join(tempDir.path, "outside-skill-target.md");
@@ -277,9 +666,9 @@ describe("agent_skill_write", () => {
       const remoteWorkspaceRoot = "/remote/workspace";
       const remoteRuntime = new RemotePathMappedRuntime(tempDir.path, remoteWorkspaceRoot);
 
-      const projectScope: MuxToolScope = {
+      const projectScope: XumToolScope = {
         type: "project",
-        muxHome: tempDir.path,
+        xumHome: tempDir.path,
         projectRoot: "/host/project",
         projectStorageAuthority: "runtime",
       };
@@ -287,7 +676,7 @@ describe("agent_skill_write", () => {
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: "regular-workspace",
         runtime: remoteRuntime,
-        muxScope: projectScope,
+        xumScope: projectScope,
       });
       const config = {
         ...baseConfig,
@@ -310,7 +699,7 @@ describe("agent_skill_write", () => {
 
       const canonicalSkillPath = path.join(
         tempDir.path,
-        ".mux",
+        ".xum",
         "skills",
         skillName,
         SKILL_FILENAME
@@ -450,7 +839,7 @@ describe("agent_skill_write", () => {
       "description: >-",
       "  Keep this wording exactly as authored.",
       "  Preserve wrapping and punctuation: colon: yes.",
-      'compatibility: "mux >= 1.0"',
+      'compatibility: "xum >= 1.0"',
       "metadata:",
       '  owner: "docs-team"',
       "advertise: false",
@@ -501,7 +890,7 @@ describe("agent_skill_write", () => {
       "description: >-",
       "  Keep this exact text.",
       "  Preserve order and spacing.",
-      'compatibility: "mux >= 1.0"',
+      'compatibility: "xum >= 1.0"',
       "metadata:",
       "  owner: docs-team",
       "---",
@@ -587,28 +976,28 @@ describe("agent_skill_write", () => {
 
   it("rejects writes when skills root is a symlink", async () => {
     using tempDir = new TestTempDir("test-agent-skill-write-symlinked-root");
-    const previousMuxRoot = process.env.MUX_ROOT;
-    process.env.MUX_ROOT = tempDir.path;
+    const previousXumRoot = process.env.XUM_ROOT;
+    process.env.XUM_ROOT = tempDir.path;
 
     try {
       const externalDir = path.join(tempDir.path, "external-skills-tree");
       const externalSkillDir = path.join(externalDir, "evil-skill");
       await fs.mkdir(externalSkillDir, { recursive: true });
 
-      const muxDir = path.join(tempDir.path, ".mux");
-      await fs.mkdir(muxDir, { recursive: true });
+      const xumDir = path.join(tempDir.path, ".xum");
+      await fs.mkdir(xumDir, { recursive: true });
       await fs.symlink(
         externalDir,
-        path.join(muxDir, "skills"),
+        path.join(xumDir, "skills"),
         process.platform === "win32" ? "junction" : "dir"
       );
 
       const baseConfig = createTestToolConfig(tempDir.path, {
         workspaceId: GLOBAL_WORKSPACE_ID,
-        sessionsDir: path.join(muxDir, "sessions", GLOBAL_WORKSPACE_ID),
-        muxScope: {
+        sessionsDir: path.join(xumDir, "sessions", GLOBAL_WORKSPACE_ID),
+        xumScope: {
           type: "global",
-          muxHome: muxDir,
+          xumHome: xumDir,
         },
       });
 
@@ -629,7 +1018,7 @@ describe("agent_skill_write", () => {
       const externalEntries = await fs.readdir(externalDir);
       expect(externalEntries).toEqual(["evil-skill"]);
     } finally {
-      restoreMuxRoot(previousMuxRoot);
+      restoreXumRoot(previousXumRoot);
     }
   });
 
@@ -745,20 +1134,23 @@ describe("agent_skill_write", () => {
     expect(stored).toBe(originalContent);
   });
 
-  it("rejects project writes when .mux is a symlink to external directory", async () => {
-    using tempDir = new TestTempDir("test-agent-skill-write-project-mux-symlink");
+  it("rejects project writes when .xum is a symlink to external directory", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-write-project-xum-symlink");
 
     const projectRoot = path.join(tempDir.path, "project");
     await fs.mkdir(projectRoot, { recursive: true });
 
-    // Create external directory and symlink .mux to it
+    const legacySkill = path.join(projectRoot, ".mux", "skills", "demo-skill");
+    await writeSkill(path.join(projectRoot, ".mux", "skills"), "demo-skill");
+
+    // Create external directory and symlink .xum to it
     const externalDir = path.join(tempDir.path, "external");
     await fs.mkdir(externalDir, { recursive: true });
-    await fs.symlink(externalDir, path.join(projectRoot, ".mux"));
+    await fs.symlink(externalDir, path.join(projectRoot, ".xum"));
 
-    const projectScope: MuxToolScope = {
+    const projectScope: XumToolScope = {
       type: "project",
-      muxHome: tempDir.path,
+      xumHome: tempDir.path,
       projectRoot,
       projectStorageAuthority: "host-local",
     };
@@ -773,8 +1165,12 @@ describe("agent_skill_write", () => {
 
     expect(result.success).toBe(false);
     if (!result.success) {
-      expect(result.error).toMatch(/outside containment root|symbolic link/i);
+      expect(result.error).toMatch(/outside (?:containment|workspace) root|symbolic link/i);
     }
+
+    expect(await fs.readFile(path.join(legacySkill, SKILL_FILENAME), "utf-8")).toContain(
+      "name: demo-skill"
+    );
 
     // Verify no directories were created in external target
     const externalEntries = await fs.readdir(externalDir);

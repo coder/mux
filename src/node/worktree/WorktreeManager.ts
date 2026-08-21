@@ -18,7 +18,7 @@ import { log } from "@/node/services/log";
 import { GIT_NO_HOOKS_ENV } from "@/node/utils/gitNoHooksEnv";
 import { WORKTREE_DELETE_GIT_TIMEOUT_MS } from "@/constants/terminationTimeouts";
 import { syncLocalGitSubmodules } from "@/node/runtime/submoduleSync";
-import { syncMuxignoreFiles } from "./muxignore";
+import { syncXumignoreFiles } from "./xumignore";
 
 type GitExecOptions = Pick<ExecFileAsyncOptions, "env" | "signal" | "timeoutMs"> | undefined;
 
@@ -166,10 +166,10 @@ export class WorktreeManager {
 
       initLogger.logStep("Worktree created successfully");
 
-      // Sync gitignored files declared in .muxignore (e.g. .env)
+      // Sync gitignored files declared in .xumignore (e.g. .env)
       // before init hooks run so they have access to secrets/config
-      initLogger.logStep("Syncing .muxignore files...");
-      await syncMuxignoreFiles(projectPath, workspacePath);
+      initLogger.logStep("Syncing .xumignore files...");
+      await syncXumignoreFiles(projectPath, workspacePath);
 
       // For existing branches, fast-forward to latest origin (best-effort)
       // Only if local can fast-forward (preserves unpushed work)

@@ -243,10 +243,10 @@ class MuxAgent(BaseInstalledAgent):
                 f"{self._PROVIDERS_FILE_ENV_KEY}={providers_path} is not a readable file"
             )
 
-        mux_config_root = (
+        xum_config_root = (
             env.get("MUX_CONFIG_ROOT") or "/root/.mux"
         ).strip() or "/root/.mux"
-        target_path = f"{mux_config_root.rstrip('/')}/providers.jsonc"
+        target_path = f"{xum_config_root.rstrip('/')}/providers.jsonc"
 
         await environment.upload_file(
             source_path=providers_path,

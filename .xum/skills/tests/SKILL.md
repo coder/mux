@@ -58,7 +58,7 @@ Otherwise, tests that live in `src/` run under `bun test` (generally these are u
 
 ## Runtime & Checks
 
-- Never kill the running Mux process; rely on the following for local validation:
+- Never kill the running Xum process; rely on the following for local validation:
   - `make typecheck`
   - `make static-check` (fast local lint/typecheck/fmt path)
   - `make static-check-full` (adds docs link and bench-agent validation used in CI)

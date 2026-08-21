@@ -9,12 +9,7 @@ import {
   WorkflowRunToolResultSchema,
 } from "@/common/utils/tools/toolDefinitions";
 import { createWorkflowRunTool } from "./workflow_run";
-import {
-  TestTempDir,
-  createIsolatedAgentSkillsRoots,
-  createTestToolConfig,
-  writeProjectSkill,
-} from "./testHelpers";
+import { TestTempDir, createTestToolConfig, writeProjectSkill } from "./testHelpers";
 import { readAgentWorkflowRunReferences } from "@/node/services/agentWorkflowRunReferences";
 import type { WorkflowRunAttachedEvent } from "@/common/types/stream";
 import type { WorkflowRunRecord } from "@/common/types/workflow";
@@ -197,7 +192,7 @@ describe("workflow_run tool", () => {
 
   test("starts a skill workflow inherited by a subproject", async () => {
     using checkout = new TestTempDir("test-workflow-run-tool-subproject-skill");
-    using muxHome = new TestTempDir("test-workflow-run-tool-subproject-mux-home");
+    using xumHome = new TestTempDir("test-workflow-run-tool-subproject-mux-home");
     const subprojectRoot = path.join(checkout.path, "packages", "app");
     await fs.mkdir(subprojectRoot, { recursive: true });
     await writeProjectSkill(checkout.path, "parent-flow", {
@@ -215,9 +210,9 @@ describe("workflow_run tool", () => {
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(subprojectRoot, {
         workspaceId: "workspace-1",
-        muxScope: {
+        xumScope: {
           type: "project",
-          muxHome: muxHome.path,
+          xumHome: xumHome.path,
           projectRoot: subprojectRoot,
           projectStorageAuthority: "host-local",
           checkoutRoot: checkout.path,
@@ -258,7 +253,6 @@ describe("workflow_run tool", () => {
     }));
     const tool = createWorkflowRunTool({
       ...createTestToolConfig(tempDir.path, { workspaceId: "workspace-1" }),
-      agentSkillsRoots: createIsolatedAgentSkillsRoots(tempDir.path),
       trusted: false,
       workflowService: {
         startWorkflow,

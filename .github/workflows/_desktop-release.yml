@@ -35,7 +35,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -102,7 +102,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -155,7 +155,7 @@ jobs:
           fetch-depth: 0 # Required for git describe to find tags
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Patch package.json version
         if: inputs.version_override != ''
@@ -201,7 +201,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: ./.github/actions/setup-mux
+      - uses: ./.github/actions/setup-xum
 
       - name: Add MSYS2 make to PATH
         shell: pwsh

@@ -29,7 +29,7 @@ import type {
 } from "./Runtime";
 import { RuntimeError } from "./Runtime";
 import { RemoteRuntime, type SpawnResult } from "./RemoteRuntime";
-import { runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
+import { findInitHookRelativePath, runInitHookOnRuntime, runWorkspaceInitHook } from "./initHook";
 import { getProjectName } from "@/node/utils/runtime/helpers";
 import { getErrorMessage } from "@/common/utils/errors";
 import { syncProjectViaGitBundle } from "./gitBundleSync";
@@ -516,7 +516,7 @@ export class DockerRuntime extends RemoteRuntime {
   }
 
   /**
-   * Initialize workspace by running .mux/init hook.
+   * Initialize workspace by running .xum/init hook.
    * Assumes postCreateSetup() has already been called to provision/prepare the container.
    *
    * This method ONLY runs the hook - all container provisioning and credential setup
@@ -534,9 +534,9 @@ export class DockerRuntime extends RemoteRuntime {
     return runWorkspaceInitHook({
       params,
       runtimeType: "docker",
-      hookCheckPath: params.projectPath,
-      runHook: async ({ xumEnv, initLogger, abortSignal }) => {
-        const hookPath = `${params.workspacePath}/.mux/init`;
+      findHookRelativePath: () => findInitHookRelativePath(this, params.workspacePath),
+      runHook: async ({ hookRelativePath, xumEnv, initLogger, abortSignal }) => {
+        const hookPath = `${params.workspacePath}/${hookRelativePath}`;
         await runInitHookOnRuntime(
           this,
           hookPath,

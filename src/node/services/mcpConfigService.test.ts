@@ -64,6 +64,26 @@ describe("MCPConfigService", () => {
     });
   });
 
+  test("prefers canonical repo overrides when both project paths exist", async () => {
+    const projectPath = path.join(tempDir, "repo-canonical");
+    await fs.mkdir(path.join(projectPath, ".xum"), { recursive: true });
+    await fs.mkdir(path.join(projectPath, ".mux"), { recursive: true });
+    await fs.writeFile(
+      path.join(projectPath, ".mux", "mcp.jsonc"),
+      JSON.stringify({ servers: { selected: "legacy", "legacy-only": "legacy-only" } }),
+      "utf-8"
+    );
+    await fs.writeFile(
+      path.join(projectPath, ".xum", "mcp.jsonc"),
+      JSON.stringify({ servers: { selected: "canonical" } }),
+      "utf-8"
+    );
+
+    expect(await configService.listServers(projectPath, true)).toEqual({
+      selected: { transport: "stdio", command: "canonical", disabled: false },
+    });
+  });
+
   test("listServers ignores repo overrides for untrusted projects", async () => {
     await configService.addServer("global-only", {
       transport: "stdio",
