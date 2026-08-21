@@ -8,7 +8,7 @@
  * applies the SMALLEST evidence-backed edits through the standard
  * self-modification tools:
  * - the guarded consolidation memory tool (scope restriction, pin protection)
- * - optionally the standard agent_skill_write tool (workspace .mux/skills)
+ * - optionally the standard agent_skill_write tool (workspace .xum/skills)
  *
  * Both tools journal invertible r2 `refinement` rows by construction (memory
  * via MemoryService, skills via appendRefinementEventFromTool), so every edit
@@ -278,6 +278,12 @@ export async function runRefinePass(args: {
   // rejected as "already running"). Error parts replicate consumeStream's
   // onError semantics: mid-stream errors are collected without throwing.
   const streamErrors: string[] = [];
+  // Model proposal order for staged edits: the SDK executes parallel tool
+  // calls concurrently, so stagedEdits' push order is completion order —
+  // nondeterministic. Record each tool call's stream emission index and
+  // re-sort after the pass so order-dependent edit sequences (e.g. create →
+  // str_replace on the same file) stage and apply in the proposed order.
+  const toolCallEmissionOrder = new Map<string, number>();
   // True only when the provider stream closed on its own: distinguishes a
   // clean finish (late abort must not fail the pass) from a deadline cutoff.
   let streamDrained = false;
@@ -310,6 +316,9 @@ export async function runRefinePass(args: {
         // pathological provider could flood error parts until the deadline.
         if (value.type === "error" && streamErrors.length < 8) {
           streamErrors.push(getErrorMessage(value.error));
+        }
+        if (value.type === "tool-call" && !toolCallEmissionOrder.has(value.toolCallId)) {
+          toolCallEmissionOrder.set(value.toolCallId, toolCallEmissionOrder.size);
         }
       }
     } catch (error) {
@@ -411,6 +420,15 @@ export async function runRefinePass(args: {
   if (pendingToolRuns.size > 0) {
     await Promise.allSettled([...pendingToolRuns]);
   }
+
+  // Stable sort: edits without a recorded emission index (defensive; every
+  // executed call should have streamed a tool-call part) keep completion
+  // order after the ordered ones.
+  stagedEdits.sort(
+    (a, b) =>
+      (toolCallEmissionOrder.get(a.toolCallId) ?? Number.MAX_SAFE_INTEGER) -
+      (toolCallEmissionOrder.get(b.toolCallId) ?? Number.MAX_SAFE_INTEGER)
+  );
 
   return {
     ops: journal,
