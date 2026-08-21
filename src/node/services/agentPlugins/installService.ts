@@ -155,6 +155,20 @@ const MUTATION_LOCK_STALE_MS = 30 * 60 * 1000;
 const LS_REMOTE_TIMEOUT_MS = 30_000;
 const CLONE_TIMEOUT_MS = 120_000;
 
+/** Deterministic JSON with recursively sorted object keys (fingerprinting). */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val: unknown) => {
+    if (val !== null && typeof val === "object" && !Array.isArray(val)) {
+      return Object.fromEntries(
+        Object.entries(val as Record<string, unknown>).sort(([a], [b]) =>
+          a < b ? -1 : a > b ? 1 : 0
+        )
+      );
+    }
+    return val;
+  });
+}
+
 /** Preview skill row plus the extra model-visible fields (see collectSkills). */
 type CollectedPluginSkill = AgentPluginPreviewSkill & {
   whenToUse?: string;
@@ -1230,6 +1244,7 @@ export class AgentPluginInstallService {
     hook: AgentPluginPreviewHook | undefined;
     servers: Map<string, string>;
     skills: Map<string, string>;
+    agents: Map<string, string>;
     components: Set<string>;
   }> {
     const hook = this.collectHook(plugin);
@@ -1249,8 +1264,11 @@ export class AgentPluginInstallService {
         })
       );
     }
+    const agents = new Map<string, string>();
+    for (const agent of await this.collectAgentFiles(plugin.agentsDir)) {
+      agents.set(agent.name, agent.fingerprint);
+    }
     const components = new Set<string>([
-      ...(await this.collectAgentFiles(plugin.agentsDir)).map((f) => `agent ${f}`),
       ...(await this.collectComponentFiles(plugin.workflowsDir, ".js")).map((f) => `workflow ${f}`),
       ...(plugin.manifest.contributes?.slashCommands ?? []).map(
         (command) => `slash command /${command.name}`
@@ -1285,7 +1303,7 @@ export class AgentPluginInstallService {
         servers.set(info.plugin.serverName, fingerprint);
       }
     }
-    return { hook, servers, skills, components };
+    return { hook, servers, skills, agents, components };
   }
 
   /**
@@ -1349,6 +1367,18 @@ export class AgentPluginInstallService {
         changes.push(`changes the model-visible advertisement of skill '${skillName}'`);
       }
     }
+    // Agent definitions: the description injects into the task tool's
+    // model-visible prompt and runnable/base/policy change execution
+    // privileges, so a changed definition behind an unchanged filename is
+    // gated exactly like an addition.
+    for (const [agentName, fingerprint] of staged.agents) {
+      const currentFingerprint = current?.agents.get(agentName);
+      if (currentFingerprint === undefined) {
+        changes.push(`adds agent ${agentName}`);
+      } else if (currentFingerprint !== fingerprint) {
+        changes.push(`changes the definition of agent ${agentName}`);
+      }
+    }
     // Consent covered a specific component set; additions need a new preview.
     for (const component of staged.components) {
       if (!(current?.components.has(component) ?? false)) {
@@ -1400,7 +1430,9 @@ export class AgentPluginInstallService {
    * introduce a runnable agent without re-consent; the preview could
    * likewise advertise an agent that never loads.
    */
-  private async collectAgentFiles(dir: string | undefined): Promise<string[]> {
+  private async collectAgentFiles(
+    dir: string | undefined
+  ): Promise<Array<{ name: string; fingerprint: string }>> {
     if (dir === undefined) {
       return [];
     }
@@ -1410,7 +1442,7 @@ export class AgentPluginInstallService {
     } catch {
       return [];
     }
-    const agents: string[] = [];
+    const agents: Array<{ name: string; fingerprint: string }> = [];
     for (const entry of entries) {
       if (
         !entry.isFile() ||
@@ -1419,19 +1451,27 @@ export class AgentPluginInstallService {
       ) {
         continue;
       }
+      let frontmatter: unknown;
       try {
         const filePath = path.join(dir, entry.name);
         const stat = await fsPromises.stat(filePath);
         const content = await fsPromises.readFile(filePath, "utf8");
         // Throws on malformed frontmatter or oversized content — exactly the
         // definitions runtime discovery would skip.
-        parseAgentDefinitionMarkdown({ content, byteSize: stat.size });
+        frontmatter = parseAgentDefinitionMarkdown({ content, byteSize: stat.size }).frontmatter;
       } catch {
         continue;
       }
-      agents.push(entry.name);
+      // Fingerprint the WHOLE parsed frontmatter (key-sorted so YAML
+      // reordering is not a change): description injects into the task
+      // tool's model-visible prompt, subagent.runnable/ui gate invocability,
+      // and base/tool policy change execution privileges. Any frontmatter
+      // change on an unchanged filename is re-consent territory; the BODY
+      // (system prompt) loads only on explicit invocation and rides the
+      // normal tree replacement like skill bodies.
+      agents.push({ name: entry.name, fingerprint: stableStringify(frontmatter) });
     }
-    return agents.sort((a, b) => a.localeCompare(b));
+    return agents.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   /**
@@ -1644,7 +1684,7 @@ export class AgentPluginInstallService {
         warnings
       );
       const hook = this.collectHook(plugin);
-      const agents = await this.collectAgentFiles(plugin.agentsDir);
+      const agents = (await this.collectAgentFiles(plugin.agentsDir)).map((agent) => agent.name);
       const workflows = await this.collectComponentFiles(plugin.workflowsDir, ".js");
       const slashCommands = (plugin.manifest.contributes?.slashCommands ?? []).map((command) => ({
         name: command.name,
@@ -2700,6 +2740,30 @@ export class AgentPluginInstallService {
           "Failed to re-enumerate workspaces after uninstall commit; keeping the pessimistic tombstone",
           { error: getErrorMessage(error) }
         );
+      }
+      // Delta workspaces are NOT in the commit-time tombstone. Persist the
+      // union BEFORE pruning: a crash between here and their prune would
+      // otherwise leave their previously accepted enable with no durable
+      // retry record, and a same-name reinstall would reactivate the
+      // replacement server. A failed persist skips the shrink below so no
+      // write can narrow the record to less than what still needs pruning.
+      if (deltaEnumerated && pruneIds.length > workspaceIdsToPrune.length) {
+        try {
+          const { envelope: envelopeDelta, rawEntries: entriesDelta } =
+            await this.readRegistryDocument("strict");
+          const pendingDelta = this.updateRawPendingPrunes(
+            this.rawPendingPrunes(envelopeDelta),
+            serverKeyPrefix,
+            pruneIds
+          );
+          await this.writePendingOverridePrunes(envelopeDelta, entriesDelta, pendingDelta);
+        } catch (error) {
+          deltaEnumerated = false;
+          log.warn(
+            "Failed to persist post-commit workspace delta into the prune tombstone; keeping the pessimistic record",
+            { error: getErrorMessage(error) }
+          );
+        }
       }
 
       // Per-workspace failures are caught inside; the failure-prone

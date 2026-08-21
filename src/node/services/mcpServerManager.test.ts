@@ -190,6 +190,63 @@ describe("MCPServerManager", () => {
     expect(close2).toHaveBeenCalledTimes(0);
   });
 
+  test("a mutation landing during startup is caught by the post-publication token recheck", async () => {
+    // A sibling mutation beginning AFTER the preflight token read is
+    // invisible to the in-process epoch and to the installer's discovery
+    // bracket; the serve must re-read the token after publication, retire the
+    // just-published stale instance, and rebuild from the new tree. The
+    // sweep also clears the cross-process-stale override cache.
+    manager.dispose();
+    let token = "epoch-1";
+    manager = new MCPServerManager(configService as unknown as MCPConfigService, {
+      pluginInvalidation: { keyPrefix: "plugin:", readToken: () => Promise.resolve(token) },
+    });
+    access = manager as unknown as MCPServerManagerTestAccess;
+
+    const workspaceId = "ws-startup-race";
+    const pluginKey = "plugin:abc123:echo";
+    configService.listServers.mockImplementation(() =>
+      Promise.resolve({ [pluginKey]: stdioConfig("node server.js") })
+    );
+    // Seed the token on a DIFFERENT workspace (first serve only records it),
+    // so the raced serve below takes the full startup path.
+    access.startServers = () => Promise.resolve(startResult([]));
+    await manager.getToolsForWorkspace(workspaceRequest("ws-token-seed"));
+
+    // Seed a stale cached override entry a sibling's prune cannot reach.
+    await manager.applyWorkspaceOverrides(workspaceId, { enabledServers: [pluginKey] });
+
+    // Serve the raced workspace: the mutation lands DURING startup —
+    // startServers flips the token as a side effect, after the preflight
+    // already read the old value.
+    const close = mock(() => Promise.resolve(undefined));
+    const close2 = mock(() => Promise.resolve(undefined));
+    let starts = 0;
+    access.startServers = () => {
+      starts += 1;
+      if (starts === 1) {
+        token = "epoch-2"; // Sibling mutation mid-startup.
+        return Promise.resolve(startResult([[pluginKey, { tools: { echo: testTool() }, close }]]));
+      }
+      return Promise.resolve(
+        startResult([[pluginKey, { tools: { echo: testTool() }, close: close2 }]])
+      );
+    };
+    const result = await manager.getToolsForWorkspace(workspaceRequest(workspaceId));
+
+    // The stale-tree instance was retired post-publication; the rebuild's
+    // instance (new tree) is served.
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(close2).toHaveBeenCalledTimes(0);
+    expect(starts).toBe(2);
+    expect(Object.keys(result.tools)).toHaveLength(1);
+    // The sweep dropped the cross-process-stale override cache.
+    expect(
+      (access as unknown as { latestWorkspaceOverrides: Map<string, unknown> })
+        .latestWorkspaceOverrides.size
+    ).toBe(0);
+  });
+
   test("concurrent serves await an in-flight cross-process sweep before returning", async () => {
     // The observed token must publish only AFTER the sweep completes: a
     // concurrent serve that merely compared the token could otherwise return

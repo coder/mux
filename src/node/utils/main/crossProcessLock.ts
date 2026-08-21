@@ -262,27 +262,83 @@ export async function acquireCrossProcessLock(
   await fsPromises.mkdir(path.dirname(lockPath), { recursive: true });
   const deadline = Date.now() + acquireTimeoutMs;
 
-  const releaseFor = (token: string) => async () => {
-    for (let attempt = 0; attempt < 40; attempt++) {
-      const mutex = await enterLockMutex(lockPath);
-      if (mutex !== undefined) {
-        try {
-          const current = await readLockHolder(lockPath);
-          // Last-instant mutex re-check, mirroring reclamation: a stall
-          // longer than the mutex ceiling between the token read and the rm
-          // lets a competitor break our mutex, reclaim, and publish a
-          // successor — deleting it here would hand out double ownership.
-          if (current?.token === token && (await mutex.owns())) {
-            await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
-          }
-        } finally {
-          await mutex.exit();
+  // LEASE RENEWAL: `acquiredAt` is a renewable lease timestamp, not a birth
+  // time. A LIVE transaction legitimately exceeding staleMs (e.g. a plugin
+  // uninstall pruning many contended workspaces under the mutation lock)
+  // must not become reclaimable on age alone — a sibling would steal the
+  // lock mid-transaction and the original's late writes would clobber its
+  // work. While held, the lease is re-stamped every staleMs/4 inside the
+  // reclaim mutex (so a renewal cannot clobber a successor after a stall);
+  // only holders that STOPPED renewing (crashed, wedged past the ceiling,
+  // or pid-reused) age out.
+  const startRenewal = (token: string): (() => void) => {
+    let renewing = false;
+    const interval = setInterval(
+      () => {
+        if (renewing) {
+          return;
         }
-        return;
+        renewing = true;
+        void (async () => {
+          const mutex = await enterLockMutex(lockPath);
+          if (mutex === undefined) {
+            return; // Contended: try again next tick.
+          }
+          try {
+            const current = await readLockHolder(lockPath);
+            if (current?.token !== token) {
+              return; // No longer ours: a reclaimer took over; stop touching it.
+            }
+            const tempPath = `${lockPath}.renew-${token}`;
+            await fsPromises.writeFile(
+              tempPath,
+              JSON.stringify({ pid: process.pid, token, acquiredAt: Date.now() })
+            );
+            if (await mutex.owns()) {
+              await fsPromises.rename(tempPath, lockPath);
+            } else {
+              await fsPromises.rm(tempPath, { force: true }).catch(() => undefined);
+            }
+          } finally {
+            await mutex.exit();
+          }
+        })()
+          .catch(() => undefined) // Best-effort: a missed renewal is the status quo.
+          .finally(() => {
+            renewing = false;
+          });
+      },
+      Math.max(250, Math.floor(staleMs / 4))
+    );
+    interval.unref?.();
+    return () => clearInterval(interval);
+  };
+
+  const releaseFor = (token: string) => {
+    const stopRenewal = startRenewal(token);
+    return async () => {
+      stopRenewal();
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const mutex = await enterLockMutex(lockPath);
+        if (mutex !== undefined) {
+          try {
+            const current = await readLockHolder(lockPath);
+            // Last-instant mutex re-check, mirroring reclamation: a stall
+            // longer than the mutex ceiling between the token read and the rm
+            // lets a competitor break our mutex, reclaim, and publish a
+            // successor — deleting it here would hand out double ownership.
+            if (current?.token === token && (await mutex.owns())) {
+              await fsPromises.rm(lockPath, { force: true }).catch(() => undefined);
+            }
+          } finally {
+            await mutex.exit();
+          }
+          return;
+        }
+        await sleepWithJitter(25);
       }
-      await sleepWithJitter(25);
-    }
-    // Mutex never freed: leave the file; it is reclaimable as stale/dead.
+      // Mutex never freed: leave the file; it is reclaimable as stale/dead.
+    };
   };
 
   for (;;) {

@@ -1169,6 +1169,15 @@ export class MCPServerManager {
         return;
       }
       log.info("[MCP] Cross-process plugin mutation detected; recycling plugin servers");
+      // A sibling's uninstall also PRUNED plugin keys from workspace override
+      // files on disk. This manager's latestWorkspaceOverrides cache overlays
+      // every serve's caller snapshot, so a stale cached enable would
+      // permanently shadow the pruned disk state — and a same-name reinstall
+      // would start its server without new consent. Disk is authoritative
+      // after a cross-process mutation (every override write persists before
+      // publishing), so drop the cache and let callers' fresh disk snapshots
+      // through.
+      this.latestWorkspaceOverrides.clear();
       await this.stopServersWithKeyPrefix(invalidation.keyPrefix);
       this.lastPluginInvalidationToken = token;
     };
@@ -1550,7 +1559,24 @@ export class MCPServerManager {
   async getToolsForWorkspace(
     options: MCPWorkspaceRequestOptions
   ): Promise<MCPToolsForWorkspaceResult> {
-    return this.ensureWorkspaceServers(options, true);
+    const result = await this.ensureWorkspaceServers(options, true);
+    // Post-publication token recheck: a sibling mutation that BEGAN after
+    // the preflight read (retireCrossProcessPluginInstances inside
+    // ensureWorkspaceServers) is invisible to the in-process invalidation
+    // epoch, and the installer's discovery bracket cannot flag a mutation
+    // that starts after its scan completed — this serve could otherwise
+    // return instances from the replaced tree and use them indefinitely.
+    // The instances are published now, so the sweep can retire them; rebuild
+    // once from the new tree. A mutation racing the rebuild is caught by the
+    // next serve's preflight (its instances were closed by that sweep).
+    if (this.pluginInvalidation !== undefined && this.pluginInvalidationTokenSeen) {
+      const token = await this.pluginInvalidation.readToken();
+      if (token !== this.lastPluginInvalidationToken) {
+        await this.retireCrossProcessPluginInstances();
+        return this.ensureWorkspaceServers(options, true);
+      }
+    }
+    return result;
   }
 
   /**

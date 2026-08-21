@@ -80,6 +80,36 @@ describe("acquireCrossProcessLock", () => {
     expect(surviving.token).toBe("successor");
   });
 
+  test("a live holder renews its lease past staleMs and stays unreclaimable", async () => {
+    // A LIVE transaction exceeding staleMs (e.g. a long uninstall pruning
+    // many contended workspaces) must not expire on age alone: the holder
+    // re-stamps acquiredAt every staleMs/4, so only holders that STOPPED
+    // renewing (crashed/wedged) age out.
+    const lockPath = await tempLockPath();
+    const release = await acquireCrossProcessLock({
+      lockPath,
+      acquireTimeoutMs: 400,
+      staleMs: 1_000,
+      timeoutMessage: "lock busy",
+    });
+    // Hold well past staleMs; a competitor must keep failing on a live lease.
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    try {
+      await acquireCrossProcessLock({
+        lockPath,
+        acquireTimeoutMs: 1_200,
+        staleMs: 1_000,
+        timeoutMessage: "lock busy",
+      });
+      expect.unreachable("the renewed live lease must not be reclaimable");
+    } catch (error) {
+      expect((error as Error).message).toBe("lock busy");
+    }
+    await release();
+    const release2 = await acquireCrossProcessLock({ lockPath, ...baseOptions });
+    await release2();
+  }, 10_000);
+
   test("contending acquirers over a stale lock are mutually exclusive", async () => {
     const lockPath = await tempLockPath();
     await fsPromises.writeFile(lockPath, JSON.stringify({ pid: 1, token: "stale", acquiredAt: 0 }));
