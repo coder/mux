@@ -55,11 +55,16 @@ runs:
         }
 
         # Signing requires a GCP access token for Cloud KMS. When auth failed
-        # (or was skipped) leave JSIGN_PATH unset so sign-windows.js skips
-        # signing instead of failing on the missing token.
+        # or was skipped, only the opt-in fallback may continue (leaving
+        # JSIGN_PATH unset so sign-windows.js skips signing); otherwise fail
+        # closed so a certificate-bearing release can never ship unsigned.
         if (-not $env:GCLOUD_ACCESS_TOKEN) {
-          Write-Host "::warning title=Windows build unsigned::GCP signing auth unavailable (rename broke WIF trust policy) - building unsigned"
-          exit 0
+          if ($env:ALLOW_UNSIGNED_FALLBACK -eq 'true') {
+            Write-Host "::warning title=Windows build unsigned::GCP signing auth unavailable (rename broke WIF trust policy) - building unsigned"
+            exit 0
+          }
+          Write-Host "::error::EV certificate provided but GCP signing auth produced no access token - failing closed"
+          exit 1
         }
 
         # Save EV certificate to temp file
@@ -76,3 +81,4 @@ runs:
       env:
         EV_SIGNING_CERT: ${{ inputs.ev_signing_cert }}
         GCLOUD_ACCESS_TOKEN: ${{ steps.gcloud_auth.outputs.access_token }}
+        ALLOW_UNSIGNED_FALLBACK: ${{ inputs.allow_unsigned_fallback }}
