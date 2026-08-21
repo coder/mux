@@ -58,7 +58,11 @@ import {
 import { stopKeyboardPropagation } from "@/browser/utils/events";
 import { updatePersistedState } from "@/browser/hooks/usePersistedState";
 import { useCopyToClipboard } from "@/browser/hooks/useCopyToClipboard";
-import { buildReadFileScript, processFileContents } from "@/browser/utils/fileRead";
+import {
+  buildReadFileScript,
+  decodeBase64Utf8,
+  processFileContents,
+} from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { getReviewSelectedHunkKey } from "@/common/constants/storage";
 import {
@@ -1362,8 +1366,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   activeFilePathRef.current = activeFilePath;
 
   // Deleted files no longer exist on disk, so a copy read would always fail;
-  // hide the affordance instead of offering a broken action.
-  const isActiveFileDeleted = currentFileHunks[0]?.changeType === "deleted";
+  // hide the affordance instead of offering a broken action. Derive deletion from
+  // the UNFILTERED hunk set: search/assisted/read filters can empty the visible
+  // hunk list while the active file falls back to a deleted file.
+  const isActiveFileDeleted =
+    activeFilePath != null && getFileHunks(allHunks, activeFilePath)[0]?.changeType === "deleted";
 
   // Copy the entire on-disk file, not the overlay content: the overlay may hold only
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
@@ -1393,14 +1400,22 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
       const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
-      if (contents.type !== "text") {
+      // SVGs are classified as images for preview purposes, but they are text
+      // source and this action promises the file's contents; copy the markup.
+      const text =
+        contents.type === "text"
+          ? contents.content
+          : contents.type === "image" && contents.mimeType === "image/svg+xml"
+            ? decodeBase64Utf8(contents.base64)
+            : null;
+      if (text == null) {
         console.error(
           "Cannot copy file contents:",
           contents.type === "error" ? contents.message : "not a text file"
         );
         return;
       }
-      await copyFileToClipboard(contents.content);
+      await copyFileToClipboard(text);
       setLastCopiedFilePath(filePath);
     } catch (error) {
       console.error("Failed to copy file contents:", error);
@@ -1677,7 +1692,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
 
-      // Y: copy the active file's full contents to the clipboard.
+      // Copy the active file's full contents to the clipboard.
       if (matchesKeybind(e, KEYBINDS.REVIEW_COPY_FILE)) {
         e.preventDefault();
         void handleCopyFile();

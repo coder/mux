@@ -31,6 +31,11 @@ function shellEscape(s: string): string {
   return "'" + s.replaceAll("'", "'\"'\"'") + "'";
 }
 
+/** Decode a base64 payload (e.g. an SVG classified as an image) back to UTF-8 text. */
+export function decodeBase64Utf8(base64: string): string {
+  return new TextDecoder("utf-8", { fatal: false }).decode(base64ToUint8Array(base64));
+}
+
 /** Decode a base64 string to bytes. */
 function base64ToUint8Array(base64: string): Uint8Array {
   const binaryString = atob(base64);

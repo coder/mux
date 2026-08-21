@@ -1138,6 +1138,42 @@ describe("ImmersiveReviewView", () => {
     expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
   });
 
+  test("no copy affordance for a deleted file whose hunks are all filtered out", () => {
+    const deletedHunk = createHunk({ changeType: "deleted" });
+
+    // Filters (search/assisted/read) can empty the visible hunk list while the
+    // active file still resolves to the deleted file via the unfiltered set.
+    const view = renderImmersiveReview({
+      hunks: [],
+      allHunks: [deletedHunk],
+      selectedHunkId: deletedHunk.id,
+    });
+
+    expect(view.container.textContent ?? "").toContain(deletedHunk.filePath);
+    expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
+  });
+
+  test("copies SVG markup as text instead of rejecting it as an image", async () => {
+    const svgSource = '<svg xmlns="http://www.w3.org/2000/svg"><rect width="1" height="1"/></svg>';
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { success: true, output: encodeFileReadOutput(svgSource), exitCode: 0 },
+      })
+    );
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() => expect(clipboardWrites).toHaveLength(1));
+    expect(clipboardWrites[0]).toBe(svgSource);
+  });
+
   test("no copy affordance when the review is complete", () => {
     const hunk = createHunk();
 
