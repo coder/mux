@@ -986,14 +986,16 @@ describe("ImmersiveReviewView", () => {
 
     // The full-file display read carries an awk line budget; the copy read must not,
     // so it still yields the whole file when the display falls back to compact hunks.
+    const copyReadCalls: Array<{ script: string; options?: { cwdMode?: string } }> = [];
     mockApi.workspace.executeBash = mock((...args: unknown[]) => {
-      const { script } = args[0] as { script: string };
-      if (script.includes("awk 'NR >")) {
+      const input = args[0] as { script: string; options?: { cwdMode?: string } };
+      if (input.script.includes("awk 'NR >")) {
         return Promise.resolve({
           success: true as const,
           data: { success: false, output: "", exitCode: 43 },
         });
       }
+      copyReadCalls.push(input);
       return Promise.resolve({
         success: true as const,
         data: { success: true, output: encodeFileReadOutput(fullContent), exitCode: 0 },
@@ -1010,6 +1012,9 @@ describe("ImmersiveReviewView", () => {
 
     await waitFor(() => expect(clipboardWrites).toHaveLength(1));
     expect(clipboardWrites[0]).toBe(fullContent);
+    // Single-project hunk paths are repo-root-relative, so the copy read must run
+    // from the repo root (default mode would run from a subproject cwd).
+    expect(copyReadCalls[0]?.options).toEqual({ cwdMode: "repo-root" });
   });
 
   test("pressing the copy-file key copies the file, but not while typing", async () => {
@@ -1123,6 +1128,34 @@ describe("ImmersiveReviewView", () => {
     fireEvent.click(copyButton!);
 
     // The rejection must be user-visible, not just a console log.
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('button[aria-label="Copy file contents"]')
+          ?.getAttribute("data-copy-file-feedback")
+      ).toBe("failed")
+    );
+    expect(clipboardWrites).toHaveLength(0);
+  });
+
+  test("rejects partial payloads from unsuccessful script exits", async () => {
+    // Simulates base64 dying after stat emitted the size: the script exits nonzero
+    // but leaves parseable output that would decode to empty text.
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: { success: false, output: "19\n", exitCode: 1 },
+      })
+    );
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
     await waitFor(() =>
       expect(
         view.container

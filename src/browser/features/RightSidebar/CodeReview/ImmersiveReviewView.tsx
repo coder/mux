@@ -122,6 +122,12 @@ interface ImmersiveReviewViewProps {
   assistedCount?: number;
   /** Agent-flagged hunks still unread (mirrors the control bar's count). */
   assistedUnreadCount?: number;
+  /**
+   * Multi-project workspaces reproject hunk paths onto the shared container root,
+   * which is default script mode's cwd; single-project (incl. subproject) workspaces
+   * keep repo-root-relative paths and need repo-root execution for file reads.
+   */
+  isMultiProjectWorkspace?: boolean;
 }
 
 interface InlineComposerRequest {
@@ -1435,17 +1441,18 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
         script: buildReadFileScript(filePath),
+        // Hunk paths are container-root-relative in multi-project workspaces (default
+        // mode's cwd) but repo-root-relative in single-project ones, where default
+        // mode would run from a subproject cwd and miss the file.
+        options: props.isMultiProjectWorkspace ? undefined : { cwdMode: "repo-root" },
       });
       if (isStale()) {
         return;
       }
-      if (!result.success) {
-        showCopyFileFeedback("failed", filePath);
-        return;
-      }
-      // The IPC bash transport caps output at 1MB; a truncated read would silently
-      // copy only the beginning of the file, so reject it outright.
-      if (result.data.truncated) {
+      // Any unsuccessful script exit (budget/containment codes or partial failures
+      // like base64 dying after stat) means the output cannot be trusted as the
+      // full file; the IPC truncation marker likewise signals a partial payload.
+      if (!result.success || !result.data.success || result.data.truncated) {
         showCopyFileFeedback("failed", filePath);
         return;
       }
