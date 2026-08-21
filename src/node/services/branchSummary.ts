@@ -67,33 +67,31 @@ export interface RlmExperimentFlags {
 /**
  * True when RLM mode applies. RLM is a sub-experiment of Programmatic Tool
  * Calling: without a PTC parent flag it stays inert (matching the experiments
- * registry). Send-option experiments are AUTHORITATIVE when present — the
- * frontend always sends the full boolean set (useSendMessageOptions /
- * sendOptions.ts), so an explicit `rlm: false` must win over machine
- * overrides, never fall through to them. Only backend-initiated operations
- * without send options (fork IPC) fall back to the persisted machine
- * overrides the renderer syncs into Settings.
+ * registry). Flags resolve PER-FIELD, mirroring
+ * resolveBackendGatedPtcExperiments (toolAssembly.ts): an explicit renderer
+ * boolean is authoritative — `rlm: false` wins over machine overrides — but a
+ * MISSING field falls back to the backend's persisted overrides. A
+ * defined-but-empty experiments object is exactly what the renderer sends
+ * when flags are enabled only through backend overrides
+ * (useExperimentOverrideValue sends no explicit values), and treating it as
+ * authoritative-false desynced this predicate from tool assembly: the
+ * workspace got the persistent RLM kernel while edit-resend summaries,
+ * keep-recent stamps, and read-file reinjection stayed silently off (r22).
  */
 export function isRlmModeEnabled(
   experiments: RlmExperimentFlags | undefined,
   isExperimentEnabled: ((experimentId: ExperimentId) => boolean) | undefined
 ): boolean {
-  if (experiments !== undefined) {
-    return (
-      experiments.rlm === true &&
-      (experiments.programmaticToolCalling === true ||
-        experiments.programmaticToolCallingExclusive === true)
-    );
-  }
   // Guard for test mocks that may not implement isExperimentEnabled.
-  if (typeof isExperimentEnabled !== "function") {
-    return false;
-  }
-  return (
-    isExperimentEnabled(EXPERIMENT_IDS.RLM) &&
-    (isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING) ||
-      isExperimentEnabled(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE))
-  );
+  const backend = (id: ExperimentId): boolean =>
+    typeof isExperimentEnabled === "function" ? isExperimentEnabled(id) : false;
+  const rlm = experiments?.rlm ?? backend(EXPERIMENT_IDS.RLM);
+  const ptc =
+    experiments?.programmaticToolCalling ?? backend(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING);
+  const ptcExclusive =
+    experiments?.programmaticToolCallingExclusive ??
+    backend(EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING_EXCLUSIVE);
+  return rlm && (ptc || ptcExclusive);
 }
 
 function extractTextForTranscript(message: MuxMessage): string {

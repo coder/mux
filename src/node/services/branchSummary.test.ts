@@ -135,13 +135,37 @@ describe("isRlmModeEnabled", () => {
   });
 
   test("explicit send-option experiments win over machine overrides", () => {
-    // Frontend sends carry the full boolean set, so a provided experiments
-    // object is authoritative: rlm: false must NOT fall through to machine
-    // overrides that have RLM enabled.
+    // Explicit booleans are authoritative per-field: rlm: false must NOT
+    // fall through to machine overrides that have RLM enabled.
     const allOn = () => true;
     expect(isRlmModeEnabled({ rlm: false, programmaticToolCalling: true }, allOn)).toBe(false);
-    expect(isRlmModeEnabled({ rlm: true, programmaticToolCalling: false }, allOn)).toBe(false);
     expect(isRlmModeEnabled({ rlm: true, programmaticToolCalling: true }, () => false)).toBe(true);
+    // Per-field fallback (matching resolveBackendGatedPtcExperiments): an
+    // explicit ptc: false does not silence a backend-enabled ptcExclusive —
+    // tool assembly would build the exclusive kernel in this scenario, and
+    // this predicate must agree with it.
+    expect(isRlmModeEnabled({ rlm: true, programmaticToolCalling: false }, allOn)).toBe(true);
+    expect(
+      isRlmModeEnabled(
+        { rlm: true, programmaticToolCalling: false, programmaticToolCallingExclusive: false },
+        allOn
+      )
+    ).toBe(false);
+  });
+
+  test("missing flags on a defined experiments object fall back to backend overrides", () => {
+    // A renderer with no origin-local override sends a defined experiments
+    // object WITHOUT these fields (useExperimentOverrideValue sends no
+    // explicit values). Treating that object as authoritative-false desynced
+    // this predicate from tool assembly: the workspace got the persistent
+    // RLM kernel while summaries/keep-recent/read-reinjection stayed off.
+    const machineFlags = new Set<ExperimentId>([
+      EXPERIMENT_IDS.RLM,
+      EXPERIMENT_IDS.PROGRAMMATIC_TOOL_CALLING,
+    ]);
+    expect(isRlmModeEnabled({}, (id) => machineFlags.has(id))).toBe(true);
+    expect(isRlmModeEnabled({}, (id) => id === EXPERIMENT_IDS.RLM)).toBe(false);
+    expect(isRlmModeEnabled({}, undefined)).toBe(false);
   });
 });
 
