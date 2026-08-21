@@ -844,6 +844,7 @@ export class Config {
   private editConfigQueue: Promise<void> = Promise.resolve();
   /** One-shot guard for the queued load-time migration persist; see loadConfigOrDefault. */
   private migrationPersist: Promise<void> | null = null;
+  private lastConfigLoadFailureSignature: string | null = null;
 
   constructor(rootDir?: string) {
     this.rootDir = rootDir ?? getXumHome();
@@ -940,11 +941,65 @@ export class Config {
     return priority.length > 1 ? priority : undefined;
   }
 
+  private handleConfigLoadFailure(rawData: string | undefined, error: unknown): void {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const failureSignature = crypto
+      .createHash("sha256")
+      .update(rawData ?? "<config unreadable>")
+      .update("\0")
+      .update(errorMessage)
+      .digest("hex");
+    if (failureSignature === this.lastConfigLoadFailureSignature) {
+      return;
+    }
+    this.lastConfigLoadFailureSignature = failureSignature;
+
+    let backupStatus = "Backup skipped because the config contents could not be read.";
+    if (rawData !== undefined) {
+      try {
+        const sourceBytes = fs.readFileSync(this.configFile);
+        const corruptPrefix = `${path.basename(this.configFile)}.corrupt-`;
+        const duplicate = fs
+          .readdirSync(path.dirname(this.configFile), { withFileTypes: true })
+          .find((entry) => {
+            if (!entry.isFile() || !entry.name.startsWith(corruptPrefix)) {
+              return false;
+            }
+            return fs
+              .readFileSync(path.join(path.dirname(this.configFile), entry.name))
+              .equals(sourceBytes);
+          });
+
+        if (duplicate) {
+          backupStatus = `Backup skipped because identical bytes already exist at ${path.join(path.dirname(this.configFile), duplicate.name)}.`;
+        } else {
+          const backupPath = `${this.configFile}.corrupt-${Date.now()}`;
+          // Copy instead of moving so cleanup guards continue to reject the corrupt source file.
+          fs.copyFileSync(this.configFile, backupPath);
+          backupStatus = `The original bytes were backed up to ${backupPath}.`;
+        }
+      } catch (backupError) {
+        const backupErrorMessage =
+          backupError instanceof Error ? backupError.message : String(backupError);
+        backupStatus = `Backup failed: ${backupErrorMessage}.`;
+      }
+    }
+
+    log.error(
+      `Failed to load config file ${this.configFile}: ${errorMessage}. ${backupStatus} Fix the JSON syntax in ${this.configFile} or restore it from the backup. Until then, Xum will continue with default settings and the next settings change will rewrite config.json with defaults.`
+    );
+  }
+
   loadConfigOrDefault(options?: { throwOnError?: boolean }): ProjectsConfig {
+    let rawData: string | undefined;
     try {
       if (fs.existsSync(this.configFile)) {
-        const data = fs.readFileSync(this.configFile, "utf-8");
-        const parsed = JSON.parse(data) as Partial<AppConfigOnDisk> & Record<string, unknown>;
+        rawData = fs.readFileSync(this.configFile, "utf-8");
+        const parsedValue: unknown = JSON.parse(rawData);
+        if (!parsedValue || typeof parsedValue !== "object" || Array.isArray(parsedValue)) {
+          throw new Error("Config root must be a JSON object");
+        }
+        const parsed = parsedValue as Partial<AppConfigOnDisk> & Record<string, unknown>;
         let configModified = false;
         let shouldInvalidateSessionUsageCaches = false;
 
@@ -1317,6 +1372,7 @@ export class Config {
           ? undefined
           : layoutPresetsRaw;
 
+        this.lastConfigLoadFailureSignature = null;
         return {
           projects: projectsMap,
           apiServerBindHost: parseOptionalNonEmptyString(parsed.apiServerBindHost),
@@ -1371,9 +1427,11 @@ export class Config {
             .parse(parsed.settingsBackup),
           legacyOnePasswordAccountName: parseOptionalNonEmptyString(parsed.onePasswordAccountName),
         };
+      } else {
+        this.lastConfigLoadFailureSignature = null;
       }
     } catch (error) {
-      log.error("Error loading config:", error);
+      this.handleConfigLoadFailure(rawData, error);
       if (options?.throwOnError) {
         throw error;
       }

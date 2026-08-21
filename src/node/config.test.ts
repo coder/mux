@@ -1,6 +1,8 @@
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import { log } from "@/node/services/log";
 import { Config } from "./config";
 import {
   CODER_ARCHIVE_BEHAVIORS,
@@ -37,6 +39,134 @@ describe("Config", () => {
   async function flushConfigEdits(): Promise<void> {
     await config.editConfig((cfg) => cfg);
   }
+
+  describe("loadConfigOrDefault corrupt config recovery", () => {
+    function configFilePath(): string {
+      return path.join(tempDir, "config.json");
+    }
+
+    function corruptBackups(): string[] {
+      return fs
+        .readdirSync(tempDir)
+        .filter((name) => name.startsWith("config.json.corrupt-"))
+        .map((name) => path.join(tempDir, name));
+    }
+
+    it("preserves malformed JSON and falls back to defaults", () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.size).toBe(0);
+      expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptData);
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(String(errorSpy.mock.calls[0]?.[0])).toContain(configFile);
+      errorSpy.mockRestore();
+    });
+
+    it("does not create duplicate backups for identical corrupt bytes", () => {
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFilePath(), corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+      config.loadConfigOrDefault();
+      new Config(tempDir).loadConfigOrDefault();
+
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+      errorSpy.mockRestore();
+    });
+
+    it.each(["null", '"just a string"', "[1,2]"])(
+      "recovers from a non-object JSON root: %s",
+      (corruptData) => {
+        const configFile = configFilePath();
+        fs.writeFileSync(configFile, corruptData);
+        const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+        const loaded = config.loadConfigOrDefault();
+
+        expect(loaded.projects.size).toBe(0);
+        expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptData);
+        const backups = corruptBackups();
+        expect(backups).toHaveLength(1);
+        expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+        errorSpy.mockRestore();
+      }
+    );
+
+    it("heals invalid fields in an object without creating a backup", () => {
+      fs.writeFileSync(
+        configFilePath(),
+        JSON.stringify({
+          projects: [],
+          apiServerPort: "abc",
+          defaultModel: "openai:gpt-4o",
+          taskSettings: { preserveSubagentsUntilArchive: true },
+          migrations: {
+            defaultModelFallbacksSeeded: true,
+            persistentSubagentsDefaulted: true,
+          },
+        })
+      );
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.apiServerPort).toBeUndefined();
+      expect(loaded.defaultModel).toBe("openai:gpt-4o");
+      expect(corruptBackups()).toHaveLength(0);
+    });
+
+    it("treats a missing config as a silent fresh install", () => {
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      const loaded = config.loadConfigOrDefault();
+
+      expect(loaded.projects.size).toBe(0);
+      expect(corruptBackups()).toHaveLength(0);
+      expect(errorSpy).not.toHaveBeenCalled();
+      errorSpy.mockRestore();
+    });
+
+    it("keeps the corrupt bytes after a settings edit rewrites config.json", async () => {
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFile, corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      config.loadConfigOrDefault();
+      const [backupPath] = corruptBackups();
+      await config.setUpdateChannel("nightly");
+
+      const rewritten = JSON.parse(fs.readFileSync(configFile, "utf-8")) as {
+        updateChannel?: unknown;
+      };
+      expect(rewritten.updateChannel).toBe("nightly");
+      expect(fs.readFileSync(backupPath)).toEqual(Buffer.from(corruptData));
+      errorSpy.mockRestore();
+    });
+
+    it("backs up malformed JSON before rethrowing for cleanup guards", () => {
+      const corruptData = '{ "projects": ';
+      fs.writeFileSync(configFilePath(), corruptData);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+
+      expect(() => config.loadConfigOrDefault({ throwOnError: true })).toThrow();
+
+      const backups = corruptBackups();
+      expect(backups).toHaveLength(1);
+      expect(fs.readFileSync(backups[0])).toEqual(Buffer.from(corruptData));
+      errorSpy.mockRestore();
+    });
+  });
 
   describe("loadConfigOrDefault settingsBackup sanitizing", () => {
     it("degrades a malformed settingsBackup instead of returning it", () => {
@@ -1493,8 +1623,8 @@ describe("Config", () => {
       });
 
       const raw = JSON.parse(fs.readFileSync(path.join(tempDir, "config.json"), "utf-8")) as {
-        agentAiDefaults?: Record<string, { modelString?: string }>;
-        subagentAiDefaults?: Record<string, { modelString?: string }>;
+        agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
+        subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: string }>;
       };
 
       expect(raw.agentAiDefaults).toEqual({
