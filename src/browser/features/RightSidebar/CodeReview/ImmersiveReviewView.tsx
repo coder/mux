@@ -1387,6 +1387,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const [copyFileFeedback, setCopyFileFeedback] = useState<{
     kind: "copied" | "failed";
     filePath: string;
+    contentVersion: string;
   } | null>(null);
   const copyFileRequestIdRef = useRef(0);
   const pendingCopyFilePathRef = useRef<string | null>(null);
@@ -1401,23 +1402,32 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     };
   }, []);
 
-  // Every file navigation invalidates in-flight copies and frees the pending slot.
-  // The request-id bump also covers the A -> B -> A case, where the path check alone
-  // would wrongly treat the stale read for A as current again.
+  // File navigation and in-place edits (same path, new diff content) invalidate
+  // in-flight copies and free the pending slot. The request-id bump also covers the
+  // A -> B -> A case, where the path check alone would wrongly treat the stale read
+  // for A as current again.
   useEffect(() => {
     copyFileRequestIdRef.current += 1;
     pendingCopyFilePathRef.current = null;
-  }, [activeFilePath]);
+  }, [activeFilePath, activeFileContentVersion]);
 
-  // Feedback persists until a deterministic event (file navigation or the next copy)
-  // instead of a wall-clock timer, and never shows against a file the copy did not
-  // target. Render-time adjustment per the React docs pattern.
-  if (copyFileFeedback && copyFileFeedback.filePath !== activeFilePath) {
+  // Feedback persists until a deterministic event (file navigation, an in-place edit,
+  // or the next copy) instead of a wall-clock timer, and never shows against content
+  // the copy did not target. Render-time adjustment per the React docs pattern.
+  if (
+    copyFileFeedback &&
+    (copyFileFeedback.filePath !== activeFilePath ||
+      copyFileFeedback.contentVersion !== activeFileContentVersion)
+  ) {
     setCopyFileFeedback(null);
   }
 
-  const showCopyFileFeedback = (kind: "copied" | "failed", filePath: string) => {
-    setCopyFileFeedback({ kind, filePath });
+  const showCopyFileFeedback = (
+    kind: "copied" | "failed",
+    filePath: string,
+    contentVersion: string
+  ) => {
+    setCopyFileFeedback({ kind, filePath, contentVersion });
   };
 
   // Deleted files no longer exist on disk, so a copy read would always fail;
@@ -1434,6 +1444,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
   const handleCopyFile = async () => {
     const filePath = activeFilePath;
+    const contentVersion = activeFileContentVersion;
     if (!api || !filePath || isActiveFileDeleted) {
       return;
     }
@@ -1447,8 +1458,9 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     // Clear the previous result so a slow re-copy cannot keep advertising success
     // for clipboard contents this operation is about to replace.
     setCopyFileFeedback(null);
-    // Discard stale completions: the user may have navigated to another file or
-    // started a newer copy while this read was in flight.
+    // Discard stale completions: the user may have navigated away, an edit may have
+    // changed the file in place (invalidation effect bumps the id), or a newer copy
+    // may have started while this read was in flight.
     const isStale = () =>
       requestId !== copyFileRequestIdRef.current || activeFilePathRef.current !== filePath;
     try {
@@ -1472,7 +1484,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // like base64 dying after stat) means the output cannot be trusted as the
       // full file; the IPC truncation marker likewise signals a partial payload.
       if (!result.success || !result.data.success || result.data.truncated) {
-        showCopyFileFeedback("failed", filePath);
+        showCopyFileFeedback("failed", filePath, contentVersion);
         return;
       }
       const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
@@ -1485,17 +1497,17 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
             ? decodeBase64Utf8(contents.base64)
             : null;
       if (text == null) {
-        showCopyFileFeedback("failed", filePath);
+        showCopyFileFeedback("failed", filePath, contentVersion);
         return;
       }
       await copyToClipboard(text);
       if (!isStale()) {
-        showCopyFileFeedback("copied", filePath);
+        showCopyFileFeedback("copied", filePath, contentVersion);
       }
     } catch (error) {
       console.error("Failed to copy file contents:", error);
       if (!isStale()) {
-        showCopyFileFeedback("failed", filePath);
+        showCopyFileFeedback("failed", filePath, contentVersion);
       }
     } finally {
       // A superseding request owns the pending slot; only the current one releases it.

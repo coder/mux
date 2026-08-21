@@ -1112,6 +1112,84 @@ describe("ImmersiveReviewView", () => {
     expect(clipboardWrites).toHaveLength(0);
   });
 
+  test("discards a copy when the file changes in place while the read is pending", async () => {
+    const hunkV1 = createHunk({ content: "-old line\n+new line" });
+
+    // Copy reads carry no awk line budget; overlay full-file reads do.
+    const pendingReads: Array<(value: unknown) => void> = [];
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      return new Promise((resolve) => {
+        pendingReads.push(resolve as (value: unknown) => void);
+      });
+    }) as unknown as MockApiClient["workspace"]["executeBash"];
+
+    function InPlaceEditHarness() {
+      const [hunks, setHunks] = useState([hunkV1]);
+      return (
+        <ThemeProvider forcedTheme="dark">
+          <button
+            type="button"
+            data-testid="edit-file"
+            onClick={() => setHunks([createHunk({ content: "-old line\n+edited line" })])}
+          >
+            edit
+          </button>
+          <ImmersiveReviewView
+            workspaceId="workspace-1"
+            fileTree={createFileTree(hunkV1.filePath)}
+            hunks={hunks}
+            allHunks={hunks}
+            isRead={() => false}
+            onToggleRead={mock(() => undefined)}
+            onMarkFileAsRead={mock(() => undefined)}
+            selectedHunkId={hunkV1.id}
+            onSelectHunk={mock(() => undefined)}
+            onExit={mock(() => undefined)}
+            isTouchImmersive={true}
+            reviewsByFilePath={new Map()}
+            firstSeenMap={{}}
+          />
+        </ThemeProvider>
+      );
+    }
+
+    const view = render(<InPlaceEditHarness />);
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+    await waitFor(() => expect(pendingReads).toHaveLength(1));
+
+    // An edit changes the same file's diff content while the read is pending.
+    fireEvent.click(view.getByTestId("edit-file"));
+
+    pendingReads[0]({
+      success: true as const,
+      data: { success: true, output: encodeFileReadOutput("pre-edit contents"), exitCode: 0 },
+    });
+    await act(async () => {
+      for (let i = 0; i < 10; i += 1) {
+        await Promise.resolve();
+      }
+    });
+    // The pre-edit payload must not reach the clipboard or report success.
+    expect(clipboardWrites).toHaveLength(0);
+    expect(
+      view.container
+        .querySelector('button[aria-label="Copy file contents"]')
+        ?.getAttribute("data-copy-file-feedback")
+    ).toBeNull();
+  });
+
   test("discards a copy that completes after navigating away and back (ABA)", async () => {
     const fileAHunk = createHunk({ id: "hunk-a", filePath: "src/a.ts" });
     const fileBHunk = createHunk({ id: "hunk-b", filePath: "src/b.ts" });
