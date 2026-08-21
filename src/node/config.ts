@@ -986,7 +986,7 @@ export class Config {
     }
 
     log.error(
-      `Failed to load config file ${this.configFile}: ${errorMessage}. ${backupStatus} Fix the JSON syntax in ${this.configFile} or restore it from the backup. Until then, Xum will continue with default settings and the next settings change will rewrite config.json with defaults.`
+      `Failed to load config file ${this.configFile}: ${errorMessage}. ${backupStatus} Fix the JSON syntax in ${this.configFile} or restore it from the backup. Xum will continue with default settings and may rewrite config.json with defaults at any time, including at startup, so use the backup to recover your original settings.`
     );
   }
 
