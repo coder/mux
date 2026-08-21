@@ -1337,10 +1337,9 @@ export class AIService extends EventEmitter {
   }
 
   /**
-   * Host-evaluated gate for the claude-skills-compat experiment: when enabled, skill
-   * discovery/read paths also scan .claude/skills and ~/.claude/skills (read-only,
-   * lowest precedence). Public so AgentSession's skill snapshot materialization can
-   * resolve slash-invoked .claude skills with the same roots as discovery.
+   * Host-evaluated gate for the claude-skills-compat experiment. When enabled,
+   * read paths include Claude's skills roots and ~/.claude/CLAUDE.md as read-only,
+   * lowest-precedence compatibility sources. Public so every consumer shares the gate.
    */
   isClaudeSkillsCompatEnabled(): boolean {
     return (
@@ -2201,7 +2200,8 @@ export class AIService extends EventEmitter {
         workspacePath,
         capabilityModelString,
         agentSystemPromptSections,
-        cfg.projects
+        cfg.projects,
+        claudeSkillsCompatExperimentEnabled
       );
       recordStartupPhaseTiming("readToolInstructionsMs", readToolInstructionsStartedAt);
 

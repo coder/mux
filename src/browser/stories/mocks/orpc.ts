@@ -1716,7 +1716,7 @@ export function createMockORPCClient(options: MockORPCClientOptions = {}): APICl
             content: "",
             enabled: true,
           },
-          sources: { global: null, context: [] },
+          sources: { global: [], context: [] },
           files: [],
           totalTokens: null,
         }),
