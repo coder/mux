@@ -313,13 +313,20 @@ async function generateAbandonedBranchSummaryText(input: {
             // Deadline already won the race: the salvage snapshot was taken,
             // so stop appending and tear the stream down.
             if (abortSignal.aborted) break;
-            accumulated += value;
             // Defensive memory bound: a pathological provider can ignore
-            // max_tokens too; never buffer beyond the hard cap.
-            if (accumulated.length >= BRANCH_SUMMARY_MAX_ACCUMULATED_CHARS) {
+            // max_tokens too; never buffer beyond the hard cap. Sliced to
+            // the remaining allowance BEFORE appending (r21): one giant
+            // delta appended in full retained O(delta) memory, and the trim
+            // below kept nearly all of it via a late sentence boundary —
+            // the retained buffer and the persisted row must both stay
+            // <= the cap regardless of delta sizing.
+            const remaining = BRANCH_SUMMARY_MAX_ACCUMULATED_CHARS - accumulated.length;
+            if (value.length >= remaining) {
+              accumulated += value.slice(0, remaining);
               cappedAtLimit = true;
               break;
             }
+            accumulated += value;
           }
         } catch (error) {
           streamFailed = true;

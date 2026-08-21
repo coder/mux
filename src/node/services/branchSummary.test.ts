@@ -8,6 +8,7 @@ import { WORDS_TO_TOKENS_RATIO } from "@/common/constants/ui";
 import { createMuxMessage, type MuxMessage } from "@/common/types/message";
 import { Err, Ok } from "@/common/types/result";
 import {
+  BRANCH_SUMMARY_MAX_ACCUMULATED_CHARS,
   BRANCH_SUMMARY_MAX_OUTPUT_TOKENS,
   BRANCH_SUMMARY_MAX_TRANSCRIPT_CHARS,
   BRANCH_SUMMARY_MIN_SEGMENT_TOKENS,
@@ -640,6 +641,51 @@ describe("maybeAppendAbandonedBranchSummary", () => {
       // The cap trips after a handful of 10k-char deltas; an uncapped
       // consumer would have kept pulling ~1/ms until the 300ms deadline.
       expect(pulls).toBeLessThan(20);
+    } finally {
+      await cleanup();
+    }
+  });
+
+  test("a single delta larger than the cap is sliced, bounding the persisted row", async () => {
+    const { historyService, cleanup } = await createTestHistoryService();
+    try {
+      // r21: a provider ignoring maxOutputTokens can emit ONE giant delta;
+      // appending it in full before the cap check retained ~5x the cap in
+      // memory, and trimSummaryToBoundary kept nearly all of it via the late
+      // sentence boundary — the persisted row must stay <= the cap.
+      const giantDelta = "Sentence for the oversized delta test. ".repeat(
+        Math.ceil((BRANCH_SUMMARY_MAX_ACCUMULATED_CHARS * 5) / 39)
+      );
+      const giantModel = new MockLanguageModelV3({
+        doStream: () =>
+          Promise.resolve({
+            stream: new ReadableStream<LanguageModelV3StreamPart>({
+              start: (controller) => {
+                controller.enqueue({ type: "text-start", id: "t1" });
+                controller.enqueue({ type: "text-delta", id: "t1", delta: giantDelta });
+                // No finish part: the cap break must not await finishReason.
+              },
+            }),
+          }),
+      });
+      const appended = await maybeAppendAbandonedBranchSummary({
+        historyService,
+        aiService: fakeAiService(giantModel),
+        workspaceId: "ws-giant-delta",
+        abandonedMessages: meatyExchange("giant"),
+        experiments: RLM_ON,
+        timeoutMs: 500,
+      });
+      expect(appended).not.toBeNull();
+      const text = appended!.parts.find((part) => part.type === "text");
+      expect(text?.type).toBe("text");
+      if (text?.type !== "text") return;
+      // The provider-controlled summary portion (the row minus the fixed
+      // label framing) is hard-bounded by the accumulation cap.
+      expect(text.text.startsWith(BRANCH_SUMMARY_LABEL)).toBe(true);
+      const summaryPortion = text.text.slice(BRANCH_SUMMARY_LABEL.length);
+      expect(summaryPortion.length).toBeLessThanOrEqual(BRANCH_SUMMARY_MAX_ACCUMULATED_CHARS);
+      expect(summaryPortion.trim().length).toBeGreaterThan(0);
     } finally {
       await cleanup();
     }
