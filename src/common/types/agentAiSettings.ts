@@ -74,15 +74,13 @@ export interface AiSettingSource {
   agentId?: string;
 }
 
+/**
+ * One declared ancestor from the target agent's `base` chain. Adapters pass
+ * declared ancestors only; the resolver itself appends the implicit fallback
+ * base (plan -> plan, otherwise exec) as a reasoningMode-only layer.
+ */
 export interface AgentAiAncestorLayer {
   agentId: string;
-  /**
-   * Implicit ancestors (the plan->plan / exec fallback appended when a declared
-   * chain ends without a base) contribute reasoningMode only, so switching to
-   * an unconfigured agent inherits pro/standard without yanking model or
-   * thinking to the fallback agent's configured defaults.
-   */
-  declared: boolean;
   definitionAiDefaults?: AgentAiDefinitionDefaults;
 }
 
@@ -101,7 +99,7 @@ export interface ResolveAgentAiSettingsInput {
   agentAiDefaults?: AgentAiDefaults;
   /** Tier 4: the target agent's definition frontmatter `ai` block. */
   targetDefinitionAiDefaults?: AgentAiDefinitionDefaults;
-  /** Tier 5: ancestors ordered child to root, excluding the target itself. */
+  /** Tier 5: declared ancestors ordered child to root, excluding the target itself. */
   ancestors?: readonly AgentAiAncestorLayer[];
   /** Tier 6: ephemeral parent runtime settings for a newly spawned task or continuation. */
   parentRuntime?: AgentAiSettingsLayerValues;
@@ -136,10 +134,6 @@ export interface ResolvedAgentAiSettings {
     model: AiSettingSource;
     thinkingLevel: AiSettingSource;
     reasoningMode?: AiSettingSource;
-  };
-  adjustments: {
-    thinkingClamped: boolean;
-    reasoningUnavailable: boolean;
   };
   /** Skipped-candidate notes for adapters to log; never logged here. */
   diagnostics: string[];

@@ -1,11 +1,8 @@
 import { describe, expect, it } from "bun:test";
 
 import type { ResolveAgentAiSettingsInput } from "@/common/types/agentAiSettings";
-import {
-  InvalidExplicitAiSettingError,
-  resolveAgentAiSettings,
-} from "./resolveAgentAiSettings";
-import { resolveAgentAncestorChain } from "./resolveAgentInheritanceChain";
+import { collectDeclaredAncestorLayers } from "./agentAncestorLayers";
+import { InvalidExplicitAiSettingError, resolveAgentAiSettings } from "./resolveAgentAiSettings";
 
 // Unrecognized providers fall through to the shared default thinking policy
 // (["off","low","medium","high"], floor "off"), so precedence assertions are
@@ -85,7 +82,11 @@ describe("resolveAgentAiSettings precedence", () => {
       base({
         profile: "subagent",
         agentAiDefaults: {
-          worker: { modelString: MODEL_A, thinkingLevel: "low", subagent: { thinkingLevel: "high" } },
+          worker: {
+            modelString: MODEL_A,
+            thinkingLevel: "low",
+            subagent: { thinkingLevel: "high" },
+          },
         },
       })
     );
@@ -111,7 +112,7 @@ describe("resolveAgentAiSettings precedence", () => {
       base({
         targetDefinitionAiDefaults: { model: MODEL_A },
         agentAiDefaults: { exec: { modelString: MODEL_B } },
-        ancestors: [{ agentId: "exec", declared: true }],
+        ancestors: [{ agentId: "exec" }],
       })
     );
     expect(result.selected.model).toBe(MODEL_A);
@@ -125,10 +126,7 @@ describe("resolveAgentAiSettings precedence", () => {
           middle: { thinkingLevel: "medium" },
           root: { modelString: MODEL_C, reasoningMode: "pro" },
         },
-        ancestors: [
-          { agentId: "middle", declared: true },
-          { agentId: "root", declared: true },
-        ],
+        ancestors: [{ agentId: "middle" }, { agentId: "root" }],
       })
     );
     expect(result.selected.model).toBe(MODEL_C);
@@ -145,20 +143,20 @@ describe("resolveAgentAiSettings precedence", () => {
         agentAiDefaults: {
           exec: { modelString: MODEL_A, subagent: { modelString: MODEL_B } },
         },
-        ancestors: [{ agentId: "exec", declared: true }],
+        ancestors: [{ agentId: "exec" }],
       })
     );
     expect(result.selected.model).toBe(MODEL_B);
     expect(result.sources.model).toEqual({ tier: "config-subagent", agentId: "exec" });
   });
 
-  it("implicit fallback ancestors contribute reasoningMode only", () => {
+  it("the implicit exec fallback contributes reasoningMode only", () => {
+    // No ancestors passed: the resolver appends the implicit fallback itself.
     const result = resolveAgentAiSettings(
       base({
         agentAiDefaults: {
           exec: { modelString: MODEL_B, thinkingLevel: "high", reasoningMode: "pro" },
         },
-        ancestors: [{ agentId: "exec", declared: false }],
         fallbacks: [{ model: MODEL_A, thinkingLevel: "low" }],
         proModeAvailable: true,
       })
@@ -168,6 +166,16 @@ describe("resolveAgentAiSettings precedence", () => {
     expect(result.selected.thinkingLevel).toBe("low");
     expect(result.selected.reasoningMode).toBe("pro");
     expect(result.sources.reasoningMode).toEqual({ tier: "config", agentId: "exec" });
+  });
+
+  it("plan has no implicit exec fallback", () => {
+    const result = resolveAgentAiSettings(
+      base({
+        targetAgentId: "plan",
+        agentAiDefaults: { exec: { reasoningMode: "pro" } },
+      })
+    );
+    expect(result.selected.reasoningMode).toBeUndefined();
   });
 
   it("explicit standard beats inherited pro", () => {
@@ -188,7 +196,7 @@ describe("resolveAgentAiSettings precedence", () => {
           worker: { reasoningMode: "standard" },
           exec: { reasoningMode: "pro" },
         },
-        ancestors: [{ agentId: "exec", declared: true }],
+        ancestors: [{ agentId: "exec" }],
       })
     );
     expect(result.selected.reasoningMode).toBe("standard");
@@ -198,7 +206,7 @@ describe("resolveAgentAiSettings precedence", () => {
     const withAncestor = resolveAgentAiSettings(
       base({
         agentAiDefaults: { exec: { modelString: MODEL_A } },
-        ancestors: [{ agentId: "exec", declared: true }],
+        ancestors: [{ agentId: "exec" }],
         parentRuntime: { model: MODEL_B },
         fallbacks: [{ model: MODEL_C }],
       })
@@ -262,7 +270,6 @@ describe("resolveAgentAiSettings normalization and clamping", () => {
     );
     expect(result.selected.thinkingLevel).toBe("max");
     expect(result.effective.thinkingLevel).toBe("high");
-    expect(result.adjustments.thinkingClamped).toBe(true);
   });
 
   it("applies configured minimum thinking floors to effective values", () => {
@@ -274,7 +281,6 @@ describe("resolveAgentAiSettings normalization and clamping", () => {
     );
     expect(result.selected.thinkingLevel).toBe("off");
     expect(result.effective.thinkingLevel).toBe("medium");
-    expect(result.adjustments.thinkingClamped).toBe(true);
   });
 
   it("preserves selected pro while effective reasoning is unavailable on a non-pro model", () => {
@@ -285,7 +291,6 @@ describe("resolveAgentAiSettings normalization and clamping", () => {
     );
     expect(result.selected.reasoningMode).toBe("pro");
     expect(result.effective.reasoningMode).toBeUndefined();
-    expect(result.adjustments.reasoningUnavailable).toBe(true);
   });
 
   it("keeps effective pro on a pro-capable model", () => {
@@ -295,7 +300,6 @@ describe("resolveAgentAiSettings normalization and clamping", () => {
       })
     );
     expect(result.effective.reasoningMode).toBe("pro");
-    expect(result.adjustments.reasoningUnavailable).toBe(false);
   });
 
   it("honors an adapter-supplied pro availability override", () => {
@@ -327,84 +331,48 @@ describe("resolveAgentAiSettings normalization and clamping", () => {
   });
 });
 
-describe("resolveAgentAncestorChain", () => {
-  it("orders declared ancestors child to root and appends the implicit fallback", () => {
-    const chain = resolveAgentAncestorChain({
-      agentId: "leaf",
-      baseByAgentId: new Map([
-        ["leaf", "middle"],
-        ["middle", "root"],
-      ]),
-    });
-    expect(chain.ancestors).toEqual([
-      { agentId: "middle", declared: true },
-      { agentId: "root", declared: true },
-      { agentId: "exec", declared: false },
+describe("collectDeclaredAncestorLayers", () => {
+  it("orders declared ancestors child to root without the implicit fallback", () => {
+    const chain = collectDeclaredAncestorLayers(
+      "leaf",
+      new Map([
+        ["leaf", { base: "middle" }],
+        ["middle", { base: "root", definitionAiDefaults: { model: MODEL_A } }],
+      ])
+    );
+    expect(chain).toEqual([
+      { agentId: "middle", definitionAiDefaults: { model: MODEL_A } },
+      { agentId: "root" },
     ]);
-    expect(chain.truncated).toBeUndefined();
-  });
-
-  it("does not append the fallback when the chain already reaches it", () => {
-    const chain = resolveAgentAncestorChain({
-      agentId: "leaf",
-      baseByAgentId: new Map([["leaf", "exec"]]),
-    });
-    expect(chain.ancestors).toEqual([{ agentId: "exec", declared: true }]);
-  });
-
-  it("plan falls back to plan (no implicit ancestor)", () => {
-    const chain = resolveAgentAncestorChain({ agentId: "plan", baseByAgentId: new Map() });
-    expect(chain.ancestors).toEqual([]);
-  });
-
-  it("agents without a declared base get the implicit exec fallback", () => {
-    const chain = resolveAgentAncestorChain({ agentId: "compact", baseByAgentId: new Map() });
-    expect(chain.ancestors).toEqual([{ agentId: "exec", declared: false }]);
   });
 
   it("missing parents terminate the declared chain", () => {
-    const chain = resolveAgentAncestorChain({
-      agentId: "leaf",
-      baseByAgentId: new Map([["leaf", "ghost"]]),
-    });
-    expect(chain.ancestors).toEqual([
-      { agentId: "ghost", declared: true },
-      { agentId: "exec", declared: false },
-    ]);
+    const chain = collectDeclaredAncestorLayers("leaf", new Map([["leaf", { base: "ghost" }]]));
+    expect(chain).toEqual([{ agentId: "ghost" }]);
   });
 
-  it("stops on cycles without the implicit fallback", () => {
-    const chain = resolveAgentAncestorChain({
-      agentId: "a",
-      baseByAgentId: new Map([
-        ["a", "b"],
-        ["b", "a"],
-      ]),
-    });
-    expect(chain.ancestors).toEqual([{ agentId: "b", declared: true }]);
-    expect(chain.truncated).toBe("cycle");
+  it("stops on cycles", () => {
+    const chain = collectDeclaredAncestorLayers(
+      "a",
+      new Map([
+        ["a", { base: "b" }],
+        ["b", { base: "a" }],
+      ])
+    );
+    expect(chain).toEqual([{ agentId: "b" }]);
   });
 
   it("treats a same-id base as the chain terminus, not a cycle", () => {
-    const chain = resolveAgentAncestorChain({
-      agentId: "exec",
-      baseByAgentId: new Map([["exec", "exec"]]),
-    });
-    expect(chain.ancestors).toEqual([]);
-    expect(chain.truncated).toBeUndefined();
+    const chain = collectDeclaredAncestorLayers("exec", new Map([["exec", { base: "exec" }]]));
+    expect(chain).toEqual([]);
   });
 
   it("bounds traversal depth", () => {
-    const map = new Map<string, string | undefined>();
+    const map = new Map<string, { base?: string }>();
     for (let i = 0; i < 20; i++) {
-      map.set(`agent-${i}`, `agent-${i + 1}`);
+      map.set(`agent-${i}`, { base: `agent-${i + 1}` });
     }
-    const chain = resolveAgentAncestorChain({
-      agentId: "agent-0",
-      baseByAgentId: map,
-      maxDepth: 5,
-    });
-    expect(chain.ancestors).toHaveLength(5);
-    expect(chain.truncated).toBe("depth");
+    const chain = collectDeclaredAncestorLayers("agent-0", map);
+    expect(chain).toHaveLength(10);
   });
 });

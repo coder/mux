@@ -7,8 +7,8 @@
  *   2. target workspace per-agent bucket
  *   3. target configured profile (delegated `subagent` override, then base)
  *   4. target definition frontmatter `ai` defaults
- *   5. ancestors child to root (config profile, then definition defaults);
- *      implicit fallback ancestors contribute reasoningMode only
+ *   5. declared ancestors child to root (config profile, then definition
+ *      defaults), then the implicit plan/exec fallback (reasoningMode only)
  *   6. parent runtime hint
  *   7. root workspace / activity fallbacks
  *   8. system fallback (default model, thinking off, no reasoning preference)
@@ -54,10 +54,18 @@ export class InvalidExplicitAiSettingError extends Error {
   }
 }
 
+/**
+ * The implicit base an agent falls back to when its declared chain ends:
+ * plan stays plan (no fallback), everything else falls back to exec.
+ */
+export function implicitBaseAgentId(agentId: string): string {
+  return agentId === "plan" ? "plan" : "exec";
+}
+
 interface Candidate {
   values: AgentAiSettingsLayerValues;
   source: AiSettingSource;
-  /** Implicit fallback ancestors inherit reasoningMode only. */
+  /** The implicit fallback ancestor inherits reasoningMode only. */
   reasoningOnly?: boolean;
 }
 
@@ -109,11 +117,12 @@ function buildCandidates(input: ResolveAgentAiSettingsInput): Candidate[] {
     });
   }
 
+  const chainIds = new Set<string>([input.targetAgentId]);
   for (const ancestor of input.ancestors ?? []) {
-    if (ancestor.agentId === input.targetAgentId) continue;
-    const reasoningOnly = !ancestor.declared;
-    pushConfig(ancestor.agentId, reasoningOnly);
-    if (ancestor.definitionAiDefaults && ancestor.declared) {
+    if (chainIds.has(ancestor.agentId)) continue;
+    chainIds.add(ancestor.agentId);
+    pushConfig(ancestor.agentId, false);
+    if (ancestor.definitionAiDefaults) {
       candidates.push({
         values: {
           model: ancestor.definitionAiDefaults.model,
@@ -124,15 +133,51 @@ function buildCandidates(input: ResolveAgentAiSettingsInput): Candidate[] {
     }
   }
 
+  // A chain terminus without a declared base still falls back to the default
+  // base, contributing reasoningMode only: switching to an unconfigured agent
+  // inherits pro/standard without yanking model or thinking to the fallback
+  // agent's configured defaults.
+  const terminus = input.ancestors?.at(-1)?.agentId ?? input.targetAgentId;
+  const fallback = implicitBaseAgentId(terminus);
+  if (!chainIds.has(fallback)) {
+    pushConfig(fallback, true);
+  }
+
   if (input.parentRuntime) {
     candidates.push({ values: input.parentRuntime, source: { tier: "parent-runtime" } });
   }
 
-  for (const fallback of input.fallbacks ?? []) {
-    candidates.push({ values: fallback, source: { tier: "fallback" } });
+  for (const fallbackLayer of input.fallbacks ?? []) {
+    candidates.push({ values: fallbackLayer, source: { tier: "fallback" } });
   }
 
   return candidates;
+}
+
+/** First candidate whose field survives coercion wins; invalid values fall through. */
+function pickField<T>(
+  candidates: readonly Candidate[],
+  field: "model" | "thinkingLevel" | "reasoningMode",
+  coerce: (raw: unknown) => T | undefined,
+  diagnostics: string[]
+): { value: T; source: AiSettingSource } | undefined {
+  for (const candidate of candidates) {
+    if (candidate.reasoningOnly && field !== "reasoningMode") continue;
+    const raw = candidate.values[field];
+    if (raw === undefined) continue;
+    const coerced = coerce(raw);
+    if (coerced === undefined) {
+      diagnostics.push(`skipped invalid ${field} "${String(raw)}" from ${candidate.source.tier}`);
+      continue;
+    }
+    return { value: coerced, source: candidate.source };
+  }
+  return undefined;
+}
+
+function coerceModel(raw: unknown): string | undefined {
+  if (typeof raw !== "string" || raw.trim().length === 0) return undefined;
+  return normalizeModelInput(raw).model ?? undefined;
 }
 
 export function resolveAgentAiSettings(
@@ -143,9 +188,7 @@ export function resolveAgentAiSettings(
   const providersConfig = input.providersConfig ?? null;
 
   // --- model ---
-  let selectedModel: string | undefined;
-  let modelSource: AiSettingSource | undefined;
-
+  let model: { value: string; source: AiSettingSource } | undefined;
   const explicitModel =
     typeof input.explicit?.model === "string" && input.explicit.model.trim().length > 0
       ? input.explicit.model
@@ -155,123 +198,68 @@ export function resolveAgentAiSettings(
     if (normalized == null) {
       throw new InvalidExplicitAiSettingError("model", explicitModel);
     }
-    selectedModel = normalized;
-    modelSource = { tier: "explicit" };
+    model = { value: normalized, source: { tier: "explicit" } };
   } else {
-    for (const candidate of candidates) {
-      if (candidate.reasoningOnly) continue;
-      const raw = candidate.values.model;
-      if (typeof raw !== "string" || raw.trim().length === 0) continue;
-      const normalized = normalizeModelInput(raw).model;
-      if (normalized == null) {
-        diagnostics.push(`skipped invalid model "${raw}" from ${candidate.source.tier}`);
-        continue;
-      }
-      selectedModel = normalized;
-      modelSource = candidate.source;
-      break;
-    }
+    model = pickField(candidates, "model", coerceModel, diagnostics);
   }
-
-  if (selectedModel === undefined || modelSource === undefined) {
-    const fallbackDefault = normalizeModelInput(input.defaultModel).model ?? DEFAULT_MODEL;
-    selectedModel = fallbackDefault;
-    modelSource = { tier: "default" };
-  }
+  model ??= {
+    value: normalizeModelInput(input.defaultModel).model ?? DEFAULT_MODEL,
+    source: { tier: "default" },
+  };
 
   // --- thinkingLevel (numeric explicit input maps into the resolved model's policy) ---
-  let selectedThinking: ThinkingLevel | undefined;
-  let thinkingSource: AiSettingSource | undefined;
-
+  let thinking: { value: ThinkingLevel; source: AiSettingSource } | undefined;
   if (input.explicit?.thinkingLevel != null) {
-    selectedThinking = resolveThinkingInput(
-      input.explicit.thinkingLevel,
-      selectedModel,
-      providersConfig
-    );
-    thinkingSource = { tier: "explicit" };
+    thinking = {
+      value: resolveThinkingInput(input.explicit.thinkingLevel, model.value, providersConfig),
+      source: { tier: "explicit" },
+    };
   } else {
-    for (const candidate of candidates) {
-      if (candidate.reasoningOnly) continue;
-      if (candidate.values.thinkingLevel === undefined) continue;
-      const coerced = coerceThinkingLevel(candidate.values.thinkingLevel);
-      if (coerced === undefined) {
-        diagnostics.push(
-          `skipped invalid thinkingLevel "${String(candidate.values.thinkingLevel)}" from ${candidate.source.tier}`
-        );
-        continue;
-      }
-      selectedThinking = coerced;
-      thinkingSource = candidate.source;
-      break;
-    }
+    thinking = pickField(candidates, "thinkingLevel", coerceThinkingLevel, diagnostics);
   }
-
-  if (selectedThinking === undefined || thinkingSource === undefined) {
-    selectedThinking = "off";
-    thinkingSource = { tier: "default" };
-  }
+  thinking ??= { value: "off", source: { tier: "default" } };
 
   // --- reasoningMode ---
-  let selectedReasoning: OpenAIReasoningMode | undefined;
-  let reasoningSource: AiSettingSource | undefined;
-
+  let reasoning: { value: OpenAIReasoningMode; source: AiSettingSource } | undefined;
   if (input.explicit?.reasoningMode != null) {
-    selectedReasoning = input.explicit.reasoningMode;
-    reasoningSource = { tier: "explicit" };
+    reasoning = { value: input.explicit.reasoningMode, source: { tier: "explicit" } };
   } else {
-    for (const candidate of candidates) {
-      if (candidate.values.reasoningMode === undefined) continue;
-      const coerced = coerceOpenAIReasoningMode(candidate.values.reasoningMode);
-      if (coerced === undefined) {
-        diagnostics.push(
-          `skipped invalid reasoningMode "${String(candidate.values.reasoningMode)}" from ${candidate.source.tier}`
-        );
-        continue;
-      }
-      selectedReasoning = coerced;
-      reasoningSource = candidate.source;
-      break;
-    }
+    reasoning = pickField(candidates, "reasoningMode", coerceOpenAIReasoningMode, diagnostics);
   }
 
   // --- effective values (provider-safe) ---
   const minThinkingFloor = resolveMinimumThinkingLevel(
-    selectedModel,
-    lookupMinThinkingLevelOverride(input.minThinkingLevelByModel, selectedModel),
+    model.value,
+    lookupMinThinkingLevelOverride(input.minThinkingLevelByModel, model.value),
     providersConfig
   );
   const effectiveThinking = enforceThinkingPolicy(
-    selectedModel,
-    selectedThinking,
+    model.value,
+    thinking.value,
     minThinkingFloor,
     providersConfig
   );
 
   const proAvailable =
-    input.proModeAvailable ?? openaiProModeAvailable(selectedModel, { providersConfig });
-  const reasoningUnavailable = selectedReasoning === "pro" && !proAvailable;
-  const effectiveReasoning = reasoningUnavailable ? undefined : selectedReasoning;
+    input.proModeAvailable ?? openaiProModeAvailable(model.value, { providersConfig });
+  const effectiveReasoning =
+    reasoning?.value === "pro" && !proAvailable ? undefined : reasoning?.value;
 
   return {
     selected: {
-      model: selectedModel,
-      thinkingLevel: selectedThinking,
-      ...(selectedReasoning !== undefined ? { reasoningMode: selectedReasoning } : {}),
+      model: model.value,
+      thinkingLevel: thinking.value,
+      ...(reasoning !== undefined ? { reasoningMode: reasoning.value } : {}),
     },
     effective: {
-      model: selectedModel,
+      model: model.value,
       thinkingLevel: effectiveThinking,
       ...(effectiveReasoning !== undefined ? { reasoningMode: effectiveReasoning } : {}),
     },
     sources: {
-      model: modelSource,
-      thinkingLevel: thinkingSource,
-      ...(reasoningSource !== undefined ? { reasoningMode: reasoningSource } : {}),
-    },
-    adjustments: {
-      thinkingClamped: effectiveThinking !== selectedThinking,
-      reasoningUnavailable,
+      model: model.source,
+      thinkingLevel: thinking.source,
+      ...(reasoning !== undefined ? { reasoningMode: reasoning.source } : {}),
     },
     diagnostics,
   };

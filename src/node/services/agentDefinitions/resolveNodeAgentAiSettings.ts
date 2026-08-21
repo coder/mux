@@ -1,9 +1,8 @@
 /**
  * Node adapter for the unified agent AI-settings resolver: reads agent
- * definitions, assembles the declared base chain plus the implicit fallback
- * ancestor, gathers configured defaults, and delegates all precedence to the
- * pure resolver. Owns missing-definition and cycle logging so the pure layer
- * stays side-effect free.
+ * definitions, assembles the declared base chain, gathers configured defaults,
+ * and delegates all precedence to the pure resolver. Owns missing-definition
+ * and cycle logging so the pure layer stays side-effect free.
  */
 
 import type { ProvidersConfigMap } from "@/common/orpc/types";
@@ -61,11 +60,6 @@ export interface ResolveNodeAgentAiSettingsParams {
   definitionContext?: NodeAgentDefinitionContext;
 }
 
-function implicitFallbackAncestors(agentId: string): AgentAiAncestorLayer[] {
-  const fallback = agentId === "plan" ? "plan" : "exec";
-  return fallback === agentId ? [] : [{ agentId: fallback, declared: false }];
-}
-
 function toDefinitionDefaults(
   ai: { model?: string; thinkingLevel?: ThinkingLevel } | undefined
 ): AgentAiDefinitionDefaults | undefined {
@@ -83,7 +77,7 @@ async function loadDefinitionLayers(
   ancestors: AgentAiAncestorLayer[];
 }> {
   if (!context) {
-    return { ancestors: implicitFallbackAncestors(agentId) };
+    return { ancestors: [] };
   }
 
   try {
@@ -108,30 +102,20 @@ async function loadDefinitionLayers(
       seen.add(entry.id);
       ancestors.push({
         agentId: entry.id,
-        declared: true,
         definitionAiDefaults: toDefinitionDefaults(entry.ai),
       });
-    }
-
-    // ACP parity: a chain terminus without a declared base still falls back to
-    // the default base (plan -> plan, otherwise exec), contributing
-    // reasoningMode only (declared: false).
-    const terminus = chain[chain.length - 1]?.id ?? agentId;
-    const fallback = terminus === "plan" ? "plan" : "exec";
-    if (fallback !== terminus && !seen.has(fallback)) {
-      ancestors.push({ agentId: fallback, declared: false });
     }
 
     return { targetDefinitionAiDefaults, ancestors };
   } catch (error) {
     // A missing or unreadable definition must not break resolution: fall back
-    // to the synchronous approximation (implicit base only).
+    // to the implicit base the resolver appends on its own.
     log.debug("resolveNodeAgentAiSettings: definition chain unavailable", {
       agentId,
       workspaceId: context.workspaceId,
       error: getErrorMessage(error),
     });
-    return { ancestors: implicitFallbackAncestors(agentId) };
+    return { ancestors: [] };
   }
 }
 

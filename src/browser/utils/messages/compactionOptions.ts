@@ -45,9 +45,6 @@ export function applyCompactionOverrides(
       profile: "interactive",
       explicit: { model: explicitModel },
       agentAiDefaults,
-      // Compact's implicit base (exec) contributes reasoningMode only, so a
-      // saved Exec pro default reaches compaction as the Settings card shows.
-      ancestors: [{ agentId: "exec", declared: false }],
       parentRuntime: {
         model: baseOptions.model,
         thinkingLevel: coerceThinkingLevel(baseOptions.thinkingLevel),
@@ -58,7 +55,8 @@ export function applyCompactionOverrides(
   let resolved;
   let compactionModel: string;
   try {
-    resolved = resolveWith(compactionModelOverride || undefined);
+    // The resolver treats an empty/whitespace explicit model as absent.
+    resolved = resolveWith(compactionModelOverride);
     compactionModel = resolved.selected.model;
   } catch (error) {
     if (!(error instanceof InvalidExplicitAiSettingError)) {

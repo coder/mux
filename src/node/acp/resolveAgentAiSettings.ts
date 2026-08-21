@@ -7,65 +7,22 @@
 
 import assert from "node:assert/strict";
 import type {
-  AgentAiAncestorLayer,
-  AgentAiDefinitionDefaults,
   AgentAiSettingsLayerValues,
   ResolveAgentAiSettingsInput,
   ResolvedAgentAiSettings,
 } from "@/common/types/agentAiSettings";
-import type { OpenAIReasoningMode, ThinkingLevel } from "@/common/types/thinking";
+import {
+  collectDeclaredAncestorLayers,
+  type AgentAncestorDescriptor,
+} from "@/common/utils/ai/agentAncestorLayers";
 import { resolveAgentAiSettings as resolveAgentAiSettingsShared } from "@/common/utils/ai/resolveAgentAiSettings";
 import type { ORPCClient } from "./serverConnection";
 
-export interface ResolvedAiSettings {
-  model: string;
-  thinkingLevel: ThinkingLevel;
-  /**
-   * OpenAI pro reasoning mode, resolved from configured agent AI defaults or
-   * workspace metadata buckets and threaded into prompt sends so ACP sessions
-   * do not silently downgrade pro workspaces to standard.
-   */
-  reasoningMode?: OpenAIReasoningMode;
-}
-
-interface AgentDescriptorForChain {
-  base?: string;
-  aiDefaults?: AgentAiDefinitionDefaults;
-}
-
-function buildAncestorLayers(
-  agentId: string,
-  agentDefsById: ReadonlyMap<string, AgentDescriptorForChain>
-): AgentAiAncestorLayer[] {
-  const ancestors: AgentAiAncestorLayer[] = [];
-  const visited = new Set<string>([agentId]);
-  let cursor = agentId;
-
-  while (true) {
-    const baseAgentId = agentDefsById.get(cursor)?.base;
-    if (baseAgentId == null) {
-      break;
-    }
-    if (baseAgentId === cursor || visited.has(baseAgentId)) {
-      return ancestors;
-    }
-    visited.add(baseAgentId);
-    ancestors.push({
-      agentId: baseAgentId,
-      declared: true,
-      definitionAiDefaults: agentDefsById.get(baseAgentId)?.aiDefaults,
-    });
-    cursor = baseAgentId;
-  }
-
-  // A chain terminus without a declared base still falls back to the default
-  // base (plan -> plan, otherwise exec), contributing reasoningMode only.
-  const fallback = cursor === "plan" ? "plan" : "exec";
-  if (fallback !== cursor && !visited.has(fallback)) {
-    ancestors.push({ agentId: fallback, declared: false });
-  }
-  return ancestors;
-}
+/**
+ * Selected (persistence-shaped) settings, threaded into prompt sends so ACP
+ * sessions do not silently downgrade pro workspaces to standard.
+ */
+export type ResolvedAiSettings = ResolvedAgentAiSettings["selected"];
 
 function buildAgentsListInput(
   workspaceId?: string
@@ -107,8 +64,8 @@ export async function resolveAcpAgentAiSettings(
   ]);
 
   const agentDef = agents.find((agent) => agent.id === trimmedAgentId);
-  const agentDefsById = new Map<string, AgentDescriptorForChain>(
-    agents.map((agent) => [agent.id, { base: agent.base, aiDefaults: agent.aiDefaults }])
+  const agentDefsById = new Map<string, AgentAncestorDescriptor>(
+    agents.map((agent) => [agent.id, { base: agent.base, definitionAiDefaults: agent.aiDefaults }])
   );
 
   return resolveAgentAiSettingsShared({
@@ -118,7 +75,7 @@ export async function resolveAcpAgentAiSettings(
     targetWorkspaceSettings: extras?.targetWorkspaceSettings,
     agentAiDefaults: config.agentAiDefaults,
     targetDefinitionAiDefaults: agentDef?.aiDefaults,
-    ancestors: buildAncestorLayers(trimmedAgentId, agentDefsById),
+    ancestors: collectDeclaredAncestorLayers(trimmedAgentId, agentDefsById),
     parentRuntime: extras?.parentRuntime,
   });
 }
