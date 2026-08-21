@@ -13299,18 +13299,95 @@ describe("TaskService", () => {
     expect(sendMessage).toHaveBeenCalledTimes(delivered);
 
     // The AIRTIGHT invariant: the rendered bytes persisted into the parent
-    // transcript never exceed the pair ceiling.
+    // transcript — payload rows AND fixed trigger rows (r21) — never exceed
+    // the pair ceiling. Triggers are observed at the sendMessage boundary
+    // (arg 1 is the trigger content the mock would persist as a user row).
     const history = await historyService.getHistoryFromLatestBoundary(parentWorkspaceId);
     expect(history.success).toBe(true);
     if (!history.success) return;
-    const renderedTotal = history.data
+    const renderedPayloadTotal = history.data
       .filter((m) => m.metadata?.muxMetadata?.type === "family-message")
       .reduce(
         (sum, m) =>
           sum + m.parts.reduce((s, part) => s + (part.type === "text" ? part.text.length : 0), 0),
         0
       );
-    expect(renderedTotal).toBeLessThanOrEqual(TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS);
+    const triggerTotal = sendMessage.mock.calls.reduce(
+      (sum, call) => sum + String(call[1]).length,
+      0
+    );
+    expect(renderedPayloadTotal + triggerTotal).toBeLessThanOrEqual(
+      TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS
+    );
+  });
+
+  test("mid-size family messages: payload + trigger rows stay within the pair ceiling", async () => {
+    // r21 red-check: max-size sends leave enough per-send headroom for the
+    // fixed trigger row to hide in, but ~2KiB sends admit enough repetitions
+    // that UNCHARGED trigger rows accumulate past the ceiling (pre-fix:
+    // charged = payload only → persisted payload+trigger ≈ 107% of ceiling).
+    const config = await createTestConfig(rootDir);
+    const projectPath = path.join(rootDir, "repo");
+    const parentWorkspaceId = "parent-midsize-budget";
+    const childTaskId = "child-midsize-budget";
+
+    await saveWorkspaces(
+      config,
+      projectPath,
+      [
+        projectWorkspace(projectPath, "parent", parentWorkspaceId, {
+          aiSettings: { model: "openai:gpt-5.2", thinkingLevel: "medium" },
+        }),
+        projectWorkspace(projectPath, "child", childTaskId, {
+          parentWorkspaceId,
+          taskStatus: "running",
+          taskExperiments: { rlm: true },
+        }),
+      ],
+      testTaskSettings()
+    );
+
+    const { workspaceService, sendMessage } = createWorkspaceServiceMocks();
+    const { taskService, historyService } = createTaskServiceHarness(config, {
+      workspaceService,
+    });
+
+    // Message sized so the chars budget (not the count budget) refuses first.
+    const messageChars = Math.floor(
+      TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS / TASK_FAMILY_MESSAGE_MAX_TOTAL_MESSAGES
+    );
+    let refused = false;
+    for (let i = 0; i < TASK_FAMILY_MESSAGE_MAX_TOTAL_MESSAGES; i++) {
+      const sent = await taskService.sendMessageToParentFromAgentTask(
+        childTaskId,
+        "x".repeat(messageChars),
+        "tool-end"
+      );
+      if (!sent.success) {
+        refused = true;
+        expect("message" in sent.error && sent.error.message).toContain("budget");
+        break;
+      }
+    }
+    expect(refused).toBe(true);
+
+    const history = await historyService.getHistoryFromLatestBoundary(parentWorkspaceId);
+    expect(history.success).toBe(true);
+    if (!history.success) return;
+    const renderedPayloadTotal = history.data
+      .filter((m) => m.metadata?.muxMetadata?.type === "family-message")
+      .reduce(
+        (sum, m) =>
+          sum + m.parts.reduce((s, part) => s + (part.type === "text" ? part.text.length : 0), 0),
+        0
+      );
+    const triggerTotal = sendMessage.mock.calls.reduce(
+      (sum, call) => sum + String(call[1]).length,
+      0
+    );
+    expect(renderedPayloadTotal + triggerTotal).toBeLessThanOrEqual(
+      TASK_FAMILY_MESSAGE_MAX_TOTAL_CHARS
+    );
   });
 
   test("wake failures retain the budget charge for persisted payload rows", async () => {
