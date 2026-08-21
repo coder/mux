@@ -1356,22 +1356,40 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   }, [resetViewCursorForHunk]);
 
   const { copied: copiedFile, copyToClipboard: copyFileToClipboard } = useCopyToClipboard();
-  const copyFileInFlightRef = useRef(false);
+  const [lastCopiedFilePath, setLastCopiedFilePath] = useState<string | null>(null);
+  const copyFileRequestIdRef = useRef(0);
+  const activeFilePathRef = useRef(activeFilePath);
+  activeFilePathRef.current = activeFilePath;
+
+  // Deleted files no longer exist on disk, so a copy read would always fail;
+  // hide the affordance instead of offering a broken action.
+  const isActiveFileDeleted = currentFileHunks[0]?.changeType === "deleted";
 
   // Copy the entire on-disk file, not the overlay content: the overlay may hold only
   // compact diff hunks (large files) or prefixed diff rows rather than raw file text.
   const handleCopyFile = useCallback(async () => {
     const filePath = activeFilePath;
-    if (!api || !filePath || copyFileInFlightRef.current) {
+    if (!api || !filePath || isActiveFileDeleted) {
       return;
     }
-    copyFileInFlightRef.current = true;
+    const requestId = ++copyFileRequestIdRef.current;
     try {
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
         script: buildReadFileScript(filePath),
       });
+      // Discard stale completions: the user may have navigated to another file or
+      // started a newer copy while this read was in flight.
+      if (requestId !== copyFileRequestIdRef.current || activeFilePathRef.current !== filePath) {
+        return;
+      }
       if (!result.success) {
+        return;
+      }
+      // The IPC bash transport caps output at 1MB; a truncated read would silently
+      // copy only the beginning of the file, so reject it outright.
+      if (result.data.truncated) {
+        console.error("Cannot copy file contents: file is too large to read in full");
         return;
       }
       const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
@@ -1383,12 +1401,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
         return;
       }
       await copyFileToClipboard(contents.content);
+      setLastCopiedFilePath(filePath);
     } catch (error) {
       console.error("Failed to copy file contents:", error);
-    } finally {
-      copyFileInFlightRef.current = false;
     }
-  }, [api, activeFilePath, props.workspaceId, copyFileToClipboard]);
+  }, [api, activeFilePath, isActiveFileDeleted, props.workspaceId, copyFileToClipboard]);
+
+  // Only surface copied feedback against the file that was actually copied, so
+  // navigating away within the feedback window cannot show a check on another file.
+  const showCopiedFileFeedback = copiedFile && lastCopiedFilePath === activeFilePath;
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {
@@ -1947,10 +1968,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
           >
             <ChevronRight className="h-4 w-4" />
           </button>
-          {!isReviewComplete && activeFilePath && (
+          {!isReviewComplete && activeFilePath && !isActiveFileDeleted && (
             <TooltipIfPresent
               tooltip={
-                copiedFile ? (
+                showCopiedFileFeedback ? (
                   "Copied!"
                 ) : (
                   <span>
@@ -1968,11 +1989,11 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 onClick={() => void handleCopyFile()}
                 className={cn(
                   "flex shrink-0 cursor-pointer items-center border-none bg-transparent p-0 transition-colors",
-                  copiedFile ? "text-read" : "text-muted hover:text-foreground"
+                  showCopiedFileFeedback ? "text-read" : "text-muted hover:text-foreground"
                 )}
                 aria-label="Copy file contents"
               >
-                {copiedFile ? (
+                {showCopiedFileFeedback ? (
                   <Check aria-hidden="true" className="h-3.5 w-3.5" />
                 ) : (
                   <Copy aria-hidden="true" className="h-3.5 w-3.5" />

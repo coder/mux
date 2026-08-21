@@ -15,6 +15,7 @@ interface MockApiClient {
         success: boolean;
         output: string;
         exitCode: number;
+        truncated?: { reason: string; totalLines: number };
       };
     }>;
   };
@@ -1036,6 +1037,105 @@ describe("ImmersiveReviewView", () => {
     fireEvent.keyDown(input, { key: "y" });
     expect(executeBashCalls).toBe(callsAfterCopy);
     expect(clipboardWrites).toHaveLength(1);
+  });
+
+  test("discards a copy that completes after navigating to another file", async () => {
+    const fileAHunk = createHunk({ id: "hunk-a", filePath: "src/a.ts" });
+    const fileBHunk = createHunk({ id: "hunk-b", filePath: "src/b.ts" });
+
+    let resolveRead: ((value: unknown) => void) | undefined;
+    mockApi.workspace.executeBash = mock(
+      () =>
+        new Promise((resolve) => {
+          resolveRead = resolve as (value: unknown) => void;
+        })
+    ) as unknown as MockApiClient["workspace"]["executeBash"];
+
+    function NavigationHarness() {
+      const [selectedHunkId, setSelectedHunkId] = useState<string | null>(fileAHunk.id);
+      return (
+        <ThemeProvider forcedTheme="dark">
+          <ImmersiveReviewView
+            workspaceId="workspace-1"
+            fileTree={createFileTreeForPaths([fileAHunk.filePath, fileBHunk.filePath])}
+            hunks={[fileAHunk, fileBHunk]}
+            allHunks={[fileAHunk, fileBHunk]}
+            isRead={() => false}
+            onToggleRead={mock(() => undefined)}
+            onMarkFileAsRead={mock(() => undefined)}
+            selectedHunkId={selectedHunkId}
+            onSelectHunk={setSelectedHunkId}
+            onExit={mock(() => undefined)}
+            isTouchImmersive={true}
+            reviewsByFilePath={new Map()}
+            firstSeenMap={{}}
+          />
+        </ThemeProvider>
+      );
+    }
+
+    const view = render(<NavigationHarness />);
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+    await waitFor(() => expect(resolveRead).toBeTruthy());
+
+    // Navigate to file B while the read for file A is still in flight.
+    const nextFileButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Next file"]'
+    );
+    expect(nextFileButton).toBeTruthy();
+    fireEvent.click(nextFileButton!);
+    await waitFor(() => expect(view.container.textContent ?? "").toContain("b.ts"));
+
+    resolveRead!({
+      success: true as const,
+      data: { success: true, output: encodeFileReadOutput("file A contents"), exitCode: 0 },
+    });
+
+    // The stale completion must not reach the clipboard.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(clipboardWrites).toHaveLength(0);
+  });
+
+  test("rejects truncated reads instead of copying a partial file", async () => {
+    mockApi.workspace.executeBash = mock(() =>
+      Promise.resolve({
+        success: true as const,
+        data: {
+          success: true,
+          output: encodeFileReadOutput("partial contents"),
+          exitCode: 0,
+          truncated: { reason: "too big", totalLines: 1 },
+        },
+      })
+    );
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() => expect(mockApi.workspace.executeBash).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(clipboardWrites).toHaveLength(0);
+  });
+
+  test("no copy affordance for a deleted file", () => {
+    const deletedHunk = createHunk({ changeType: "deleted" });
+
+    const view = renderImmersiveReview({
+      hunks: [deletedHunk],
+      allHunks: [deletedHunk],
+    });
+
+    expect(view.container.querySelector('button[aria-label="Copy file contents"]')).toBeNull();
   });
 
   test("no copy affordance when the review is complete", () => {
