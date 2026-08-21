@@ -1,7 +1,11 @@
 import { APICallError, RetryError } from "ai";
 
+import { CODEX_ENDPOINT } from "@/common/constants/codexOAuth";
+
 export const OPENAI_RESPONSES_BASE_URL_HINT =
   "Your custom OpenAI base URL may not support the Responses API. In Settings -> Providers -> OpenAI set Wire format to 'chat completions', or add the endpoint as a custom OpenAI-compatible provider instead.";
+
+const CODEX_ENDPOINT_HOSTNAME = new URL(CODEX_ENDPOINT).hostname;
 
 function getApiCallError(error: unknown): APICallError | undefined {
   if (APICallError.isInstance(error)) {
@@ -17,30 +21,32 @@ function getApiCallError(error: unknown): APICallError | undefined {
 
 export function getOpenAIResponsesBaseUrlHint(options: {
   providerId: string;
-  /** Effective base URL (config or env fallback), not just the persisted config field. */
-  baseUrlResolved: string | undefined;
-  wireFormat: "responses" | "chatCompletions";
   error: unknown;
 }): string | undefined {
-  if (options.providerId !== "openai" || options.wireFormat !== "responses") {
+  if (options.providerId !== "openai") {
     return undefined;
   }
 
-  const baseUrl = options.baseUrlResolved?.trim();
-  if (!baseUrl) {
+  const apiCallError = getApiCallError(options.error);
+  const statusCode = apiCallError?.statusCode;
+  if (!apiCallError || (statusCode !== 400 && statusCode !== 404 && statusCode !== 405)) {
     return undefined;
   }
 
+  // Gate on the failing request's own URL rather than provider config. The
+  // URL is pinned to the request by construction, so mid-flight config edits
+  // cannot desynchronize the hint, and Codex-OAuth-rerouted requests (which
+  // target chatgpt.com, never the configured base URL) are excluded by host.
   try {
-    if (new URL(baseUrl).hostname.toLowerCase() === "api.openai.com") {
+    const url = new URL(apiCallError.url);
+    if (!url.pathname.endsWith("/responses")) {
+      return undefined;
+    }
+    const hostname = url.hostname.toLowerCase();
+    if (hostname === "api.openai.com" || hostname === CODEX_ENDPOINT_HOSTNAME) {
       return undefined;
     }
   } catch {
-    return undefined;
-  }
-
-  const statusCode = getApiCallError(options.error)?.statusCode;
-  if (statusCode !== 400 && statusCode !== 404 && statusCode !== 405) {
     return undefined;
   }
 

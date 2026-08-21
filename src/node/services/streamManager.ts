@@ -573,12 +573,6 @@ interface WorkspaceStreamInfo {
   model: string;
   /** Metadata model resolved from provider mapping for cost/token metadata lookups. */
   metadataModel: string;
-  /**
-   * Pinned providers-config snapshot this request was built from (AIService's
-   * requestProvidersConfig). Error hints must describe the failed request's
-   * configuration; a live config read could reflect edits made mid-flight.
-   */
-  requestProvidersConfig?: ProvidersConfigMap;
   /** Effective thinking level after model policy clamping */
   thinkingLevel?: string;
   initialMetadata?: Partial<MuxMetadata>;
@@ -2108,7 +2102,6 @@ export class StreamManager extends EventEmitter {
       pendingToolExecutionStarts: new Map(),
       model: modelString,
       metadataModel,
-      requestProvidersConfig: providersConfigSnapshot,
       thinkingLevel,
       initialMetadata,
       toolModelUsages: [],
@@ -2872,7 +2865,6 @@ export class StreamManager extends EventEmitter {
       prepared.data.modelString,
       prepared.data.providersConfig
     );
-    streamInfo.requestProvidersConfig = prepared.data.providersConfig;
     if (prepared.data.thinkingLevel !== undefined) {
       streamInfo.thinkingLevel = prepared.data.thinkingLevel;
     }
@@ -3839,17 +3831,11 @@ export class StreamManager extends EventEmitter {
       errorMessage = MUX_GATEWAY_SESSION_EXPIRED_MESSAGE;
     }
 
-    const openAIConfig = (streamInfo.requestProvidersConfig ?? this.getProvidersConfig())?.openai;
     const openAIResponsesBaseUrlHint = getOpenAIResponsesBaseUrlHint({
       // The route provider identifies whose config served the request. The
       // canonical model would misattribute gateway routes: openrouter:openai/x
       // canonicalizes to openai:x but never uses the openai base URL.
       providerId: streamInfo.initialMetadata?.routeProvider ?? "",
-      // baseUrlResolved covers both config spellings and the OPENAI_BASE_URL /
-      // OPENAI_API_BASE env fallbacks, and is absent when policy forces the URL
-      // (the user cannot act on the hint in that case).
-      baseUrlResolved: openAIConfig?.baseUrlResolved ?? undefined,
-      wireFormat: openAIConfig?.wireFormat === "chatCompletions" ? "chatCompletions" : "responses",
       error: actualError,
     });
     if (openAIResponsesBaseUrlHint) {
