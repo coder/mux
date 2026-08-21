@@ -4391,15 +4391,28 @@ describe("TaskService", () => {
     });
   });
 
-  test("terminal nested report coalescing does not interrupt the outer workspace turn", async () => {
+  test("terminal nested report replaces progress before the outer turn settles", async () => {
     let progressCancellation: ((reason: string) => Promise<void> | void) | undefined;
+    let terminalContinuationPending = false;
+    const handoffEvents: string[] = [];
     const sendMessage = mock((...args: unknown[]): Promise<Result<void, SendMessageError>> => {
-      const internal = args[3] as { onCanceled?: (reason: string) => Promise<void> | void };
-      progressCancellation = internal?.onCanceled;
+      const internal = args[3] as {
+        onCanceled?: (reason: string) => Promise<void> | void;
+        queueDedupeKey?: string;
+      };
+      if (internal?.queueDedupeKey?.startsWith("agent-report:") === true) {
+        progressCancellation = internal.onCanceled;
+      }
+      if (internal?.queueDedupeKey?.startsWith("agent-terminal-report:") === true) {
+        terminalContinuationPending = true;
+        handoffEvents.push("terminal-accepted");
+      }
       return Promise.resolve(Ok(undefined));
     });
+    const hasPendingWorkspaceTurnContinuation = mock(() => terminalContinuationPending);
     const { config, parentId, taskService, workspaceMocks } = await startWorkspaceTurnForTest({
       sendMessage,
+      hasPendingWorkspaceTurnContinuation,
     });
     await config.editConfig((cfg) => {
       const project = cfg.projects.get(path.join(rootDir, "repo"));
@@ -4425,6 +4438,7 @@ describe("TaskService", () => {
     let cancellationPromise: Promise<void> | undefined;
     workspaceMocks.workspaceService.removeQueuedMessagesByDedupeKeyPrefix = mock(
       (_workspaceId: string, _prefix: string, options?: { notifyCancellation?: boolean }) => {
+        handoffEvents.push("progress-removed");
         if (options?.notifyCancellation !== false) {
           const cancellationResult = progressCancellation?.("Queued progress was canceled");
           cancellationPromise = Promise.resolve(cancellationResult);
@@ -4450,42 +4464,133 @@ describe("TaskService", () => {
             report: { reportMarkdown: "Nested work completed." },
           },
         },
+        { type: "text", text: "Nested work completed." },
       ],
     });
 
+    expect(handoffEvents).toEqual(["terminal-accepted", "progress-removed"]);
     expect(cancellationPromise).toBeUndefined();
+    expect(sendMessage).toHaveBeenCalledWith(
+      "childworkspace",
+      expect.stringContaining("Nested work completed."),
+      expect.objectContaining({
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
+        },
+      }),
+      expect.objectContaining({
+        queueDedupeKey: "agent-terminal-report:nested-coalesced-report",
+        workspaceTurnContinuation: true,
+      })
+    );
 
+    const internal = taskService as unknown as {
+      handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
+    };
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "outer-uncorrelated-end",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+      },
+      parts: [{ type: "text", text: "Outer stream ended before terminal handoff." }],
+    });
     expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
       status: "running",
     });
 
-    const internal = taskService as unknown as {
-      finalizeWorkspaceTurnFromStreamEnd: (event: StreamEndEvent) => Promise<boolean>;
-    };
-    expect(
-      await internal.finalizeWorkspaceTurnFromStreamEnd({
-        type: "stream-end",
-        workspaceId: "childworkspace",
-        messageId: "outer-final",
-        metadata: {
-          model: "anthropic:claude-opus-4-6",
-          agentId: "exec",
-          finishReason: "stop",
-          muxMetadata: {
-            type: "workspace-turn-task",
-            taskHandleId: "wst_handle",
-            ownerWorkspaceId: parentId,
-            turnId: "turn",
-          },
+    terminalContinuationPending = false;
+    await internal.handleStreamEnd({
+      type: "stream-end",
+      workspaceId: "childworkspace",
+      messageId: "outer-terminal-continuation",
+      metadata: {
+        model: "anthropic:claude-opus-4-6",
+        agentId: "exec",
+        finishReason: "stop",
+        muxMetadata: {
+          type: "workspace-turn-task",
+          taskHandleId: "wst_handle",
+          ownerWorkspaceId: parentId,
+          turnId: "turn",
         },
-        parts: [{ type: "text", text: "Outer turn completed." }],
-      })
-    ).toBe(true);
+      },
+      parts: [{ type: "text", text: "Outer turn completed." }],
+    });
 
     expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
       status: "completed",
       reportMarkdown: "Outer turn completed.",
     });
+  });
+
+  test("failed terminal continuation enqueue retains queued progress", async () => {
+    let terminalContinuationAttempted = false;
+    const sendMessage = mock((...args: unknown[]): Promise<Result<void, SendMessageError>> => {
+      const internal = args[3] as { queueDedupeKey?: string };
+      if (internal?.queueDedupeKey?.startsWith("agent-terminal-report:") === true) {
+        terminalContinuationAttempted = true;
+        return Promise.resolve(Err({ type: "unknown", raw: "Terminal enqueue failed" }));
+      }
+      return Promise.resolve(Ok(undefined));
+    });
+    const { config, parentId, taskService, workspaceMocks, historyService } =
+      await startWorkspaceTurnForTest({ sendMessage });
+    await config.editConfig((cfg) => {
+      const project = cfg.projects.get(path.join(rootDir, "repo"));
+      assert(project, "test project must exist");
+      project.workspaces.push({
+        path: path.join(rootDir, "repo", "nested-terminal-enqueue-failure"),
+        id: "nested-terminal-enqueue-failure",
+        name: "nested-terminal-enqueue-failure",
+        createdAt: "2026-06-19T00:00:00.000Z",
+        runtimeConfig: { type: "local" },
+        parentWorkspaceId: "childworkspace",
+        taskStatus: "running",
+        agentType: "explore",
+      });
+      return cfg;
+    });
+
+    await taskService.reportAgentProgress("nested-terminal-enqueue-failure", "progress-call", {
+      reportMarkdown: "Progress remains queued.",
+    });
+
+    await handleTaskServiceStreamEndForTest(taskService, {
+      type: "stream-end",
+      workspaceId: "nested-terminal-enqueue-failure",
+      messageId: "assistant-nested-terminal-enqueue-failure",
+      metadata: { model: "anthropic:claude-opus-4-6", finishReason: "stop" },
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolCallId: "nested-report-call",
+          toolName: "agent_report",
+          input: { reportMarkdown: "Nested work completed." },
+          state: "output-available",
+          output: {
+            success: true,
+            report: { reportMarkdown: "Nested work completed." },
+          },
+        },
+        { type: "text", text: "Nested work completed." },
+      ],
+    });
+
+    expect(terminalContinuationAttempted).toBe(true);
+    expect(workspaceMocks.removeQueuedMessagesByDedupeKeyPrefix).not.toHaveBeenCalled();
+    expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
+      status: "running",
+    });
+    const history = await historyService.getHistoryFromLatestBoundary("childworkspace");
+    expect(history.success).toBe(true);
+    expect(JSON.stringify(history)).toContain("Nested work completed.");
   });
 
   test("terminal nested agent report resumes a workspace turn with correlation", async () => {
@@ -7209,8 +7314,33 @@ describe("TaskService", () => {
     expect(snapshot?.reportMarkdown).toBeUndefined();
   });
 
-  test("a correlated final self-heals an uncorrelated stream-end interruption", async () => {
-    const { parentId, taskService } = await startWorkspaceTurnForTest();
+  test("an exact continuation keeps an uncorrelated stream-end nonterminal", async () => {
+    let continuationPending = true;
+    const hasPendingWorkspaceTurnContinuation = mock(
+      (
+        workspaceId: string,
+        metadata: { taskHandleId: string; ownerWorkspaceId: string; turnId: string }
+      ) =>
+        continuationPending &&
+        workspaceId === "childworkspace" &&
+        metadata.taskHandleId === "wst_handle" &&
+        metadata.turnId === "turn"
+    );
+    const { parentId, taskService } = await startWorkspaceTurnForTest({
+      hasPendingWorkspaceTurnContinuation,
+    });
+    let waiterSettled = false;
+    const waiter = taskService
+      .waitForWorkspaceTurn("wst_handle", {
+        ownerWorkspaceId: parentId,
+        requestingWorkspaceId: parentId,
+        backgroundOnMessageQueued: false,
+        timeoutMs: 10_000,
+      })
+      .then((result) => {
+        waiterSettled = true;
+        return result;
+      });
     const internal = taskService as unknown as {
       handleStreamEnd: (event: StreamEndEvent) => Promise<void>;
     };
@@ -7227,10 +7357,11 @@ describe("TaskService", () => {
       parts: [{ type: "text", text: "Synthetic continuation output" }],
     });
     expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
-      status: "interrupted",
-      error: "Workspace turn superseded by an uncorrelated workspace stream-end",
+      status: "running",
     });
+    expect(waiterSettled).toBe(false);
 
+    continuationPending = false;
     await internal.handleStreamEnd({
       type: "stream-end",
       workspaceId: "childworkspace",
@@ -7249,6 +7380,10 @@ describe("TaskService", () => {
       parts: [{ type: "text", text: "The delegated turn completed." }],
     });
 
+    expect(await waiter).toMatchObject({
+      workspaceId: "childworkspace",
+      reportMarkdown: "The delegated turn completed.",
+    });
     expect(await taskService.getWorkspaceTurnSnapshot(parentId, "wst_handle")).toMatchObject({
       status: "completed",
       messageId: "msg_correlated_final",

@@ -752,16 +752,6 @@ function isSelfHealEligibleSettledWorkspaceTurn(
   );
 }
 
-function isCorrelatedResettleEligibleWorkspaceTurn(
-  record: Pick<WorkspaceTurnTaskHandleRecord, "status" | "error">
-): boolean {
-  return (
-    isSelfHealEligibleSettledWorkspaceTurn(record) ||
-    (record.status === "interrupted" &&
-      record.error === WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR)
-  );
-}
-
 /**
  * A workspace-turn stream error may resolve without parent intervention when
  * the child can still make progress on its own. The caller must still confirm
@@ -6865,7 +6855,7 @@ export class TaskService {
           params.allowTerminalResettle === true &&
           this.isTerminalWorkspaceTurnStatus(current.status) &&
           current.status !== "completed" &&
-          isCorrelatedResettleEligibleWorkspaceTurn(current) &&
+          isSelfHealEligibleSettledWorkspaceTurn(current) &&
           (params.next.status !== current.status || params.next.messageId !== current.messageId);
         if (this.isTerminalWorkspaceTurnStatus(current.status) && !resettleStaleTerminal) {
           const active = this.activeWorkspaceTurnHandleByWorkspaceId.get(params.record.workspaceId);
@@ -10535,6 +10525,16 @@ export class TaskService {
       return true;
     }
 
+    const correlation = this.buildWorkspaceTurnMuxMetadata(record);
+    if (this.hasSameTurnContinuation(event, correlation)) {
+      log.debug("Deferring uncorrelated stream-end to an exact workspace turn continuation", {
+        workspaceId: event.workspaceId,
+        taskHandleId: record.handleId,
+        streamEndMessageId: event.messageId,
+      });
+      return true;
+    }
+
     const error = WORKSPACE_TURN_UNCORRELATED_STREAM_END_ERROR;
     const next: WorkspaceTurnTaskHandleRecord = {
       ...record,
@@ -12517,24 +12517,6 @@ export class TaskService {
 
     await this.maybeStartPatchGenerationForReportedTask(childWorkspaceId);
 
-    const queuedProgressRemoval = this.workspaceService.removeQueuedMessagesByDedupeKeyPrefix(
-      parentWorkspaceId,
-      `agent-report:${childWorkspaceId}:`,
-      {
-        cancelReason: "Incremental sub-agent update superseded by the terminal report.",
-        // The terminal report replaces this queued update. It does not cancel
-        // the parent workspace turn that owns the continuation.
-        notifyCancellation: false,
-      }
-    );
-    if (!queuedProgressRemoval.success) {
-      log.warn("Failed to remove queued incremental sub-agent reports", {
-        parentWorkspaceId,
-        childWorkspaceId,
-        error: queuedProgressRemoval.error,
-      });
-    }
-
     await this.deliverReportToParent(
       parentWorkspaceId,
       childWorkspaceId,
@@ -12592,9 +12574,9 @@ export class TaskService {
       return { finalized: true };
     }
 
-    // The report is already injected into parent history above (deliverReportToParent). Enqueue the
-    // notification even when other children are still active: the drain defers on blocking work and
-    // a later foreground-awaited sibling may suppress its own wake-up.
+    // The report is already delivered to a foreground waiter, queued as a workspace-turn
+    // continuation, or appended to parent history. Enqueue the notification even when other
+    // children are active. The drain defers on blocking work.
     const generationId = await this.getAgentTerminalAttentionGenerationId(
       parentWorkspaceId,
       childWorkspaceId
@@ -13093,6 +13075,29 @@ export class TaskService {
     return { groupId: bestOf.groupId, index: bestOf.index, total: bestOf.total };
   }
 
+  private removeQueuedAgentProgressAfterTerminalDelivery(
+    parentWorkspaceId: string,
+    childWorkspaceId: string
+  ): void {
+    const removal = this.workspaceService.removeQueuedMessagesByDedupeKeyPrefix(
+      parentWorkspaceId,
+      `agent-report:${childWorkspaceId}:`,
+      {
+        cancelReason: "Incremental sub-agent update superseded by the terminal report.",
+        // The terminal report now owns the continuation. This cleanup must not
+        // cancel the outer workspace turn.
+        notifyCancellation: false,
+      }
+    );
+    if (!removal.success) {
+      log.warn("Failed to remove queued incremental sub-agent reports", {
+        parentWorkspaceId,
+        childWorkspaceId,
+        error: removal.error,
+      });
+    }
+  }
+
   private async deliverReportToParent(
     parentWorkspaceId: string,
     childWorkspaceId: string,
@@ -13187,6 +13192,7 @@ export class TaskService {
         childEntry
       );
       if (finalization.kind === "finalized") {
+        this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
         return finalization.taskIds.filter((taskId) => taskId !== childWorkspaceId);
       }
 
@@ -13221,6 +13227,7 @@ export class TaskService {
     if (childWorkspaceId) {
       const waiters = this.pendingWaitersByTaskId.get(childWorkspaceId);
       if (waiters && waiters.length > 0) {
+        this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
         return [];
       }
     }
@@ -13246,6 +13253,63 @@ export class TaskService {
 
     const workspaceTurnMuxMetadata =
       await this.getActiveWorkspaceTurnMuxMetadataForWorkspace(parentWorkspaceId);
+    if (workspaceTurnMuxMetadata != null) {
+      const parentEntry = findWorkspaceEntry(this.config.loadConfigOrDefault(), parentWorkspaceId);
+      if (parentEntry != null) {
+        const resumeOptions = await this.resolveParentAutoResumeOptions(
+          parentWorkspaceId,
+          parentEntry,
+          defaultModel
+        );
+        const sendResult = await this.workspaceService.sendMessage(
+          parentWorkspaceId,
+          reportContent,
+          {
+            model: resumeOptions.model,
+            agentId: resumeOptions.agentId,
+            thinkingLevel: resumeOptions.thinkingLevel,
+            reasoningMode: resumeOptions.reasoningMode,
+            muxMetadata: workspaceTurnMuxMetadata,
+          },
+          {
+            skipAutoResumeReset: true,
+            synthetic: true,
+            agentInitiated: true,
+            startStreamInBackground: true,
+            workspaceTurnContinuation: true,
+            queueDedupeKey: `agent-terminal-report:${childWorkspaceId}`,
+            onCanceled: async (reason: string) => {
+              await this.settleWorkspaceTurnContinuationFailure(
+                parentWorkspaceId,
+                workspaceTurnMuxMetadata,
+                "interrupted",
+                reason
+              );
+            },
+            onAcceptedPreStreamFailure: async (error: SendMessageError) => {
+              await this.settleWorkspaceTurnContinuationFailure(
+                parentWorkspaceId,
+                workspaceTurnMuxMetadata,
+                "error",
+                formatSendMessageError(error).message
+              );
+            },
+          }
+        );
+        if (sendResult.success) {
+          // Install the terminal continuation before removing progress. The
+          // workspace turn always has a concrete future driver during handoff.
+          this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
+          return [];
+        }
+        log.warn("Failed to queue terminal sub-agent report continuation", {
+          parentWorkspaceId,
+          childWorkspaceId,
+          error: formatSendMessageError(sendResult.error).message,
+        });
+      }
+    }
+
     const messageId = createTaskReportMessageId();
     const reportMessage = createMuxMessage(messageId, "user", reportContent, {
       timestamp: Date.now(),
@@ -13263,6 +13327,9 @@ export class TaskService {
         ...reportMessage,
         type: "message",
       });
+      if (workspaceTurnMuxMetadata == null) {
+        this.removeQueuedAgentProgressAfterTerminalDelivery(parentWorkspaceId, childWorkspaceId);
+      }
     }
     if (!appendResult.success) {
       log.error("Failed to append synthetic subagent report to parent history", {
