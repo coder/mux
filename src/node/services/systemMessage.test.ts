@@ -367,6 +367,35 @@ Native mode guidance is scoped.
 
       expect(toolInstructions.bash).toBe("Use the Claude-compatible shell guidance.");
     });
+
+    test("joins native global Tool sections before Claude compat Tool sections", async () => {
+      const claudeDir = path.join(tempDir, ".claude");
+      await fs.mkdir(claudeDir);
+      await fs.writeFile(
+        path.join(claudeDir, "CLAUDE.md"),
+        "## Tool: bash\nClaude compat shell guidance.\n"
+      );
+      await fs.writeFile(
+        path.join(globalDir, "AGENTS.md"),
+        "## Tool: bash\nNative shell guidance.\n"
+      );
+
+      const toolInstructions = await readToolInstructions(
+        metadata(),
+        runtime,
+        workspaceDir,
+        "anthropic:claude-sonnet-4-20250514",
+        undefined,
+        undefined,
+        true
+      );
+
+      // Tool extraction is highest-precedence first, so native global guidance
+      // must precede the compat source even though the prompt orders compat first.
+      expect(toolInstructions.bash).toBe(
+        ["Native shell guidance.", "Claude compat shell guidance."].join("\n\n")
+      );
+    });
   });
 
   test("includes parent project AGENTS.md alongside sub-project AGENTS.md when subProjectPath is set", async () => {

@@ -325,7 +325,11 @@ export async function readToolInstructions(
     projectConfigs,
     claudeSkillsCompatEnabled
   );
-  const globalContents = collectInstructionContents(sources.global);
+  // Tool extraction joins sources highest-precedence first (agent → context →
+  // global), the opposite of prompt order. `sources.global` is compat-first
+  // for the prompt, so reverse it here to keep native guidance ahead of the
+  // ~/.claude/CLAUDE.md compatibility source.
+  const globalContents = collectInstructionContents([...sources.global].reverse());
   const contextContents = collectInstructionContents(sources.context);
 
   return extractToolInstructions(globalContents, contextContents, modelString, {
