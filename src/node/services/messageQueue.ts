@@ -664,7 +664,9 @@ export class MessageQueue {
       return null;
     }
     const [entry] = this.entries.splice(index, 1);
-    return getQueueClearCallbacks(entry);
+    // An empty object still means the entry was removed. Callers must not confuse
+    // callback absence with a missing queue entry.
+    return getQueueClearCallbacks(entry) ?? {};
   }
 
   /** Remove queued entries carrying a dedupe key with the given prefix. */

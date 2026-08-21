@@ -602,6 +602,17 @@ describe("MessageQueue", () => {
       expect(queue.getMessages()).toEqual(["User message before", "User message after"]);
     });
 
+    it("removeWorkspaceTurn reports removal when the entry has no callbacks", () => {
+      queue.add(
+        "Follow up without callbacks",
+        { model: "gpt-4", agentId: "exec", muxMetadata: metadata },
+        { agentInitiated: true, workspaceTurnContinuation: true }
+      );
+
+      expect(queue.removeWorkspaceTurn("wst_followup")).toEqual({});
+      expect(queue.hasWorkspaceTurn("wst_followup")).toBe(false);
+    });
+
     it("should report clear callbacks for every pending entry", () => {
       const onCanceledFirst = () => undefined;
       const onCanceledSecond = () => undefined;
