@@ -3,7 +3,9 @@ title: Init Hooks
 description: Run setup commands automatically when creating new workspaces
 ---
 
-Add a `.mux/init` executable script to your project root to run commands when creating new workspaces.
+Add a `.xum/init` executable script to your project root to run commands when creating new workspaces.
+
+Xum falls back to a legacy `.mux/init` hook when `.xum/init` is absent. If both exist, only `.xum/init` runs.
 
 ## Example
 
@@ -18,7 +20,7 @@ bun run build
 Make it executable:
 
 ```bash
-chmod +x .mux/init
+chmod +x .xum/init
 ```
 
 ## Behavior
@@ -72,7 +74,7 @@ bun install
 
 Init output appears in a banner at the top of the workspace. Click to expand/collapse the log. The banner shows:
 
-- Script path (`.mux/init`)
+- Script path (`.xum/init`)
 - Status (running, success, or exit code on failure)
 - Full stdout/stderr output
 

@@ -2,6 +2,7 @@ import * as fsPromises from "fs/promises";
 import * as path from "path";
 import { tool } from "ai";
 
+import { getCanonicalProjectMetadataRelativePath } from "@/common/compat/legacyMux";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import type { AgentSkillWriteToolResult } from "@/common/types/tools";
 import { FILE_EDIT_DIFF_OMITTED_MESSAGE } from "@/common/types/tools";
@@ -22,6 +23,7 @@ import {
 import {
   ensureRuntimePathWithinWorkspace,
   inspectContainmentOnRuntime,
+  migrateLegacyProjectSkill,
   resolveSkillFilePathForRuntime,
 } from "./runtimeSkillPathUtils";
 
@@ -31,10 +33,11 @@ interface AgentSkillWriteToolArgs {
   content: string;
 }
 
-/**
- * Keep SKILL.md frontmatter.name aligned with the validated tool argument.
- * This prevents avoidable write failures when an agent sends a human-friendly name or omits it.
- */
+function writeFailure(error: unknown, prefix = ""): AgentSkillWriteToolResult {
+  return { success: false, error: prefix + getErrorMessage(error) };
+}
+
+/** Keep SKILL.md frontmatter.name aligned with the validated tool argument. */
 function injectSkillNameIntoFrontmatter(content: string, skillName: string): string {
   const normalizedContent = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
   const lines = normalizedContent.split("\n");
@@ -76,9 +79,7 @@ function injectSkillNameIntoFrontmatter(content: string, skillName: string): str
   return lines.join("\n");
 }
 
-/**
- * Tool that creates/updates files in the contextual skills directory.
- */
+/** Create or update files in the contextual skills directory. */
 export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.agent_skill_write.description,
@@ -101,11 +102,16 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath: config.cwd,
-          muxScope: config.muxScope ?? null,
+          xumScope: config.xumScope ?? null,
         });
 
+        await migrateLegacyProjectSkill(skillCtx, parsedName.data);
+
         if (skillCtx.kind === "project-runtime") {
-          const skillsRoot = config.runtime.normalizePath(".mux/skills", skillCtx.workspacePath);
+          const skillsRoot = config.runtime.normalizePath(
+            getCanonicalProjectMetadataRelativePath("skills"),
+            skillCtx.workspacePath
+          );
           const skillDir = config.runtime.normalizePath(parsedName.data, skillsRoot);
 
           let resolvedTarget: ReturnType<typeof resolveSkillFilePathForRuntime>;
@@ -116,10 +122,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
               relativeFilePath
             );
           } catch (error) {
-            return {
-              success: false,
-              error: getErrorMessage(error),
-            };
+            return writeFailure(error);
           }
 
           // Canonicalize any casing variant of SKILL.md to the canonical path.
@@ -172,10 +175,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
                 directoryName: parsedName.data,
               });
             } catch (error) {
-              return {
-                success: false,
-                error: getErrorMessage(error),
-              };
+              return writeFailure(error);
             }
           }
 
@@ -202,34 +202,30 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
           };
         }
 
-        const { muxScope } = config;
-        if (!muxScope) {
-          throw new Error("agent_skill_write requires muxScope");
+        const { xumScope } = config;
+        if (!xumScope) {
+          throw new Error("agent_skill_write requires xumScope");
         }
 
         const skillsRoot =
-          muxScope.type === "project"
-            ? path.join(muxScope.projectRoot, ".mux", "skills")
-            : path.join(muxScope.muxHome, "skills");
-        // Containment is anchored at workspace root (project) or mux home (global),
-        // never at .mux — a symlinked .mux must not redirect skill operations outside.
+          xumScope.type === "project"
+            ? path.join(xumScope.projectRoot, getCanonicalProjectMetadataRelativePath("skills"))
+            : path.join(xumScope.xumHome, "skills");
+        // Anchor above metadata directories so aliases cannot escape the project or home.
         const containmentRoot =
-          muxScope.type === "project" ? muxScope.projectRoot : muxScope.muxHome;
+          xumScope.type === "project" ? xumScope.projectRoot : xumScope.xumHome;
 
         const skillDir = path.join(skillsRoot, parsedName.data);
 
         try {
-          if (muxScope.type !== "project") {
+          if (xumScope.type !== "project") {
             // Self-heal a deleted mux home before realpath-based containment validation runs.
             await fsPromises.mkdir(containmentRoot, { recursive: true });
           }
 
           await validateLocalSkillDirectory(containmentRoot, skillDir);
         } catch (error) {
-          return {
-            success: false,
-            error: getErrorMessage(error),
-          };
+          return writeFailure(error);
         }
 
         let resolvedTarget: Awaited<ReturnType<typeof resolveContainedSkillFilePath>>;
@@ -238,10 +234,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
             allowMissingLeaf: true,
           });
         } catch (error) {
-          return {
-            success: false,
-            error: getErrorMessage(error),
-          };
+          return writeFailure(error);
         }
 
         // Canonicalize any casing variant of SKILL.md to the canonical path.
@@ -267,10 +260,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
               directoryName: parsedName.data,
             });
           } catch (error) {
-            return {
-              success: false,
-              error: getErrorMessage(error),
-            };
+            return writeFailure(error);
           }
         }
 
@@ -313,10 +303,7 @@ export const createAgentSkillWriteTool: ToolFactory = (config: ToolConfiguration
           },
         };
       } catch (error) {
-        return {
-          success: false,
-          error: `Failed to write skill file: ${getErrorMessage(error)}`,
-        };
+        return writeFailure(error, "Failed to write skill file: ");
       }
     },
   });

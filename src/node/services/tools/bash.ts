@@ -822,7 +822,7 @@ function shellEscape(str: string): string {
 }
 
 /**
- * Build script prelude that sources .mux/tool_env if present.
+ * Build script prelude that sources .xum/tool_env if present.
  * Returns empty string if no tool_env path is provided.
  */
 function buildToolEnvPrelude(toolEnvPath: string | null): string {
@@ -906,7 +906,7 @@ export const createBashTool: ToolFactory = (config: ToolConfiguration) => {
           ? CAT_FILE_READ_NOTICE
           : undefined;
 
-      // Look up .mux/tool_env to source before script (for direnv, nvm, venv, etc.)
+      // Look up .xum/tool_env to source before script (for direnv, nvm, venv, etc.)
       // Skip for untrusted projects — tool_env is repo-controlled code
       const toolEnvPath =
         config.trusted && config.runtime ? await getToolEnvPath(config.runtime, config.cwd) : null;

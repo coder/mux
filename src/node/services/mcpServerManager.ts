@@ -1433,7 +1433,7 @@ export class MCPServerManager {
    *
    * @param serverName - Name of the MCP server (used for allowlist lookup)
    * @param tools - Record of tool name -> Tool (NOT namespaced)
-   * @param projectAllowlist - Optional project-level tool allowlist (from .mux/mcp.jsonc)
+   * @param projectAllowlist - Optional project-level tool allowlist (from .xum/mcp.jsonc)
    * @param workspaceOverrides - Optional workspace MCP overrides containing toolAllowlist
    * @returns Filtered tools record
    */

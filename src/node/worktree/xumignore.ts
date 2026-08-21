@@ -2,16 +2,15 @@ import ignore from "ignore";
 import * as fs from "fs/promises";
 import * as path from "path";
 import { execFileAsync } from "@/node/utils/disposableExec";
+import { PROJECT_IGNORE_FILE_NAMES } from "@/common/compat/legacyMux";
 import { log } from "@/node/services/log";
 
-const MUXIGNORE_FILENAME = ".muxignore";
-
 /**
- * Parse .muxignore and return negation patterns (without the ! prefix).
+ * Parse .xumignore and return negation patterns (without the ! prefix).
  * Only !-prefixed lines are actionable — they identify gitignored files
  * that should be copied into worktree workspaces.
  */
-export function parseMuxignorePatterns(content: string): string[] {
+export function parseXumignorePatterns(content: string): string[] {
   return content
     .split("\n")
     .map((line) => line.trim())
@@ -20,7 +19,7 @@ export function parseMuxignorePatterns(content: string): string[] {
 }
 
 /**
- * Get list of gitignored files in the project that match .muxignore patterns.
+ * Get gitignored files matching the selected .xumignore or legacy .muxignore patterns.
  * Uses `git ls-files` for consistency with the project's git-first philosophy.
  */
 async function getFilesToSync(projectPath: string, patterns: string[]): Promise<string[]> {
@@ -30,7 +29,7 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
   const includePatterns = patterns.filter((pattern) => !pattern.startsWith("!"));
   if (includePatterns.length === 0) return [];
 
-  // Root-anchored ignore patterns (e.g. `!/.env`) are valid in .muxignore,
+  // Root-anchored ignore patterns (e.g. `!/.env`) are valid in Xum ignore files,
   // but git pathspec treats a leading slash as an absolute filesystem path.
   // Normalize to repo-relative pathspecs for prefiltering.
   const includePathspecs = includePatterns
@@ -68,34 +67,36 @@ async function getFilesToSync(projectPath: string, patterns: string[]): Promise<
     .map((line) => line.replace(/\r$/, ""))
     .filter(Boolean);
 
-  // Use the `ignore` package to preserve .muxignore-style matching semantics
+  // Use the `ignore` package to preserve gitignore-style matching semantics
   // after git's pathspec prefiltering.
   const ig = ignore().add(patterns);
   return ignoredFiles.filter((file) => ig.ignores(file));
 }
 
 /**
- * Sync gitignored files from project root to worktree based on .muxignore.
- * Runs after `git worktree add` so that files like `.env` are available
- * before `.mux/init` hooks execute.
+ * Sync gitignored files from project root to worktree based on .xumignore,
+ * falling back to legacy .muxignore. Runs after `git worktree add` so files
+ * like `.env` are available before project init hooks execute.
  *
  * Best-effort: logs debug details but never throws.
  */
-export async function syncMuxignoreFiles(
+export async function syncXumignoreFiles(
   projectPath: string,
   workspacePath: string
 ): Promise<void> {
   try {
-    // Read .muxignore — bail silently if missing (most projects won't have one)
-    const muxignorePath = path.join(projectPath, MUXIGNORE_FILENAME);
-    let content: string;
-    try {
-      content = await fs.readFile(muxignorePath, "utf-8");
-    } catch {
-      return;
+    let content: string | undefined;
+    for (const filename of PROJECT_IGNORE_FILE_NAMES) {
+      try {
+        content = await fs.readFile(path.join(projectPath, filename), "utf-8");
+        break;
+      } catch {
+        // Try the legacy name after the canonical file.
+      }
     }
+    if (content == null) return;
 
-    const patterns = parseMuxignorePatterns(content);
+    const patterns = parseXumignorePatterns(content);
     if (patterns.length === 0) return;
 
     const filesToSync = await getFilesToSync(projectPath, patterns);
@@ -118,15 +119,15 @@ export async function syncMuxignoreFiles(
         await fs.copyFile(src, dest);
         copied++;
       } catch (err) {
-        log.debug(`muxignore: failed to copy ${relPath}`, { error: String(err) });
+        log.debug(`xumignore: failed to copy ${relPath}`, { error: String(err) });
       }
     }
 
     if (copied > 0) {
-      log.debug(`muxignore: synced ${copied} file(s) to worktree`);
+      log.debug(`xumignore: synced ${copied} file(s) to worktree`);
     }
   } catch (err) {
-    // Best-effort — never let .muxignore sync break workspace creation
-    log.debug("muxignore: sync failed", { error: String(err) });
+    // Best-effort — never let ignore-file sync break workspace creation.
+    log.debug("xumignore: sync failed", { error: String(err) });
   }
 }

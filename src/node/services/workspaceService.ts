@@ -2000,7 +2000,7 @@ export class WorkspaceService extends EventEmitter {
   // AbortControllers for in-progress workspace initialization (postCreateSetup + initWorkspace).
   //
   // Why this lives here: archive/remove are the user-facing lifecycle operations that should
-  // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .mux/init).
+  // cancel any fire-and-forget init work to avoid orphaned processes (e.g., SSH sync, .xum/init).
   private readonly initAbortControllers = new Map<string, AbortController>();
 
   // ExtensionMetadataService now serializes all mutations globally because every
@@ -3882,13 +3882,13 @@ export class WorkspaceService extends EventEmitter {
     }
 
     const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getXumHome();
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
+    const xumHome = runtime.getXumHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
     // For local/SSH: expand tilde for comparison with message history paths
     // For Docker: paths are already absolute (/var/mux/...), no expansion needed
-    const expandedPlanPath = muxHome.startsWith("~") ? expandTilde(planPath) : planPath;
+    const expandedPlanPath = xumHome.startsWith("~") ? expandTilde(planPath) : planPath;
     // Legacy plan path (stored by workspace ID) for filtering — same runtime home
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, xumHome);
     const expandedLegacyPlanPath = expandTilde(legacyPlanPath);
 
     // Check both new and legacy plan paths, prefer new path
@@ -5029,7 +5029,7 @@ export class WorkspaceService extends EventEmitter {
     let removedFromConfig = false;
 
     // If this workspace is mid-init, cancel the fire-and-forget init work (postCreateSetup,
-    // sync/checkout, .mux/init hook, etc.) so removal doesn't leave orphaned background work.
+    // sync/checkout, .xum/init hook, etc.) so removal doesn't leave orphaned background work.
     const initAbortController = this.initAbortControllers.get(workspaceId);
     if (initAbortController) {
       initAbortController.abort();
@@ -9935,11 +9935,11 @@ export class WorkspaceService extends EventEmitter {
     workspaceId: string,
     metadata: FrontendWorkspaceMetadata
   ): Promise<void> {
-    // Create runtime to get correct muxHome (local ~/.xum, SSH ~/.mux, Docker /var/mux)
+    // Create runtime to get correct xumHome (local ~/.xum, SSH ~/.mux, Docker /var/mux)
     const runtime = createRuntimeForWorkspace(metadata);
-    const muxHome = runtime.getXumHome();
-    const planPath = getPlanFilePath(metadata.name, metadata.projectName, muxHome);
-    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, muxHome);
+    const xumHome = runtime.getXumHome();
+    const planPath = getPlanFilePath(metadata.name, metadata.projectName, xumHome);
+    const legacyPlanPath = getLegacyPlanFilePath(workspaceId, xumHome);
 
     const isDocker = isDockerRuntime(metadata.runtimeConfig);
     const isSSH = isSSHRuntime(metadata.runtimeConfig);

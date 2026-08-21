@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import * as fsPromises from "node:fs/promises";
 import * as path from "path";
 import * as jsonc from "jsonc-parser";
+import {
+  PROJECT_METADATA_DIR_NAMES,
+  getCanonicalProjectMetadataRelativePath,
+} from "@/common/compat/legacyMux";
 import assert from "@/common/utils/assert";
 import type { WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { RuntimeConfig } from "@/common/types/runtime";
@@ -16,14 +20,10 @@ import { isCanonicalPluginServerKey } from "@/node/services/agentPlugins/mcpConf
 import { log } from "@/node/services/log";
 import { getErrorMessage } from "@/common/utils/errors";
 
-const MCP_OVERRIDES_DIR = ".mux";
-const MCP_OVERRIDES_JSONC = "mcp.local.jsonc";
-const MCP_OVERRIDES_JSON = "mcp.local.json";
-
-const MCP_OVERRIDES_GITIGNORE_PATTERNS = [
-  `${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSONC}`,
-  `${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSON}`,
-];
+const MCP_OVERRIDE_FILENAMES = ["mcp.local.jsonc", "mcp.local.json"] as const;
+const MCP_OVERRIDES_GITIGNORE_PATTERNS = PROJECT_METADATA_DIR_NAMES.flatMap((dirName) =>
+  MCP_OVERRIDE_FILENAMES.map((filename) => `${dirName}/${filename}`)
+);
 
 function joinForRuntime(runtimeConfig: RuntimeConfig | undefined, ...parts: string[]): string {
   assert(parts.length > 0, "joinForRuntime requires at least one path segment");
@@ -259,21 +259,11 @@ export class WorkspaceMcpOverridesService {
   private getOverridesFilePaths(
     workspacePath: string,
     runtimeConfig: RuntimeConfig | undefined
-  ): {
-    jsoncPath: string;
-    jsonPath: string;
-  } {
+  ): string[] {
     assert(typeof workspacePath === "string", "workspacePath must be a string");
-
-    return {
-      jsoncPath: joinForRuntime(
-        runtimeConfig,
-        workspacePath,
-        MCP_OVERRIDES_DIR,
-        MCP_OVERRIDES_JSONC
-      ),
-      jsonPath: joinForRuntime(runtimeConfig, workspacePath, MCP_OVERRIDES_DIR, MCP_OVERRIDES_JSON),
-    };
+    return MCP_OVERRIDES_GITIGNORE_PATTERNS.map((relativePath) =>
+      joinForRuntime(runtimeConfig, workspacePath, relativePath)
+    );
   }
 
   private async readOverridesFile(
@@ -316,13 +306,13 @@ export class WorkspaceMcpOverridesService {
     workspacePath: string,
     runtimeConfig: RuntimeConfig | undefined
   ): Promise<void> {
-    const overridesDirPath = joinForRuntime(runtimeConfig, workspacePath, MCP_OVERRIDES_DIR);
+    const overridesDir = getCanonicalProjectMetadataRelativePath("");
+    const overridesDirPath = joinForRuntime(runtimeConfig, workspacePath, overridesDir);
 
     try {
       await runtime.ensureDir(overridesDirPath);
     } catch (err) {
-      const msg = getErrorMessage(err);
-      throw new Error(`Failed to create ${MCP_OVERRIDES_DIR} directory: ${msg}`);
+      throw new Error(`Failed to create ${overridesDir} directory: ${getErrorMessage(err)}`);
     }
   }
 
@@ -398,20 +388,17 @@ export class WorkspaceMcpOverridesService {
     runtime: ReturnType<typeof createRuntime>,
     workspacePath: string
   ): Promise<void> {
-    // Remove both file names so we never leave conflicting sources behind.
+    // Remove canonical and legacy file names so no conflicting source remains.
     // The exit code MUST be checked: callers (e.g. the Agent Plugin
     // uninstaller retiring override-prune tombstones) rely on
     // setOverridesForWorkspace rejecting when clearing overrides failed —
     // a swallowed `rm` failure would leave a stale enabledServers key that
     // a plugin reinstall could silently reactivate.
-    const result = await execBuffered(
-      runtime,
-      `rm -f "${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSONC}" "${MCP_OVERRIDES_DIR}/${MCP_OVERRIDES_JSON}"`,
-      {
-        cwd: workspacePath,
-        timeout: 10,
-      }
-    );
+    const paths = MCP_OVERRIDES_GITIGNORE_PATTERNS.map((filePath) => `"${filePath}"`).join(" ");
+    const result = await execBuffered(runtime, `rm -f ${paths}`, {
+      cwd: workspacePath,
+      timeout: 10,
+    });
     if (result.exitCode !== 0) {
       throw new Error(
         `Failed to remove workspace MCP overrides file: ${result.stderr.trim() || `rm exited with code ${result.exitCode}`}`
@@ -420,7 +407,7 @@ export class WorkspaceMcpOverridesService {
   }
 
   /**
-   * Read workspace MCP overrides from <workspace>/.mux/mcp.local.jsonc.
+   * Read workspace MCP overrides from <workspace>/.xum/mcp.local.jsonc.
    *
    * If the file doesn't exist, we fall back to legacy overrides stored in ~/.mux/config.json
    * and migrate them into the workspace-local file.
@@ -441,22 +428,15 @@ export class WorkspaceMcpOverridesService {
     mode: "lenient" | "strict" = "lenient"
   ): Promise<WorkspaceMCPOverrides> {
     const { metadata, runtime, workspacePath } = await this.getRuntimeAndWorkspacePath(workspaceId);
-    const { jsoncPath, jsonPath } = this.getOverridesFilePaths(
-      workspacePath,
-      metadata.runtimeConfig
-    );
+    const filePaths = this.getOverridesFilePaths(workspacePath, metadata.runtimeConfig);
+    const canonicalPath = filePaths[0];
 
-    // Prefer JSONC, then JSON.
-    const jsoncExists = await statIsFile(runtime, jsoncPath, mode);
-    if (jsoncExists) {
-      const parsed = await this.readOverridesFile(runtime, jsoncPath, mode);
-      return normalizeWorkspaceMcpOverrides(parsed);
-    }
-
-    const jsonExists = await statIsFile(runtime, jsonPath, mode);
-    if (jsonExists) {
-      const parsed = await this.readOverridesFile(runtime, jsonPath, mode);
-      return normalizeWorkspaceMcpOverrides(parsed);
+    for (const filePath of filePaths) {
+      if (await statIsFile(runtime, filePath, mode)) {
+        return normalizeWorkspaceMcpOverrides(
+          await this.readOverridesFile(runtime, filePath, mode)
+        );
+      }
     }
 
     // No workspace-local file => try migrating legacy config.json storage.
@@ -472,12 +452,16 @@ export class WorkspaceMcpOverridesService {
 
     try {
       await this.ensureOverridesDir(runtime, workspacePath, metadata.runtimeConfig);
-      await writeFileString(runtime, jsoncPath, JSON.stringify(normalizedLegacy, null, 2) + "\n");
+      await writeFileString(
+        runtime,
+        canonicalPath,
+        JSON.stringify(normalizedLegacy, null, 2) + "\n"
+      );
       await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
       await this.clearLegacyOverridesInConfig(workspaceId);
       log.info("[MCP] Migrated workspace MCP overrides from config.json", {
         workspaceId,
-        filePath: jsoncPath,
+        filePath: canonicalPath,
       });
     } catch (error) {
       // Migration is best-effort; if it fails, still honor legacy overrides.
@@ -530,7 +514,7 @@ export class WorkspaceMcpOverridesService {
   }
 
   /**
-   * Persist workspace MCP overrides to <workspace>/.mux/mcp.local.jsonc.
+   * Persist workspace MCP overrides to <workspace>/.xum/mcp.local.jsonc.
    *
    * Empty overrides remove the workspace-local file.
    *
@@ -583,7 +567,7 @@ export class WorkspaceMcpOverridesService {
 
       const { metadata, runtime, workspacePath } =
         await this.getRuntimeAndWorkspacePath(workspaceId);
-      const { jsoncPath } = this.getOverridesFilePaths(workspacePath, metadata.runtimeConfig);
+      const canonicalPath = this.getOverridesFilePaths(workspacePath, metadata.runtimeConfig)[0];
 
       const normalized = normalizeWorkspaceMcpOverrides(overrides);
 
@@ -597,7 +581,7 @@ export class WorkspaceMcpOverridesService {
       }
 
       await this.ensureOverridesDir(runtime, workspacePath, metadata.runtimeConfig);
-      await writeFileString(runtime, jsoncPath, JSON.stringify(normalized, null, 2) + "\n");
+      await writeFileString(runtime, canonicalPath, JSON.stringify(normalized, null, 2) + "\n");
       await this.ensureOverridesGitignored(runtime, workspacePath, metadata.runtimeConfig);
       await options?.publish?.(normalized);
     });
@@ -638,12 +622,12 @@ export class WorkspaceMcpOverridesService {
     return this.runExclusive(async () => {
       const { metadata, runtime, workspacePath } =
         await this.getRuntimeAndWorkspacePath(workspaceId);
-      const { jsoncPath, jsonPath } = this.getOverridesFilePaths(
-        workspacePath,
-        metadata.runtimeConfig
-      );
+      // Prune canonical AND legacy-named files: a stale plugin key in an old
+      // .mux/mcp.local.jsonc would otherwise survive uninstall and reactivate
+      // on a later canonical migration.
+      const filePaths = this.getOverridesFilePaths(workspacePath, metadata.runtimeConfig);
 
-      for (const filePath of [jsoncPath, jsonPath]) {
+      for (const filePath of filePaths) {
         if (!(await statIsFile(runtime, filePath, "strict"))) {
           continue;
         }

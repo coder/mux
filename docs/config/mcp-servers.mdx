@@ -3,7 +3,7 @@ title: MCP Servers
 description: Extend agent capabilities with Model Context Protocol servers
 ---
 
-MCP (Model Context Protocol) servers provide additional tools to agents. Configure them globally in `~/.xum/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`.
+MCP (Model Context Protocol) servers provide additional tools to agents. Configure them globally in `~/.xum/mcp.jsonc`, with optional repo overrides in `./.xum/mcp.jsonc`.
 
 ## Configuration
 
@@ -11,7 +11,7 @@ You can either configure the servers in the UI (`Ctrl+,`):
 
 ![MCP Servers UI](../img/mcp-servers-1.webp)
 
-Or directly in your MCP config file (global: `~/.xum/mcp.jsonc`, repo overrides: `./.mux/mcp.jsonc`):
+Or directly in your MCP config file (global: `~/.xum/mcp.jsonc`, repo overrides: `./.xum/mcp.jsonc`):
 
 ```jsonc
 {
@@ -34,18 +34,19 @@ Manage MCP servers in **Settings → MCP** (or by editing the config files direc
 
 MCP servers have two scopes:
 
-- **Configuration** is global with optional repo overrides — Global config lives in `~/.xum/mcp.jsonc`, with optional repo overrides in `./.mux/mcp.jsonc`
+- **Configuration** is global with optional repo overrides — Global config lives in `~/.xum/mcp.jsonc`, with optional repo overrides in `./.xum/mcp.jsonc`
 - **Runtime instances** are per-workspace — Each workspace runs its own server processes, so state in one workspace doesn't affect another
 
 ## Per-workspace overrides
 
-Xum supports per-workspace MCP overrides (enable/disable servers and restrict tool allowlists) without modifying the shared config files (`~/.xum/mcp.jsonc` / `./.mux/mcp.jsonc`).
+Xum supports per-workspace MCP overrides (enable/disable servers and restrict tool allowlists) without modifying the shared config files (`~/.xum/mcp.jsonc` / `./.xum/mcp.jsonc`).
 
-These overrides are stored in a workspace-local file: `.mux/mcp.local.jsonc`.
+These overrides are stored in a workspace-local file: `.xum/mcp.local.jsonc`.
 
 - This file is intended to be **gitignored** (it contains local-only workspace preferences)
 - When Xum writes this file, it also adds it to the workspace's local git excludes (`.git/info/exclude`) so it doesn't get accidentally committed
-- Older Mux versions stored these overrides in `~/.mux/config.json`; Xum will migrate them into `.mux/mcp.local.jsonc` on first use
+- Older Mux versions stored these overrides in `~/.mux/config.json`; Xum migrates them into `.xum/mcp.local.jsonc` on first use
+- Legacy project files under `.mux/` remain readable when the corresponding `.xum/` file is absent
 
 This means you configure servers once (globally or with repo overrides), but each workspace (branch) gets isolated server instances with independent state.
 
@@ -55,7 +56,7 @@ With the **Agent Plugins** experiment enabled (Settings → Experiments), MCP se
 
 - **Disabled by default** — enable them per workspace via the Workspace MCP dialog; there is no global enable
 - **Read-only** — they cannot be edited or removed, and are never written into `mcp.jsonc`
-- **Trust-gated** — servers from a repo's `.mux/plugins` / `.agents/plugins` only appear once the project is trusted
+- **Trust-gated** — servers from a repo's `.xum/plugins` / `.agents/plugins` only appear once the project is trusted
 - **Host-only** — plugin servers are skipped for SSH and devcontainer workspaces
 - **Branch-following** — in a workspace, repo plugin servers load from the workspace's own checkout (matching skill discovery), while server identities stay stable across worktrees of the same project
 

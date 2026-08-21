@@ -6,7 +6,7 @@ import type { ToolConfiguration } from "@/common/utils/tools/tools";
  * - global-local / project-local: host filesystem, use resolveAgentsPathWithinRoot + fs/promises.
  * - project-runtime: active runtime workspace, use runtime.normalizePath + readFileString/writeFileString.
  */
-export type MuxAgentsStorageContext =
+export type XumAgentsStorageContext =
   | { kind: "global-local"; root: string }
   | { kind: "project-local"; root: string }
   | { kind: "project-runtime"; workspacePath: string; hostProjectRoot: string };
@@ -14,10 +14,10 @@ export type MuxAgentsStorageContext =
 /**
  * Derive AGENTS storage context from tool configuration.
  */
-export function resolveMuxAgentsStorageContext(config: ToolConfiguration): MuxAgentsStorageContext {
-  const scope = config.muxScope!;
+export function resolveXumAgentsStorageContext(config: ToolConfiguration): XumAgentsStorageContext {
+  const scope = config.xumScope!;
   if (scope.type === "global") {
-    return { kind: "global-local", root: scope.muxHome };
+    return { kind: "global-local", root: scope.xumHome };
   }
 
   if (scope.projectStorageAuthority === "runtime") {

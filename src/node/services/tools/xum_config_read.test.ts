@@ -5,10 +5,10 @@ import { describe, expect, it } from "bun:test";
 import type { ToolExecutionOptions } from "ai";
 
 const GLOBAL_WORKSPACE_ID = "workspace-global";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 import { REDACTED_SECRET_VALUE } from "@/node/services/tools/shared/configRedaction";
 
-import { createMuxConfigReadTool } from "./mux_config_read";
+import { createXumConfigReadTool } from "./xum_config_read";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions<unknown> = {
@@ -17,42 +17,42 @@ const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   context: undefined,
 };
 
-interface MuxConfigReadSuccess {
+interface XumConfigReadSuccess {
   success: true;
   file: "providers" | "config";
   data: unknown;
 }
 
-interface MuxConfigReadError {
+interface XumConfigReadError {
   success: false;
   error: string;
 }
 
-type MuxConfigReadResult = MuxConfigReadSuccess | MuxConfigReadError;
+type XumConfigReadResult = XumConfigReadSuccess | XumConfigReadError;
 
 async function createReadTool(
-  muxHomeDir: string,
+  xumHomeDir: string,
   workspaceId: string,
-  muxScope: MuxToolScope = { type: "global", muxHome: muxHomeDir }
+  xumScope: XumToolScope = { type: "global", xumHome: xumHomeDir }
 ) {
-  const workspaceSessionDir = path.join(muxHomeDir, "sessions", workspaceId);
+  const workspaceSessionDir = path.join(xumHomeDir, "sessions", workspaceId);
   await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-  const config = createTestToolConfig(muxHomeDir, {
+  const config = createTestToolConfig(xumHomeDir, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
-    muxScope,
+    xumScope,
   });
 
-  return createMuxConfigReadTool(config);
+  return createXumConfigReadTool(config);
 }
 
 describe("mux_config_read", () => {
   it("returns redacted providers data for full and path reads", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
+    using xumHome = new TestTempDir("mux-config-read");
 
     await fs.writeFile(
-      path.join(muxHome.path, "providers.jsonc"),
+      path.join(xumHome.path, "providers.jsonc"),
       JSON.stringify(
         {
           anthropic: {
@@ -115,12 +115,12 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createReadTool(xumHome.path, GLOBAL_WORKSPACE_ID);
 
     const fullResult = (await tool.execute!(
       { file: "providers" },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(fullResult.success).toBe(true);
     if (fullResult.success) {
@@ -226,7 +226,7 @@ describe("mux_config_read", () => {
     const pathResult = (await tool.execute!(
       { file: "providers", path: ["anthropic", "apiKey"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(pathResult.success).toBe(true);
     if (pathResult.success) {
@@ -236,7 +236,7 @@ describe("mux_config_read", () => {
     const tokenPathResult = (await tool.execute!(
       { file: "providers", path: ["custom-llm", "token"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(tokenPathResult.success).toBe(true);
     if (tokenPathResult.success) {
@@ -246,7 +246,7 @@ describe("mux_config_read", () => {
     const pluralTokenPathResult = (await tool.execute!(
       { file: "providers", path: ["custom-plural", "accessTokens"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(pluralTokenPathResult.success).toBe(true);
     if (pluralTokenPathResult.success) {
@@ -256,7 +256,7 @@ describe("mux_config_read", () => {
     const privateKeyPathResult = (await tool.execute!(
       { file: "providers", path: ["custom-llm", "privateKey"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(privateKeyPathResult.success).toBe(true);
     if (privateKeyPathResult.success) {
@@ -266,7 +266,7 @@ describe("mux_config_read", () => {
     const httpHeaderPathResult = (await tool.execute!(
       { file: "providers", path: ["custom-http", "httpHeaders", "Authorization"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(httpHeaderPathResult.success).toBe(true);
     if (httpHeaderPathResult.success) {
@@ -275,10 +275,10 @@ describe("mux_config_read", () => {
   });
 
   it("redacts config token fields", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
+    using xumHome = new TestTempDir("mux-config-read");
 
     await fs.writeFile(
-      path.join(muxHome.path, "config.json"),
+      path.join(xumHome.path, "config.json"),
       JSON.stringify(
         {
           muxGovernorToken: "token-123",
@@ -290,12 +290,12 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createReadTool(xumHome.path, GLOBAL_WORKSPACE_ID);
 
     const result = (await tool.execute!(
       { file: "config" },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -309,21 +309,21 @@ describe("mux_config_read", () => {
   });
 
   it("returns null for inherited prototype property names in path", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
+    using xumHome = new TestTempDir("mux-config-read");
 
     await fs.writeFile(
-      path.join(muxHome.path, "config.json"),
+      path.join(xumHome.path, "config.json"),
       JSON.stringify({ defaultModel: "anthropic:claude-sonnet-4-20250514" }, null, 2),
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createReadTool(xumHome.path, GLOBAL_WORKSPACE_ID);
 
     // "constructor" is inherited from Object.prototype — must not be traversable
     const constructorResult = (await tool.execute!(
       { file: "config", path: ["constructor"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
     expect(constructorResult.success).toBe(true);
     if (constructorResult.success) {
       expect(constructorResult.data).toBeNull();
@@ -333,7 +333,7 @@ describe("mux_config_read", () => {
     const nestedResult = (await tool.execute!(
       { file: "config", path: ["constructor", "name"] },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
     expect(nestedResult.success).toBe(true);
     if (nestedResult.success) {
       expect(nestedResult.data).toBeNull();
@@ -341,11 +341,11 @@ describe("mux_config_read", () => {
   });
 
   it("reads parseable but schema-invalid config data for recovery", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
+    using xumHome = new TestTempDir("mux-config-read");
 
     // Seed a config with an out-of-range value that fails schema validation
     await fs.writeFile(
-      path.join(muxHome.path, "config.json"),
+      path.join(xumHome.path, "config.json"),
       JSON.stringify(
         {
           taskSettings: { maxParallelAgentTasks: 999 },
@@ -357,11 +357,11 @@ describe("mux_config_read", () => {
       "utf-8"
     );
 
-    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createReadTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       { file: "config" },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -373,15 +373,15 @@ describe("mux_config_read", () => {
   });
 
   it("fails when config file contains malformed JSON", async () => {
-    using muxHome = new TestTempDir("mux-config-read");
+    using xumHome = new TestTempDir("mux-config-read");
 
-    await fs.writeFile(path.join(muxHome.path, "config.json"), "{ not valid json !!!", "utf-8");
+    await fs.writeFile(path.join(xumHome.path, "config.json"), "{ not valid json !!!", "utf-8");
 
-    const tool = await createReadTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createReadTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       { file: "config" },
       mockToolCallOptions
-    )) as MuxConfigReadResult;
+    )) as XumConfigReadResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {

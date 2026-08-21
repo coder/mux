@@ -58,7 +58,7 @@ export function collectInstructionContents(sets: ReadonlyArray<InstructionSet | 
 }
 
 /**
- * Collect the contents of Xum-dedicated (`muxOnly`) files from a sequence of
+ * Collect the contents of Xum-dedicated (`xumOnly`) files from a sequence of
  * instruction sets, in prompt order. These are the source texts for scoped
  * `Model:`/`Mode:` directives — shared AGENTS.md content is deliberately
  * excluded so those directives never activate from files that non-Xum agents
@@ -74,7 +74,7 @@ export function collectMuxOnlyInstructionContents(
 ): string[] {
   return sets
     .flatMap((set) => set?.files ?? [])
-    .filter((file) => file.muxOnly)
+    .filter((file) => file.xumOnly)
     .map((file) => file.content)
     .filter((content) => content.length > 0);
 }

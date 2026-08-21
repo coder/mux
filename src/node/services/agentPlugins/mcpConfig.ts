@@ -3,6 +3,7 @@ import { constants as fsConstants } from "node:fs";
 import * as fsPromises from "node:fs/promises";
 import * as path from "node:path";
 
+import { normalizeProjectMetadataIdentityPath } from "@/common/compat/legacyMux";
 import type { MCPServerInfo, MCPStdioServerInfo, WorkspaceMCPOverrides } from "@/common/types/mcp";
 import type { WorkspaceMetadata } from "@/common/types/workspace";
 import assert from "@/common/utils/assert";
@@ -15,20 +16,9 @@ import { computeAgentPluginContainers, discoverAgentPlugins } from "./discovery"
 import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
 
 /**
- * Agent Plugins 1.0.0 MCP configuration (`mcp.json`, §7.2) → Xum MCPServerInfo.
- *
- * Loading rules follow §7.2.2 exactly:
- * - invalid JSON / bad top-level / `$schema` mismatch → MCP disabled for that
- *   plugin only (diagnostic), other components unaffected;
- * - an invalid or unsupported server entry → that entry skipped (diagnostic),
- *   siblings unaffected.
- *
- * Normalized servers are default-disabled, read-only config entries keyed by
- * `plugin:<instanceId>:<serverName>` where `instanceId` hashes the plugin's
- * stable installation identity (lexical location; see
- * computePluginInstanceId). The key is stable across manifest renames,
- * content updates, and symlink retargets, so workspace `enabledServers`
- * overrides and the `PLUGIN_DATA` directory survive plugin updates (§9.1).
+ * Agent Plugins MCP documents become default-disabled, read-only Xum servers.
+ * Invalid documents and entries are isolated, while stable instance IDs keep
+ * workspace enablement and PLUGIN_DATA across plugin updates and path migrations.
  */
 
 /** Canonical `$schema` const for Agent Plugins 1.0.0 mcp.json documents. */
@@ -52,9 +42,9 @@ export function computePluginInstanceId(identity: string): string {
 }
 
 /** Client-managed persistent data directory for a plugin instance (§9.1). */
-export function getPluginDataPath(muxHome: string, instanceId: string): string {
-  assert(path.isAbsolute(muxHome), "getPluginDataPath: muxHome must be absolute");
-  return path.join(muxHome, "plugin-data", instanceId);
+export function getPluginDataPath(xumHome: string, instanceId: string): string {
+  assert(path.isAbsolute(xumHome), "getPluginDataPath: xumHome must be absolute");
+  return path.join(xumHome, "plugin-data", instanceId);
 }
 
 export function buildPluginServerKey(instanceId: string, serverName: string): string {
@@ -266,7 +256,7 @@ async function ensureContainedAllowMissingRoot(root: string, candidate: string):
 
 /**
  * Display discriminator for a plugin installation: the container's last two
- * lexical segments plus the plugin dir, e.g. ".mux/plugins/demo" vs
+ * lexical segments plus the plugin dir, e.g. ".xum/plugins/demo" vs
  * ".agents/plugins/demo". Same-name plugins can only collide across sibling
  * containers of a scope, so this is unique per scope (cross-scope entries are
  * already distinguished by the displayed sourceScope).
@@ -541,7 +531,7 @@ function normalizeRemoteEntry(
  */
 export async function loadPluginMcpServers(
   plugin: AgentPluginInfo,
-  ctx: { muxHome: string; instanceId?: string }
+  ctx: { xumHome: string; instanceId?: string }
 ): Promise<LoadPluginMcpServersResult> {
   assert(
     plugin.mcpConfigPath !== undefined && path.isAbsolute(plugin.mcpConfigPath),
@@ -593,7 +583,7 @@ export async function loadPluginMcpServers(
   }
 
   const instanceId = ctx.instanceId ?? computePluginInstanceId(plugin.rootPath);
-  const dataPath = getPluginDataPath(ctx.muxHome, instanceId);
+  const dataPath = getPluginDataPath(ctx.xumHome, instanceId);
   const normalizeCtx: NormalizeContext = {
     plugin,
     dataPath,
@@ -653,7 +643,7 @@ export async function loadPluginMcpServers(
 /**
  * Where and how plugin MCP discovery runs for a call.
  *
- * `projectRoot` is the host checkout whose `.mux/plugins` / `.agents/plugins`
+ * `projectRoot` is the host checkout whose `.xum/plugins` / `.agents/plugins`
  * containers are scanned. For workspace flows this is the ACTIVE worktree (so
  * plugin content follows the branch, matching skill discovery); for
  * project-level flows (Settings, workspace MCP modal) it is the project path.
@@ -710,10 +700,8 @@ function computeProjectPluginInstanceId(args: {
   projectRoot: string;
   plugin: AgentPluginInfo;
 }): string {
-  // Lexical container-relative location, e.g. ".mux/plugins/hello-plugin".
-  const relativeLocation = path.join(
-    path.relative(args.projectRoot, args.plugin.containerPath),
-    args.plugin.dirName
+  const relativeLocation = normalizeProjectMetadataIdentityPath(
+    path.join(path.relative(args.projectRoot, args.plugin.containerPath), args.plugin.dirName)
   );
   return computePluginInstanceId(`${args.projectKey}\0${relativeLocation}`);
 }
@@ -721,16 +709,16 @@ function computeProjectPluginInstanceId(args: {
 /**
  * Build the MCP server provider for Agent Plugins containers. Returns an empty
  * map when the agent-plugins experiment is off. Project-scope containers are
- * consulted only for trusted projects (mirroring repo `.mux/mcp.jsonc`).
+ * consulted only for trusted projects (mirroring repo `.xum/mcp.jsonc`).
  * Failures in one plugin never affect others (§11.3).
  */
 export function createAgentPluginsMcpProvider(ctx: {
-  muxHome: string;
+  xumHome: string;
   isEnabled: () => boolean;
 }): AgentPluginsMcpProvider {
   assert(
-    path.isAbsolute(ctx.muxHome),
-    "createAgentPluginsMcpProvider: muxHome must be an absolute path"
+    path.isAbsolute(ctx.xumHome),
+    "createAgentPluginsMcpProvider: xumHome must be an absolute path"
   );
 
   return async (args) => {
@@ -740,7 +728,7 @@ export function createAgentPluginsMcpProvider(ctx: {
 
     const projectRoot = args.projectRoot;
     const containers: AgentPluginContainer[] = computeAgentPluginContainers({
-      muxHome: ctx.muxHome,
+      xumHome: ctx.xumHome,
       projectRoot,
       projectTrusted: args.trusted,
     });
@@ -780,7 +768,7 @@ export function createAgentPluginsMcpProvider(ctx: {
         }
         try {
           const { servers } = await loadPluginMcpServers(plugin, {
-            muxHome: ctx.muxHome,
+            xumHome: ctx.xumHome,
             instanceId,
           });
           Object.assign(merged, servers);

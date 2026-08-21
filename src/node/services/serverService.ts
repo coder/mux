@@ -26,7 +26,7 @@ export interface ServerInfo {
 
 export interface StartServerOptions {
   /** Path to xum home directory (for lockfile) */
-  muxHome: string;
+  xumHome: string;
   /** oRPC context with services */
   context: ORPCContext;
   /** Host/interface to bind to (default: "127.0.0.1") */
@@ -352,7 +352,7 @@ export class ServerService {
     }
 
     // Create lockfile instance for checking - don't store yet
-    const lockfile = new ServerLockfile(options.muxHome);
+    const lockfile = new ServerLockfile(options.xumHome);
 
     // Check for existing server (another process)
     const existing = await lockfile.read();

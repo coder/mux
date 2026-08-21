@@ -222,7 +222,7 @@ export interface WorkspaceInitParams {
   env?: Record<string, string>;
 
   /**
-   * When true, skip running the project's .mux/init hook.
+   * When true, skip running the project's .xum/init hook.
    *
    * NOTE: This skips only hook execution, not runtime provisioning.
    */

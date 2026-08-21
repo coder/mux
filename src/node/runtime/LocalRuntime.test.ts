@@ -170,7 +170,7 @@ describe("LocalRuntime", () => {
           skipInitHook: true,
         });
         expect(result.success).toBe(true);
-        expect(logger.steps).toContain("Skipping .mux/init hook (disabled for this task)");
+        expect(logger.steps).toContain("Skipping .xum/init hook (disabled for this task)");
       }
 
       const skippedMarkerExists = await fs.access(markerPath).then(
@@ -226,7 +226,7 @@ describe("LocalRuntime", () => {
         trusted: false,
       });
       expect(result.success).toBe(true);
-      expect(logger.steps).toContain("Skipping .mux/init hook (project not trusted)");
+      expect(logger.steps).toContain("Skipping .xum/init hook (project not trusted)");
 
       const markerExists = await fs.access(markerPath).then(
         () => true,

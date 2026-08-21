@@ -23,12 +23,12 @@ interface StoreSnapshot {
   entries: Record<string, MCPOAuthStoredCredentials>;
 }
 
-function getStoreFilePath(muxHome: string): string {
-  return path.join(muxHome, "mcp-oauth.json");
+function getStoreFilePath(xumHome: string): string {
+  return path.join(xumHome, "mcp-oauth.json");
 }
 
 describe("McpOauthService store", () => {
-  let muxHome: string;
+  let xumHome: string;
   let projectPath: string;
   let config: Config;
   let mcpConfigService: MCPConfigService;
@@ -49,10 +49,10 @@ describe("McpOauthService store", () => {
   };
 
   beforeEach(async () => {
-    muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-home-"));
+    xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-home-"));
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-project-"));
 
-    config = new Config(muxHome);
+    config = new Config(xumHome);
     mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
 
@@ -65,12 +65,12 @@ describe("McpOauthService store", () => {
 
   afterEach(async () => {
     await service.dispose();
-    await fs.rm(muxHome, { recursive: true, force: true });
+    await fs.rm(xumHome, { recursive: true, force: true });
     await fs.rm(projectPath, { recursive: true, force: true });
   });
 
   async function readStoreFile(): Promise<StoreSnapshot> {
-    const raw = await fs.readFile(getStoreFilePath(muxHome), "utf-8");
+    const raw = await fs.readFile(getStoreFilePath(xumHome), "utf-8");
     return JSON.parse(raw) as StoreSnapshot;
   }
 
@@ -79,7 +79,7 @@ describe("McpOauthService store", () => {
     tokens: MCPOAuthTokens;
   }): Promise<void> {
     await fs.writeFile(
-      getStoreFilePath(muxHome),
+      getStoreFilePath(xumHome),
       JSON.stringify({
         version: 2,
         entries: {
@@ -96,7 +96,7 @@ describe("McpOauthService store", () => {
   }
 
   test("reading corrupt JSON store self-heals to empty", async () => {
-    await fs.writeFile(getStoreFilePath(muxHome), "{ definitely not valid json", "utf-8");
+    await fs.writeFile(getStoreFilePath(xumHome), "{ definitely not valid json", "utf-8");
 
     const status = await service.getAuthStatus({ serverUrl });
     expect(status).toEqual({
@@ -162,7 +162,7 @@ describe("McpOauthService store", () => {
         },
       };
 
-      await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(v1Store), "utf-8");
+      await fs.writeFile(getStoreFilePath(xumHome), JSON.stringify(v1Store), "utf-8");
 
       // Trigger store load + migration.
       await service.getAuthStatus({ serverUrl });
@@ -219,7 +219,7 @@ describe("McpOauthService store", () => {
         },
       },
     };
-    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(populatedStore), "utf-8");
+    await fs.writeFile(getStoreFilePath(xumHome), JSON.stringify(populatedStore), "utf-8");
 
     expect(
       await service.hasAuthTokens({
@@ -278,7 +278,7 @@ describe("McpOauthService store", () => {
         },
       },
     };
-    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(populatedStore), "utf-8");
+    await fs.writeFile(getStoreFilePath(xumHome), JSON.stringify(populatedStore), "utf-8");
 
     const provider = await service.getAuthProviderForServer({ serverUrl });
     expect(provider).toBeDefined();
@@ -457,7 +457,7 @@ describe("McpOauthService store", () => {
         },
       },
     };
-    await fs.writeFile(getStoreFilePath(muxHome), JSON.stringify(populatedStore), "utf-8");
+    await fs.writeFile(getStoreFilePath(xumHome), JSON.stringify(populatedStore), "utf-8");
 
     const provider = await service.getAuthProviderForServer({ serverUrl });
     expect(provider).toBeDefined();
@@ -601,24 +601,24 @@ describe("probeServerForBearerChallenge", () => {
 });
 
 describe("McpOauthService.startDesktopFlow", () => {
-  let muxHome: string;
+  let xumHome: string;
   let projectPath: string;
   let config: Config;
   let mcpConfigService: MCPConfigService;
   let service: McpOauthService;
 
   beforeEach(async () => {
-    muxHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-home-"));
+    xumHome = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-home-"));
     projectPath = await fs.mkdtemp(path.join(os.tmpdir(), "mcp-oauth-flow-project-"));
 
-    config = new Config(muxHome);
+    config = new Config(xumHome);
     mcpConfigService = new MCPConfigService(config);
     service = new McpOauthService(config, mcpConfigService);
   });
 
   afterEach(async () => {
     await service.dispose();
-    await fs.rm(muxHome, { recursive: true, force: true });
+    await fs.rm(xumHome, { recursive: true, force: true });
     await fs.rm(projectPath, { recursive: true, force: true });
   });
 
@@ -833,7 +833,7 @@ describe("McpOauthService.startDesktopFlow", () => {
       expect(seenPaths).toContain("/mcp/.well-known/oauth-protected-resource");
 
       // Stored credentials should continue to use a normalized URL for keying.
-      const storeRaw = await fs.readFile(getStoreFilePath(muxHome), "utf-8");
+      const storeRaw = await fs.readFile(getStoreFilePath(xumHome), "utf-8");
       const serverUrlKey = baseUrl.slice(0, -1);
       expect(JSON.parse(storeRaw)).toMatchObject({
         version: 2,

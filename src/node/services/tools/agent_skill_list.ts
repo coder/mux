@@ -3,6 +3,7 @@ import os from "node:os";
 import * as path from "path";
 import { tool } from "ai";
 
+import { listProjectMetadataRelativePaths } from "@/common/compat/legacyMux";
 import {
   AgentSkillDescriptorSchema,
   SkillNameSchema,
@@ -176,14 +177,14 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
         const skillCtx = resolveSkillStorageContext({
           runtime: config.runtime,
           workspacePath: config.cwd,
-          muxScope: config.muxScope ?? null,
+          xumScope: config.xumScope ?? null,
           includeClaudeSkills,
           includeAgentPlugins,
         });
 
         if (skillCtx.kind === "project-runtime") {
           // Runtime discovery mirrors the shared default roots contract so project-runtime
-          // listings include .mux/skills and .agents/skills plus ~/.xum/skills and ~/.agents/skills.
+          // listings include .xum/skills and .agents/skills plus ~/.xum/skills and ~/.agents/skills.
           const roots =
             skillCtx.roots ??
             getDefaultAgentSkillsRoots(skillCtx.runtime, skillCtx.workspacePath, {
@@ -216,9 +217,9 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        const { muxScope } = config;
-        if (!muxScope) {
-          throw new Error("agent_skill_list requires muxScope");
+        const { xumScope } = config;
+        if (!xumScope) {
+          throw new Error("agent_skill_list requires xumScope");
         }
 
         const userHome = os.homedir();
@@ -230,8 +231,8 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           scope: "global" | "project";
         }> = [
           {
-            skillsRoot: path.join(muxScope.muxHome, "skills"),
-            containmentRoot: muxScope.muxHome,
+            skillsRoot: path.join(xumScope.xumHome, "skills"),
+            containmentRoot: xumScope.xumHome,
             scope: "global",
           },
           {
@@ -249,11 +250,11 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
             scope: "global",
           });
         }
-        if (muxScope.type === "project") {
+        if (xumScope.type === "project") {
           if (skillCtx.roots == null) {
             throw new Error("Project-local skill context requires explicit roots");
           }
-          const containmentRoot = muxScope.checkoutRoot ?? muxScope.projectRoot;
+          const containmentRoot = xumScope.checkoutRoot ?? xumScope.projectRoot;
           roots.unshift(
             ...getProjectSkillRoots(skillCtx.roots).map((skillsRoot) => ({
               // Project skills are nearest-directory first, before global ones.
@@ -270,21 +271,21 @@ export const createAgentSkillListTool: ToolFactory = (config: ToolConfiguration)
           // for subProjectPath workspaces `projectRoot` is the execution
           // subdirectory, but plugins live at the checkout level.
           const pluginAnchor =
-            muxScope.type === "project" ? (muxScope.checkoutRoot ?? muxScope.projectRoot) : null;
+            xumScope.type === "project" ? (xumScope.checkoutRoot ?? xumScope.projectRoot) : null;
           const pluginContainers = [
             ...(pluginAnchor != null
               ? [
-                  {
-                    path: path.join(pluginAnchor, ".mux", "plugins"),
+                  ...listProjectMetadataRelativePaths("plugins").map((relativePath) => ({
+                    path: path.join(pluginAnchor, relativePath),
                     scope: "project" as const,
-                  },
+                  })),
                   {
                     path: path.join(pluginAnchor, ".agents", "plugins"),
                     scope: "project" as const,
                   },
                 ]
               : []),
-            { path: path.join(muxScope.muxHome, "plugins"), scope: "global" as const },
+            { path: path.join(xumScope.xumHome, "plugins"), scope: "global" as const },
             { path: path.join(userHome, ".agents", "plugins"), scope: "global" as const },
           ];
           const { plugins } = await discoverAgentPlugins(pluginContainers);

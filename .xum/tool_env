@@ -1,16 +1,16 @@
-# .mux/tool_env
-# Sourced by Mux before every bash tool invocation.
+# .xum/tool_env
+# Sourced by Xum before every bash tool invocation.
 # Docs: https://mux.coder.com/hooks/tools
 #
 # Keep PATH resolution and step logging deterministic across tool calls.
 # This mirrors the proven workflow the team liked in coder-k8s.
 
-mux_use_nix_devshell_path() {
+xum_use_nix_devshell_path() {
 	local flake_root=""
 
 	# Resolve the flake root from stable workspace signals before considering current cwd.
-	if [[ -n "${MUX_PROJECT_PATH:-}" && -f "${MUX_PROJECT_PATH}/flake.nix" ]]; then
-		flake_root="${MUX_PROJECT_PATH}"
+	if [[ -n "${XUM_PROJECT_PATH:-}" && -f "${XUM_PROJECT_PATH}/flake.nix" ]]; then
+		flake_root="${XUM_PROJECT_PATH}"
 	elif [[ -f "flake.nix" ]]; then
 		flake_root="$(pwd)"
 	else
@@ -28,10 +28,10 @@ mux_use_nix_devshell_path() {
 	fi
 
 	# Keep cache file workspace-specific to avoid collisions between parallel workspaces.
-	local workspace_cache_tag="${MUX_WORKSPACE_ID:-${MUX_WORKSPACE_NAME:-${flake_root}}}"
+	local workspace_cache_tag="${XUM_WORKSPACE_ID:-${XUM_WORKSPACE_NAME:-${flake_root}}}"
 	workspace_cache_tag="$(printf '%s' "${workspace_cache_tag}" | tr -cs 'A-Za-z0-9._-' '_')"
 
-	local cache_file="/tmp/mux-nix-path-${workspace_cache_tag}"
+	local cache_file="/tmp/xum-nix-path-${workspace_cache_tag}"
 	local cache_state_file="${cache_file}.state"
 	local inherited_retry_interval_seconds=300
 
@@ -135,20 +135,20 @@ if [[ ! -s "${cache_file}" && -n "${PATH:-}" ]]; then
 	return 0
 }
 
-if ! mux_use_nix_devshell_path; then
-	echo "warning: mux_use_nix_devshell_path failed unexpectedly; continuing with inherited PATH" >&2
+if ! xum_use_nix_devshell_path; then
+	echo "warning: xum_use_nix_devshell_path failed unexpectedly; continuing with inherited PATH" >&2
 fi
 
 # Restore vendored tools after nix devshell PATH rewriting replaces PATH entirely.
 # Prepend project-local bins first so vendored shims can be added last and remain highest priority.
-if [[ -n "${MUX_PROJECT_PATH:-}" && -d "${MUX_PROJECT_PATH}/node_modules/.bin" ]]; then
-	export PATH="${MUX_PROJECT_PATH}/node_modules/.bin:${PATH}"
+if [[ -n "${XUM_PROJECT_PATH:-}" && -d "${XUM_PROJECT_PATH}/node_modules/.bin" ]]; then
+	export PATH="${XUM_PROJECT_PATH}/node_modules/.bin:${PATH}"
 fi
 
-if [[ -n "${MUX_VENDORED_BIN_DIR:-}" ]]; then
-	export PATH="${MUX_VENDORED_BIN_DIR}:${PATH}"
-elif [[ -d "${HOME}/.mux/bin" ]]; then
-	export PATH="${HOME}/.mux/bin:${PATH}"
+if [[ -n "${XUM_VENDORED_BIN_DIR:-}" ]]; then
+	export PATH="${XUM_VENDORED_BIN_DIR}:${PATH}"
+elif [[ -d "${HOME}/.xum/bin" ]]; then
+	export PATH="${HOME}/.xum/bin:${PATH}"
 fi
 
 run_and_report() {
@@ -166,8 +166,8 @@ run_and_report() {
 
 	local safe_name
 	safe_name="$(printf '%s' "${step_name}" | tr -cs 'A-Za-z0-9._-' '_')"
-	local workspace_tag="${MUX_WORKSPACE_ID:-local}"
-	local log_file="/tmp/mux-${workspace_tag}-${safe_name}.log"
+	local workspace_tag="${XUM_WORKSPACE_ID:-local}"
+	local log_file="/tmp/xum-${workspace_tag}-${safe_name}.log"
 
 	echo "==> Running ${step_name}"
 	if "$@" >"${log_file}" 2>&1; then

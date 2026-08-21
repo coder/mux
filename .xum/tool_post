@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# .mux/tool_post - Format TypeScript and Markdown files after edits
+# .xum/tool_post - Format TypeScript and Markdown files after edits
 
-if [[ "$MUX_TOOL" == file_edit_* ]]; then
-  file="${MUX_TOOL_INPUT_FILE_PATH:-}"
+if [[ "$XUM_TOOL" == file_edit_* ]]; then
+  file="${XUM_TOOL_INPUT_FILE_PATH:-}"
   [[ -z "$file" ]] && exit 0
 
   case "$file" in
@@ -11,7 +11,7 @@ if [[ "$MUX_TOOL" == file_edit_* ]]; then
       # 1. Format with prettier
       bun run prettier --write --log-level silent "$file" 2>/dev/null || true
       # 2. Fix tailwind class ordering (minimal config for speed)
-      bun run eslint --fix --quiet --no-config-lookup --no-inline-config --config .mux/eslint-tailwind-only.mjs "$file" 2>/dev/null || true
+      bun run eslint --fix --quiet --no-config-lookup --no-inline-config --config .xum/eslint-tailwind-only.mjs "$file" 2>/dev/null || true
       # Only output if file changed
       if [[ "$(cat "$file")" != "$before" ]]; then
         echo "Formatted: $file"

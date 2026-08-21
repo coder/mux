@@ -743,7 +743,7 @@ async function syncAutoCleanupWorkflow(): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 function generateDeepReviewSkillBlock(): string {
-  const skillPath = path.join(import.meta.dir, "..", ".mux", "skills", "deep-review", "SKILL.md");
+  const skillPath = path.join(import.meta.dir, "..", ".xum", "skills", "deep-review", "SKILL.md");
   const content = fs.readFileSync(skillPath, "utf-8");
   // Use 5 backticks to wrap the skill content since it may contain nested code blocks with 3 backticks.
   return "`````md\n" + content.trim() + "\n`````";
@@ -752,7 +752,7 @@ function generateDeepReviewSkillBlock(): string {
 async function syncDeepReviewSkill(): Promise<boolean> {
   return syncDoc({
     docsFile: "agents/agent-skills.mdx",
-    sourceLabel: ".mux/skills/deep-review/SKILL.md",
+    sourceLabel: ".xum/skills/deep-review/SKILL.md",
     markerName: "DEEP_REVIEW_SKILL",
     generateBlock: generateDeepReviewSkillBlock,
   });

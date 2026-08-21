@@ -33,14 +33,14 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   private readonly localRuntime: LocalRuntime;
   private readonly localBase: string;
   private readonly remoteBase: string;
-  private readonly muxHomeOverride: string | null;
+  private readonly xumHomeOverride: string | null;
 
-  constructor(localBase: string, remoteBase: string, options?: { muxHome?: string }) {
+  constructor(localBase: string, remoteBase: string, options?: { xumHome?: string }) {
     super();
     this.localRuntime = new LocalRuntime(localBase);
     this.localBase = path.resolve(localBase);
     this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-    this.muxHomeOverride = options?.muxHome ?? null;
+    this.xumHomeOverride = options?.xumHome ?? null;
   }
 
   protected readonly commandPrefix = "TestRemoteRuntime";
@@ -96,7 +96,7 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   }
 
   override getXumHome(): string {
-    return this.muxHomeOverride ?? super.getXumHome();
+    return this.xumHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -196,7 +196,7 @@ describe("agentDefinitionsService", () => {
     await writeAgent(projectAgentsRoot, "foo", "Foo (project)");
     await writeAgent(globalAgentsRoot, "bar", "Bar (global)");
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
 
     const agents = await discoverAgentDefinitions(runtime, project.path, { roots });
@@ -222,7 +222,7 @@ describe("agentDefinitionsService", () => {
     await writeAgent(projectAgentsRoot, "dup", "Zulu (project)");
     await writeAgent(globalAgentsRoot, "dup", "Alpha (global)");
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
     const agents = await discoverAgentDefinitions(runtime, project.path, {
       roots,
@@ -246,7 +246,7 @@ describe("agentDefinitionsService", () => {
     await writeAgent(globalAgentsRoot, "foo", "Foo (global)");
     await writeAgent(projectAgentsRoot, "foo", "Foo (project)");
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
 
     const agentId = AgentIdSchema.parse("foo");
@@ -269,7 +269,7 @@ describe("agentDefinitionsService", () => {
     await writeAgent(projectAgentsRoot, "shared", "Shared (project)");
 
     const roots = {
-      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      projectRoots: [path.posix.join(remoteWorkspacePath, ".mux", "agents")],
       globalRoot: globalAgentsRoot,
     };
     const runtime = new RemotePathMappedRuntime(project.path, remoteWorkspacePath);
@@ -315,7 +315,7 @@ describe("agentDefinitionsService", () => {
     );
 
     const roots = {
-      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      projectRoots: [path.posix.join(remoteWorkspacePath, ".mux", "agents")],
       globalRoot: globalAgentsRoot,
     };
     const runtime = new RemotePathMappedRuntime(project.path, remoteWorkspacePath);
@@ -336,11 +336,11 @@ describe("agentDefinitionsService", () => {
     await writeAgent(runtimeGlobalAgentsRoot, "docker-global", "Docker Global");
 
     const roots = {
-      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      projectRoots: [path.posix.join(remoteWorkspacePath, ".mux", "agents")],
       globalRoot: path.posix.join(remoteRuntimeRoot, "global-agents"),
     };
     const runtime = new RemotePathMappedRuntime(runtimeBase.path, remoteRuntimeRoot, {
-      muxHome: "/var/mux",
+      xumHome: "/var/mux",
     });
 
     const agents = await discoverAgentDefinitions(runtime, remoteWorkspacePath, { roots });
@@ -375,7 +375,7 @@ describe("agentDefinitionsService", () => {
     );
 
     const roots = {
-      projectRoot: path.posix.join(remoteWorkspacePath, ".mux", "agents"),
+      projectRoots: [path.posix.join(remoteWorkspacePath, ".mux", "agents")],
       globalRoot: globalAgentsRoot,
     };
     const runtime = new TrackingRemotePathMappedRuntime(project.path, remoteWorkspacePath);
@@ -441,7 +441,7 @@ Replaced body.
       "utf-8"
     );
 
-    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const roots = { projectRoots: [agentsRoot], globalRoot: agentsRoot };
     const runtime = new LocalRuntime(tempDir.path);
 
     // Child without explicit prompt settings should append (new default)
@@ -562,7 +562,7 @@ Project-specific additions.
       "utf-8"
     );
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
 
     // Verify project agent is discovered
@@ -608,7 +608,7 @@ Project body.
       "utf-8"
     );
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
 
     // Without skip: project takes precedence
@@ -675,7 +675,7 @@ Project body.
       "utf-8"
     );
 
-    const roots = { projectRoot: projectAgentsRoot, globalRoot: globalAgentsRoot };
+    const roots = { projectRoots: [projectAgentsRoot], globalRoot: globalAgentsRoot };
     const runtime = new LocalRuntime(project.path);
 
     const frontmatter = await resolveAgentFrontmatter(runtime, project.path, "foo", { roots });
@@ -729,7 +729,7 @@ subagent:
       "utf-8"
     );
 
-    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const roots = { projectRoots: [agentsRoot], globalRoot: agentsRoot };
     const runtime = new LocalRuntime(tempDir.path);
 
     const frontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "child", { roots });
@@ -778,7 +778,7 @@ tools:
       "utf-8"
     );
 
-    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const roots = { projectRoots: [agentsRoot], globalRoot: agentsRoot };
     const runtime = new LocalRuntime(tempDir.path);
 
     const frontmatter = await resolveAgentFrontmatter(runtime, tempDir.path, "child", { roots });
@@ -813,7 +813,7 @@ base: a
       "utf-8"
     );
 
-    const roots = { projectRoot: agentsRoot, globalRoot: agentsRoot };
+    const roots = { projectRoots: [agentsRoot], globalRoot: agentsRoot };
     const runtime = new LocalRuntime(tempDir.path);
 
     expect(resolveAgentFrontmatter(runtime, tempDir.path, "a", { roots })).rejects.toThrow(
@@ -853,7 +853,7 @@ base: a
       await writeAgent(projectAgentsRoot, "shared", "Shared (project)");
 
       const roots = {
-        projectRoot: projectAgentsRoot,
+        projectRoots: [projectAgentsRoot],
         globalRoot: global.path,
         projectPluginRoots: [pluginContainer],
       };
@@ -884,7 +884,7 @@ base: a
       await writeAgent(projectAgentsRoot, "shared", "Shared");
 
       const roots = {
-        projectRoot: projectAgentsRoot,
+        projectRoots: [projectAgentsRoot],
         globalRoot: global.path,
         projectPluginRoots: [pluginContainer],
       };
@@ -910,7 +910,7 @@ base: a
       await writePluginWithAgent(pluginContainer, "my-plugin", "helper", "Helper (plugin)");
 
       const roots = {
-        projectRoot: path.join(project.path, ".mux", "agents"),
+        projectRoots: [path.join(project.path, ".mux", "agents")],
         globalRoot: global.path,
         projectPluginRoots: [pluginContainer],
       };

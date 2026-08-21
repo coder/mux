@@ -1172,7 +1172,7 @@ export class AgentPluginInstallService {
     const servers = new Map<string, string>();
     if (plugin.mcpConfigPath !== undefined) {
       const { servers: infos } = await loadPluginMcpServers(plugin, {
-        muxHome: this.config.rootDir,
+        xumHome: this.config.rootDir,
         instanceId,
       });
       const normalize = (value: string): string => value.split(plugin.rootPath).join("<plugin>");
@@ -1367,7 +1367,7 @@ export class AgentPluginInstallService {
       return [];
     }
     const { servers, diagnostics } = await loadPluginMcpServers(plugin, {
-      muxHome: this.config.rootDir,
+      xumHome: this.config.rootDir,
       instanceId,
     });
     warnings.push(...diagnostics.map((d) => d.message));
@@ -2189,7 +2189,7 @@ export class AgentPluginInstallService {
       if (plugin.mcpConfigPath !== undefined) {
         try {
           const { servers } = await loadPluginMcpServers(plugin, {
-            muxHome: this.config.rootDir,
+            xumHome: this.config.rootDir,
             instanceId: computePluginInstanceId(path.join(plugin.containerPath, plugin.dirName)),
           });
           mcpServerCount = Object.keys(servers).length;

@@ -307,9 +307,9 @@ async function resolveAgentSkillDiscoveryContext(
     return resolveSkillStorageContext({
       runtime: resolved.runtime,
       workspacePath: resolved.discoveryPath,
-      muxScope: {
+      xumScope: {
         type: "project",
-        muxHome: context.config.rootDir,
+        xumHome: context.config.rootDir,
         projectRoot: resolved.discoveryPath,
         projectStorageAuthority: "host-local",
         checkoutRoot: creationScope.projectPath,
@@ -326,7 +326,7 @@ async function resolveAgentSkillDiscoveryContext(
           resolved.runtime,
           resolveWorkspaceRootPath(resolved.metadata, resolved.runtime)
         );
-  const muxScope = context.aiService.resolveMuxToolScopeForWorkspace(
+  const xumScope = context.aiService.resolveXumToolScopeForWorkspace(
     resolved.metadata,
     resolved.runtime,
     workspacePath
@@ -334,10 +334,10 @@ async function resolveAgentSkillDiscoveryContext(
   return resolveSkillStorageContext({
     runtime: resolved.runtime,
     workspacePath,
-    muxScope:
-      input.disableWorkspaceAgents === true && muxScope.type === "project"
-        ? { ...muxScope, checkoutRoot: workspacePath }
-        : muxScope,
+    xumScope:
+      input.disableWorkspaceAgents === true && xumScope.type === "project"
+        ? { ...xumScope, checkoutRoot: workspacePath }
+        : xumScope,
     ...options,
   });
 }
@@ -509,10 +509,10 @@ export async function resolveWorkflowContext(
   const skillStorageContext = resolveSkillStorageContext({
     runtime,
     workspacePath,
-    muxScope: context.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath),
+    xumScope: context.aiService.resolveXumToolScopeForWorkspace(metadata, runtime, workspacePath),
     includeAgentPlugins,
   });
-  const workflowRuntimeTempDir = runtime.normalizePath(".mux/tmp", workspacePath);
+  const workflowRuntimeTempDir = runtime.normalizePath(".xum/tmp", workspacePath);
 
   return {
     workflowExecutionProjectPath,
@@ -1032,7 +1032,7 @@ export const router = (authToken?: string) => {
 
             try {
               await context.serverService.startServer({
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 context,
                 authToken,
                 serveStatic: serveWebUi === true,
@@ -1053,7 +1053,7 @@ export const router = (authToken?: string) => {
 
                 try {
                   await context.serverService.startServer({
-                    muxHome: context.config.rootDir,
+                    xumHome: context.config.rootDir,
                     context,
                     serveStatic: prevServeWebUi === true,
                     authToken,
@@ -5872,7 +5872,7 @@ export const router = (authToken?: string) => {
               }
               const { plugins } = await discoverWorkspaceAgentPlugins({
                 workspacePath: hostCheckoutRoot,
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 projectTrusted: isWorkspaceProjectTrusted(context.config, metadata),
               });
               return collectPluginSlashCommands(plugins);
@@ -5912,7 +5912,7 @@ export const router = (authToken?: string) => {
                 // nullable host checkout root.
                 workspacePath,
                 hostCheckoutRoot,
-                muxHome: context.config.rootDir,
+                xumHome: context.config.rootDir,
                 projectTrusted,
                 agentPluginsEnabled: context.experimentsService.isExperimentEnabled(
                   EXPERIMENT_IDS.AGENT_PLUGINS

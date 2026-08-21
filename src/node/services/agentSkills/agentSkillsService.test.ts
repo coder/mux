@@ -32,16 +32,16 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   private readonly localRuntime: LocalRuntime;
   private readonly localBase: string;
   private readonly remoteBase: string;
-  private readonly muxHomeOverride: string | null;
+  private readonly xumHomeOverride: string | null;
 
   public execCallCount = 0;
 
-  constructor(localBase: string, remoteBase: string, options?: { muxHome?: string }) {
+  constructor(localBase: string, remoteBase: string, options?: { xumHome?: string }) {
     super();
     this.localRuntime = new LocalRuntime(localBase);
     this.localBase = path.resolve(localBase);
     this.remoteBase = remoteBase === "/" ? remoteBase : remoteBase.replace(/\/+$/u, "");
-    this.muxHomeOverride = options?.muxHome ?? null;
+    this.xumHomeOverride = options?.xumHome ?? null;
   }
 
   protected readonly commandPrefix = "TestRemoteRuntime";
@@ -110,7 +110,7 @@ class RemotePathMappedRuntime extends RemoteRuntime {
   }
 
   override getXumHome(): string {
-    return this.muxHomeOverride ?? super.getXumHome();
+    return this.xumHomeOverride ?? super.getXumHome();
   }
 
   override normalizePath(targetPath: string, basePath: string): string {
@@ -206,13 +206,13 @@ describe("agentSkillsService", () => {
     class MuxHomeRuntime extends LocalRuntime {
       constructor(
         workspacePath: string,
-        private readonly muxHome: string
+        private readonly xumHome: string
       ) {
         super(workspacePath);
       }
 
       override getXumHome(): string {
-        return this.muxHome;
+        return this.xumHome;
       }
     }
 
@@ -245,10 +245,13 @@ describe("agentSkillsService", () => {
     });
 
     expect(roots.projectRoots).toEqual([
+      path.win32.join(workspacePath, ".xum", "skills"),
       path.win32.join(workspacePath, ".mux", "skills"),
       path.win32.join(workspacePath, ".agents", "skills"),
+      path.win32.join("C:\\Repo\\packages", ".xum", "skills"),
       path.win32.join("C:\\Repo\\packages", ".mux", "skills"),
       path.win32.join("C:\\Repo\\packages", ".agents", "skills"),
+      path.win32.join("C:\\Repo", ".xum", "skills"),
       path.win32.join("C:\\Repo", ".mux", "skills"),
       path.win32.join("C:\\Repo", ".agents", "skills"),
     ]);
@@ -267,7 +270,8 @@ describe("agentSkillsService", () => {
       projectSearchRoot: checkoutRoot,
     });
 
-    expect(roots.projectRoots?.slice(-2)).toEqual([
+    expect(roots.projectRoots?.slice(-3)).toEqual([
+      path.win32.join("C:\\", ".xum", "skills"),
       path.win32.join("C:\\", ".mux", "skills"),
       path.win32.join("C:\\", ".agents", "skills"),
     ]);
@@ -287,10 +291,13 @@ describe("agentSkillsService", () => {
     });
 
     expect(roots.projectRoots).toEqual([
+      path.win32.join(workspacePath, ".xum", "skills"),
       path.win32.join(workspacePath, ".mux", "skills"),
       path.win32.join(workspacePath, ".agents", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo\\packages", ".xum", "skills"),
       path.win32.join("\\\\SERVER\\Share\\Repo\\packages", ".mux", "skills"),
       path.win32.join("\\\\SERVER\\Share\\Repo\\packages", ".agents", "skills"),
+      path.win32.join("\\\\SERVER\\Share\\Repo", ".xum", "skills"),
       path.win32.join("\\\\SERVER\\Share\\Repo", ".mux", "skills"),
       path.win32.join("\\\\SERVER\\Share\\Repo", ".agents", "skills"),
     ]);
@@ -303,6 +310,7 @@ describe("agentSkillsService", () => {
     });
 
     expect(roots.projectRoots).toEqual([
+      "/workspace/project/packages/app/.xum/skills",
       "/workspace/project/packages/app/.mux/skills",
       "/workspace/project/packages/app/.agents/skills",
     ]);
@@ -352,7 +360,7 @@ describe("agentSkillsService", () => {
 
   test("subprojects inherit ancestor skills with nearest-directory precedence", async () => {
     using checkout = new DisposableTempDir("agent-skills-subproject-checkout");
-    using muxHome = new DisposableTempDir("agent-skills-subproject-mux-home");
+    using xumHome = new DisposableTempDir("agent-skills-subproject-mux-home");
 
     const packagesRoot = path.join(checkout.path, "packages");
     const subprojectRoot = path.join(packagesRoot, "app");
@@ -361,14 +369,14 @@ describe("agentSkillsService", () => {
     await writeSkill(path.join(checkout.path, ".mux", "skills"), "parent-only", "from checkout");
     await writeSkill(path.join(checkout.path, ".mux", "skills"), "shared", "from checkout");
     await writeSkill(path.join(packagesRoot, ".agents", "skills"), "shared", "from packages");
-    await writeSkill(path.join(muxHome.path, "skills"), "parent-only", "from global");
+    await writeSkill(path.join(xumHome.path, "skills"), "parent-only", "from global");
 
     const context = resolveSkillStorageContext({
       runtime: new LocalRuntime(subprojectRoot),
       workspacePath: subprojectRoot,
-      muxScope: {
+      xumScope: {
         type: "project",
-        muxHome: muxHome.path,
+        xumHome: xumHome.path,
         projectRoot: subprojectRoot,
         projectStorageAuthority: "host-local",
         checkoutRoot: checkout.path,
@@ -467,9 +475,9 @@ describe("agentSkillsService", () => {
         configPath: path.join(host.path, ".devcontainer", "devcontainer.json"),
       }),
       workspacePath: "/remote/workspace",
-      muxScope: {
+      xumScope: {
         type: "project",
-        muxHome: hostMuxHome,
+        xumHome: hostMuxHome,
         projectRoot,
         projectStorageAuthority: "host-local",
       },
@@ -570,10 +578,13 @@ describe("agentSkillsService", () => {
     );
 
     expect(roots.projectRoots).toEqual([
+      "/remote/workspace/packages/app/.xum/skills",
       "/remote/workspace/packages/app/.mux/skills",
       "/remote/workspace/packages/app/.agents/skills",
+      "/remote/workspace/packages/.xum/skills",
       "/remote/workspace/packages/.mux/skills",
       "/remote/workspace/packages/.agents/skills",
+      "/remote/workspace/.xum/skills",
       "/remote/workspace/.mux/skills",
       "/remote/workspace/.agents/skills",
     ]);
@@ -635,7 +646,7 @@ describe("agentSkillsService", () => {
     await writeSkill(runtimeGlobalSkillsRoot, "docker-global-skill", "from runtime global");
 
     const runtime = new RemotePathMappedRuntime(runtimeBase.path, remoteRuntimeRoot, {
-      muxHome: "/var/mux",
+      xumHome: "/var/mux",
     });
     const roots = getDefaultAgentSkillsRoots(runtime, remoteWorkspaceRoot);
 
@@ -708,7 +719,7 @@ describe("agentSkillsService", () => {
 
     const roots = {
       projectRoot: projectSkillsRoot,
-      projectUniversalRoot: projectUniversalSkillsRoot,
+      projectRoots: [projectSkillsRoot, projectUniversalSkillsRoot],
       globalRoot: globalSkillsRoot,
     };
     const runtime = new LocalRuntime(project.path);
@@ -734,7 +745,7 @@ describe("agentSkillsService", () => {
 
     const roots = {
       projectRoot: projectSkillsRoot,
-      projectUniversalRoot: projectUniversalSkillsRoot,
+      projectRoots: [projectSkillsRoot, projectUniversalSkillsRoot],
       globalRoot: globalSkillsRoot,
     };
     const runtime = new LocalRuntime(project.path);
@@ -752,19 +763,19 @@ describe("agentSkillsService", () => {
     const runtime = new LocalRuntime(project.path);
 
     const defaultRoots = getDefaultAgentSkillsRoots(runtime, project.path);
-    expect(defaultRoots.projectClaudeRoot).toBeUndefined();
+    expect(defaultRoots.projectRoots).not.toContain(path.join(project.path, ".claude", "skills"));
     expect(defaultRoots.globalClaudeRoot).toBeUndefined();
 
     const offRoots = getDefaultAgentSkillsRoots(runtime, project.path, {
       includeClaudeSkills: false,
     });
-    expect(offRoots.projectClaudeRoot).toBeUndefined();
+    expect(offRoots.projectRoots).not.toContain(path.join(project.path, ".claude", "skills"));
     expect(offRoots.globalClaudeRoot).toBeUndefined();
 
     const onRoots = getDefaultAgentSkillsRoots(runtime, project.path, {
       includeClaudeSkills: true,
     });
-    expect(onRoots.projectClaudeRoot).toBe(path.join(project.path, ".claude", "skills"));
+    expect(onRoots.projectRoots).toContain(path.join(project.path, ".claude", "skills"));
     expect(onRoots.globalClaudeRoot).toBe("~/.claude/skills");
   });
 
@@ -880,7 +891,7 @@ describe("agentSkillsService", () => {
 
     const roots = {
       projectRoot: projectSkillsRoot,
-      projectUniversalRoot: projectUniversalSkillsRoot,
+      projectRoots: [projectSkillsRoot, projectUniversalSkillsRoot],
       globalRoot: globalSkillsRoot,
     };
     const runtime = new LocalRuntime(project.path);
@@ -1193,7 +1204,7 @@ describe("agentSkillsService", () => {
 
     const roots = {
       projectRoot: projectSkillsRoot,
-      projectUniversalRoot: projectUniversalSkillsRoot,
+      projectRoots: [projectSkillsRoot, projectUniversalSkillsRoot],
       globalRoot: "/nonexistent",
     };
     const runtime = new LocalRuntime(projectRoot);
@@ -1375,6 +1386,7 @@ describe("agentSkillsService agent plugins", () => {
       includeAgentPlugins: true,
     });
     expect(onRoots.projectPluginRoots).toEqual([
+      path.join(project.path, ".xum", "plugins"),
       path.join(project.path, ".mux", "plugins"),
       path.join(project.path, ".agents", "plugins"),
     ]);

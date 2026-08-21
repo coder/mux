@@ -93,7 +93,7 @@ function inferMuxRootFromWorkspaceSessionDir(workspaceSessionDir: string): strin
 }
 
 function resolveMuxRootDir(config: ToolConfiguration): string | undefined {
-  const scopedMuxHome = config.muxScope?.muxHome;
+  const scopedMuxHome = config.xumScope?.xumHome;
   if (scopedMuxHome && scopedMuxHome.length > 0) {
     return scopedMuxHome;
   }

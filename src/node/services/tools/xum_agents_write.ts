@@ -3,25 +3,25 @@ import { tool } from "ai";
 
 import {
   FILE_EDIT_DIFF_OMITTED_MESSAGE,
-  type MuxAgentsWriteToolArgs,
-  type MuxAgentsWriteToolResult,
+  type XumAgentsWriteToolArgs,
+  type XumAgentsWriteToolResult,
 } from "@/common/types/tools";
 import { getErrorMessage } from "@/common/utils/errors";
 import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import type { ToolConfiguration, ToolFactory } from "@/common/utils/tools/tools";
 import { readFileString, writeFileString } from "@/node/utils/runtime/helpers";
 import { generateDiff } from "./fileCommon";
-import { resolveAgentsPathOnRuntime, resolveAgentsPathWithinRoot } from "./mux_agents_path";
-import { resolveMuxAgentsStorageContext } from "./mux_agents_storage_context";
+import { resolveAgentsPathOnRuntime, resolveAgentsPathWithinRoot } from "./xum_agents_path";
+import { resolveXumAgentsStorageContext } from "./xum_agents_storage_context";
 
-export const createMuxAgentsWriteTool: ToolFactory = (config: ToolConfiguration) => {
+export const createXumAgentsWriteTool: ToolFactory = (config: ToolConfiguration) => {
   return tool({
     description: TOOL_DEFINITIONS.mux_agents_write.description,
     inputSchema: TOOL_DEFINITIONS.mux_agents_write.schema,
     execute: async (
-      args: MuxAgentsWriteToolArgs,
+      args: XumAgentsWriteToolArgs,
       { abortSignal: _abortSignal }
-    ): Promise<MuxAgentsWriteToolResult> => {
+    ): Promise<XumAgentsWriteToolResult> => {
       try {
         if (!args.confirm) {
           return {
@@ -30,7 +30,7 @@ export const createMuxAgentsWriteTool: ToolFactory = (config: ToolConfiguration)
           };
         }
 
-        const ctx = resolveMuxAgentsStorageContext(config);
+        const ctx = resolveXumAgentsStorageContext(config);
 
         if (ctx.kind === "project-runtime") {
           // Resolve with symlink containment — mirrors resolveAgentsPathWithinRoot for local paths.

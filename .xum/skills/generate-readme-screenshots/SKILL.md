@@ -208,6 +208,6 @@ The retry logic handles most cases. If persistent:
 
 ### Why there is no ProductHero screenshot story
 
-Intentional. README now uses `mux-demo.gif` as the hero media. The README
+Intentional. README now uses `xum-demo.gif` as the hero media. The README
 screenshot pipeline covers only the 7 generated WebP assets that remain in
 README, starting with `code-review.webp`.

@@ -1,11 +1,11 @@
 ---
 name: tbench
-description: Terminal-Bench integration for Mux agent benchmarking and failure analysis
+description: Terminal-Bench integration for Xum agent benchmarking and failure analysis
 ---
 
 # Terminal-Bench Integration
 
-This directory contains the mux agent adapter for [Terminal-Bench 2.0](https://tbench.ai/), using [Harbor](https://harborframework.com/) as the evaluation harness.
+This directory contains the xum agent adapter for [Terminal-Bench 2.0](https://tbench.ai/), using [Harbor](https://harborframework.com/) as the evaluation harness.
 
 ## Quick Start
 
@@ -63,7 +63,7 @@ make benchmark-terminal TB_ENV=daytona TB_CONCURRENCY=48 TB_TASK_NAMES="chess-be
 
 ### Timeout Handling
 
-The benchmark uses Harbor's **global timeout** applied to all tasks. The default is **30 minutes (1800 seconds)**, which provides sufficient time for most tasks while catching genuinely stuck agents. The mux runner does not wrap the command in GNU `timeout`; Harbor must classify task timeouts as `AgentTimeoutError` so the workflow can distinguish timeout/infra cases from mux process failures.
+The benchmark uses Harbor's **global timeout** applied to all tasks. The default is **30 minutes (1800 seconds)**, which provides sufficient time for most tasks while catching genuinely stuck agents. The xum runner does not wrap the command in GNU `timeout`; Harbor must classify task timeouts as `AgentTimeoutError` so the workflow can distinguish timeout/infra cases from xum process failures.
 
 **Design Rationale:**
 
@@ -138,7 +138,7 @@ MUX_RUN_ARGS="--thinking high" make benchmark-terminal TB_ARGS="--agent-kwarg mo
 
 ## Monitoring local benchmark output
 
-Local Terminal-Bench runs can be long and log-driven. If you intentionally run one locally instead of dispatching CI, start it as a monitored background bash so Mux wakes on terminal benchmark failure/completion lines instead of requiring parent-side polling.
+Local Terminal-Bench runs can be long and log-driven. If you intentionally run one locally instead of dispatching CI, start it as a monitored background bash so Xum wakes on terminal benchmark failure/completion lines instead of requiring parent-side polling.
 
 ```ts
 bash({
@@ -184,7 +184,7 @@ See `.github/workflows/terminal-bench.yml` and `.github/workflows/nightly-termin
 
 ## Leaderboard Submission
 
-To submit mux results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/leaderboard/terminal-bench/2.0):
+To submit xum results to the [Terminal-Bench 2.0 leaderboard](https://tbench.ai/leaderboard/terminal-bench/2.0):
 
 ### Step 1: Prepare Submission
 
@@ -255,8 +255,8 @@ api.upload_folder(
     path_in_repo="submissions",
     repo_type="dataset",
     create_pr=True,
-    commit_message="Add Mux + <Model> submission",
-    commit_description="- Agent: Mux (Coder)\n- Model: <model>\n- <N> tasks × <K> attempts",
+    commit_message="Add Xum + <Model> submission",
+    commit_description="- Agent: Xum (Coder)\n- Model: <model>\n- <N> tasks × <K> attempts",
 )
 ```
 
@@ -272,8 +272,8 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 ## Files
 
 - `mux_agent.py`: Main agent adapter implementing Harbor's `BaseInstalledAgent` interface
-- `mux-run.sh`: Shell script that sets up environment and invokes mux CLI
-- `mux_payload.py`: Helper to package mux app for containerized execution
+- `mux-run.sh`: Shell script that sets up environment and invokes xum CLI
+- `mux_payload.py`: Helper to package xum app for containerized execution
 - `mux_setup.sh.j2`: Jinja2 template for agent installation script
 - `prepare_leaderboard_submission.py`: Script to prepare results for leaderboard submission
 - `analyze_failure_rates.py`: Analyze failure rates to find optimization opportunities
@@ -281,12 +281,12 @@ The PR will be automatically validated by the leaderboard bot. Once merged, resu
 
 ## Comparative Failure Analysis Workflow
 
-When investigating why Mux fails on a task more than other agents, consider this workflow:
+When investigating why Xum fails on a task more than other agents, consider this workflow:
 
 ### 1. Identify High-Priority Failures
 
 ```bash
-# Find tasks where Mux underperforms (high M/O ratio = Mux fails more than others)
+# Find tasks where Xum underperforms (high M/O ratio = Xum fails more than others)
 python benchmarks/terminal_bench/analyze_failure_rates.py --top 20
 ```
 
@@ -347,16 +347,16 @@ find .leaderboard_cache -path "*TASK_NAME*" -name "result.json" -exec sh -c '
 
 ## Analyzing Failure Rates
 
-To identify where Mux underperforms relative to other top agents, use the analysis script:
+To identify where Xum underperforms relative to other top agents, use the analysis script:
 
 ```bash
-# Run analysis (requires bq CLI for Mux results, git for leaderboard data)
+# Run analysis (requires bq CLI for Xum results, git for leaderboard data)
 python benchmarks/terminal_bench/analyze_failure_rates.py
 
 # Show more results
 python benchmarks/terminal_bench/analyze_failure_rates.py --top 50
 
-# Filter to specific Mux model
+# Filter to specific Xum model
 python benchmarks/terminal_bench/analyze_failure_rates.py --mux-model sonnet
 
 # Force refresh of cached data
@@ -369,10 +369,10 @@ python benchmarks/terminal_bench/analyze_failure_rates.py --json > opportunities
 The script computes the **M/O ratio** for each task:
 
 ```
-M/O ratio = Mux failure rate / Average failure rate of top 10 agents
+M/O ratio = Xum failure rate / Average failure rate of top 10 agents
 ```
 
-Tasks with **high M/O ratio** are where Mux underperforms relative to competitors—these represent the best optimization opportunities.
+Tasks with **high M/O ratio** are where Xum underperforms relative to competitors—these represent the best optimization opportunities.
 
 Example output:
 
@@ -380,7 +380,7 @@ Example output:
 ================================================================================
 OPTIMIZATION OPPORTUNITIES (sorted by M/O ratio)
 ================================================================================
-Task ID                                   Mux Fail%  Avg Other%  M/O Ratio Agent
+Task ID                                   Xum Fail%  Avg Other%  M/O Ratio Agent
 --------------------------------------------------------------------------------
 some-difficult-task                         100.0%       10.0%       9.09 Mux__Claude-Sonnet-4.5
 another-task                                 80.0%       20.0%       3.64 Mux__Claude-Sonnet-4.5
@@ -389,7 +389,7 @@ another-task                                 80.0%       20.0%       3.64 Mux__C
 ================================================================================
 SUMMARY
 ================================================================================
-Total tasks with Mux failures: 42
+Total tasks with Xum failures: 42
   High priority (M/O > 2.0):   12
   Medium priority (1.0 < M/O ≤ 2.0): 8
 ```

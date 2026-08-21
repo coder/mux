@@ -1,33 +1,15 @@
 /**
- * Tool Hook System
- *
- * Provides a mechanism for users to wrap tool executions with custom pre/post logic.
- * Hooks can be used for:
- * - Environment setup (direnv, nvm, virtualenv)
- * - Linting/type-checking after file edits
- * - Blocking dangerous operations
- * - Custom logging/metrics
- *
- * Hook Location:
- *   1. .mux/tool_hook (project-level, committed)
- *   2. ~/.xum/tool_hook (user-level, personal)
- *
- * Protocol:
- *   1. Hook receives XUM_TOOL, XUM_TOOL_INPUT, XUM_EXEC, etc. as env vars
- *   2. Hook runs pre-logic
- *   3. Hook prints $XUM_EXEC (the unique marker) to signal readiness
- *   4. Xum executes the tool, sends result JSON to hook's stdin
- *   5. Hook reads result, runs post-logic
- *   6. Hook exits (non-zero = failure fed back to LLM)
- *
- * Runtime Support:
- *   Hooks execute via the Runtime abstraction, so they work correctly for both
- *   local and SSH workspaces. For SSH, the hook file must exist on the remote machine.
+ * Runtime-backed project/user hooks for environment setup, policy, and validation.
+ * A hook prints its unique XUM_EXEC marker to receive the tool result on stdin;
+ * a non-zero exit reports failure to the model.
  */
 
 import * as crypto from "crypto";
 import * as path from "path";
-import { withLegacyMuxEnvironmentAliases } from "@/common/compat/legacyMux";
+import {
+  listProjectMetadataRelativePaths,
+  withLegacyMuxEnvironmentAliases,
+} from "@/common/compat/legacyMux";
 import { flattenToolHookValueToEnv } from "@/common/utils/tools/toolHookEnv";
 import type { Runtime } from "@/node/runtime/Runtime";
 import { log } from "@/node/services/log";
@@ -72,7 +54,7 @@ export function joinPathLike(basePath: string, ...parts: string[]): string {
 /**
  * User-global hooks/tool_env live in the runtime xum home, not a hardcoded ~/.mux.
  * Local `~/.xum` resolves through expandTilde → getXumHome(), so XUM_ROOT and a
- * leftover ~/.mux stay on one tree. Project-local files remain under `.mux/`.
+ * leftover ~/.mux stay on one tree. Project-local files prefer `.xum/` and fall back to `.mux/`.
  */
 async function getUserGlobalConfigPath(runtime: Runtime, filename: string): Promise<string | null> {
   try {
@@ -85,6 +67,18 @@ async function getUserGlobalConfigPath(runtime: Runtime, filename: string): Prom
     // resolvePath failed - skip user-level file
   }
   return null;
+}
+
+async function getProjectOrGlobalConfigPath(
+  runtime: Runtime,
+  projectDir: string,
+  filename: string
+): Promise<string | null> {
+  for (const relativePath of listProjectMetadataRelativePaths(filename)) {
+    const projectPath = joinPathLike(projectDir, relativePath);
+    if (await isFile(runtime, projectPath)) return projectPath;
+  }
+  return getUserGlobalConfigPath(runtime, filename);
 }
 
 function getToolInputValueForEnv(context: {
@@ -150,13 +144,7 @@ export interface HookResult {
  * expose mode bits. The hook will fail at execution time if not executable.
  */
 export async function getHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  // Check project-level hook first
-  const projectHook = joinPathLike(projectDir, ".mux", HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
-  }
-
-  return getUserGlobalConfigPath(runtime, HOOK_FILENAME);
+  return getProjectOrGlobalConfigPath(runtime, projectDir, HOOK_FILENAME);
 }
 
 /**
@@ -165,13 +153,7 @@ export async function getHookPath(runtime: Runtime, projectDir: string): Promise
  * Returns null if no tool_env exists.
  */
 export async function getToolEnvPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  // Check project-level tool_env first
-  const projectEnv = joinPathLike(projectDir, ".mux", TOOL_ENV_FILENAME);
-  if (await isFile(runtime, projectEnv)) {
-    return projectEnv;
-  }
-
-  return getUserGlobalConfigPath(runtime, TOOL_ENV_FILENAME);
+  return getProjectOrGlobalConfigPath(runtime, projectDir, TOOL_ENV_FILENAME);
 }
 
 /**
@@ -180,12 +162,7 @@ export async function getToolEnvPath(runtime: Runtime, projectDir: string): Prom
  * Returns null if no tool_pre exists.
  */
 export async function getPreHookPath(runtime: Runtime, projectDir: string): Promise<string | null> {
-  const projectHook = joinPathLike(projectDir, ".mux", PRE_HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
-  }
-
-  return getUserGlobalConfigPath(runtime, PRE_HOOK_FILENAME);
+  return getProjectOrGlobalConfigPath(runtime, projectDir, PRE_HOOK_FILENAME);
 }
 
 /**
@@ -197,12 +174,7 @@ export async function getPostHookPath(
   runtime: Runtime,
   projectDir: string
 ): Promise<string | null> {
-  const projectHook = joinPathLike(projectDir, ".mux", POST_HOOK_FILENAME);
-  if (await isFile(runtime, projectHook)) {
-    return projectHook;
-  }
-
-  return getUserGlobalConfigPath(runtime, POST_HOOK_FILENAME);
+  return getProjectOrGlobalConfigPath(runtime, projectDir, POST_HOOK_FILENAME);
 }
 
 // When probing hook files over SSH, avoid hanging on dead connections.

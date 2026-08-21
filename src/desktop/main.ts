@@ -804,7 +804,7 @@ async function loadServices(): Promise<void> {
         const host = configuredBindHost ?? "127.0.0.1";
 
         const serverInfo = await services.serverService.startServer({
-          muxHome: config.rootDir,
+          xumHome: config.rootDir,
           context: orpcContext,
           router: orpcRouter,
           authToken,

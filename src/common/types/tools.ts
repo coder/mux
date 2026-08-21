@@ -18,10 +18,10 @@ import type {
   BashToolResultSchema,
   FileEditInsertToolResultSchema,
   FileEditReplaceStringToolResultSchema,
-  MuxConfigReadToolResultSchema,
-  MuxConfigWriteToolResultSchema,
-  MuxAgentsReadToolResultSchema,
-  MuxAgentsWriteToolResultSchema,
+  XumConfigReadToolResultSchema,
+  XumConfigWriteToolResultSchema,
+  XumAgentsReadToolResultSchema,
+  XumAgentsWriteToolResultSchema,
   FileReadToolResultSchema,
   HeartbeatToolResultSchema,
   MemoryToolResultSchema,
@@ -159,20 +159,20 @@ export type MemoryToolResult = z.infer<typeof MemoryToolResultSchema>;
 // AttachFileToolResult derived from Zod schema (single source of truth)
 export type AttachFileToolResult = z.infer<typeof AttachFileToolResultSchema>;
 
-// mux_config_read tool types
-export type MuxConfigReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_read.schema>;
-export type MuxConfigReadToolResult = z.infer<typeof MuxConfigReadToolResultSchema>;
+// xum_config_read tool types
+export type XumConfigReadToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_read.schema>;
+export type XumConfigReadToolResult = z.infer<typeof XumConfigReadToolResultSchema>;
 
-// mux_config_write tool types
-export type MuxConfigWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_write.schema>;
-export type MuxConfigWriteToolResult = z.infer<typeof MuxConfigWriteToolResultSchema>;
+// xum_config_write tool types
+export type XumConfigWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_config_write.schema>;
+export type XumConfigWriteToolResult = z.infer<typeof XumConfigWriteToolResultSchema>;
 
-// mux_agents_read tool types
-export type MuxAgentsReadToolResult = z.infer<typeof MuxAgentsReadToolResultSchema>;
+// xum_agents_read tool types
+export type XumAgentsReadToolResult = z.infer<typeof XumAgentsReadToolResultSchema>;
 
-// mux_agents_write tool types
-export type MuxAgentsWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_agents_write.schema>;
-export type MuxAgentsWriteToolResult = z.infer<typeof MuxAgentsWriteToolResultSchema>;
+// xum_agents_write tool types
+export type XumAgentsWriteToolArgs = z.infer<typeof TOOL_DEFINITIONS.mux_agents_write.schema>;
+export type XumAgentsWriteToolResult = z.infer<typeof XumAgentsWriteToolResultSchema>;
 
 export interface FileEditDiffSuccessBase extends ToolOutputUiOnlyFields {
   success: true;

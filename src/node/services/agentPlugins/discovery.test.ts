@@ -324,6 +324,23 @@ describe("discoverAgentPlugins", () => {
     expect(result.diagnostics).toEqual([]);
   });
 
+  test("canonical project plugins suppress same-named legacy copies", async () => {
+    using tmp = new DisposableTempDir("agent-plugins-precedence");
+    const canonical = path.join(tmp.path, ".xum", "plugins");
+    const legacy = path.join(tmp.path, ".mux", "plugins");
+    await writePlugin(canonical, "shared-plugin", { skills: ["canonical-skill"] });
+    await writePlugin(legacy, "shared-plugin", { skills: ["legacy-skill"] });
+    await writePlugin(legacy, "legacy-only");
+
+    const result = await discoverAgentPlugins([
+      { path: canonical, scope: "project" },
+      { path: legacy, scope: "project" },
+    ]);
+
+    expect(result.plugins.map((plugin) => plugin.name)).toEqual(["shared-plugin", "legacy-only"]);
+    expect(result.plugins[0]?.containerPath).toBe(canonical);
+  });
+
   test("missing containers yield no plugins and no diagnostics", async () => {
     using tmp = new DisposableTempDir("agent-plugins");
     const result = await discoverAgentPlugins([
@@ -424,33 +441,34 @@ describe("journalDerivedDiscoveryGate", () => {
 describe("computeAgentPluginContainers", () => {
   test("includes project containers only for trusted projects with absolute roots", () => {
     const trusted = computeAgentPluginContainers({
-      muxHome: "/home/u/.mux",
+      xumHome: "/home/u/.mux",
       projectRoot: "/repo",
       projectTrusted: true,
     });
     expect(trusted.filter((c) => c.scope === "project").map((c) => c.path)).toEqual([
+      path.join("/repo", ".xum", "plugins"),
       path.join("/repo", ".mux", "plugins"),
       path.join("/repo", ".agents", "plugins"),
     ]);
 
     const untrusted = computeAgentPluginContainers({
-      muxHome: "/home/u/.mux",
+      xumHome: "/home/u/.mux",
       projectRoot: "/repo",
       projectTrusted: false,
     });
     expect(untrusted.every((c) => c.scope === "global")).toBe(true);
 
     const relative = computeAgentPluginContainers({
-      muxHome: "/home/u/.mux",
+      xumHome: "/home/u/.mux",
       projectRoot: "repo",
       projectTrusted: true,
     });
     expect(relative.every((c) => c.scope === "global")).toBe(true);
   });
 
-  test("always includes the muxHome global container", () => {
+  test("always includes the xumHome global container", () => {
     const containers = computeAgentPluginContainers({
-      muxHome: "/home/u/.mux",
+      xumHome: "/home/u/.mux",
       projectTrusted: false,
     });
     expect(containers.some((c) => c.path === path.join("/home/u/.mux", "plugins"))).toBe(true);

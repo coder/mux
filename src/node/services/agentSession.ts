@@ -4385,21 +4385,28 @@ export class AgentSession {
         source?: "idle-compaction" | "auto-compaction";
       }
     | undefined {
+    const streamIsCompaction = isCompactionRequestMetadata(options?.muxMetadata);
+
     for (let index = history.length - 1; index >= 0; index -= 1) {
       const message = history[index];
       if (message.role !== "user") {
         continue;
       }
       const muxMetadata = message.metadata?.muxMetadata;
-      if (!isCompactionRequestMetadata(muxMetadata)) {
+      if (isCompactionRequestMetadata(muxMetadata)) {
+        return {
+          id: message.id,
+          modelString,
+          options,
+          source: muxMetadata.source,
+        };
+      }
+
+      // Snapshot rows can follow a synthetic compaction request before stream startup.
+      // Skip only those rows when the current send options identify this stream as compaction.
+      if (!streamIsCompaction || message.metadata?.synthetic !== true) {
         return undefined;
       }
-      return {
-        id: message.id,
-        modelString,
-        options,
-        source: muxMetadata.source,
-      };
     }
     return undefined;
   }
@@ -5157,7 +5164,10 @@ export class AgentSession {
         });
         this.clearLiveUsageState();
 
-        const handled = await this.compactionHandler.handleCompletion(streamEndPayload);
+        const handled = await this.compactionHandler.handleCompletion(
+          streamEndPayload,
+          completedCompactionRequest?.id
+        );
 
         await this.recordGoalAccountingFromUsage({
           model: streamEndPayload.metadata.model,
@@ -6617,17 +6627,17 @@ export class AgentSession {
         // skill tools so subprojects inherit checkout-level skills and plugins
         // across host-local and runtime-backed workspaces. disableWorkspaceAgents
         // keeps default projectPath discovery.
-        const muxScope =
+        const xumScope =
           !disableWorkspaceAgents &&
-          typeof this.aiService.resolveMuxToolScopeForWorkspace === "function"
-            ? this.aiService.resolveMuxToolScopeForWorkspace(metadata, runtime, workspacePath)
+          typeof this.aiService.resolveXumToolScopeForWorkspace === "function"
+            ? this.aiService.resolveXumToolScopeForWorkspace(metadata, runtime, workspacePath)
             : null;
         const skillCtx =
-          muxScope?.type === "project"
+          xumScope?.type === "project"
             ? resolveSkillStorageContext({
                 runtime,
                 workspacePath: skillDiscoveryPath,
-                muxScope,
+                xumScope,
                 includeClaudeSkills,
                 includeAgentPlugins,
               })
@@ -6764,7 +6774,7 @@ export class AgentSession {
         // this path — so each execution traces to a deliberate user action on a skill
         // they chose, the same trust level as the user running the command themselves.
         // Commands run non-interactively (no stdin) in the workspace directory with
-        // the runtime's default environment; the bash tool's `.mux/tool_env` sourcing
+        // the runtime's default environment; the bash tool's `.xum/tool_env` sourcing
         // lives behind hook/trust plumbing that is not reachable here, and directive
         // commands should not depend on tool-specific env anyway.
         execute: async (command) => {

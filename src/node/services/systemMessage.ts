@@ -229,7 +229,7 @@ function buildMCPContext(mcpServers: MCPServerMap): string {
 
   return `
 <mcp>
-MCP (Model Context Protocol) servers provide additional tools. Configured globally in ~/.xum/mcp.jsonc, with optional repo overrides in ./.mux/mcp.jsonc:
+MCP (Model Context Protocol) servers provide additional tools. Configured globally in ~/.xum/mcp.jsonc, with optional repo overrides in ./.xum/mcp.jsonc:
 
 ${serverList}
 
@@ -240,8 +240,8 @@ Manage servers in Settings → MCP.
 // #endregion SYSTEM_PROMPT_DOCS
 
 /**
- * Get the system directory where global mux configuration lives.
- * Users can place global AGENTS.md and .mux/PLAN.md files here.
+ * Get the system directory where global Xum configuration lives.
+ * Users can place global AGENTS.md and PLAN.md files here.
  */
 function getSystemDirectory(): string {
   return getXumHome();
@@ -498,8 +498,8 @@ export async function loadInstructionSources(
  * Synthesize instruction sets from `customInstructions` persisted per project
  * in `~/.xum/config.json` (Settings → Instructions). Flowing them through
  * `InstructionSources` keeps the right-sidebar Instructions tab and the prompt
- * builder in lockstep, and `muxOnly: true` gives scoped Model:/Mode:/Tool:
- * directives the same semantics as `.mux/AGENTS.md` (config.json is
+ * builder in lockstep, and `xumOnly: true` gives scoped Model:/Mode:/Tool:
+ * directives the same semantics as `.xum/AGENTS.md` (config.json is
  * Xum-dedicated by construction).
  */
 function buildProjectSettingsInstructionSets(
@@ -528,7 +528,7 @@ function buildProjectSettingsInstructionSets(
           path: `${configPath}#${normalizedPath}`,
           filename: "Project instructions",
           isLocal: false,
-          muxOnly: true,
+          xumOnly: true,
           scope: INSTRUCTION_SCOPE.PROJECT,
           projectName: project.projectName,
           content,
@@ -546,12 +546,12 @@ function buildProjectSettingsInstructionSets(
  *
  * Instruction layers:
  * 1. Global: ~/.xum/AGENTS.md (always included; Xum-dedicated)
- * 2. Context: workspace/AGENTS.md (+ workspace/.mux/AGENTS.md) plus project repo instructions
+ * 2. Context: workspace/AGENTS.md (+ workspace/.xum/AGENTS.md) plus project repo instructions
  *    for multi-project workspaces, or workspace/AGENTS.md OR project/AGENTS.md for
  *    single-project workspaces, plus per-project `customInstructions` from
  *    ~/.xum/config.json when options.projectConfigs is provided
  * 3. Model: Extracts "Model: <regex>" sections from Xum-dedicated sources only
- *    (agent definition → .mux/AGENTS.md context files → ~/.xum/AGENTS.md), if modelString provided
+ *    (agent definition → .xum/AGENTS.md context files → ~/.xum/AGENTS.md), if modelString provided
  * 4. Mode: Extracts "Mode: <mode>" sections from the same Xum-dedicated sources for every
  *    options.modes candidate (effective mode + agent id). Shared AGENTS.md files never contribute
  *    Model:/Mode: sections — non-Xum agents read those files too, so the headings stay ordinary
@@ -636,7 +636,7 @@ export async function buildSystemMessage(
     workspaceRootPath,
     options?.projectConfigs
   );
-  // Xum-dedicated per-file contents (<dir>/.mux/AGENTS.md context files, then
+  // Xum-dedicated per-file contents (<dir>/.xum/AGENTS.md context files, then
   // the global ~/.xum/AGENTS.md set, which is Xum-dedicated by construction).
   // Scoped Model:/Mode: directives are honored ONLY in Xum-dedicated sources
   // so a "Model: …" heading in a shared AGENTS.md (read by non-Xum agents too)
@@ -675,7 +675,7 @@ export async function buildSystemMessage(
   const sanitizeSet = (set: InstructionSet | null): string | undefined => {
     if (!set) return undefined;
     const parts = set.files
-      .map((file) => sanitizeScopedInstructions(file.content, file.muxOnly ? "mux" : "shared"))
+      .map((file) => sanitizeScopedInstructions(file.content, file.xumOnly ? "mux" : "shared"))
       .filter((value): value is string => Boolean(value));
     return parts.length > 0 ? parts.join("\n\n") : undefined;
   };
@@ -686,12 +686,12 @@ export async function buildSystemMessage(
   const customInstructions = customInstructionSources.join("\n\n");
 
   // Scoped directive sources in priority order: agent definition → workspace
-  // .mux/AGENTS.md files → global ~/.xum/AGENTS.md. All matches are joined.
-  const muxScopedSources = [...agentPromptSections, ...muxContextContents, ...muxGlobalContents];
+  // .xum/AGENTS.md files → global ~/.xum/AGENTS.md. All matches are joined.
+  const xumScopedSources = [...agentPromptSections, ...muxContextContents, ...muxGlobalContents];
 
   // Extract model-specific section based on active model identifier
   const modelContent = modelString
-    ? muxScopedSources
+    ? xumScopedSources
         .map((src) => (src ? extractModelSection(src, modelString) : null))
         .filter((content): content is string => content != null && content.trim().length > 0)
         .join("\n\n")
@@ -702,7 +702,7 @@ export async function buildSystemMessage(
   // source before moving to the next source.
   const modeContent =
     modeCandidates.length > 0
-      ? muxScopedSources
+      ? xumScopedSources
           .flatMap((src) =>
             src ? modeCandidates.map((candidate) => extractModeSection(src, candidate)) : []
           )

@@ -66,7 +66,7 @@ const HEADLESS_REASONING_AGENT_IDS = new Set(["dream", "name_workspace"]);
 function getAgentDefinitionPath(agent: AgentDefinitionDescriptor): string | null {
   switch (agent.scope) {
     case "project":
-      return `.mux/agents/${agent.id}.md`;
+      return `.xum/agents/${agent.id}.md`;
     case "global":
       return `~/.xum/agents/${agent.id}.md`;
     default:

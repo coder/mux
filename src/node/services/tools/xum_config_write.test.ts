@@ -6,9 +6,9 @@ import type { ToolExecutionOptions } from "ai";
 import * as jsonc from "jsonc-parser";
 
 const GLOBAL_WORKSPACE_ID = "workspace-global";
-import type { MuxToolScope } from "@/common/types/toolScope";
+import type { XumToolScope } from "@/common/types/toolScope";
 
-import { createMuxConfigWriteTool } from "./mux_config_write";
+import { createXumConfigWriteTool } from "./xum_config_write";
 import { TestTempDir, createTestToolConfig } from "./testHelpers";
 
 const mockToolCallOptions: ToolExecutionOptions<unknown> = {
@@ -17,50 +17,50 @@ const mockToolCallOptions: ToolExecutionOptions<unknown> = {
   context: undefined,
 };
 
-interface MuxConfigWriteValidationIssue {
+interface XumConfigWriteValidationIssue {
   path: Array<string | number>;
   message: string;
 }
 
-interface MuxConfigWriteSuccess {
+interface XumConfigWriteSuccess {
   success: true;
   file: "providers" | "config";
   appliedOps: number;
   summary: string;
 }
 
-interface MuxConfigWriteError {
+interface XumConfigWriteError {
   success: false;
   error: string;
-  validationIssues?: MuxConfigWriteValidationIssue[];
+  validationIssues?: XumConfigWriteValidationIssue[];
 }
 
-type MuxConfigWriteResult = MuxConfigWriteSuccess | MuxConfigWriteError;
+type XumConfigWriteResult = XumConfigWriteSuccess | XumConfigWriteError;
 
 async function createWriteTool(
-  muxHomeDir: string,
+  xumHomeDir: string,
   workspaceId: string,
   onConfigChanged?: () => void,
-  muxScope: MuxToolScope = { type: "global", muxHome: muxHomeDir }
+  xumScope: XumToolScope = { type: "global", xumHome: xumHomeDir }
 ) {
-  const workspaceSessionDir = path.join(muxHomeDir, "sessions", workspaceId);
+  const workspaceSessionDir = path.join(xumHomeDir, "sessions", workspaceId);
   await fs.mkdir(workspaceSessionDir, { recursive: true });
 
-  const config = createTestToolConfig(muxHomeDir, {
+  const config = createTestToolConfig(xumHomeDir, {
     workspaceId,
     sessionsDir: workspaceSessionDir,
-    muxScope,
+    xumScope,
   });
   config.onConfigChanged = onConfigChanged;
 
-  return createMuxConfigWriteTool(config);
+  return createXumConfigWriteTool(config);
 }
 
 describe("mux_config_write", () => {
   it("enforces explicit confirm gate", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -68,7 +68,7 @@ describe("mux_config_write", () => {
         confirm: false,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -77,10 +77,10 @@ describe("mux_config_write", () => {
   });
 
   it("writes valid providers mutations (anthropic, openrouter, bedrock)", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
     let onConfigChangedCalls = 0;
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID, () => {
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID, () => {
       onConfigChangedCalls += 1;
     });
 
@@ -99,7 +99,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -107,7 +107,7 @@ describe("mux_config_write", () => {
     }
     expect(onConfigChangedCalls).toBe(1);
 
-    const rawProviders = await fs.readFile(path.join(muxHome.path, "providers.jsonc"), "utf-8");
+    const rawProviders = await fs.readFile(path.join(xumHome.path, "providers.jsonc"), "utf-8");
     const providersDocument: unknown = jsonc.parse(rawProviders);
 
     expect(providersDocument).toMatchObject({
@@ -128,9 +128,9 @@ describe("mux_config_write", () => {
   });
 
   it("writes valid app config mutations (defaultModel, hiddenModels, taskSettings)", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -143,7 +143,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -151,7 +151,7 @@ describe("mux_config_write", () => {
     }
 
     const configDocument = JSON.parse(
-      await fs.readFile(path.join(muxHome.path, "config.json"), "utf-8")
+      await fs.readFile(path.join(xumHome.path, "config.json"), "utf-8")
     ) as {
       defaultModel?: string;
       hiddenModels?: string[];
@@ -167,9 +167,9 @@ describe("mux_config_write", () => {
   });
 
   it("preserves unknown nested fields when mutating unrelated key", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const configPath = path.join(muxHome.path, "config.json");
+    const configPath = path.join(xumHome.path, "config.json");
     await fs.writeFile(
       configPath,
       JSON.stringify(
@@ -194,7 +194,7 @@ describe("mux_config_write", () => {
       "utf-8"
     );
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -202,7 +202,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -241,13 +241,13 @@ describe("mux_config_write", () => {
   });
 
   it("returns validation issues and does not write when schema validation fails", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const configPath = path.join(muxHome.path, "config.json");
+    const configPath = path.join(xumHome.path, "config.json");
     const initialDocument = JSON.stringify({ defaultModel: "openai:gpt-4o" }, null, 2);
     await fs.writeFile(configPath, initialDocument, "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -255,7 +255,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -272,10 +272,10 @@ describe("mux_config_write", () => {
   });
 
   it("rejects prototype pollution paths", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const providersPath = path.join(muxHome.path, "providers.jsonc");
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const providersPath = path.join(xumHome.path, "providers.jsonc");
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -283,7 +283,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -301,13 +301,13 @@ describe("mux_config_write", () => {
   });
 
   it("rejects operations containing redaction sentinel values", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    const providersPath = path.join(xumHome.path, "providers.jsonc");
     const initialProviders = JSON.stringify({ anthropic: { apiKey: "sk-real-key" } }, null, 2);
     await fs.writeFile(providersPath, initialProviders, "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -315,7 +315,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -328,9 +328,9 @@ describe("mux_config_write", () => {
   });
 
   it("rejects nested redaction sentinel values in object payloads", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -344,7 +344,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -353,10 +353,10 @@ describe("mux_config_write", () => {
   });
 
   it("can repair a pre-existing invalid config field", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
     // Seed config with an out-of-range value that would fail schema validation on read
-    const configPath = path.join(muxHome.path, "config.json");
+    const configPath = path.join(xumHome.path, "config.json");
     await fs.writeFile(
       configPath,
       JSON.stringify(
@@ -370,7 +370,7 @@ describe("mux_config_write", () => {
       "utf-8"
     );
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -378,7 +378,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -395,12 +395,12 @@ describe("mux_config_write", () => {
   });
 
   it("repairs primitive config.json root during write", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const configPath = path.join(muxHome.path, "config.json");
+    const configPath = path.join(xumHome.path, "config.json");
     await fs.writeFile(configPath, JSON.stringify("oops"), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -408,7 +408,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -422,12 +422,12 @@ describe("mux_config_write", () => {
   });
 
   it("repairs primitive providers.jsonc root during write", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    const providersPath = path.join(xumHome.path, "providers.jsonc");
     await fs.writeFile(providersPath, "42", "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -435,7 +435,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -449,12 +449,12 @@ describe("mux_config_write", () => {
   });
 
   it("repairs array config.json root during write", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const configPath = path.join(muxHome.path, "config.json");
+    const configPath = path.join(xumHome.path, "config.json");
     await fs.writeFile(configPath, JSON.stringify([]), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -462,7 +462,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -476,12 +476,12 @@ describe("mux_config_write", () => {
   });
 
   it("repairs array providers.jsonc root during write", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const providersPath = path.join(muxHome.path, "providers.jsonc");
+    const providersPath = path.join(xumHome.path, "providers.jsonc");
     await fs.writeFile(providersPath, JSON.stringify([]), "utf-8");
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -489,7 +489,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(true);
     if (result.success) {
@@ -503,17 +503,17 @@ describe("mux_config_write", () => {
   });
 
   it("rejects writes to symlinked config.json target", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
     // Create an external file that should NOT be modified
-    const externalTarget = path.join(muxHome.path, "external-config.json");
+    const externalTarget = path.join(xumHome.path, "external-config.json");
     const originalContent = JSON.stringify({ untouched: true }, null, 2);
     await fs.writeFile(externalTarget, originalContent, "utf-8");
 
     // Symlink config.json → external target
-    await fs.symlink(externalTarget, path.join(muxHome.path, "config.json"));
+    await fs.symlink(externalTarget, path.join(xumHome.path, "config.json"));
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "config",
@@ -521,7 +521,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {
@@ -533,15 +533,15 @@ describe("mux_config_write", () => {
   });
 
   it("rejects writes to symlinked providers.jsonc target", async () => {
-    using muxHome = new TestTempDir("mux-config-write");
+    using xumHome = new TestTempDir("mux-config-write");
 
-    const externalTarget = path.join(muxHome.path, "external-providers.jsonc");
+    const externalTarget = path.join(xumHome.path, "external-providers.jsonc");
     const originalContent = JSON.stringify({}, null, 2);
     await fs.writeFile(externalTarget, originalContent, "utf-8");
 
-    await fs.symlink(externalTarget, path.join(muxHome.path, "providers.jsonc"));
+    await fs.symlink(externalTarget, path.join(xumHome.path, "providers.jsonc"));
 
-    const tool = await createWriteTool(muxHome.path, GLOBAL_WORKSPACE_ID);
+    const tool = await createWriteTool(xumHome.path, GLOBAL_WORKSPACE_ID);
     const result = (await tool.execute!(
       {
         file: "providers",
@@ -549,7 +549,7 @@ describe("mux_config_write", () => {
         confirm: true,
       },
       mockToolCallOptions
-    )) as MuxConfigWriteResult;
+    )) as XumConfigWriteResult;
 
     expect(result.success).toBe(false);
     if (!result.success) {

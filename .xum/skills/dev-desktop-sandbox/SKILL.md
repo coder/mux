@@ -1,6 +1,6 @@
 ---
 name: dev-desktop-sandbox
-description: Run isolated mux desktop (Electron) instances (temp XUM_ROOT + free ports)
+description: Run isolated xum desktop (Electron) instances (temp XUM_ROOT + free ports)
 ---
 
 # Desktop (Electron) sandbox instances
@@ -23,7 +23,7 @@ make dev-desktop-sandbox
   - `config.json` (project list)
   - Each file is seeded independently from the first root that has it
     (`$XUM_ROOT`, then leftover `$MUX_ROOT`, then `~/.xum[-dev]`, then
-    leftover `~/.mux[-dev]` / `.cmux`), so a root with only `config.json`
+    leftover `~/.mux[-dev]` / `~/.cmux`), so a root with only `config.json`
     doesn't drop provider config
 - Provider credential env vars are stripped from the child processes' env when
   they could silently override or mismatch the intended setup: all of them with
@@ -49,7 +49,7 @@ make dev-desktop-sandbox
 
 ## Agent usage with `bash.monitor`
 
-When launching an Electron sandbox for dogfooding, prefer a monitored background bash so Mux wakes the workspace on Vite/Electron readiness or startup failures without manual polling.
+When launching an Electron sandbox for dogfooding, prefer a monitored background bash so Xum wakes the workspace on Vite/Electron readiness or startup failures without manual polling.
 
 ```ts
 bash({
@@ -79,7 +79,7 @@ make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-providers"
 # Clear projects from config.json (preserves other config)
 make dev-desktop-sandbox DEV_DESKTOP_SANDBOX_ARGS="--clean-projects"
 
-# Use a specific root to seed from (default: per-file from $XUM_ROOT, leftover $MUX_ROOT, ~/.xum[-dev], leftover ~/.mux[-dev]/.cmux)
+# Use a specific root to seed from (default: per-file from $XUM_ROOT, leftover $MUX_ROOT, ~/.xum[-dev], leftover ~/.mux[-dev] / ~/.cmux)
 SEED_XUM_ROOT=~/.xum-dev make dev-desktop-sandbox
 
 # Keep the sandbox root directory after exit (useful for debugging)

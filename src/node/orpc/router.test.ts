@@ -104,9 +104,9 @@ describe("router agent skill routes", () => {
         config: new Config(tempDir),
         aiService: {
           waitForInit: mock(async () => undefined),
-          resolveMuxToolScopeForWorkspace: mock(() => ({
+          resolveXumToolScopeForWorkspace: mock(() => ({
             type: "project",
-            muxHome: tempDir,
+            xumHome: tempDir,
             projectRoot: subProjectPath,
             projectStorageAuthority: "host-local",
             checkoutRoot,
@@ -172,9 +172,9 @@ describe("router agent skill routes", () => {
         config: new Config(tempDir),
         aiService: {
           waitForInit: mock(async () => undefined),
-          resolveMuxToolScopeForWorkspace: mock(() => ({
+          resolveXumToolScopeForWorkspace: mock(() => ({
             type: "project",
-            muxHome: tempDir,
+            xumHome: tempDir,
             projectRoot: subProjectPath,
             projectStorageAuthority: "host-local",
             checkoutRoot,
@@ -333,9 +333,9 @@ describe("router workflow routes", () => {
       config,
       aiService: {
         waitForInit: mock(async () => undefined),
-        resolveMuxToolScopeForWorkspace: mock((_metadata, _runtime, executionPath) => ({
+        resolveXumToolScopeForWorkspace: mock((_metadata, _runtime, executionPath) => ({
           type: "project",
-          muxHome: tempDir,
+          xumHome: tempDir,
           projectRoot: executionPath,
           projectStorageAuthority: "host-local",
           checkoutRoot: workspacePath,

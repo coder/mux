@@ -105,7 +105,7 @@ function removeSectionsByHeading(markdown: string, headingMatcher: HeadingMatche
  * definitions and Xum instruction files) — never in shared AGENTS.md files.
  *
  * All matching sections are joined in source order so a concatenated
- * multi-file blob (e.g. parent + sub-project .mux/AGENTS.md) keeps every
+ * multi-file blob (e.g. parent + sub-project .xum/AGENTS.md) keeps every
  * file's mode guidance.
  */
 export function extractModeSection(markdown: string, mode: string): string | null {
@@ -183,7 +183,7 @@ export function extractToolSection(markdown: string, toolName: string): string |
 /**
  * Kind of instruction source for scoped-section handling:
  * - "mux": Xum-dedicated sources (agent definitions, `~/.xum/AGENTS.md`,
- *   `<dir>/.mux/AGENTS.md`). All scoped directives (`Model:`, `Mode:`, `Tool:`)
+ *   `<dir>/.xum/AGENTS.md`). All scoped directives (`Model:`, `Mode:`, `Tool:`)
  *   are honored and therefore stripped from the plain instruction text.
  * - "shared": shared AGENTS.md/AGENT.md/CLAUDE.md files read by non-Xum agents
  *   too. Only `Tool:` sections are honored/stripped; `Model:`/`Mode:` headings
