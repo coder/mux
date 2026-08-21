@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeAgentAiDefaults } from "./agentAiDefaults";
-import { normalizeSubagentAiDefaults } from "./tasks";
 
 describe("normalizeAgentAiDefaults reasoningMode", () => {
   test("keeps an entry that only sets reasoningMode", () => {
@@ -22,14 +21,56 @@ describe("normalizeAgentAiDefaults reasoningMode", () => {
   });
 });
 
-describe("normalizeSubagentAiDefaults reasoningMode", () => {
-  test("keeps an entry that only sets reasoningMode", () => {
-    const result = normalizeSubagentAiDefaults({ explore: { reasoningMode: "pro" } });
-    expect(result.explore?.reasoningMode).toBe("pro");
+describe("normalizeAgentAiDefaults nested subagent profiles", () => {
+  test("keeps a nested profile that only sets reasoningMode", () => {
+    const result = normalizeAgentAiDefaults({
+      explore: { subagent: { reasoningMode: "pro" } },
+    });
+    expect(result.explore?.subagent?.reasoningMode).toBe("pro");
   });
 
-  test("drops an invalid reasoningMode and the then-empty entry", () => {
-    const result = normalizeSubagentAiDefaults({ explore: { reasoningMode: "ultra" } });
+  test("drops an invalid nested reasoningMode and the then-empty entry", () => {
+    const result = normalizeAgentAiDefaults({
+      explore: { subagent: { reasoningMode: "ultra" } },
+    });
     expect(result.explore).toBeUndefined();
+  });
+
+  test("prunes nested fields equal to the base entry", () => {
+    const result = normalizeAgentAiDefaults({
+      exec: {
+        modelString: "openai:gpt-5.6-sol",
+        thinkingLevel: "high",
+        subagent: {
+          modelString: "openai:gpt-5.6-sol",
+          thinkingLevel: "xhigh",
+        },
+      },
+    });
+
+    expect(result.exec).toEqual({
+      modelString: "openai:gpt-5.6-sol",
+      thinkingLevel: "high",
+      subagent: { thinkingLevel: "xhigh" },
+    });
+  });
+
+  test("drops an empty nested subagent object", () => {
+    const result = normalizeAgentAiDefaults({
+      exec: { modelString: "openai:gpt-5.6-sol", subagent: {} },
+    });
+
+    expect(result.exec).toEqual({ modelString: "openai:gpt-5.6-sol" });
+  });
+
+  test("coerces invalid nested values away", () => {
+    const result = normalizeAgentAiDefaults({
+      exec: {
+        enabled: true,
+        subagent: { modelString: "   ", thinkingLevel: "invalid", reasoningMode: "ultra" },
+      },
+    });
+
+    expect(result.exec).toEqual({ enabled: true });
   });
 });

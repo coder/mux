@@ -19,6 +19,17 @@ export type { UserPreferences } from "./userPreferences";
 export { TaskSettingsSchema } from "./taskSettings";
 export type { TaskSettings } from "./taskSettings";
 
+/**
+ * Sparse delegated-run (sub-agent) override profile nested under an agent's
+ * canonical defaults entry. Missing fields inherit field-wise from the base
+ * (interactive) profile and lower precedence tiers.
+ */
+export const AgentAiSubagentProfileSchema = z.object({
+  modelString: z.string().optional(),
+  thinkingLevel: ThinkingLevelSchema.optional(),
+  reasoningMode: OpenAIReasoningModeSchema.optional(),
+});
+
 export const AgentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
@@ -27,10 +38,17 @@ export const AgentAiDefaultsEntrySchema = z.object({
   reasoningMode: OpenAIReasoningModeSchema.optional(),
   enabled: z.boolean().optional(),
   advisorEnabled: z.boolean().optional(),
+  subagent: AgentAiSubagentProfileSchema.optional(),
 });
 
 export const AgentAiDefaultsSchema = z.record(AgentIdSchema, AgentAiDefaultsEntrySchema);
 
+/**
+ * Legacy root map retained only as a one-way disk projection for downgrade
+ * compatibility: older builds read/write this map instead of the nested
+ * `subagent` profile. Current runtime code must never consume it outside the
+ * config load/serialization boundary.
+ */
 export const SubagentAiDefaultsEntrySchema = z.object({
   modelString: z.string().optional(),
   thinkingLevel: ThinkingLevelSchema.optional(),
@@ -77,6 +95,11 @@ export const ModelFallbacksSchema = z.record(z.string(), ModelFallbackEntrySchem
 
 export const AppConfigMigrationsSchema = z
   .object({
+    /**
+     * No longer consulted at load (legacy subagentAiDefaults now folds into the
+     * nested `subagent` profile); still written on save so downgraded builds do
+     * not re-run their exec split migration.
+     */
     execSubagentDefaultsSplit: z.boolean().optional(),
     userPreferencesInitialized: z.boolean().optional(),
     /** One-time seed of DEFAULT_MODEL_FALLBACKS; not re-applied while true. */
@@ -171,6 +194,7 @@ export const AppConfigOnDiskSchema = z
   .passthrough();
 
 export type AppConfigMigrations = z.infer<typeof AppConfigMigrationsSchema>;
+export type AgentAiSubagentProfile = z.infer<typeof AgentAiSubagentProfileSchema>;
 export type AgentAiDefaultsEntry = z.infer<typeof AgentAiDefaultsEntrySchema>;
 export type AgentAiDefaults = z.infer<typeof AgentAiDefaultsSchema>;
 export type SubagentAiDefaultsEntry = z.infer<typeof SubagentAiDefaultsEntrySchema>;

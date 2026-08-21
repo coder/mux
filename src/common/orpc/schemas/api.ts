@@ -123,7 +123,6 @@ import { PolicyGetResponseSchema } from "./policy";
 import {
   AgentAiDefaultsSchema,
   ModelFallbacksSchema,
-  SubagentAiDefaultsSchema,
   UpdateChannelSchema,
 } from "../../config/schemas/appConfigOnDisk";
 import {
@@ -2322,8 +2321,6 @@ export const config = {
       runtimeEnablement: z.record(z.string(), z.boolean()),
       defaultRuntime: z.string().nullable(),
       agentAiDefaults: AgentAiDefaultsSchema,
-      // Legacy fields (downgrade compatibility)
-      subagentAiDefaults: SubagentAiDefaultsSchema,
       // Shux Governor enrollment status (safe fields only - token never exposed)
       muxGovernorUrl: z.string().nullable(),
       muxGovernorEnrolled: z.boolean(),
@@ -2343,8 +2340,6 @@ export const config = {
       advisorMaxUsesPerTurn: AdvisorMaxUsesPerTurnSchema.nullish(),
       advisorMaxOutputTokens: AdvisorMaxOutputTokensSchema.nullish(),
       agentAiDefaults: AgentAiDefaultsSchema.optional(),
-      // Legacy field (downgrade compatibility)
-      subagentAiDefaults: SubagentAiDefaultsSchema.optional(),
     }),
     output: z.void(),
   },

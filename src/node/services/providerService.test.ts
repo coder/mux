@@ -1389,12 +1389,22 @@ describe("ProviderService custom provider mutations", () => {
                 advisorEnabled: true,
               },
               plan: { modelString: "openai:gpt-5", thinkingLevel: "medium" },
-              review: { modelString: `${provider}:review-agent`, thinkingLevel: "low" },
-              explore: { modelString: "other-custom:model", thinkingLevel: "medium" },
-            },
-            subagentAiDefaults: {
-              review: { modelString: `${provider}:review-agent`, thinkingLevel: "low" },
-              explore: { modelString: "other-custom:model", thinkingLevel: "medium" },
+              review: {
+                modelString: `${provider}:review-agent`,
+                thinkingLevel: "medium",
+                subagent: {
+                  modelString: `${provider}:review-subagent`,
+                  thinkingLevel: "low",
+                },
+              },
+              explore: {
+                modelString: "other-custom:model",
+                thinkingLevel: "high",
+                subagent: {
+                  modelString: "other-custom:subagent",
+                  thinkingLevel: "medium",
+                },
+              },
             },
           },
           null,
@@ -1429,10 +1439,17 @@ describe("ProviderService custom provider mutations", () => {
         modelString: "openai:gpt-5",
         thinkingLevel: "medium",
       });
-      expect(appConfig.subagentAiDefaults?.review).toEqual({ thinkingLevel: "low" });
-      expect(appConfig.subagentAiDefaults?.explore).toEqual({
-        modelString: "other-custom:model",
+      expect(appConfig.agentAiDefaults?.review).toEqual({
         thinkingLevel: "medium",
+        subagent: { thinkingLevel: "low" },
+      });
+      expect(appConfig.agentAiDefaults?.explore).toEqual({
+        modelString: "other-custom:model",
+        thinkingLevel: "high",
+        subagent: {
+          modelString: "other-custom:subagent",
+          thinkingLevel: "medium",
+        },
       });
 
       const project = appConfig.projects.get("/tmp/project");

@@ -1837,7 +1837,7 @@ export class TaskService {
     baseChainAgentIds?: readonly string[];
   }): OpenAIReasoningMode | undefined {
     const ownMode = coerceOpenAIReasoningMode(
-      params.cfg.subagentAiDefaults?.[params.agentId]?.reasoningMode ??
+      params.cfg.agentAiDefaults?.[params.agentId]?.subagent?.reasoningMode ??
         params.cfg.agentAiDefaults?.[params.agentId]?.reasoningMode
     );
     if (ownMode != null) {
@@ -1850,7 +1850,7 @@ export class TaskService {
         continue;
       }
       const chainMode = coerceOpenAIReasoningMode(
-        params.cfg.subagentAiDefaults?.[baseId]?.reasoningMode ??
+        params.cfg.agentAiDefaults?.[baseId]?.subagent?.reasoningMode ??
           params.cfg.agentAiDefaults?.[baseId]?.reasoningMode
       );
       if (chainMode != null) {
@@ -1885,7 +1885,7 @@ export class TaskService {
   } {
     const parentAiSettings = this.resolveWorkspaceAISettings(params.parentMeta, params.agentId);
     // Sub-agent defaults take priority over UI agent defaults per field for any agent invoked as a sub-agent.
-    const subagentDefault = params.cfg.subagentAiDefaults?.[params.agentId];
+    const subagentDefault = params.cfg.agentAiDefaults?.[params.agentId]?.subagent;
     const agentDefault = params.cfg.agentAiDefaults?.[params.agentId];
     const parentRuntimeAiSettings = params.parentRuntimeAiSettings;
 

@@ -4,10 +4,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { installDom } from "../../../../../tests/ui/dom";
 import type { AgentAiDefaults } from "@/common/types/agentAiDefaults";
 import type { AgentDefinitionDescriptor } from "@/common/types/agentDefinition";
-import {
-  shouldMirrorAgentDefaultToLegacySubagent,
-  type SubagentAiDefaults,
-} from "@/common/types/tasks";
 import { getThinkingOptionLabel } from "@/common/types/thinking";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
 
@@ -108,7 +104,6 @@ import { TasksSection } from "./TasksSection";
 
 interface RenderTasksSectionOptions {
   agentAiDefaults?: AgentAiDefaults;
-  subagentAiDefaults?: SubagentAiDefaults;
   /** When set, serves this discovered-agent list instead of FALLBACK_AGENTS. */
   agents?: AgentDefinitionDescriptor[];
 }
@@ -119,7 +114,6 @@ function renderTasksSection(options: RenderTasksSectionOptions = {}) {
     Promise.resolve({
       taskSettings: {},
       agentAiDefaults: options.agentAiDefaults ?? {},
-      subagentAiDefaults: options.subagentAiDefaults ?? {},
     })
   );
 
@@ -158,7 +152,6 @@ function getLatestSavePayload(saveConfig: ReturnType<typeof mock>) {
   expect(calls.length).toBeGreaterThan(0);
   return calls[calls.length - 1][0] as {
     agentAiDefaults: AgentAiDefaults;
-    subagentAiDefaults?: SubagentAiDefaults;
   };
 }
 
@@ -207,69 +200,11 @@ describe("TasksSection Exec subagent defaults", () => {
     expect(planAdvisorSwitch.getAttribute("aria-checked")).toBe("true");
   });
 
-  test("resetting a mirrored subagent model removes the stale mirrored entry", async () => {
-    const view = renderTasksSection({
-      agentAiDefaults: {
-        explore: { modelString: "anthropic:foo" },
-      },
-      subagentAiDefaults: {
-        explore: { modelString: "anthropic:foo" },
-      },
-    });
-
-    await view.findByText("Explore");
-    fireEvent.click(
-      within(getAgentCardByName(view, "Explore")).getByRole("button", { name: "Reset" })
-    );
-
-    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
-    const payload = getLatestSavePayload(view.saveConfig);
-
-    expect(payload.agentAiDefaults.explore).toBeUndefined();
-    expect(payload.subagentAiDefaults?.explore).toBeUndefined();
-  });
-
-  test("clearing mirrored agent model and thinking drops stale legacy subagent entry", async () => {
-    const customAgentId = "foo";
-    expect(shouldMirrorAgentDefaultToLegacySubagent(customAgentId)).toBe(true);
-    const view = renderTasksSection({
-      agentAiDefaults: {
-        [customAgentId]: {
-          enabled: true,
-          advisorEnabled: true,
-          modelString: "anthropic:foo",
-          thinkingLevel: "medium",
-        },
-      },
-      subagentAiDefaults: {
-        [customAgentId]: { modelString: "anthropic:foo", thinkingLevel: "medium" },
-      },
-    });
-
-    await view.findByText(customAgentId);
-    const card = getAgentCardByName(view, customAgentId);
-    fireEvent.change(within(card).getByLabelText("Model"), {
-      target: { value: "" },
-    });
-    selectReasoningOption(card, "Inherit");
-
-    await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
-    const payload = getLatestSavePayload(view.saveConfig);
-
-    expect(payload.agentAiDefaults[customAgentId]).toEqual({
-      enabled: true,
-      advisorEnabled: true,
-    });
-    expect(payload.subagentAiDefaults).toEqual({});
-  });
-
-  test("omits unchanged subagent defaults when saving an agent-only change", async () => {
+  test("preserves unchanged nested subagent defaults when saving an agent-only change", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {
         foo: { enabled: true },
-      },
-      subagentAiDefaults: {
-        exec: { modelString: "openai:subagent-model" },
+        exec: { subagent: { modelString: "openai:subagent-model" } },
       },
     });
 
@@ -284,11 +219,14 @@ describe("TasksSection Exec subagent defaults", () => {
     const payload = getLatestSavePayload(view.saveConfig);
 
     expect(payload.agentAiDefaults.explore).toEqual({ enabled: false });
+    expect(payload.agentAiDefaults.exec?.subagent).toEqual({
+      modelString: "openai:subagent-model",
+    });
     expect("subagentAiDefaults" in payload).toBe(false);
   });
 
-  test("includes subagent defaults when saving a subagent default change", async () => {
-    const view = renderTasksSection({ subagentAiDefaults: {} });
+  test("includes nested subagent defaults when saving a delegated default change", async () => {
+    const view = renderTasksSection();
     const row = await view.findByRole("group", { name: "Exec defaults" });
 
     fireEvent.change(within(row).getByLabelText("Model"), {
@@ -298,9 +236,9 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect("subagentAiDefaults" in payload).toBe(true);
-    expect(payload.subagentAiDefaults).toEqual({
-      exec: { modelString: "openai:subagent-model" },
+    expect("subagentAiDefaults" in payload).toBe(false);
+    expect(payload.agentAiDefaults.exec?.subagent).toEqual({
+      modelString: "openai:subagent-model",
     });
   });
 
@@ -309,7 +247,6 @@ describe("TasksSection Exec subagent defaults", () => {
       agentAiDefaults: {
         exec: { modelString: "anthropic:ui-exec", thinkingLevel: "medium" },
       },
-      subagentAiDefaults: {},
     });
 
     const row = await view.findByRole("group", { name: "Exec defaults" });
@@ -326,10 +263,11 @@ describe("TasksSection Exec subagent defaults", () => {
 
     const view = renderTasksSection({
       agentAiDefaults: {
-        exec: { modelString: "anthropic:ui-exec", thinkingLevel: "xhigh" },
-      },
-      subagentAiDefaults: {
-        exec: { modelString: model },
+        exec: {
+          modelString: "anthropic:ui-exec",
+          thinkingLevel: "xhigh",
+          subagent: { modelString: model },
+        },
       },
     });
 
@@ -347,7 +285,6 @@ describe("TasksSection Exec subagent defaults", () => {
       agentAiDefaults: {
         exec: { modelString: "anthropic:ui-exec", thinkingLevel: "medium" },
       },
-      subagentAiDefaults: {},
     });
     const row = await view.findByRole("group", { name: "Exec defaults" });
 
@@ -358,14 +295,12 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect(payload.subagentAiDefaults).toEqual({
-      exec: { modelString: "openai:subagent-model" },
-    });
     expect(payload.agentAiDefaults.exec).toEqual({
       modelString: "anthropic:ui-exec",
       thinkingLevel: "medium",
+      subagent: { modelString: "openai:subagent-model" },
     });
-    expect(payload.subagentAiDefaults?.exec?.thinkingLevel).toBeUndefined();
+    expect(payload.agentAiDefaults.exec?.subagent?.thinkingLevel).toBeUndefined();
   });
 
   test("setting only the Exec subagent thinking writes only the sparse subagent thinking", async () => {
@@ -373,7 +308,6 @@ describe("TasksSection Exec subagent defaults", () => {
       agentAiDefaults: {
         exec: { modelString: "anthropic:ui-exec", thinkingLevel: "medium" },
       },
-      subagentAiDefaults: {},
     });
     const row = await view.findByRole("group", { name: "Exec defaults" });
 
@@ -382,20 +316,20 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect(payload.subagentAiDefaults).toEqual({
-      exec: { thinkingLevel: "high" },
-    });
     expect(payload.agentAiDefaults.exec).toEqual({
       modelString: "anthropic:ui-exec",
       thinkingLevel: "medium",
+      subagent: { thinkingLevel: "high" },
     });
-    expect("modelString" in (payload.subagentAiDefaults?.exec ?? {})).toBe(false);
+    expect("modelString" in (payload.agentAiDefaults.exec?.subagent ?? {})).toBe(false);
   });
 
   test("resetting one Exec subagent field removes only that field", async () => {
     const view = renderTasksSection({
-      subagentAiDefaults: {
-        exec: { modelString: "openai:subagent-model", thinkingLevel: "high" },
+      agentAiDefaults: {
+        exec: {
+          subagent: { modelString: "openai:subagent-model", thinkingLevel: "high" },
+        },
       },
     });
     const row = await view.findByRole("group", { name: "Exec defaults" });
@@ -405,13 +339,13 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect(payload.subagentAiDefaults).toEqual({ exec: { thinkingLevel: "high" } });
+    expect(payload.agentAiDefaults.exec?.subagent).toEqual({ thinkingLevel: "high" });
   });
 
   test("resetting the last Exec subagent field removes the exec entry", async () => {
     const view = renderTasksSection({
-      subagentAiDefaults: {
-        exec: { modelString: "openai:subagent-model" },
+      agentAiDefaults: {
+        exec: { subagent: { modelString: "openai:subagent-model" } },
       },
     });
     const row = await view.findByRole("group", { name: "Exec defaults" });
@@ -421,10 +355,10 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect(payload.subagentAiDefaults).toEqual({});
+    expect(payload.agentAiDefaults.exec).toBeUndefined();
   });
 
-  test("toggling Pro mode persists the agent default and its legacy sub-agent mirror", async () => {
+  test("toggling Pro mode persists the agent default", async () => {
     const view = renderTasksSection({
       agentAiDefaults: {
         explore: { modelString: "openai:gpt-5.6-sol" },
@@ -442,7 +376,6 @@ describe("TasksSection Exec subagent defaults", () => {
     const payload = getLatestSavePayload(view.saveConfig);
 
     expect(payload.agentAiDefaults.explore?.reasoningMode).toBe("pro");
-    expect(payload.subagentAiDefaults?.explore?.reasoningMode).toBe("pro");
   });
 
   test("toggling Pro mode off removes the persisted reasoning mode", async () => {
@@ -485,7 +418,7 @@ describe("TasksSection Exec subagent defaults", () => {
     await waitFor(() => expect(view.saveConfig).toHaveBeenCalled());
     const payload = getLatestSavePayload(view.saveConfig);
 
-    expect(payload.subagentAiDefaults?.exec?.reasoningMode).toBe("standard");
+    expect(payload.agentAiDefaults.exec?.subagent?.reasoningMode).toBe("standard");
     // UI Exec's own default stays pro; only the sub-agent override changes.
     expect(payload.agentAiDefaults.exec?.reasoningMode).toBe("pro");
   });
@@ -516,8 +449,8 @@ describe("TasksSection Exec subagent defaults", () => {
 
   test("selecting Inherit clears the reasoning override along with the thinking level", async () => {
     const view = renderTasksSection({
-      subagentAiDefaults: {
-        exec: { thinkingLevel: "high", reasoningMode: "standard" },
+      agentAiDefaults: {
+        exec: { subagent: { thinkingLevel: "high", reasoningMode: "standard" } },
       },
     });
 
@@ -530,7 +463,7 @@ describe("TasksSection Exec subagent defaults", () => {
     const payload = getLatestSavePayload(view.saveConfig);
 
     // Both fields cleared empties the entry entirely.
-    expect(payload.subagentAiDefaults).toEqual({});
+    expect(payload.agentAiDefaults.exec).toBeUndefined();
   });
 
   test("displays base-chain-inherited Pro mode and disables it in one click", async () => {

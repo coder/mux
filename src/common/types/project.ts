@@ -16,7 +16,7 @@ import type { z } from "zod";
 import type { ProjectConfigSchema, WorkspaceConfigSchema } from "../orpc/schemas";
 import type { AgentAiDefaults } from "./agentAiDefaults";
 import type { RuntimeEnablementId } from "./runtime";
-import type { TaskSettings, SubagentAiDefaults } from "./tasks";
+import type { TaskSettings } from "./tasks";
 import type { LayoutPresetsConfig } from "./uiLayouts";
 import type { ThinkingLevel } from "./thinking";
 import type { GoalDefaults } from "@/constants/goals";
@@ -132,15 +132,12 @@ export interface ProjectsConfig {
    * Mirrors the browser localStorage cache (HIDDEN_MODELS_KEY).
    */
   hiddenModels?: string[];
-  /** Default model + thinking overrides per agentId (applies to UI agents and subagents). */
-  agentAiDefaults?: AgentAiDefaults;
   /**
-   * Sparse per-agent override that wins over agentAiDefaults when an agent runs as a
-   * sub-agent. The exec key is canonical storage for the sub-agent Exec slot.
-   * Other keys are kept for legacy mirror compatibility, but new code should write
-   * to agentAiDefaults instead.
+   * Default model/thinking/reasoning overrides per agentId. Base fields are the
+   * interactive profile; the sparse nested `subagent` profile holds
+   * delegated-run differences (see AgentAiDefaultsEntrySchema).
    */
-  subagentAiDefaults?: SubagentAiDefaults;
+  agentAiDefaults?: AgentAiDefaults;
   /** Internal one-time migration markers. Not surfaced in user-facing config UI. */
   migrations?: AppConfigMigrations;
   /** Use built-in SSH2 library instead of system OpenSSH for remote connections (non-Windows only) */

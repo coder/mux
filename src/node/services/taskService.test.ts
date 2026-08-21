@@ -59,6 +59,7 @@ import { STRUCTURED_WORKFLOW_REPORT_PLACEHOLDER_MARKDOWN } from "@/common/consta
 import { formatSubagentReportEnvelope } from "@/common/utils/subagentReportEnvelope";
 import { defaultModel } from "@/common/utils/ai/models";
 import { enforceThinkingPolicy } from "@/common/utils/thinking/policy";
+import type { AgentAiDefaults, AgentAiSubagentProfile } from "@/common/types/agentAiDefaults";
 import { DEFAULT_TASK_SETTINGS } from "@/common/types/tasks";
 import type { ThinkingLevel } from "@/common/types/thinking";
 import type { SendMessageError } from "@/common/types/errors";
@@ -250,12 +251,25 @@ async function saveWorkspaces(
   );
 }
 
+function mergeTestAgentAiDefaults(
+  agentAiDefaults?: AgentAiDefaults,
+  subagentAiDefaults?: Record<string, AgentAiSubagentProfile>
+): AgentAiDefaults | undefined {
+  if (!agentAiDefaults && !subagentAiDefaults) return undefined;
+
+  const merged: AgentAiDefaults = { ...agentAiDefaults };
+  for (const [agentId, subagent] of Object.entries(subagentAiDefaults ?? {})) {
+    merged[agentId] = { ...merged[agentId], subagent: { ...subagent } };
+  }
+  return merged;
+}
+
 async function saveLocalParentWorkspace(
   config: Config,
   rootDir: string,
   options?: {
-    agentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>;
-    subagentAiDefaults?: Record<string, { modelString?: string; thinkingLevel?: ThinkingLevel }>;
+    agentAiDefaults?: AgentAiDefaults;
+    subagentAiDefaults?: Record<string, AgentAiSubagentProfile>;
     parentAiSettings?: { model: string; thinkingLevel: ThinkingLevel };
   }
 ): Promise<{ parentId: string; projectPath: string }> {
@@ -279,8 +293,10 @@ async function saveLocalParentWorkspace(
     ],
     {
       taskSettings: { maxParallelAgentTasks: 3, maxTaskNestingDepth: 3 },
-      agentAiDefaults: options?.agentAiDefaults,
-      subagentAiDefaults: options?.subagentAiDefaults,
+      agentAiDefaults: mergeTestAgentAiDefaults(
+        options?.agentAiDefaults,
+        options?.subagentAiDefaults
+      ),
       migrations: { execSubagentDefaultsSplit: true },
     }
   );
@@ -10485,8 +10501,12 @@ describe("TaskService", () => {
 
     await config.editConfig((cfg) => ({
       ...cfg,
-      subagentAiDefaults: {
-        exec: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+      agentAiDefaults: {
+        ...cfg.agentAiDefaults,
+        exec: {
+          ...cfg.agentAiDefaults?.exec,
+          subagent: { modelString: "openai:gpt-5.2", thinkingLevel: "medium" },
+        },
       },
     }));
 
@@ -22472,14 +22492,8 @@ describe("TaskService", () => {
     projectName?: string;
     maxTaskNestingDepth?: number;
     parentAiSettingsByAgent?: Record<string, { model: string; thinkingLevel: ThinkingLevel }>;
-    agentAiDefaults?: Record<
-      string,
-      { modelString: string; thinkingLevel: ThinkingLevel; enabled?: boolean }
-    >;
-    subagentAiDefaults?: Record<
-      string,
-      { modelString?: string; thinkingLevel?: ThinkingLevel; reasoningMode?: "standard" | "pro" }
-    >;
+    agentAiDefaults?: AgentAiDefaults;
+    subagentAiDefaults?: Record<string, AgentAiSubagentProfile>;
     sendMessageOverride?: ReturnType<typeof mock>;
     aiServiceOverrides?: Parameters<typeof createAIServiceMocks>[1];
   }) {
@@ -22511,7 +22525,10 @@ describe("TaskService", () => {
       );
     }
 
-    const agentAiDefaults = { ...(options?.agentAiDefaults ?? {}) };
+    const agentAiDefaults = mergeTestAgentAiDefaults(
+      options?.agentAiDefaults,
+      options?.subagentAiDefaults
+    );
 
     await saveWorkspaces(
       config,
@@ -22544,8 +22561,7 @@ describe("TaskService", () => {
           maxParallelAgentTasks: 3,
           maxTaskNestingDepth: options?.maxTaskNestingDepth ?? 3,
         },
-        agentAiDefaults: Object.keys(agentAiDefaults).length > 0 ? agentAiDefaults : undefined,
-        subagentAiDefaults: options?.subagentAiDefaults,
+        agentAiDefaults,
       }
     );
 

@@ -32,15 +32,12 @@ import {
   normalizeAgentAiDefaults,
   type AgentAiDefaults,
   type AgentAiDefaultsEntry,
+  type AgentAiSubagentProfile,
 } from "@/common/types/agentAiDefaults";
 import {
   DEFAULT_TASK_SETTINGS,
   TASK_SETTINGS_LIMITS,
-  normalizeSubagentAiDefaults,
-  shouldMirrorAgentDefaultToLegacySubagent,
   normalizeTaskSettings,
-  type SubagentAiDefaults,
-  type SubagentAiDefaultsEntry,
   type TaskSettings,
 } from "@/common/types/tasks";
 import {
@@ -98,7 +95,8 @@ function updateAgentDefaultEntry(
     !updated.thinkingLevel &&
     !updated.reasoningMode &&
     updated.enabled === undefined &&
-    updated.advisorEnabled === undefined
+    updated.advisorEnabled === undefined &&
+    updated.subagent === undefined
   ) {
     delete next[normalizedId];
   } else {
@@ -108,106 +106,35 @@ function updateAgentDefaultEntry(
   return next;
 }
 
-function updateSubagentDefaultEntry(
-  previous: SubagentAiDefaults,
+/** Updates an agent's sparse delegated-run override profile (entry.subagent). */
+function updateAgentSubagentProfile(
+  previous: AgentAiDefaults,
   agentId: string,
-  update: (entry: SubagentAiDefaultsEntry) => void
-): SubagentAiDefaults {
-  const normalizedId = normalizeAgentId(agentId, WORKSPACE_DEFAULTS.agentId);
+  update: (profile: AgentAiSubagentProfile) => void
+): AgentAiDefaults {
+  return updateAgentDefaultEntry(previous, agentId, (entry) => {
+    const profile: AgentAiSubagentProfile = { ...entry.subagent };
+    update(profile);
 
-  const next = { ...previous };
-  const existing = next[normalizedId] ?? {};
-  const updated: SubagentAiDefaultsEntry = { ...existing };
-  update(updated);
-
-  if (updated.modelString && updated.thinkingLevel) {
-    updated.thinkingLevel = enforceThinkingPolicy(updated.modelString, updated.thinkingLevel);
-  }
-
-  if (
-    updated.modelString === undefined &&
-    updated.thinkingLevel === undefined &&
-    updated.reasoningMode === undefined
-  ) {
-    delete next[normalizedId];
-  } else {
-    next[normalizedId] = updated;
-  }
-
-  return next;
-}
-
-function getSubagentAiDefaultsForSave(
-  agentAiDefaults: AgentAiDefaults,
-  subagentAiDefaults: SubagentAiDefaults
-): SubagentAiDefaults {
-  const next: SubagentAiDefaults = { ...subagentAiDefaults };
-  const agentIds = new Set([...Object.keys(agentAiDefaults), ...Object.keys(subagentAiDefaults)]);
-
-  for (const agentId of agentIds) {
-    if (!shouldMirrorAgentDefaultToLegacySubagent(agentId)) {
-      continue;
-    }
-
-    const entry = agentAiDefaults[agentId];
-    if (!entry) {
-      delete next[agentId];
-      continue;
+    if (profile.modelString && profile.thinkingLevel) {
+      profile.thinkingLevel = enforceThinkingPolicy(profile.modelString, profile.thinkingLevel);
     }
 
     if (
-      entry.modelString === undefined &&
-      entry.thinkingLevel === undefined &&
-      entry.reasoningMode === undefined
+      profile.modelString === undefined &&
+      profile.thinkingLevel === undefined &&
+      profile.reasoningMode === undefined
     ) {
-      // Legacy mirrored subagent entries are derived from agent defaults, not
-      // user-managed sparse overrides, so clearing AI fields must remove stale
-      // mirrors before router reconciliation can restore them.
-      delete next[agentId];
-      continue;
+      delete entry.subagent;
+    } else {
+      entry.subagent = profile;
     }
-
-    next[agentId] = {
-      modelString: entry.modelString,
-      thinkingLevel: entry.thinkingLevel,
-      reasoningMode: entry.reasoningMode,
-    };
-  }
-
-  return next;
+  });
 }
 
 interface TasksSectionSavePayload {
   taskSettings: TaskSettings;
   agentAiDefaults: AgentAiDefaults;
-  subagentAiDefaults: SubagentAiDefaults;
-}
-
-interface TasksSectionSaveBody {
-  taskSettings: TaskSettings;
-  agentAiDefaults: AgentAiDefaults;
-  subagentAiDefaults?: SubagentAiDefaults;
-}
-
-function getTasksSectionSaveBody(
-  payload: TasksSectionSavePayload,
-  lastSyncedSubagentAiDefaults: SubagentAiDefaults | null
-): TasksSectionSaveBody {
-  const didSubagentDefaultsChange =
-    lastSyncedSubagentAiDefaults === null ||
-    !areSubagentAiDefaultsEqual(lastSyncedSubagentAiDefaults, payload.subagentAiDefaults);
-  const saveBody: TasksSectionSaveBody = {
-    taskSettings: payload.taskSettings,
-    agentAiDefaults: payload.agentAiDefaults,
-  };
-
-  // Skip unchanged legacy subagent defaults so unrelated agent toggles do not
-  // run router reconciliation and drop enabled/advisorEnabled for custom agents.
-  if (didSubagentDefaultsChange) {
-    saveBody.subagentAiDefaults = payload.subagentAiDefaults;
-  }
-
-  return saveBody;
 }
 
 function renderPolicySummary(agent: AgentDefinitionDescriptor): React.ReactNode {
@@ -320,6 +247,17 @@ function areTaskSettingsEqual(a: TaskSettings, b: TaskSettings): boolean {
   );
 }
 
+function areSubagentProfilesEqual(
+  a: AgentAiSubagentProfile | undefined,
+  b: AgentAiSubagentProfile | undefined
+): boolean {
+  return (
+    (a?.modelString ?? undefined) === (b?.modelString ?? undefined) &&
+    (a?.thinkingLevel ?? undefined) === (b?.thinkingLevel ?? undefined) &&
+    (a?.reasoningMode ?? undefined) === (b?.reasoningMode ?? undefined)
+  );
+}
+
 function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolean {
   const aKeys = Object.keys(a);
   const bKeys = Object.keys(b);
@@ -353,36 +291,7 @@ function areAgentAiDefaultsEqual(a: AgentAiDefaults, b: AgentAiDefaults): boolea
     if ((aEntry?.advisorEnabled ?? undefined) !== (bEntry?.advisorEnabled ?? undefined)) {
       return false;
     }
-  }
-
-  return true;
-}
-
-function areSubagentAiDefaultsEqual(a: SubagentAiDefaults, b: SubagentAiDefaults): boolean {
-  const aKeys = Object.keys(a);
-  const bKeys = Object.keys(b);
-  if (aKeys.length !== bKeys.length) {
-    return false;
-  }
-
-  aKeys.sort();
-  bKeys.sort();
-
-  for (let i = 0; i < aKeys.length; i += 1) {
-    const key = aKeys[i];
-    if (key !== bKeys[i]) {
-      return false;
-    }
-
-    const aEntry = a[key];
-    const bEntry = b[key];
-    if ((aEntry?.modelString ?? undefined) !== (bEntry?.modelString ?? undefined)) {
-      return false;
-    }
-    if ((aEntry?.thinkingLevel ?? undefined) !== (bEntry?.thinkingLevel ?? undefined)) {
-      return false;
-    }
-    if ((aEntry?.reasoningMode ?? undefined) !== (bEntry?.reasoningMode ?? undefined)) {
+    if (!areSubagentProfilesEqual(aEntry?.subagent, bEntry?.subagent)) {
       return false;
     }
   }
@@ -500,7 +409,6 @@ export function TasksSection() {
 
   const [taskSettings, setTaskSettings] = useState<TaskSettings>(DEFAULT_TASK_SETTINGS);
   const [agentAiDefaults, setAgentAiDefaults] = useState<AgentAiDefaults>({});
-  const [subagentAiDefaults, setSubagentAiDefaults] = useState<SubagentAiDefaults>({});
 
   const [agents, setAgents] = useState<AgentDefinitionDescriptor[]>([]);
   const [enabledAgentIds, setEnabledAgentIds] = useState<string[]>([]);
@@ -548,7 +456,6 @@ export function TasksSection() {
 
   const lastSyncedTaskSettingsRef = useRef<TaskSettings | null>(null);
   const lastSyncedAgentAiDefaultsRef = useRef<AgentAiDefaults | null>(null);
-  const lastSyncedSubagentAiDefaultsRef = useRef<SubagentAiDefaults | null>(null);
 
   useEffect(() => {
     if (!api) return;
@@ -564,14 +471,11 @@ export function TasksSection() {
         setTaskSettings(normalizedTaskSettings);
         const normalizedAgentDefaults = normalizeAgentAiDefaults(cfg.agentAiDefaults);
         setAgentAiDefaults(normalizedAgentDefaults);
-        const normalizedSubagentDefaults = normalizeSubagentAiDefaults(cfg.subagentAiDefaults);
-        setSubagentAiDefaults(normalizedSubagentDefaults);
         updatePersistedState(AGENT_AI_DEFAULTS_KEY, normalizedAgentDefaults);
 
         setLoadFailed(false);
         lastSyncedTaskSettingsRef.current = normalizedTaskSettings;
         lastSyncedAgentAiDefaultsRef.current = normalizedAgentDefaults;
-        lastSyncedSubagentAiDefaultsRef.current = normalizedSubagentDefaults;
 
         setLoaded(true);
       })
@@ -628,26 +532,18 @@ export function TasksSection() {
     if (!loaded) return;
     if (loadFailed) return;
 
-    const subagentAiDefaultsForSave = getSubagentAiDefaultsForSave(
-      agentAiDefaults,
-      subagentAiDefaults
-    );
     pendingSaveRef.current = {
       taskSettings,
       agentAiDefaults,
-      subagentAiDefaults: subagentAiDefaultsForSave,
     };
     const lastTaskSettings = lastSyncedTaskSettingsRef.current;
     const lastAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
-    const lastSubagentDefaults = lastSyncedSubagentAiDefaultsRef.current;
 
     if (
       lastTaskSettings &&
       lastAgentDefaults &&
-      lastSubagentDefaults &&
       areTaskSettingsEqual(lastTaskSettings, taskSettings) &&
-      areAgentAiDefaultsEqual(lastAgentDefaults, agentAiDefaults) &&
-      areSubagentAiDefaultsEqual(lastSubagentDefaults, subagentAiDefaultsForSave)
+      areAgentAiDefaultsEqual(lastAgentDefaults, agentAiDefaults)
     ) {
       pendingSaveRef.current = null;
       if (saveTimerRef.current) {
@@ -675,21 +571,16 @@ export function TasksSection() {
 
         pendingSaveRef.current = null;
         savingRef.current = true;
-        const saveBody = getTasksSectionSaveBody(payload, lastSyncedSubagentAiDefaultsRef.current);
         void api.config
-          .saveConfig(saveBody)
+          .saveConfig(payload)
           .then(() => {
             const previousAgentDefaults = lastSyncedAgentAiDefaultsRef.current;
-            const previousSubagentDefaults = lastSyncedSubagentAiDefaultsRef.current;
             const agentDefaultsChanged =
               !previousAgentDefaults ||
-              !areAgentAiDefaultsEqual(previousAgentDefaults, payload.agentAiDefaults) ||
-              !previousSubagentDefaults ||
-              !areSubagentAiDefaultsEqual(previousSubagentDefaults, payload.subagentAiDefaults);
+              !areAgentAiDefaultsEqual(previousAgentDefaults, payload.agentAiDefaults);
 
             lastSyncedTaskSettingsRef.current = payload.taskSettings;
             lastSyncedAgentAiDefaultsRef.current = payload.agentAiDefaults;
-            lastSyncedSubagentAiDefaultsRef.current = payload.subagentAiDefaults;
             setSaveError(null);
 
             if (agentDefaultsChanged) {
@@ -741,7 +632,7 @@ export function TasksSection() {
         saveTimerRef.current = null;
       }
     };
-  }, [api, agentAiDefaults, loaded, loadFailed, subagentAiDefaults, taskSettings]);
+  }, [api, agentAiDefaults, loaded, loadFailed, taskSettings]);
 
   // Flush any pending debounced save on unmount so changes aren't lost.
   useEffect(() => {
@@ -761,9 +652,8 @@ export function TasksSection() {
 
       pendingSaveRef.current = null;
       savingRef.current = true;
-      const saveBody = getTasksSectionSaveBody(payload, lastSyncedSubagentAiDefaultsRef.current);
       void api.config
-        .saveConfig(saveBody)
+        .saveConfig(payload)
         .catch(() => undefined)
         .finally(() => {
           savingRef.current = false;
@@ -874,46 +764,46 @@ export function TasksSection() {
   };
 
   const setSubagentModel = (agentId: string, value: string) => {
-    setSubagentAiDefaults((prev) =>
-      updateSubagentDefaultEntry(prev, agentId, (updated) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentSubagentProfile(prev, agentId, (profile) => {
         if (value === INHERIT || value.trim().length === 0) {
-          delete updated.modelString;
+          delete profile.modelString;
         } else {
-          updated.modelString = value;
+          profile.modelString = value;
         }
       })
     );
   };
 
   const setSubagentThinking = (agentId: string, value: string) => {
-    setSubagentAiDefaults((prev) =>
-      updateSubagentDefaultEntry(prev, agentId, (updated) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentSubagentProfile(prev, agentId, (profile) => {
         if (value === INHERIT) {
           // Clear the reasoning override too (same rationale as setAgentThinking).
-          delete updated.thinkingLevel;
-          delete updated.reasoningMode;
+          delete profile.thinkingLevel;
+          delete profile.reasoningMode;
           return;
         }
 
-        updated.thinkingLevel = value as ThinkingLevel;
+        profile.thinkingLevel = value as ThinkingLevel;
       })
     );
   };
 
   const setSubagentReasoningMode = (agentId: string, mode: OpenAIReasoningMode) => {
-    // Deleting the override falls back to the UI agent default, so when that
-    // default is pro, turning the toggle off must persist an explicit
+    // Deleting the override falls back to the base (interactive) profile, so
+    // when that profile is pro, turning the toggle off must persist an explicit
     // "standard" or the inherited pro would win and the toggle could never
     // disable it. Delete (sparse storage) only when nothing pro is inherited.
     const inheritsPro = agentAiDefaults[agentId]?.reasoningMode === "pro";
-    setSubagentAiDefaults((prev) =>
-      updateSubagentDefaultEntry(prev, agentId, (updated) => {
+    setAgentAiDefaults((prev) =>
+      updateAgentSubagentProfile(prev, agentId, (profile) => {
         if (mode === "pro") {
-          updated.reasoningMode = "pro";
+          profile.reasoningMode = "pro";
         } else if (inheritsPro) {
-          updated.reasoningMode = "standard";
+          profile.reasoningMode = "standard";
         } else {
-          delete updated.reasoningMode;
+          delete profile.reasoningMode;
         }
       })
     );
@@ -988,7 +878,6 @@ export function TasksSection() {
     const entry = agentAiDefaults[agent.id];
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
-    const writesSubagentAiDefaults = agent.subagentRunnable && !agent.uiSelectable;
     const enabledOverride = entry?.enabled;
     const advisorEnabledOverride = entry?.advisorEnabled;
     const advisorSwitchState = getAdvisorSwitchState(agent.id, advisorEnabledOverride);
@@ -1157,31 +1046,16 @@ export function TasksSection() {
           effectiveModel={effectiveModel}
           models={models}
           hiddenModelsForSelector={hiddenModelsForSelector}
-          onModelChange={(value) => {
-            setAgentModel(agent.id, value);
-            if (writesSubagentAiDefaults) {
-              setSubagentModel(agent.id, value);
-            }
-          }}
-          onThinkingChange={(value) => {
-            setAgentThinking(agent.id, value);
-            if (writesSubagentAiDefaults) {
-              setSubagentThinking(agent.id, value);
-            }
-          }}
-          onReasoningModeChange={(mode) => {
-            setAgentReasoningMode(agent.id, mode);
-            if (writesSubagentAiDefaults) {
-              setSubagentReasoningMode(agent.id, mode);
-            }
-          }}
+          onModelChange={(value) => setAgentModel(agent.id, value)}
+          onThinkingChange={(value) => setAgentThinking(agent.id, value)}
+          onReasoningModeChange={(mode) => setAgentReasoningMode(agent.id, mode)}
         />
       </div>
     );
   };
 
   const renderExecSubagentDefaults = (agent: AgentDefinitionDescriptor) => {
-    const entry = subagentAiDefaults.exec;
+    const entry = agentAiDefaults.exec?.subagent;
     const modelValue = entry?.modelString ?? INHERIT;
     const thinkingValue = entry?.thinkingLevel ?? INHERIT;
     const uiExecEntry = agentAiDefaults.exec;
