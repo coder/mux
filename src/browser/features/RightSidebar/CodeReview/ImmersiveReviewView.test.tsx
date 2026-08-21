@@ -1418,6 +1418,48 @@ describe("ImmersiveReviewView", () => {
     expect(resolveRead).toBeTruthy();
   });
 
+  test("caps copy reads and reports a size-specific failure for oversized files", async () => {
+    // Copy reads carry no awk line budget; overlay full-file reads do.
+    const copyReadScripts: string[] = [];
+    mockApi.workspace.executeBash = mock((...args: unknown[]) => {
+      const { script } = args[0] as { script: string };
+      if (script.includes("awk 'NR >")) {
+        return Promise.resolve({
+          success: true as const,
+          data: { success: false, output: "", exitCode: 43 },
+        });
+      }
+      copyReadScripts.push(script);
+      // The size guard trips: deterministic too-large exit, not a truncated payload.
+      return Promise.resolve({
+        success: true as const,
+        data: { success: false, output: "", exitCode: 42 },
+      });
+    });
+
+    const view = renderImmersiveReview();
+
+    const copyButton = view.container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Copy file contents"]'
+    );
+    expect(copyButton).toBeTruthy();
+    fireEvent.click(copyButton!);
+
+    await waitFor(() =>
+      expect(
+        view.container
+          .querySelector('button[aria-label="Copy file contents"]')
+          ?.getAttribute("data-copy-file-feedback")
+      ).toBe("failed")
+    );
+    expect(clipboardWrites).toHaveLength(0);
+    // The copy read must carry the IPC-safe size budget so oversize files fail
+    // deterministically instead of arriving truncated.
+    expect(copyReadScripts[0]).toContain(`-gt ${750 * 1024}`);
+    // And the failure must tell the user it is a size problem.
+    expect(view.container.textContent ?? "").toContain("file is larger than 750 KB");
+  });
+
   test("rejects partial payloads from unsuccessful script exits", async () => {
     // Simulates base64 dying after stat emitted the size: the script exits nonzero
     // but leaves parseable output that would decode to empty text.

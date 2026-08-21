@@ -62,6 +62,8 @@ import { copyToClipboard } from "@/browser/utils/clipboard";
 import {
   buildReadFileScript,
   decodeBase64Utf8,
+  EXIT_CODE_TOO_LARGE,
+  MAX_COPY_FILE_SIZE_BYTES,
   processFileContents,
 } from "@/browser/utils/fileRead";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
@@ -1388,6 +1390,8 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     kind: "copied" | "failed";
     filePath: string;
     contentVersion: string;
+    /** Failure-specific user-facing message; falls back to the generic copy for other failures. */
+    message?: string;
   } | null>(null);
   const copyFileRequestIdRef = useRef(0);
   const pendingCopyFilePathRef = useRef<string | null>(null);
@@ -1425,9 +1429,10 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const showCopyFileFeedback = (
     kind: "copied" | "failed",
     filePath: string,
-    contentVersion: string
+    contentVersion: string,
+    extra?: { message?: string }
   ) => {
-    setCopyFileFeedback({ kind, filePath, contentVersion });
+    setCopyFileFeedback({ kind, filePath, contentVersion, message: extra?.message });
   };
 
   // Deleted files no longer exist on disk, so a copy read would always fail;
@@ -1466,12 +1471,15 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     try {
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
-        script: buildReadFileScript(
-          filePath,
+        script: buildReadFileScript(filePath, {
+          // The IPC bash channel truncates output beyond 1MiB, so cap copies at what
+          // fits after base64 expansion and fail deterministically with a clear
+          // message instead of surfacing an opaque truncation.
+          maxSizeBytes: MAX_COPY_FILE_SIZE_BYTES,
           // Hunk paths are container-root-relative in multi-project workspaces, where
           // project entries are symlinks that containment must anchor to.
-          props.isMultiProjectWorkspace ? { containmentAnchor: "first-segment" } : {}
-        ),
+          ...(props.isMultiProjectWorkspace ? { containmentAnchor: "first-segment" as const } : {}),
+        }),
         // Multi-project default mode runs from the container root matching those
         // paths; single-project hunk paths are repo-root-relative, where default
         // mode would run from a subproject cwd and miss the file.
@@ -1484,7 +1492,12 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // like base64 dying after stat) means the output cannot be trusted as the
       // full file; the IPC truncation marker likewise signals a partial payload.
       if (!result.success || !result.data.success || result.data.truncated) {
-        showCopyFileFeedback("failed", filePath, contentVersion);
+        const isTooLarge = result.success && result.data.exitCode === EXIT_CODE_TOO_LARGE;
+        showCopyFileFeedback("failed", filePath, contentVersion, {
+          message: isTooLarge
+            ? `Copy failed: file is larger than ${Math.floor(MAX_COPY_FILE_SIZE_BYTES / 1024)} KB`
+            : undefined,
+        });
         return;
       }
       const contents = processFileContents(result.data.output ?? "", result.data.exitCode);
@@ -2092,7 +2105,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 activeCopyFileFeedback === "copied" ? (
                   "Copied!"
                 ) : activeCopyFileFeedback === "failed" ? (
-                  "Copy failed: not a copyable text file"
+                  (copyFileFeedback?.message ?? "Copy failed: not a copyable text file")
                 ) : (
                   <span>
                     Copy file{" "}
@@ -2131,7 +2144,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                   {activeCopyFileFeedback === "copied"
                     ? "File copied to clipboard"
                     : activeCopyFileFeedback === "failed"
-                      ? "Copy failed: not a copyable text file"
+                      ? (copyFileFeedback?.message ?? "Copy failed: not a copyable text file")
                       : ""}
                 </span>
               </button>

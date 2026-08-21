@@ -14,6 +14,13 @@ export const EXIT_CODE_TOO_MANY_LINES = 43;
 /** Exit code for "path resolves outside the workspace" (e.g. a symlink escape). */
 export const EXIT_CODE_OUTSIDE_WORKSPACE = 44;
 
+/**
+ * Size budget for whole-file clipboard copies. The IPC bash channel caps total
+ * output at 1MiB (BASH_TRUNCATE_MAX_TOTAL_BYTES) and base64 expands by 4/3, so
+ * reads beyond ~768KB would arrive truncated; fail deterministically instead.
+ */
+export const MAX_COPY_FILE_SIZE_BYTES = 750 * 1024;
+
 interface ReadFileScriptOptions {
   maxSizeBytes?: number;
   maxLineCount?: number;
