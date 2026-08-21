@@ -1364,6 +1364,33 @@ describe("MemoryService refinement journal", () => {
     expect(sibling.success).toBe(true);
   });
 
+  it("refuses own-subtree renames reached through an aliased path (case-fold/symlink)", async () => {
+    // Codex round 22: the r21 guard compared path SPELLINGS, but on a
+    // case-insensitive filesystem 'Notes' -> 'notes/archive/notes' resolves
+    // to the same source dir and bypassed it — reproducing the mkdir
+    // pollution. The guard now compares physical identities (dev+ino of the
+    // destination's existing ancestors vs the source dir), which covers case
+    // folding AND in-root symlink aliases through one mechanism. CI runs on
+    // a case-sensitive fs, so the alias here is a symlink — it exercises the
+    // exact same resolution path (an ancestor whose spelling differs from
+    // the source but stats to its identity).
+    using fixture = await createFixture();
+    await fixture.service.create(fixture.ctx, "/memories/global/notes/a.md", "a\n", "agent");
+    const globalDir = path.join(fixture.muxHome, "memory", "global");
+    await fsPromises.symlink("notes", path.join(globalDir, "alias"));
+
+    const throughAlias = await fixture.service.rename(
+      fixture.ctx,
+      "/memories/global/notes",
+      "/memories/global/alias/archive/notes",
+      "agent"
+    );
+    expect(throughAlias.success).toBe(false);
+    if (!throughAlias.success) expect(throughAlias.error).toContain("inside itself");
+    // No mkdir pollution through the alias.
+    expect(await fsPromises.readdir(path.join(globalDir, "notes"))).toEqual(["a.md"]);
+  });
+
   it("journals rename with an inverse that renames back", async () => {
     using fixture = await createFixture();
     await fixture.service.create(fixture.ctx, "/memories/global/old.md", "content", "agent");

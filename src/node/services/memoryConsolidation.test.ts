@@ -466,6 +466,26 @@ describe("consolidation memory tool rails", () => {
     expect(sibling.success).toBe(true);
   });
 
+  it("dry-run rejects own-subtree renames reached through an aliased path", async () => {
+    // Codex round 22 (mirrors the memoryService handler test): staging
+    // validation shares the physical-identity guard, so an aliased spelling
+    // of the source (case variant on case-insensitive hosts; symlink here,
+    // which CI can exercise) must refuse at staging instead of consuming the
+    // approved set at apply.
+    using fixture = await createFixture({ dryRun: true });
+    await fsPromises.mkdir(path.join(fixture.globalMemoryDir, "notes"), { recursive: true });
+    await fsPromises.writeFile(path.join(fixture.globalMemoryDir, "notes", "a.md"), "a\n");
+    await fsPromises.symlink("notes", path.join(fixture.globalMemoryDir, "alias"));
+
+    const throughAlias = await execute(fixture.tool, {
+      command: "rename",
+      old_path: "/memories/global/notes",
+      new_path: "/memories/global/alias/archive/notes",
+    });
+    expect(throughAlias.success).toBe(false);
+    if (!throughAlias.success) expect(throughAlias.error).toContain("inside itself");
+  });
+
   it("dry-run rejects delete/rename proposals the real handlers would reject", async () => {
     // Codex round 20: delete/rename skipped staging validation entirely —
     // deleting a nonexistent path, renaming a missing source, or renaming

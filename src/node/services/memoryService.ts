@@ -151,25 +151,54 @@ const CONTROL_CHARS_PATTERN = /[\u0000-\u001f\u007f]/;
  * existence checks alone accepted 'notes' -> 'notes/archive/notes' — the
  * filesystem rejects the move only AFTER store.rename mkdirs the destination
  * parent INSIDE the source (pollution), and a staged proposal consumed the
- * approved set at apply. Path-SEGMENT-aware on the normalized relPaths
- * ('notes-x' must not match 'notes'). Shared verbatim by validateMutation and
- * the real rename handler (round-19/20 zero-drift doctrine).
+ * approved set at apply. Shared verbatim by validateMutation and the real
+ * rename handler (round-19/20 zero-drift doctrine; both have store access).
+ *
+ * Two layers (r22): the lexical segment comparison ('notes-x' must not match
+ * 'notes') is a cheap first check, but it trusts SPELLING — on a
+ * case-insensitive filesystem 'Notes' -> 'notes/archive/notes' resolves to
+ * the same source dir and bypassed it, and an in-root symlink alias of the
+ * source bypasses any string comparison on any filesystem. The second layer
+ * therefore compares physical identities: every EXISTING ancestor of the
+ * destination is stat'ed (following symlinks) and refused when it is the
+ * source directory itself (same dev+ino) — case variants and aliases resolve
+ * to the source's identity regardless of spelling. Missing ancestors are
+ * skipped: a nonexistent path can't be (or contain) the live source dir.
  */
-function assertRenameDestinationOutsideDirSource(args: {
+async function assertRenameDestinationOutsideDirSource(args: {
+  store: MemoryStore;
   sourceKind: "file" | "dir";
   sourceRelPath: string;
   destRelPath: string;
   sourceVirtualPath: string;
   destVirtualPath: string;
-}): void {
+}): Promise<void> {
   if (args.sourceKind !== "dir") return;
+  const refuse = (): never => {
+    throw new MemoryCommandError(
+      `Cannot rename ${args.sourceVirtualPath} to ${args.destVirtualPath}: a directory cannot be moved inside itself`
+    );
+  };
   if (
     args.destRelPath === args.sourceRelPath ||
     args.destRelPath.startsWith(`${args.sourceRelPath}/`)
   ) {
-    throw new MemoryCommandError(
-      `Cannot rename ${args.sourceVirtualPath} to ${args.destVirtualPath}: a directory cannot be moved inside itself`
-    );
+    refuse();
+  }
+  const sourceStat = await fsPromises.stat(args.store.physicalPath(args.sourceRelPath));
+  const segments = args.destRelPath.split("/");
+  for (let depth = 1; depth <= segments.length; depth++) {
+    const ancestorRel = segments.slice(0, depth).join("/");
+    let ancestorStat;
+    try {
+      ancestorStat = await fsPromises.stat(args.store.physicalPath(ancestorRel));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw error;
+    }
+    if (ancestorStat.dev === sourceStat.dev && ancestorStat.ino === sourceStat.ino) {
+      refuse();
+    }
   }
 }
 
@@ -1105,7 +1134,8 @@ export class MemoryService extends EventEmitter {
           if (oldKind === null) {
             throw new MemoryCommandError(`No memory file or directory at ${command.path}`);
           }
-          assertRenameDestinationOutsideDirSource({
+          await assertRenameDestinationOutsideDirSource({
+            store,
             sourceKind: oldKind,
             sourceRelPath: parsed.relPath,
             destRelPath: newParsed.relPath,
@@ -1190,7 +1220,8 @@ export class MemoryService extends EventEmitter {
         // Pre-flight (mirrored in validateMutation): store.rename would mkdir
         // the destination parent INSIDE the source before the filesystem
         // rejects the move — refuse cleanly instead of polluting the source.
-        assertRenameDestinationOutsideDirSource({
+        await assertRenameDestinationOutsideDirSource({
+          store,
           sourceKind: oldKind,
           sourceRelPath: oldParsed.relPath,
           destRelPath: newParsed.relPath,
