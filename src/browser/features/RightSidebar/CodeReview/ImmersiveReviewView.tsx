@@ -64,7 +64,6 @@ import {
   decodeBase64Utf8,
   processFileContents,
 } from "@/browser/utils/fileRead";
-import { COPY_FEEDBACK_DURATION_MS } from "@/common/constants/ui";
 import { TooltipIfPresent } from "@/browser/components/Tooltip/Tooltip";
 import { getReviewSelectedHunkKey } from "@/common/constants/storage";
 import {
@@ -1388,7 +1387,6 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     kind: "copied" | "failed";
     filePath: string;
   } | null>(null);
-  const copyFileFeedbackTimeoutRef = useRef<number | null>(null);
   const copyFileRequestIdRef = useRef(0);
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
@@ -1398,21 +1396,18 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
       // Invalidate any in-flight copy so a read that resolves after unmount cannot
       // write to the clipboard (isStale() sees the bumped request id).
       copyFileRequestIdRef.current += 1;
-      if (copyFileFeedbackTimeoutRef.current != null) {
-        clearTimeout(copyFileFeedbackTimeoutRef.current);
-      }
     };
   }, []);
 
+  // Feedback persists until a deterministic event (file navigation or the next copy)
+  // instead of a wall-clock timer, and never shows against a file the copy did not
+  // target. Render-time adjustment per the React docs pattern.
+  if (copyFileFeedback && copyFileFeedback.filePath !== activeFilePath) {
+    setCopyFileFeedback(null);
+  }
+
   const showCopyFileFeedback = (kind: "copied" | "failed", filePath: string) => {
-    if (copyFileFeedbackTimeoutRef.current != null) {
-      clearTimeout(copyFileFeedbackTimeoutRef.current);
-    }
     setCopyFileFeedback({ kind, filePath });
-    copyFileFeedbackTimeoutRef.current = window.setTimeout(() => {
-      setCopyFileFeedback(null);
-      copyFileFeedbackTimeoutRef.current = null;
-    }, COPY_FEEDBACK_DURATION_MS);
   };
 
   // Deleted files no longer exist on disk, so a copy read would always fail;
@@ -1486,10 +1481,7 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   const handleCopyFileRef = useRef(handleCopyFile);
   handleCopyFileRef.current = handleCopyFile;
 
-  // Only surface feedback against the file the copy actually targeted, so navigating
-  // away within the feedback window cannot show it against another file.
-  const activeCopyFileFeedback =
-    copyFileFeedback?.filePath === activeFilePath ? copyFileFeedback.kind : null;
+  const activeCopyFileFeedback = copyFileFeedback?.kind ?? null;
 
   const handleLineIndexSelect = useCallback(
     (lineIndex: number, shiftKey: boolean) => {

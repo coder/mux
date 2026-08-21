@@ -14,8 +14,9 @@ import {
 describe("buildReadFileScript", () => {
   test("generates script with size check", () => {
     const script = buildReadFileScript("test.txt");
-    expect(script).toContain("stat -c %s './test.txt'");
-    expect(script).toContain("base64 < './test.txt'");
+    expect(script).toContain("realpath './test.txt'");
+    expect(script).toContain('stat -c %s "$resolved"');
+    expect(script).toContain('base64 < "$resolved"');
   });
 
   test("escapes paths with spaces", () => {
@@ -32,7 +33,7 @@ describe("buildReadFileScript", () => {
     const script = buildReadFileScript("test.txt", { maxSizeBytes: 1234, maxLineCount: 99 });
 
     expect(script).toContain('[ "$size" -gt 1234 ] && exit 42');
-    expect(script).toContain("awk 'NR > 99 { exit 43 }' './test.txt'");
+    expect(script).toContain("awk 'NR > 99 { exit 43 }' \"$resolved\"");
     expect(script).toContain('exit "$awk_status"');
   });
 

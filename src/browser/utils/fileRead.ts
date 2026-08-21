@@ -133,24 +133,26 @@ export function buildReadFileScript(
     maxLineCount == null
       ? ""
       : `
-awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' ${file}
+awk 'NR > ${maxLineCount} { exit ${EXIT_CODE_TOO_MANY_LINES} }' "$resolved"
 awk_status=$?
 [ "$awk_status" -ne 0 ] && exit "$awk_status"`;
 
   // SECURITY AUDIT: repo-controlled paths are attacker-controlled input. A changed
   // symlink pointing outside the workspace must not let the UI read (and copy) files
   // beyond the execution root, so reject paths whose physical resolution escapes it.
-  // Fail closed: an unresolvable path (loop, missing resolver) also exits.
+  // Fail closed: an unresolvable path (loop, missing resolver) also exits. All reads
+  // then use the validated physical path, not the original link, so swapping the
+  // symlink between validation and read cannot redirect the read outside the root.
   return `root=$(pwd -P)
 resolved=$(realpath ${file} 2>/dev/null || readlink -f ${file} 2>/dev/null)
 case "$resolved" in
   "$root"/*) ;;
   *) exit ${EXIT_CODE_OUTSIDE_WORKSPACE} ;;
 esac
-size=$(stat -c %s ${file} 2>/dev/null || stat -f %z ${file})
+size=$(stat -c %s "$resolved" 2>/dev/null || stat -f %z "$resolved")
 [ "$size" -gt ${maxSizeBytes} ] && exit ${EXIT_CODE_TOO_LARGE}${lineLimitScript}
 echo "$size"
-base64 < ${file}`;
+base64 < "$resolved"`;
 }
 
 /** Parse the read file script output (size on first line, base64 on remaining lines). */
