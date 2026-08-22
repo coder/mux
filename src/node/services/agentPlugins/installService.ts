@@ -1485,12 +1485,21 @@ export class AgentPluginInstallService {
       return [];
     }
     const agents: Array<{ name: string; fingerprint: string }> = [];
+    // Runtime discovery dedupes by normalized agent ID with the first
+    // successfully parsed file winning (discoverAgentDefinitions sets byId
+    // once per ID, in the same readdir enumeration order used here). Mirror
+    // that: on a case-sensitive filesystem agents/foo.md and agents/FOO.md
+    // are ONE loadable agent, so the preview must promise one row and the
+    // capability surface must not fingerprint a definition that never loads.
+    const seenAgentIds = new Set<string>();
     for (const entry of entries) {
-      if (
-        !entry.isFile() ||
-        !entry.name.toLowerCase().endsWith(".md") ||
-        !AgentIdSchema.safeParse(path.parse(entry.name).name.trim().toLowerCase()).success
-      ) {
+      const agentIdParse = AgentIdSchema.safeParse(
+        path.parse(entry.name).name.trim().toLowerCase()
+      );
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".md") || !agentIdParse.success) {
+        continue;
+      }
+      if (seenAgentIds.has(agentIdParse.data)) {
         continue;
       }
       let frontmatter: unknown;
@@ -1504,6 +1513,10 @@ export class AgentPluginInstallService {
       } catch {
         continue;
       }
+      // Seen only AFTER a successful parse, mirroring runtime dedupe: when
+      // the enumeration-order winner is malformed (skipped above), the next
+      // same-ID file is the one that actually loads.
+      seenAgentIds.add(agentIdParse.data);
       // Fingerprint the WHOLE parsed frontmatter (key-sorted so YAML
       // reordering is not a change): description injects into the task
       // tool's model-visible prompt, subagent.runnable/ui gate invocability,
@@ -1835,10 +1848,11 @@ export class AgentPluginInstallService {
         const promotionNonce = randomBytes(16).toString("hex");
         await fsPromises.writeFile(path.join(stagedDir, PROMOTION_MARKER_FILE), promotionNonce);
         const journalPath = this.journalPath(PROMOTION_JOURNAL_PREFIX, name);
-        await fsPromises.writeFile(
-          journalPath,
-          JSON.stringify({ name, stagedAt: Date.now(), nonce: promotionNonce })
-        );
+        await this.writeJournalFile(journalPath, {
+          name,
+          stagedAt: Date.now(),
+          nonce: promotionNonce,
+        });
 
         await fsPromises.mkdir(this.containerDir, { recursive: true });
         await fsPromises.rename(stagedDir, targetPath);
@@ -1965,6 +1979,28 @@ export class AgentPluginInstallService {
   private journalPath(prefix: string, name: string): string {
     // Names are grammar-validated (no separators/traversal), so this join is safe.
     return path.join(this.stagingRoot, `${prefix}${name}.json`);
+  }
+
+  /**
+   * Publish a journal atomically (temp + rename, like the epoch file):
+   * readJournalForRecovery deliberately retains any unparseable journal and
+   * the discovery gate then suppresses the whole managed container, so a
+   * crash mid-writeFile must never leave truncated JSON at the journal path.
+   * The temp name keeps the `.json` suffix off, so journal enumeration
+   * (isJournalName + `.json`) can never pick up a half-written file.
+   */
+  private async writeJournalFile(
+    journalPath: string,
+    document: Record<string, unknown>
+  ): Promise<void> {
+    const tempPath = `${journalPath}.${randomBytes(8).toString("hex")}.tmp`;
+    await fsPromises.writeFile(tempPath, JSON.stringify(document));
+    try {
+      await fsPromises.rename(tempPath, journalPath);
+    } catch (error) {
+      await fsPromises.rm(tempPath, { force: true }).catch(() => undefined);
+      throw error;
+    }
   }
 
   /**
@@ -2589,10 +2625,12 @@ export class AgentPluginInstallService {
       // them while the registry entry still exists, and finishes the trash
       // cleanup once the commit landed.
       const uninstallJournalPath = this.journalPath(UNINSTALL_JOURNAL_PREFIX, entry.name);
-      await fsPromises.writeFile(
-        uninstallJournalPath,
-        JSON.stringify({ name: entry.name, trashDir, dataTrashDir, stagedAt: Date.now() })
-      );
+      await this.writeJournalFile(uninstallJournalPath, {
+        name: entry.name,
+        trashDir,
+        dataTrashDir,
+        stagedAt: Date.now(),
+      });
       const consumeJournal = async (): Promise<void> => {
         await this.consumeJournalFile(uninstallJournalPath).catch(() => undefined);
       };
@@ -2783,6 +2821,42 @@ export class AgentPluginInstallService {
           "Failed to re-enumerate workspaces after uninstall commit; keeping the pessimistic tombstone",
           { error: getErrorMessage(error) }
         );
+        if (workspaceIdsToPrune.length === 0) {
+          // Zero workspaces at commit time means the commit wrote NO
+          // tombstone for this prefix, yet a workspace registered during the
+          // uninstall could have saved an enable while the tree was still
+          // present — and this failed re-enumeration was the only chance to
+          // find it. The tombstone's PRESENCE is what drives retry-side live
+          // re-enumeration, so persist an empty SENTINEL record; retries
+          // clear it only after a full live sweep succeeds. If even that
+          // write fails, surface the gap to the user (after the remaining
+          // cleanup below).
+          try {
+            const { envelope: envelopeSentinel, rawEntries: entriesSentinel } =
+              await this.readRegistryDocument("strict");
+            if (this.hasOpaquePendingPrunes(envelopeSentinel)) {
+              // Recording into a newer build's opaque shape would clobber it
+              // (same reasoning as the pre-commit guard, which only runs when
+              // commit-time workspaces existed).
+              throw new Error(
+                "the registry's pending cleanup state was written by a newer version of Mux"
+              );
+            }
+            const pendingSentinel = this.updateRawPendingPrunes(
+              this.rawPendingPrunes(envelopeSentinel),
+              serverKeyPrefix,
+              [],
+              { keepEmpty: true }
+            );
+            await this.writePendingOverridePrunes(
+              envelopeSentinel,
+              entriesSentinel,
+              pendingSentinel
+            );
+          } catch (sentinelError) {
+            deltaRecordFailure = `The plugin was uninstalled, but workspaces registered during the uninstall could not be checked for stale MCP overrides and recording a cleanup reminder failed (${getErrorMessage(sentinelError)}). If reinstalling this plugin, first check workspace MCP settings for stale entries.`;
+          }
+        }
       }
       // Delta workspaces are NOT in the commit-time tombstone. Persist the
       // union BEFORE pruning so a crash between here and their prune keeps a
@@ -3024,11 +3098,16 @@ export class AgentPluginInstallService {
    * removes every recognized item for that prefix (merging their unknown
    * fields into the replacement) and appends the new one when
    * `workspaceIds` is non-empty. Unrecognized items are preserved verbatim.
+   * `keepEmpty` appends an empty-list SENTINEL tombstone instead of removing
+   * the entry: its presence still drives retry-side live re-enumeration,
+   * covering uninstalls where the workspaces needing pruning were never
+   * enumerable (see the uninstall post-commit re-enumeration catch).
    */
   private updateRawPendingPrunes(
     rawPending: unknown[],
     prefix: string,
-    workspaceIds: string[]
+    workspaceIds: string[],
+    options?: { keepEmpty?: boolean }
   ): unknown[] {
     const matches: Array<Record<string, unknown>> = [];
     const next: unknown[] = [];
@@ -3039,7 +3118,7 @@ export class AgentPluginInstallService {
         next.push(item);
       }
     }
-    if (workspaceIds.length > 0) {
+    if (workspaceIds.length > 0 || options?.keepEmpty === true) {
       const replacement: Record<string, unknown> = {};
       for (const match of matches) {
         Object.assign(replacement, match);
@@ -3086,11 +3165,17 @@ export class AgentPluginInstallService {
    * succeeded. Recorded workspaces that no longer exist drop out implicitly
    * — a deleted workspace's overrides can never reactivate anything, so
    * keeping its ID would block reinstall forever. Returns the IDs that
-   * still need pruning; when enumeration itself fails, the recorded list is
-   * returned unshrunk even if its prunes succeeded, because unenumerated
-   * delta workspaces cannot be ruled out (over-blocking is safe).
+   * still need pruning; when enumeration itself fails (`enumerated: false`),
+   * the recorded list is returned unshrunk even if its prunes succeeded,
+   * because unenumerated delta workspaces cannot be ruled out — callers must
+   * then keep the tombstone even when `failed` is empty (an empty SENTINEL
+   * tombstone records exactly this "delta workspaces unknown" state, and a
+   * failed re-enumeration cannot rule them out either).
    */
-  private async retryPrune(prune: { prefix: string; workspaceIds: string[] }): Promise<string[]> {
+  private async retryPrune(prune: {
+    prefix: string;
+    workspaceIds: string[];
+  }): Promise<{ enumerated: boolean; failed: string[] }> {
     let liveWorkspaceIds: string[];
     try {
       liveWorkspaceIds = await this.listWorkspaceIdsForOverridePruning();
@@ -3099,9 +3184,12 @@ export class AgentPluginInstallService {
         error: getErrorMessage(error),
       });
       await this.pruneWorkspaceOverrides(prune.prefix, prune.workspaceIds);
-      return prune.workspaceIds;
+      return { enumerated: false, failed: prune.workspaceIds };
     }
-    return this.pruneWorkspaceOverrides(prune.prefix, liveWorkspaceIds);
+    return {
+      enumerated: true,
+      failed: await this.pruneWorkspaceOverrides(prune.prefix, liveWorkspaceIds),
+    };
   }
 
   /**
@@ -3139,7 +3227,16 @@ export class AgentPluginInstallService {
       return;
     }
 
-    const failed = await this.retryPrune(match);
+    const { enumerated, failed } = await this.retryPrune(match);
+    if (!enumerated) {
+      // Delta workspaces cannot be ruled out without a live enumeration:
+      // keep the tombstone verbatim (even an empty sentinel) and stay
+      // blocked — clearing it here would let the reinstall proceed over
+      // workspaces the sweep never saw.
+      throw new Error(
+        `A previous uninstall of '${name}' could not verify its workspace MCP override cleanup yet (workspace enumeration failed). Retry in a moment.`
+      );
+    }
     const remaining = this.updateRawPendingPrunes(
       this.rawPendingPrunes(envelope),
       serverKeyPrefix,
@@ -3172,12 +3269,24 @@ export class AgentPluginInstallService {
       let rawPending = this.rawPendingPrunes(envelope);
       let progressed = false;
       for (const prune of pending) {
-        const failed = await this.retryPrune(prune);
+        const { enumerated, failed } = await this.retryPrune(prune);
+        if (!enumerated) {
+          // Keep the record verbatim: without a live enumeration, delta
+          // workspaces cannot be ruled out — in particular an empty SENTINEL
+          // tombstone (recorded when an uninstall's re-enumeration failed
+          // with zero commit-time workspaces) must not be cleared here.
+          continue;
+        }
         // Set comparison, not length: retryPrune re-enumerates live
         // workspaces, so `failed` can contain IDs the record never held
-        // (delta workspaces) — those must be folded in durably too.
+        // (delta workspaces) — those must be folded in durably too. A fully
+        // successful sweep (`failed` empty) always counts as progress so an
+        // empty sentinel tombstone clears instead of lingering forever.
         const recorded = new Set(prune.workspaceIds);
-        const changed = failed.length !== recorded.size || failed.some((id) => !recorded.has(id));
+        const changed =
+          failed.length === 0 ||
+          failed.length !== recorded.size ||
+          failed.some((id) => !recorded.has(id));
         if (changed) {
           progressed = true;
           rawPending = this.updateRawPendingPrunes(rawPending, prune.prefix, failed);
@@ -3367,10 +3476,12 @@ export class AgentPluginInstallService {
           // self-heal because assertNoCapabilityIncrease treats the missing
           // tree as an empty surface and rejects the staged capabilities as
           // additions. reconcileJournals restores the old tree on recovery.
-          await fsPromises.writeFile(
-            updateJournalPath,
-            JSON.stringify({ name: entry.name, trashDir, nonce: updateNonce, stagedAt: Date.now() })
-          );
+          await this.writeJournalFile(updateJournalPath, {
+            name: entry.name,
+            trashDir,
+            nonce: updateNonce,
+            stagedAt: Date.now(),
+          });
           try {
             await this.renameIntoStaging(targetPath, trashDir);
           } catch (error) {

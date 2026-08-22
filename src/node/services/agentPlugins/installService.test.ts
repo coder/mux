@@ -199,6 +199,42 @@ describe("AgentPluginInstallService", () => {
     expect(preview.slashCommands).toEqual([{ name: "standup", description: "Daily standup" }]);
   });
 
+  test("preview dedupes agents that normalize to the same agent ID", async () => {
+    // On a case-sensitive filesystem a repo can ship agents/reviewer.md AND
+    // agents/REVIEWER.md; runtime discovery lowercases both to one agent ID
+    // and loads only one. The consent preview must promise one selectable
+    // agent, not two.
+    await fsPromises.mkdir(path.join(remoteDir, "agents"), { recursive: true });
+    await fsPromises.writeFile(
+      path.join(remoteDir, "agents", "reviewer.md"),
+      "---\nname: Reviewer\n---\nReview the diff.\n"
+    );
+    await fsPromises.writeFile(
+      path.join(remoteDir, "agents", "REVIEWER.md"),
+      "---\nname: Shouty Reviewer\n---\nReview the diff loudly.\n"
+    );
+    await commitAll(remoteDir, "case-colliding agents");
+
+    const preview = await service.preview({ input: remoteDir });
+    expect(preview.agents).toHaveLength(1);
+  });
+
+  test("preview rejects an oversized plugin.json before it can reach the renderer", async () => {
+    // The checkout quota permits ~100 MiB; without a manifest ceiling a repo
+    // could put megabytes into `description` and the preview would ship that
+    // through IPC and lay it out in Settings before any consent.
+    const manifestPath = path.join(remoteDir, "plugin.json");
+    const manifest = JSON.parse(await fsPromises.readFile(manifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >;
+    manifest.description = "x".repeat(512 * 1024);
+    await fsPromises.writeFile(manifestPath, JSON.stringify(manifest));
+    await commitAll(remoteDir, "oversized manifest");
+
+    await expect(service.preview({ input: remoteDir })).rejects.toThrow(/too large/);
+  });
+
   test("preview ignores configured checkout filters from global Git config", async () => {
     // An untrusted repository controls .gitattributes. If staging inherits the
     // user's global filter.<name>.smudge/process configuration, clone/checkout
@@ -2355,6 +2391,112 @@ describe("AgentPluginInstallService", () => {
       expect(doc.pendingOverridePrunes).toEqual([
         { prefix: `plugin:${instanceId}:`, workspaceIds: ["ws-delta"] },
       ]);
+    } finally {
+      metadataSpy.mockRestore();
+    }
+  });
+
+  test("zero-workspace uninstall with a failed re-enumeration persists a sentinel tombstone", async () => {
+    // Pre-commit enumeration found ZERO workspaces, so the commit wrote no
+    // tombstone — yet a workspace registered during the uninstall could have
+    // saved an enable while the tree was present. When the post-commit
+    // re-enumeration (the only chance to find it) then fails, an empty
+    // SENTINEL tombstone must persist so retries live-re-enumerate; the
+    // reinstall gate must clear it only after a full live sweep.
+    const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    const prunedIds: string[] = [];
+    const overridesStub = {
+      prunePluginOverrideKeys: (workspaceId: string) => {
+        prunedIds.push(workspaceId);
+        return Promise.resolve();
+      },
+    };
+    const serviceWithOverrides = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: overridesStub as unknown as WorkspaceMcpOverridesService,
+    });
+    const preview = await serviceWithOverrides.preview({ input: remoteDir });
+    await serviceWithOverrides.install({ source: preview.source, expectedSha: preview.lockedSha });
+
+    // Pre-commit: zero workspaces. Post-commit: enumeration fails.
+    let calls = 0;
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() => {
+      calls += 1;
+      return calls === 1
+        ? Promise.resolve([] as unknown as Awaited<ReturnType<Config["getAllWorkspaceMetadata"]>>)
+        : Promise.reject(new Error("config store unavailable"));
+    });
+    try {
+      await serviceWithOverrides.uninstall({ name: "demo-plugin", deletePluginData: false });
+      const doc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+        pendingOverridePrunes?: Array<{ prefix: string; workspaceIds: string[] }>;
+      };
+      expect(doc.pendingOverridePrunes).toEqual([
+        { prefix: `plugin:${instanceId}:`, workspaceIds: [] },
+      ]);
+    } finally {
+      metadataSpy.mockRestore();
+    }
+
+    // Reinstall gate: the sentinel drives a live sweep over the delta
+    // workspace the record never named, then clears.
+    const liveSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.resolve([{ id: "ws-delta", runtimeConfig: { type: "local" } }] as unknown as Awaited<
+        ReturnType<Config["getAllWorkspaceMetadata"]>
+      >)
+    );
+    try {
+      const preview2 = await serviceWithOverrides.preview({ input: remoteDir });
+      await serviceWithOverrides.install({
+        source: preview2.source,
+        expectedSha: preview2.lockedSha,
+      });
+      expect(prunedIds).toContain("ws-delta");
+      const doc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+        pendingOverridePrunes?: unknown;
+      };
+      expect(doc.pendingOverridePrunes).toBeUndefined();
+    } finally {
+      liveSpy.mockRestore();
+    }
+  });
+
+  test("a sentinel tombstone survives retries whose enumeration fails and blocks reinstall", async () => {
+    // An empty sentinel and a failed live enumeration are indistinguishable
+    // from "delta workspaces unknown": the section-open retry must keep the
+    // record and the reinstall gate must stay blocked rather than clearing
+    // a sweep that never ran.
+    const instanceId = computePluginInstanceId(path.join(pluginsDir(), "demo-plugin"));
+    const serviceWithOverrides = new AgentPluginInstallService(config, {
+      isEnabled: () => true,
+      workspaceMcpOverridesService: {
+        prunePluginOverrideKeys: () => Promise.resolve(),
+      } as unknown as WorkspaceMcpOverridesService,
+    });
+    await fsPromises.mkdir(path.dirname(registryFile()), { recursive: true });
+    await fsPromises.writeFile(
+      registryFile(),
+      JSON.stringify({
+        plugins: [],
+        pendingOverridePrunes: [{ prefix: `plugin:${instanceId}:`, workspaceIds: [] }],
+      })
+    );
+    const metadataSpy = spyOn(config, "getAllWorkspaceMetadata").mockImplementation(() =>
+      Promise.reject(new Error("config store unavailable"))
+    );
+    try {
+      await serviceWithOverrides.list();
+      const doc = JSON.parse(await fsPromises.readFile(registryFile(), "utf8")) as {
+        pendingOverridePrunes?: Array<{ prefix: string; workspaceIds: string[] }>;
+      };
+      expect(doc.pendingOverridePrunes).toEqual([
+        { prefix: `plugin:${instanceId}:`, workspaceIds: [] },
+      ]);
+
+      const preview = await serviceWithOverrides.preview({ input: remoteDir });
+      await expect(
+        serviceWithOverrides.install({ source: preview.source, expectedSha: preview.lockedSha })
+      ).rejects.toThrow(/could not verify/);
     } finally {
       metadataSpy.mockRestore();
     }

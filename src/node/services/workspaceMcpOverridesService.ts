@@ -704,6 +704,10 @@ export class WorkspaceMcpOverridesService {
         // requested prefix: MCP server names are otherwise arbitrary strings
         // and user configuration may legitimately name a server "plugin:…" —
         // pruning must never strip such an ordinary server's overrides.
+        // Canonical keys themselves are additionally RESERVED in ordinary
+        // config (MCPConfigService ignores them in global/project layers and
+        // addServer rejects them), so a key this shape can only belong to an
+        // Agent Plugin server — shape-based pruning cannot hit a user server.
         const isPrunableKey = (key: unknown): boolean =>
           typeof key === "string" && key.startsWith(keyPrefix) && isCanonicalPluginServerKey(key);
 

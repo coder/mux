@@ -175,6 +175,25 @@ describe("loadPluginMcpServers", () => {
     }
   });
 
+  test("disables MCP for the plugin on an oversized mcp.json", async () => {
+    // Server summaries built from mcp.json reach the install consent
+    // preview's IPC/render path: an unbounded document must disable MCP for
+    // this plugin instead of shipping megabytes of text to the renderer.
+    using tmp = new DisposableTempDir("plugin-mcp");
+    const oversized = JSON.stringify({
+      $schema: AGENT_PLUGIN_MCP_SCHEMA_ID_1_0_0,
+      mcpServers: {
+        big: { type: "stdio", command: "bunx", args: ["x".repeat(512 * 1024)] },
+      },
+    });
+    const plugin = await makePlugin(tmp.path, "oversized", oversized);
+    const { servers, diagnostics } = await loadPluginMcpServers(plugin, { xumHome: tmp.path });
+    expect(servers).toEqual({});
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].severity).toBe("error");
+    expect(diagnostics[0].message).toContain("too large");
+  });
+
   test("an empty mcpServers object is valid", async () => {
     using tmp = new DisposableTempDir("plugin-mcp");
     const plugin = await makePlugin(tmp.path, "empty", mcpDoc({}));

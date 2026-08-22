@@ -12,7 +12,11 @@ import { isMultiProject } from "@/common/utils/multiProject";
 import { log } from "@/node/services/log";
 import { ensurePathContained, hasErrorCode } from "@/node/services/tools/skillFileUtils";
 import type { AgentPluginContainer, AgentPluginDiagnostic, AgentPluginInfo } from "./discovery";
-import { computeAgentPluginContainers, discoverAgentPlugins } from "./discovery";
+import {
+  computeAgentPluginContainers,
+  discoverAgentPlugins,
+  MAX_PLUGIN_MANIFEST_BYTES,
+} from "./discovery";
 import { expandPluginPlaceholders, type PluginPlaceholderValues } from "./expansion";
 
 /**
@@ -554,6 +558,16 @@ export async function loadPluginMcpServers(
 
   let raw: unknown;
   try {
+    // Size-cap before parsing: server summaries built from this document
+    // (command lines, env assignments, URLs) reach the install consent
+    // preview's IPC/render path, so one unbounded string must not be able to
+    // freeze the app before consent (same ceiling as plugin.json).
+    const stat = await fsPromises.stat(plugin.mcpConfigPath);
+    if (stat.size > MAX_PLUGIN_MANIFEST_BYTES) {
+      return disableMcp(
+        `mcp.json is too large (${stat.size} bytes; max ${MAX_PLUGIN_MANIFEST_BYTES})`
+      );
+    }
     raw = JSON.parse(await fsPromises.readFile(plugin.mcpConfigPath, "utf8")) as unknown;
   } catch (error) {
     // §7.2.2 rule 2: invalid JSON disables MCP for this plugin only.

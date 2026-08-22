@@ -39,6 +39,16 @@ export type AgentPluginScope = "project" | "global";
  */
 export const UNIVERSAL_AGENT_PLUGINS_CONTAINER = "~/.agents/plugins";
 
+/**
+ * Generous ceiling for a plausible plugin.json (name/description/contributes
+ * declarations). A repository can otherwise put its entire checkout quota
+ * into one unbounded manifest string, and the install consent preview would
+ * ship that through IPC and render it — freezing the app before consent.
+ * Skill/agent markdown already has runtime size caps; this closes the same
+ * hole for the manifest.
+ */
+export const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
+
 export interface AgentPluginContainer {
   /** Absolute host path of the container directory (e.g. `<projectRoot>/.xum/plugins`). */
   path: string;
@@ -206,6 +216,13 @@ async function discoverPluginAt(args: {
   }
   if (!manifestStat.isFile()) {
     // plugin.json of the wrong filesystem kind: not a plugin candidate.
+    return null;
+  }
+  if (manifestStat.size > MAX_PLUGIN_MANIFEST_BYTES) {
+    pushError(
+      manifestPath,
+      `plugin.json is too large (${manifestStat.size} bytes; max ${MAX_PLUGIN_MANIFEST_BYTES})`
+    );
     return null;
   }
 
