@@ -57,12 +57,25 @@ class CaptureSkippedError extends Error {}
 class CaptureBudgetExceededError extends CaptureSkippedError {}
 
 /**
- * Enforce the inverse-capture budgets. `sizeBytes` is the file's on-disk size
- * (checked BEFORE reading so an attacker-sized file is never buffered).
- * Returns the new running total; throws when any budget is exceeded.
+ * Running capture totals shared across every directory captured for ONE
+ * deletion. A project skill delete captures both the canonical and the legacy
+ * dir into a single journaled inverse, so per-dir counters would let one
+ * deletion buffer and journal nearly 2x REFINEMENT_CAPTURE_MAX_TOTAL_BYTES /
+ * REFINEMENT_CAPTURE_MAX_FILES.
  */
-function assertCaptureBudget(fileCount: number, sizeBytes: number, totalBytes: number): number {
-  if (fileCount >= REFINEMENT_CAPTURE_MAX_FILES) {
+interface CaptureTotals {
+  fileCount: number;
+  totalBytes: number;
+}
+
+/**
+ * Enforce the inverse-capture budgets and advance the shared running totals.
+ * `sizeBytes` is the file's on-disk size (checked BEFORE reading so an
+ * attacker-sized file is never buffered). Throws without mutating the totals
+ * when any budget is exceeded.
+ */
+function assertCaptureBudget(totals: CaptureTotals, sizeBytes: number): void {
+  if (totals.fileCount >= REFINEMENT_CAPTURE_MAX_FILES) {
     throw new CaptureBudgetExceededError(
       `skill has more than ${REFINEMENT_CAPTURE_MAX_FILES} files`
     );
@@ -72,13 +85,13 @@ function assertCaptureBudget(fileCount: number, sizeBytes: number, totalBytes: n
       `file exceeds ${REFINEMENT_CAPTURE_MAX_FILE_BYTES} bytes (${sizeBytes})`
     );
   }
-  const newTotal = totalBytes + sizeBytes;
-  if (newTotal > REFINEMENT_CAPTURE_MAX_TOTAL_BYTES) {
+  if (totals.totalBytes + sizeBytes > REFINEMENT_CAPTURE_MAX_TOTAL_BYTES) {
     throw new CaptureBudgetExceededError(
       `skill exceeds ${REFINEMENT_CAPTURE_MAX_TOTAL_BYTES} total bytes`
     );
   }
-  return newTotal;
+  totals.fileCount += 1;
+  totals.totalBytes += sizeBytes;
 }
 
 /**
@@ -98,15 +111,19 @@ function assertLosslessUtf8(entryPath: string, bytes: Buffer): string {
 
 /**
  * Capture every regular file under a local skill dir (refinement inverse for a
- * whole-skill delete). Returns null when capture fails, exceeds the capture
- * budgets, or the tree cannot be represented faithfully by a files-only
- * text inverse (binary files, symlinks/special entries, empty directories):
- * the delete then proceeds unjournaled (log-only) rather than failing.
+ * whole-skill delete). Budgets accrue into the caller's shared `totals` so
+ * one deletion spanning several dirs stays within a single budget. Returns
+ * null when capture fails, exceeds the capture budgets, or the tree cannot be
+ * represented faithfully by a files-only text inverse (binary files,
+ * symlinks/special entries, empty directories): the delete then proceeds
+ * unjournaled (log-only) rather than failing.
  */
-async function captureLocalSkillFiles(skillDir: string): Promise<RefinementFileCapture[] | null> {
+async function captureLocalSkillFiles(
+  skillDir: string,
+  totals: CaptureTotals
+): Promise<RefinementFileCapture[] | null> {
   try {
     const captures: RefinementFileCapture[] = [];
-    let totalBytes = 0;
     const walk = async (dir: string): Promise<void> => {
       const entries = await fsPromises.readdir(dir, { withFileTypes: true });
       if (entries.length === 0) {
@@ -121,7 +138,7 @@ async function captureLocalSkillFiles(skillDir: string): Promise<RefinementFileC
           await walk(entryPath);
         } else if (entry.isFile()) {
           const { size } = await fsPromises.stat(entryPath);
-          totalBytes = assertCaptureBudget(captures.length, size, totalBytes);
+          assertCaptureBudget(totals, size);
           const content = assertLosslessUtf8(entryPath, await fsPromises.readFile(entryPath));
           captures.push({ path: entryPath, content });
         } else {
@@ -163,7 +180,8 @@ const FIND_MAX_OUTPUT_BYTES = (REFINEMENT_CAPTURE_MAX_FILES + 1) * 1024;
  */
 async function captureRuntimeSkillFiles(
   runtime: Runtime,
-  skillDir: string
+  skillDir: string,
+  totals: CaptureTotals
 ): Promise<RefinementFileCapture[] | null> {
   try {
     // Entries a files-only inverse cannot represent: anything that is neither
@@ -206,17 +224,18 @@ async function captureRuntimeSkillFiles(
       .filter((line) => line.length > 0)
       .map((line) => line.replace(/^\.\//, ""))
       .sort();
-    if (relPaths.length > REFINEMENT_CAPTURE_MAX_FILES) {
+    // Count against the shared totals so files already captured from a
+    // sibling dir (canonical vs legacy) consume the same file budget.
+    if (totals.fileCount + relPaths.length > REFINEMENT_CAPTURE_MAX_FILES) {
       throw new CaptureBudgetExceededError(
         `skill has more than ${REFINEMENT_CAPTURE_MAX_FILES} files`
       );
     }
     const captures: RefinementFileCapture[] = [];
-    let totalBytes = 0;
     for (const relPath of relPaths) {
       const runtimePath = runtime.normalizePath(relPath, skillDir);
       const { size } = await runtime.stat(runtimePath);
-      totalBytes = assertCaptureBudget(captures.length, size, totalBytes);
+      assertCaptureBudget(totals, size);
       const content = await readFileString(runtime, runtimePath);
       // Runtime reads decode to text on the wire, so the original bytes are
       // not available for an exact round-trip check. A lossy decode always
@@ -315,10 +334,13 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
               return { success: false, error: `Skill not found: ${parsedName.data}` };
             }
             let skillCaptures: RefinementFileCapture[] | null = [];
+            // One budget shared across both dirs (canonical + legacy): per-dir
+            // counters would let one delete journal nearly double the caps.
+            const captureTotals: CaptureTotals = { fileCount: 0, totalBytes: 0 };
             for (const [i, dir] of projectSkillDirs.entries()) {
               if (skillCaptures === null) break;
               if (!stats[i]?.isDirectory) continue; // Absent dir: nothing to capture.
-              const captured = await captureRuntimeSkillFiles(skillCtx.runtime, dir);
+              const captured = await captureRuntimeSkillFiles(skillCtx.runtime, dir, captureTotals);
               if (captured === null) {
                 skillCaptures = null;
               } else {
@@ -535,11 +557,13 @@ export const createAgentSkillDeleteTool: ToolFactory = (config: ToolConfiguratio
             path.resolve(skillsRoot),
             async () => {
               // Prior contents must be captured before removal (refinement
-              // inverse) — across every dir the delete removes.
+              // inverse) — across every dir the delete removes, under ONE
+              // shared budget (see CaptureTotals).
               let skillCaptures: RefinementFileCapture[] | null = [];
+              const captureTotals: CaptureTotals = { fileCount: 0, totalBytes: 0 };
               for (const dir of dirsToDelete) {
                 if (skillCaptures === null) break;
-                const captured = await captureLocalSkillFiles(dir).catch(() => null);
+                const captured = await captureLocalSkillFiles(dir, captureTotals).catch(() => null);
                 if (captured === null) {
                   // Missing dirs are fine (force-rm semantics); a dir that
                   // exists but cannot be captured faithfully skips journaling.

@@ -1021,6 +1021,77 @@ describe("refinement journal", () => {
     expect(await readRefinementEvents(sessionDirOf(tempDir.path))).toHaveLength(0);
   });
 
+  /** Both project skill dirs for one over-combined-budget delete (Finding: per-dir budgets). */
+  async function writeCombinedBudgetProjectSkill(
+    projectRoot: string,
+    perDirFiles: Record<string, string>
+  ): Promise<void> {
+    await writeSkill(path.join(projectRoot, ".xum", "skills"), "demo-skill", {
+      files: perDirFiles,
+    });
+    await writeSkill(path.join(projectRoot, ".mux", "skills"), "demo-skill", {
+      files: perDirFiles,
+    });
+  }
+
+  /** Delete + assert: both dirs removed, journaling skipped (combined budget). */
+  async function expectCombinedBudgetSkip(xumHome: string, projectRoot: string): Promise<void> {
+    const tool = await createDeleteTool(xumHome, GLOBAL_WORKSPACE_ID, {
+      type: "project",
+      xumHome,
+      projectRoot,
+      projectStorageAuthority: "host-local",
+    });
+    const result = (await tool.execute!(
+      { name: "demo-skill", target: "skill", confirm: true },
+      mockToolCallOptions
+    )) as AgentSkillDeleteToolResult;
+
+    // The delete still removes both dirs; only journaling is skipped.
+    expect(result).toMatchObject({ success: true, deleted: "skill" });
+    for (const root of [".xum", ".mux"]) {
+      const statErr = await fs
+        .stat(path.join(projectRoot, root, "skills", "demo-skill"))
+        .catch((error: NodeJS.ErrnoException) => error);
+      expect(statErr).toMatchObject({ code: "ENOENT" });
+    }
+    expect(await readRefinementEvents(sessionDirOf(xumHome))).toHaveLength(0);
+  }
+
+  it("shares the capture file-count budget across canonical and legacy dirs", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-refinement-combined-count");
+
+    // Each dir is individually under the cap (SKILL.md + MAX/2 references),
+    // but one delete captures BOTH dirs into a single journaled inverse:
+    // per-dir counters would journal ~2x REFINEMENT_CAPTURE_MAX_FILES.
+    const projectRoot = path.join(tempDir.path, "my-project");
+    await writeCombinedBudgetProjectSkill(
+      projectRoot,
+      Object.fromEntries(
+        Array.from({ length: Math.ceil(REFINEMENT_CAPTURE_MAX_FILES / 2) }, (_, i) => [
+          `references/f${i}.txt`,
+          "x",
+        ])
+      )
+    );
+    await expectCombinedBudgetSkip(tempDir.path, projectRoot);
+  });
+
+  it("shares the capture byte budget across canonical and legacy dirs", async () => {
+    using tempDir = new TestTempDir("test-agent-skill-delete-refinement-combined-bytes");
+
+    // Each dir stays under REFINEMENT_CAPTURE_MAX_TOTAL_BYTES on its own but
+    // the combined capture would buffer/journal well past the total-byte cap.
+    const projectRoot = path.join(tempDir.path, "my-project");
+    const chunk = "x".repeat(REFINEMENT_CAPTURE_MAX_FILE_BYTES);
+    await writeCombinedBudgetProjectSkill(projectRoot, {
+      "references/a.txt": chunk,
+      "references/b.txt": chunk,
+      "references/c.txt": chunk,
+    });
+    await expectCombinedBudgetSkip(tempDir.path, projectRoot);
+  });
+
   /** Runtime-backed delete tool over a project skill (shared by budget/lossless tests). */
   async function createRuntimeDeleteContext(tempDirPath: string, skillName: string) {
     const remoteWorkspaceRoot = "/remote/workspace";
