@@ -6464,23 +6464,20 @@ export class AgentSession {
    * (compactionOccurred + the in-session mirrors).
    */
   async clearPostCompactionState(): Promise<void> {
+    // In-memory clears stay unconditional: they stop THIS session from
+    // injecting carryover even when the durable discard below fails.
     this.compactionOccurred = false;
     this.turnsSinceLastAttachment = TURNS_BETWEEN_ATTACHMENTS;
     this.postCompactionLoadedSkills = [];
     this.postCompactionReadFilePaths = [];
     this.ackPendingPostCompactionStateOnStreamEnd = false;
-    try {
-      await this.compactionHandler.discardPendingState("context-boundary");
-      this.onPostCompactionStateChange?.();
-    } catch (error) {
-      // Best-effort like the rest of the pending-state lifecycle: a failed
-      // disk cleanup only risks re-injection after a restart, and the
-      // in-memory clears above already stop this session from injecting.
-      log.warn("Failed to discard pending post-compaction state at context boundary", {
-        workspaceId: this.workspaceId,
-        error: getErrorMessage(error),
-      });
-    }
+    // Durable-or-throw: a swallowed unlink failure would leave the stale
+    // post-compaction.json to re-inject pre-boundary carryover after a
+    // restart while the boundary caller reports success — the same
+    // invalidation-must-be-durable invariant as the sandbox reset tombstone.
+    // Boundary callers surface the throw as a partial failure.
+    await this.compactionHandler.discardPendingStateDurably("context-boundary");
+    this.onPostCompactionStateChange?.();
   }
 
   /**

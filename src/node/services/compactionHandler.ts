@@ -538,6 +538,27 @@ export class CompactionHandler {
     this.cachedReadFilePaths = [];
   }
 
+  /**
+   * Context-boundary variant of discardPendingState: the persisted pending
+   * state must be provably gone before the boundary caller reports success —
+   * a stale post-compaction.json re-injects PRE-boundary read paths / skills
+   * / diffs into a fresh session after a restart. Performs the same in-memory
+   * discard, then deletes the persisted file durable-or-throw (ENOENT counts
+   * as deleted; it also heals an earlier swallowed best-effort unlink
+   * failure, since the in-memory early return above cannot see the file).
+   */
+  async discardPendingStateDurably(reason: string): Promise<void> {
+    await this.discardPendingState(reason);
+    try {
+      await fsPromises.unlink(this.postCompactionStatePath);
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+
   private async deletePersistedPendingStateBestEffort(): Promise<void> {
     try {
       await fsPromises.unlink(this.postCompactionStatePath);

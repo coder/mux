@@ -9943,8 +9943,18 @@ export class WorkspaceService extends EventEmitter {
       }
       this.sessions.get(workspaceId)?.clearFileState();
       // Same new-segment invariant as resetContext: pre-clear read/skill
-      // carryover must not be injected after the transcript is gone.
-      await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      // carryover must not be injected after the transcript is gone, and the
+      // discard must be durable before the clear reports success (a stale
+      // persisted file would re-inject pre-clear context after a restart).
+      try {
+        await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      } catch (error) {
+        return Err(
+          `History was cleared, but the persisted post-compaction carryover could not be ` +
+            `durably discarded (${getErrorMessage(error)}). Pre-clear read/skill context may ` +
+            `be re-injected after a restart; retry once the session storage is writable.`
+        );
+      }
     }
 
     return Ok(undefined);
@@ -10018,7 +10028,23 @@ export class WorkspaceService extends EventEmitter {
       // turns. getOrCreateSession so the persisted pending state is
       // discarded even when no session exists yet (e.g. reset right after
       // an app restart).
-      await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      try {
+        await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+      } catch (error) {
+        // Same partial-failure posture as the sandbox invalidation below:
+        // the chat-side reset applied, but the stale persisted carryover
+        // would re-inject pre-reset context after a restart, so success must
+        // not be reported while the discard is not durable.
+        log.error(
+          `Failed to durably discard post-compaction carryover for ${workspaceId} after context reset`,
+          error
+        );
+        return Err(
+          `Context was reset, but the persisted post-compaction carryover could not be durably ` +
+            `discarded (${getErrorMessage(error)}). Pre-reset read/skill context may be ` +
+            `re-injected after a restart; retry once the session storage is writable.`
+        );
+      }
 
       // Persistent sandbox mounts are scoped to the workspace session; a
       // context reset ends that session, so sandbox state is DISCARDED (not
@@ -10147,9 +10173,19 @@ export class WorkspaceService extends EventEmitter {
         if (!isCompaction) {
           // A destructive non-compaction replace (e.g. "start here") begins a
           // new context segment: discard pre-boundary post-compaction
-          // carryover like resetContext does. Compaction summaries instead
-          // RELY on the pending post-compaction state persisted for them.
-          await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+          // carryover like resetContext does, durable-or-fail for the same
+          // reason (a stale persisted file re-injects after a restart).
+          // Compaction summaries instead RELY on the pending post-compaction
+          // state persisted for them.
+          try {
+            await this.getOrCreateSession(workspaceId).clearPostCompactionState();
+          } catch (error) {
+            return Err(
+              `History was cleared, but the persisted post-compaction carryover could not be ` +
+                `durably discarded (${getErrorMessage(error)}). Pre-boundary read/skill context ` +
+                `may be re-injected after a restart; retry once the session storage is writable.`
+            );
+          }
         }
         this.timelineRecorder.record(workspaceId, {
           kind: "history.cleared",

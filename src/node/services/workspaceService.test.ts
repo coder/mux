@@ -4462,6 +4462,39 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset fails when the post-compaction carryover discard is not durable", async () => {
+    // Best-effort deletion of post-compaction.json swallowed unlink failures
+    // while resetContext still reported success — after a restart the stale
+    // file re-injects PRE-reset read paths/skills/diffs. The discard must be
+    // durable-or-fail, matching the sandbox invalidation posture.
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-carryover-not-durable";
+    try {
+      await config.addWorkspace("/tmp/context-reset-carryover-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-carryover-project",
+        projectPath: "/tmp/context-reset-carryover-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      // Deterministic unlink failure: a DIRECTORY at the pending-state path
+      // fails unlink with EISDIR (read errors are swallowed at load, so this
+      // models exactly the stale-undeletable-file case).
+      const pendingStatePath = path.join(config.getSessionDir(workspaceId), "post-compaction.json");
+      await fsPromises.mkdir(pendingStatePath, { recursive: true });
+
+      const result = await workspaceService.resetContext(workspaceId);
+      expect(result.success).toBe(false);
+      expect(result.success ? "" : result.error).toContain("post-compaction carryover");
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset fails when the sandbox invalidation is not durable", async () => {
     // The reset's kernel-vars invalidation is only durable once the
     // empty-snapshot tombstone publishes; the in-memory reset-pending guard
