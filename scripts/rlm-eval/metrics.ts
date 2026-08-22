@@ -70,6 +70,17 @@ function readJsonl(filePath: string): unknown[] {
   return rows;
 }
 
+/**
+ * Per-request context pressure from a row's usage snapshot. AI SDK v6
+ * unified semantics: inputTokens is INCLUSIVE of cache-read and cache-write
+ * tokens (see createDisplayUsage), so adding cachedInputTokens /
+ * cacheCreationInputTokens again would double-count cached configurations
+ * and skew peak-context comparisons.
+ */
+function contextTokensFromUsage(usage: Record<string, unknown>): number {
+  return typeof usage.inputTokens === "number" ? usage.inputTokens : 0;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -159,13 +170,10 @@ export function extractMetrics(sessionDir: string): CellMetrics {
       // requests, so their usage still counts toward peak context pressure —
       // only their text/tool parts are excluded from scenario turns.
       if (isRecord(meta) && isRecord(meta.usage)) {
-        const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-        const usage = meta.usage;
-        const ctx =
-          num(usage.inputTokens) +
-          num(usage.cachedInputTokens) +
-          num(usage.cacheCreationInputTokens);
-        metrics.peakContextTokens = Math.max(metrics.peakContextTokens, ctx);
+        metrics.peakContextTokens = Math.max(
+          metrics.peakContextTokens,
+          contextTokensFromUsage(meta.usage)
+        );
       }
       continue;
     }
@@ -173,12 +181,10 @@ export function extractMetrics(sessionDir: string): CellMetrics {
       // Peak per-request context pressure from the per-row usage snapshot.
       const usage = meta.usage;
       if (isRecord(usage)) {
-        const num = (v: unknown): number => (typeof v === "number" ? v : 0);
-        const ctx =
-          num(usage.inputTokens) +
-          num(usage.cachedInputTokens) +
-          num(usage.cacheCreationInputTokens);
-        metrics.peakContextTokens = Math.max(metrics.peakContextTokens, ctx);
+        metrics.peakContextTokens = Math.max(
+          metrics.peakContextTokens,
+          contextTokensFromUsage(usage)
+        );
       }
     }
     for (const part of msg.parts ?? []) {
