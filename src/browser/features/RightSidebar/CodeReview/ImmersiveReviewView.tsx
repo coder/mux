@@ -1395,8 +1395,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
   } | null>(null);
   const copyFileRequestIdRef = useRef(0);
   const pendingCopyFilePathRef = useRef<string | null>(null);
+  // Both refs update during render so isStale() sees path AND content-version
+  // changes before passive effects run; a resolved read's microtask can otherwise
+  // beat the invalidation effect after a same-path refresh commits.
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
+  const activeFileContentVersionRef = useRef(activeFileContentVersion);
+  activeFileContentVersionRef.current = activeFileContentVersion;
 
   useEffect(() => {
     return () => {
@@ -1472,10 +1477,13 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
     // for clipboard contents this operation is about to replace.
     setCopyFileFeedback(null);
     // Discard stale completions: the user may have navigated away, an edit may have
-    // changed the file in place (invalidation effect bumps the id), or a newer copy
-    // may have started while this read was in flight.
+    // changed the file in place, or a newer copy may have started while this read
+    // was in flight. Path and content version are read from render-updated refs so
+    // staleness is visible even before the invalidation effect runs.
     const isStale = () =>
-      requestId !== copyFileRequestIdRef.current || activeFilePathRef.current !== filePath;
+      requestId !== copyFileRequestIdRef.current ||
+      activeFilePathRef.current !== filePath ||
+      activeFileContentVersionRef.current !== contentVersion;
     try {
       const result = await api.workspace.executeBash({
         workspaceId: props.workspaceId,
@@ -2146,18 +2154,20 @@ export const ImmersiveReviewView: React.FC<ImmersiveReviewViewProps> = (props) =
                 ) : (
                   <Copy aria-hidden="true" className="h-3.5 w-3.5" />
                 )}
-                {/* The keyboard shortcut never focuses the button, so announce
-                    copy outcomes through a live region instead of icon swaps. */}
-                <span className="sr-only" role="status">
-                  {activeCopyFileFeedback === "copied"
-                    ? "File copied to clipboard"
-                    : activeCopyFileFeedback === "failed"
-                      ? (copyFileFeedback?.message ?? "Copy failed: not a copyable text file")
-                      : ""}
-                </span>
               </button>
             </TooltipIfPresent>
           )}
+          {/* The keyboard shortcut never focuses the button, so announce copy
+              outcomes through a live region. Rendered as a SIBLING: a button is an
+              accessibility leaf whose aria-label replaces descendant text, so a
+              nested status would not be exposed. */}
+          <span className="sr-only" role="status">
+            {activeCopyFileFeedback === "copied"
+              ? "File copied to clipboard"
+              : activeCopyFileFeedback === "failed"
+                ? (copyFileFeedback?.message ?? "Copy failed: not a copyable text file")
+                : ""}
+          </span>
         </div>
 
         <div className="bg-border-light hidden h-4 w-px shrink-0 sm:block" />

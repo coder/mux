@@ -232,6 +232,26 @@ describe("buildReadFileScript", () => {
     }
   });
 
+  test("parses the payload despite a persistent DEBUG trap from tool_env", () => {
+    // A tool_env can install a DEBUG trap that keeps emitting after xtrace is off;
+    // it must be cleared before the framed payload.
+    const tempDir = mkdtempSync(join(tmpdir(), "mux-file-read-"));
+
+    try {
+      writeFileSync(join(tempDir, "file.txt"), "trapped contents\n");
+      const result = spawnSync(
+        "bash",
+        ["-lc", `trap 'echo diagnostic' DEBUG; ${buildReadFileScript("file.txt")} 2>&1`],
+        { cwd: tempDir }
+      );
+      expect(result.status).toBe(0);
+      const processed = processFileContents(result.stdout.toString(), result.status ?? 0);
+      expect(processed).toMatchObject({ type: "text", content: "trapped contents\n" });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("resolves paths without realpath or readlink -f (BSD/macOS fallback)", () => {
     const outsideDir = mkdtempSync(join(tmpdir(), "mux-file-read-outside-"));
     const workspaceDir = mkdtempSync(join(tmpdir(), "mux-file-read-ws-"));
