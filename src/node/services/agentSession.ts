@@ -6453,6 +6453,37 @@ export class AgentSession {
   }
 
   /**
+   * Discard cumulative post-compaction carryover when a NEW context segment
+   * starts (context reset, full history clear, destructive replace). The
+   * cached read-file paths, loaded skills, and pending diff snapshot
+   * summarize PRE-boundary epochs; injecting them into a later turn would
+   * resurrect context the user explicitly discarded and tell the model files
+   * were "previously read" when their contents are gone from active context.
+   * Covers both injection routes: the immediate pending-state path (on-disk
+   * post-compaction.json + handler caches) and the periodic re-merge path
+   * (compactionOccurred + the in-session mirrors).
+   */
+  async clearPostCompactionState(): Promise<void> {
+    this.compactionOccurred = false;
+    this.turnsSinceLastAttachment = TURNS_BETWEEN_ATTACHMENTS;
+    this.postCompactionLoadedSkills = [];
+    this.postCompactionReadFilePaths = [];
+    this.ackPendingPostCompactionStateOnStreamEnd = false;
+    try {
+      await this.compactionHandler.discardPendingState("context-boundary");
+      this.onPostCompactionStateChange?.();
+    } catch (error) {
+      // Best-effort like the rest of the pending-state lifecycle: a failed
+      // disk cleanup only risks re-injection after a restart, and the
+      // in-memory clears above already stop this session from injecting.
+      log.warn("Failed to discard pending post-compaction state at context boundary", {
+        workspaceId: this.workspaceId,
+        error: getErrorMessage(error),
+      });
+    }
+  }
+
+  /**
    * Resolve the memory session context (index snapshot + optional hot block)
    * for the current session segment.
    *

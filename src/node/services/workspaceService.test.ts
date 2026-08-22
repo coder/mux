@@ -4413,6 +4413,55 @@ describe("WorkspaceService truncateHistory goal acknowledgment", () => {
     }
   });
 
+  test("context reset discards persisted post-compaction carryover", async () => {
+    // An RLM compaction persists cumulative read-file paths / loaded skills
+    // (post-compaction.json). A reset starts a NEW context segment: without
+    // discarding that state, a later turn would inject PRE-reset read paths
+    // (even in a fresh session after a restart), resurrecting context the
+    // reset was meant to discard.
+    const { config, historyService, workspaceService, cleanup } = await createServices();
+    const workspaceId = "context-reset-post-compaction";
+    try {
+      await config.addWorkspace("/tmp/context-reset-post-compaction-project", {
+        id: workspaceId,
+        name: workspaceId,
+        projectName: "context-reset-post-compaction-project",
+        projectPath: "/tmp/context-reset-post-compaction-project",
+        runtimeConfig: { type: "local" },
+      });
+      await historyService.appendToHistory(
+        workspaceId,
+        createMuxMessage("pre-reset-user", "user", "before reset", {})
+      );
+      const sessionDir = config.getSessionDir(workspaceId);
+      await fsPromises.mkdir(sessionDir, { recursive: true });
+      const pendingStatePath = path.join(sessionDir, "post-compaction.json");
+      await fsPromises.writeFile(
+        pendingStatePath,
+        JSON.stringify({
+          version: 1,
+          createdAt: Date.now(),
+          diffs: [],
+          loadedSkills: [],
+          readFiles: ["/tmp/pre-reset-read.ts"],
+        })
+      );
+
+      expect(await workspaceService.resetContext(workspaceId)).toEqual({
+        success: true,
+        data: "reset",
+      });
+
+      const stateExists = await fsPromises.access(pendingStatePath).then(
+        () => true,
+        () => false
+      );
+      expect(stateExists).toBe(false);
+    } finally {
+      await cleanup();
+    }
+  });
+
   test("context reset fails when the sandbox invalidation is not durable", async () => {
     // The reset's kernel-vars invalidation is only durable once the
     // empty-snapshot tombstone publishes; the in-memory reset-pending guard

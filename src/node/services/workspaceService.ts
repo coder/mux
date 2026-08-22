@@ -9942,6 +9942,9 @@ export class WorkspaceService extends EventEmitter {
         return Err(getErrorMessage(error));
       }
       this.sessions.get(workspaceId)?.clearFileState();
+      // Same new-segment invariant as resetContext: pre-clear read/skill
+      // carryover must not be injected after the transcript is gone.
+      await this.getOrCreateSession(workspaceId).clearPostCompactionState();
     }
 
     return Ok(undefined);
@@ -10009,6 +10012,13 @@ export class WorkspaceService extends EventEmitter {
         log.error("Failed to require goal acknowledgment after context reset:", error);
       }
       this.sessions.get(workspaceId)?.clearFileState();
+      // A reset starts a NEW context segment: cumulative post-compaction
+      // carryover (read-file paths, loaded skills, pending diff snapshot)
+      // summarizes PRE-reset epochs and must not be injected into later
+      // turns. getOrCreateSession so the persisted pending state is
+      // discarded even when no session exists yet (e.g. reset right after
+      // an app restart).
+      await this.getOrCreateSession(workspaceId).clearPostCompactionState();
 
       // Persistent sandbox mounts are scoped to the workspace session; a
       // context reset ends that session, so sandbox state is DISCARDED (not
@@ -10133,6 +10143,13 @@ export class WorkspaceService extends EventEmitter {
         );
         if (!clearResult.success) {
           return Err(`Failed to clear history: ${clearResult.error}`);
+        }
+        if (!isCompaction) {
+          // A destructive non-compaction replace (e.g. "start here") begins a
+          // new context segment: discard pre-boundary post-compaction
+          // carryover like resetContext does. Compaction summaries instead
+          // RELY on the pending post-compaction state persisted for them.
+          await this.getOrCreateSession(workspaceId).clearPostCompactionState();
         }
         this.timelineRecorder.record(workspaceId, {
           kind: "history.cleared",
