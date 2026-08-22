@@ -6,6 +6,7 @@ import { TOOL_DEFINITIONS } from "@/common/utils/tools/toolDefinitions";
 import { getErrorMessage } from "@/common/utils/errors";
 import { SkillNameSchema } from "@/common/orpc/schemas";
 import { readAgentSkill } from "@/node/services/agentSkills/agentSkillsService";
+import { readPluginFileWithinRootCapped } from "@/node/services/agentPlugins/discovery";
 import { resolveSkillStorageContext } from "@/node/services/agentSkills/skillStorageContext";
 import { MAX_FILE_SIZE, validateFileSize } from "@/node/services/tools/fileCommon";
 import { readBuiltInSkillFile } from "@/node/services/agentSkills/builtInSkillDefinitions";
@@ -239,7 +240,23 @@ export const createAgentSkillReadFileTool: ToolFactory = (config: ToolConfigurat
 
         let fullContent: string;
         try {
-          fullContent = await readFileString(skillRuntime, targetPath);
+          // Plugin skills retain plugin provenance: the consuming read must
+          // revalidate containment + file identity against the PLUGIN root
+          // through a bounded post-open handle. A managed update promoted
+          // after readAgentSkill's containment checks can replace
+          // skills/<name> (or an ancestor) with an absolute symlink to an
+          // outside directory; skill-dir-relative resolution above would
+          // then canonicalize through that same link and serve outside
+          // files as skill references.
+          fullContent =
+            resolvedSkill.pluginRoot != null
+              ? await readPluginFileWithinRootCapped({
+                  filePath: targetPath,
+                  pluginRoot: resolvedSkill.pluginRoot,
+                  maxBytes: MAX_FILE_SIZE,
+                  label: `plugin skill file '${filePath}'`,
+                })
+              : await readFileString(skillRuntime, targetPath);
         } catch (err) {
           if (err instanceof RuntimeError) {
             return {
