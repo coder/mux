@@ -5909,7 +5909,19 @@ export class AgentSession {
       const { message, options, internal } = this.messageQueue.dequeueNext();
       this.dispatchingQueuedEntry = true;
       this.dispatchingQueuedEntryMuxMetadata = options?.muxMetadata;
-      this.emitQueuedMessageChanged();
+
+      // Keep the dequeued user entry visible until sendMessage emits its durable user row.
+      // Otherwise compaction completion clears the queue card before the transcript replacement exists.
+      const finishDispatchWithoutStream = (): void => {
+        this.emitQueuedMessageChanged();
+        this.dispatchingQueuedEntry = false;
+        this.dispatchingQueuedEntryMuxMetadata = undefined;
+        if (this.turnPhase === TurnPhase.PREPARING) {
+          this.setTurnPhase(TurnPhase.IDLE);
+        }
+        // No stream will drain later entries, so continue now (each attempt pops one entry).
+        this.sendQueuedMessages();
+      };
 
       // Re-arm dispatch signals for the remaining entries so the stream we are
       // about to start drains them at its next tool end (or stream end).
@@ -5925,41 +5937,26 @@ export class AgentSession {
       this.preparingWorkspaceTurnMetadata = getWorkspaceTurnMuxMetadata(options?.muxMetadata);
       this.setTurnPhase(TurnPhase.PREPARING);
 
-      void this.sendMessage(message, options, internal)
+      void this.sendMessage(message, options, {
+        ...internal,
+        onAccepted: async () => {
+          this.emitQueuedMessageChanged();
+          await internal?.onAccepted?.();
+        },
+      })
         .then(async (result) => {
           // Keep the dispatch marker through the dequeue-to-stream-start window. A background
           // send can resolve before startup emits stream-start, and later reports must not claim
           // that window as the next continuation.
-          // If sendMessage fails before it can start streaming, ensure we don't
-          // leave the session stuck in PREPARING and notify correlated internal callers.
           if (!result.success) {
             await internal?.onAcceptedPreStreamFailure?.(result.error);
-            if (this.turnPhase === TurnPhase.PREPARING) {
-              this.setTurnPhase(TurnPhase.IDLE);
-            }
-            // No stream started, so no stream-end drain will fire for the
-            // remaining entries — try the next one now (each attempt pops an
-            // entry, so this terminates).
-            this.sendQueuedMessages();
-            return;
-          }
-          if (internal?.cancelState?.canceledBeforeAcceptance === true) {
-            // Cancellation can arrive after dequeue while sendMessage is validating or writing
-            // history. No stream will start, so release PREPARING and continue with later entries.
-            if (this.turnPhase === TurnPhase.PREPARING) {
-              this.setTurnPhase(TurnPhase.IDLE);
-            }
-            this.sendQueuedMessages();
+            finishDispatchWithoutStream();
+          } else if (internal?.cancelState?.canceledBeforeAcceptance === true) {
+            // Cancellation can arrive after dequeue while sendMessage is validating or writing.
+            finishDispatchWithoutStream();
           }
         })
-        .catch(() => {
-          this.dispatchingQueuedEntry = false;
-          this.dispatchingQueuedEntryMuxMetadata = undefined;
-          if (this.turnPhase === TurnPhase.PREPARING) {
-            this.setTurnPhase(TurnPhase.IDLE);
-          }
-          this.sendQueuedMessages();
-        });
+        .catch(finishDispatchWithoutStream);
     }
   }
 

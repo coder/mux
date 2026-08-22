@@ -514,6 +514,59 @@ describe("AgentSession queued message tool-call dispatch", () => {
     }
   });
 
+  test("keeps a dequeued user message visible until its durable row is emitted", async () => {
+    const workspaceId = "queue-dispatch-visible-handoff";
+    const { session, cleanup, historyService, events } = await createAgentSessionHarness({
+      workspaceId,
+      captureEvents: true,
+    });
+    const originalAppend = historyService.appendToHistory.bind(historyService);
+    const appendStarted = Promise.withResolvers<void>();
+    const appendRelease = Promise.withResolvers<void>();
+    const appendSpy = spyOn(historyService, "appendToHistory").mockImplementation(
+      async (...args) => {
+        appendStarted.resolve();
+        await appendRelease.promise;
+        return originalAppend(...args);
+      }
+    );
+    const followUp = "Follow up after compaction";
+    const isFollowUpUserMessage = (event: (typeof events)[number]) =>
+      event.type === "message" &&
+      event.role === "user" &&
+      event.parts.some((part) => part.type === "text" && part.text === followUp);
+    const latestQueuedMessages = () =>
+      events.filter((event) => event.type === "queued-message-changed").at(-1)?.queuedMessages;
+
+    try {
+      session.queueMessage(followUp, { model: TEST_MODEL, agentId: "exec" });
+      session.sendQueuedMessages();
+      await appendStarted.promise;
+
+      expect(latestQueuedMessages()).toEqual([followUp]);
+      expect(events.some(isFollowUpUserMessage)).toBe(false);
+
+      appendRelease.resolve();
+      expect(await waitForCondition(() => events.some(isFollowUpUserMessage))).toBe(true);
+      expect(await waitForCondition(() => latestQueuedMessages()?.length === 0)).toBe(true);
+
+      const userMessageIndex = events.findIndex(isFollowUpUserMessage);
+      const clearedQueueIndex = events.findIndex(
+        (event, index) =>
+          index > userMessageIndex &&
+          event.type === "queued-message-changed" &&
+          event.queuedMessages.length === 0
+      );
+      expect(userMessageIndex).toBeGreaterThanOrEqual(0);
+      expect(clearedQueueIndex).toBeGreaterThan(userMessageIndex);
+    } finally {
+      appendRelease.resolve();
+      appendSpy.mockRestore();
+      session.dispose();
+      await cleanup();
+    }
+  });
+
   test("cancel signal retracts a synthetic entry after dequeue while history append is preparing", async () => {
     const workspaceId = "queue-dispatch-cancel-preparing";
     const { session, cleanup, historyService, events } = await createAgentSessionHarness({
