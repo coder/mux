@@ -220,7 +220,12 @@ describe("Config", () => {
         origWrite(file, data, options);
       });
 
-      await config.setUpdateChannel("nightly");
+      // Callers must see the blocked write as a failure, not a silent success.
+      const blockedError = await config.setUpdateChannel("nightly").then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(String(blockedError)).toContain("no confirmed backup yet");
 
       expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptData);
       expect(corruptBackups()).toHaveLength(0);
@@ -258,7 +263,11 @@ describe("Config", () => {
         origWrite(file, data, options);
       });
 
-      await config.setUpdateChannel("nightly");
+      const blockedError = await config.setUpdateChannel("nightly").then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(String(blockedError)).toContain("no confirmed backup yet");
       expect(fs.readFileSync(configFile, "utf-8")).toBe(newCorrupt);
       expect(corruptBackups()).toHaveLength(1);
 
@@ -403,6 +412,31 @@ describe("Config", () => {
       }
     });
 
+    it("creates readable owner-only sidecars even under a restrictive umask", () => {
+      if (process.platform === "win32") {
+        return;
+      }
+      const configFile = configFilePath();
+      const corruptData = '{ "projects": ';
+      // Write the corrupt config while file creation still works normally; only the
+      // sidecar creation should run under the restrictive umask.
+      fs.writeFileSync(configFile, corruptData);
+      // A 0777 umask strips the requested creation mode to 0000; the backup must still
+      // end up readable or recovery guidance points at an unusable file.
+      const prevUmask = process.umask(0o777);
+      const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
+      try {
+        config.loadConfigOrDefault();
+
+        const [backup] = corruptBackups();
+        expect(fs.statSync(backup).mode & 0o777).toBe(0o600);
+        expect(fs.readFileSync(backup)).toEqual(Buffer.from(corruptData));
+      } finally {
+        process.umask(prevUmask);
+        errorSpy.mockRestore();
+      }
+    });
+
     it("tightens permissions on a reused permissive sidecar", () => {
       if (process.platform === "win32") {
         return;
@@ -436,10 +470,16 @@ describe("Config", () => {
       const errorSpy = spyOn(log, "error").mockImplementation(() => undefined);
 
       // Simulate a concurrent writer replacing the file between this edit's load and write.
-      await config.editConfig((cfg) => {
-        fs.writeFileSync(configFile, corruptB);
-        return cfg;
-      });
+      const raceError = await config
+        .editConfig((cfg) => {
+          fs.writeFileSync(configFile, corruptB);
+          return cfg;
+        })
+        .then(
+          () => null,
+          (e: unknown) => e
+        );
+      expect(String(raceError)).toContain("changed after this edit loaded it");
 
       // The write was skipped: B is still on disk instead of a defaults rewrite.
       expect(fs.readFileSync(configFile, "utf-8")).toBe(corruptB);

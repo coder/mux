@@ -1033,6 +1033,9 @@ export class Config {
               backupPath = `${basePath}-${suffix}`;
             }
           }
+          // The creation mode is reduced by the process umask (a 0777 umask yields an
+          // owner-unreadable file); chmod is not, so pin the final mode explicitly.
+          fs.chmodSync(backupPath, 0o600);
           backupStatus = `The original bytes were backed up to ${backupPath}.`;
           backupDetail = backupPath;
         }
@@ -1880,34 +1883,38 @@ export class Config {
       // If that load failed, writing would replace the corrupt file with defaults. Only
       // proceed when the bytes on disk right now are the ones with a confirmed sidecar:
       // no confirmed backup, a concurrent replacement since the load, or an unreadable
-      // file all skip the write (matching saveConfig's log-and-swallow contract). A
-      // missing file is safe to overwrite. This cannot fully close the cross-process
+      // file all reject the edit so callers do not treat the mutation as durable (unlike
+      // saveConfig's log-and-swallow of unexpected I/O errors, this skip is deliberate).
+      // A missing file is safe to overwrite. This cannot fully close the cross-process
       // race (that needs file locking, which editConfig has never had); it binds the
       // approval to the current bytes and shrinks the window to the atomic write itself.
       const failureState = configLoadFailureStates.get(this.configFile);
       if (failureState) {
+        const rejectEdit = (reason: string): never => {
+          const message = `Skipping config write to ${this.configFile}: ${reason}`;
+          log.error(message);
+          throw new Error(message);
+        };
         if (failureState.backupSignature === null) {
-          log.error(
-            `Skipping config write to ${this.configFile}: the existing corrupt config has no confirmed backup yet. Fix the reported backup failure or move the corrupt file aside, then retry.`
+          rejectEdit(
+            "the existing corrupt config has no confirmed backup yet. Fix the reported backup failure or move the corrupt file aside, then retry."
           );
-          return;
         }
+        let currentSignature: string | null = null;
         try {
           const currentBytes = fs.readFileSync(this.configFile);
-          const currentSignature = crypto.createHash("sha256").update(currentBytes).digest("hex");
-          if (currentSignature !== failureState.backupSignature) {
-            log.error(
-              `Skipping config write to ${this.configFile}: the file changed after this edit loaded it and the new content has no confirmed backup. Retry the settings change.`
-            );
-            return;
-          }
+          currentSignature = crypto.createHash("sha256").update(currentBytes).digest("hex");
         } catch (readError) {
           if ((readError as NodeJS.ErrnoException).code !== "ENOENT") {
-            log.error(
-              `Skipping config write to ${this.configFile}: the file could not be re-read before writing (${readError instanceof Error ? readError.message : String(readError)}). Retry the settings change.`
+            rejectEdit(
+              `the file could not be re-read before writing (${readError instanceof Error ? readError.message : String(readError)}). Retry the settings change.`
             );
-            return;
           }
+        }
+        if (currentSignature !== null && currentSignature !== failureState.backupSignature) {
+          rejectEdit(
+            "the file changed after this edit loaded it and the new content has no confirmed backup. Retry the settings change."
+          );
         }
       }
       await this.saveConfig(newConfig);
