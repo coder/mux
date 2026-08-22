@@ -352,6 +352,21 @@ function compactKernelToolCallRecords(result: PTCExecutionResult, loadActive: bo
 }
 
 /**
+ * Truncate to at most `maxBytes` of UTF-8 without splitting a multibyte
+ * sequence. The caps here are byte budgets (measured with Buffer.byteLength),
+ * but String.prototype.slice counts UTF-16 code units — multibyte-heavy text
+ * sliced by code units can retain up to ~4x the nominal byte cap and bypass
+ * the documented model-context bound. Encode, cut at the cap, and strip the
+ * replacement char a split trailing sequence decodes to.
+ */
+function sliceUtf8Bytes(text: string, maxBytes: number): string {
+  const encoded = new TextEncoder().encode(text);
+  if (encoded.length <= maxBytes) return text;
+  const decoded = new TextDecoder("utf-8", { fatal: false }).decode(encoded.subarray(0, maxBytes));
+  return decoded.replace(/\uFFFD+$/u, "");
+}
+
+/**
  * Bound the error echoed in a compact kernel record (defense in depth behind
  * the runtime's creation-time bounding). Host error messages can embed
  * guest-supplied data verbatim — ENAMETOOLONG echoes the full oversized path —
@@ -361,7 +376,7 @@ function compactKernelToolCallRecords(result: PTCExecutionResult, loadActive: bo
 function boundCompactRecordError(error: string): string {
   const bytes = Buffer.byteLength(error, "utf8");
   if (bytes <= KERNEL_COMPACT_ARGS_CAP_BYTES) return error;
-  return `${error.slice(0, KERNEL_COMPACT_ARGS_CAP_BYTES)}…[${bytes} bytes total; truncated]`;
+  return `${sliceUtf8Bytes(error, KERNEL_COMPACT_ARGS_CAP_BYTES)}…[${bytes} bytes total; truncated]`;
 }
 
 /**
@@ -392,7 +407,7 @@ function boundCompactRecordArgs(args: unknown): unknown {
   const size = Buffer.byteLength(serialized, "utf8");
   if (size <= KERNEL_COMPACT_ARGS_CAP_BYTES) return args;
   return {
-    argsPreview: `${serialized.slice(0, KERNEL_COMPACT_ARGS_CAP_BYTES)}…[${size} bytes total; truncated]`,
+    argsPreview: `${sliceUtf8Bytes(serialized, KERNEL_COMPACT_ARGS_CAP_BYTES)}…[${size} bytes total; truncated]`,
     argsBytes: size,
   };
 }
@@ -425,12 +440,11 @@ function capKernelConsoleOutput(result: PTCExecutionResult): void {
     }
     droppedRecords += 1;
     if (droppedRecords === 1 && total < KERNEL_CONSOLE_CAP_BYTES) {
-      // Crossing record: keep a bounded head (char-sliced — close enough to
-      // bytes for a soft cap) instead of dropping it whole.
+      // Crossing record: keep a bounded head instead of dropping it whole.
       const remaining = KERNEL_CONSOLE_CAP_BYTES - total;
       kept.push({
         level: record.level,
-        args: [`${serialized.slice(0, remaining)}…[truncated]`],
+        args: [`${sliceUtf8Bytes(serialized, remaining)}…[truncated]`],
         timestamp: record.timestamp,
       });
       droppedBytes += Math.max(0, size - remaining);

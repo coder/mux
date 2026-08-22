@@ -1110,6 +1110,43 @@ describe("createCodeExecutionTool", () => {
       await host.disposeScope("ws-error-bound");
     });
 
+    it("bounds oversized errors by UTF-8 bytes, not UTF-16 code units", async () => {
+      // The cap is a byte budget: multibyte text sliced by code units would
+      // retain ~3x the nominal cap (3 UTF-8 bytes per CJK char) and bypass
+      // the model-context bound the cap documents.
+      using tmp = new DisposableTempDir("code-exec-offload");
+      const host = new SandboxHostService();
+      const multibyteErrorTools: Record<string, Tool> = {
+        touchy: createMockTool("touchy", z.object({ path: z.string() }), (input) => {
+          throw new Error(
+            `ENAMETOOLONG: name too long, open '${(input as { path: string }).path}'`
+          );
+        }),
+      };
+      const tool = await createCodeExecutionTool(
+        runtimeFactory,
+        new ToolBridge(multibyteErrorTools),
+        () => undefined,
+        persistentRunner(host, "ws-error-bound-mb", tmp.path)
+      );
+
+      const result = (await tool.execute!(
+        {
+          code: "try { mux.touchy({path: 'あ'.repeat(1_000_000)}); } catch (e) {} return 'done';",
+        },
+        mockToolCallOptions
+      )) as PTCExecutionResult;
+      expect(result.success).toBe(true);
+
+      const record = result.toolCalls.find((r) => r.toolName === "touchy");
+      expect(record?.error).toBeDefined();
+      expect(record!.error).toContain("truncated");
+      // Byte length (not just code-unit length) stays within the cap plus the
+      // truncation marker's small overhead.
+      expect(Buffer.byteLength(record!.error!, "utf8")).toBeLessThan(3 * 1024);
+      await host.disposeScope("ws-error-bound-mb");
+    });
+
     it("truncates over-cap return values to a bounded preview (no handle, no inline value)", async () => {
       // A value over the retention cap can be neither a handle (retention
       // would protect it while it blows the snapshot budget) nor inline (it
