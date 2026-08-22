@@ -543,6 +543,66 @@ describe("RefineService", () => {
     expect(await pathExists(stagedPath)).toBe(false);
   });
 
+  it("reconstructs unjournaled successes across apply recovery (r33)", async () => {
+    // Crash shape: the memory write succeeded but its r2 journal row never
+    // landed (swallowed by design), the per-edit progress rewrite persisted
+    // the attempt + success outcome, and the process died before the audit
+    // summary row was appended. Recovery skips the attempted edit — the
+    // in-pass success set starts empty — so only the PERSISTED outcome can
+    // keep the real, rollback-less mutation from being reported as a no-op.
+    using fixture = await createFixture({
+      modelFactory: () =>
+        toolCallModel(
+          [
+            {
+              toolCallId: "refine-unjournaled-resume-1",
+              toolName: "memory",
+              input: {
+                command: "create",
+                path: LESSON_PATH,
+                file_text: "An unjournaled success that must survive recovery.\n",
+              },
+            },
+          ],
+          "one lesson staged"
+        ),
+    });
+    await fixture.seedTrajectory();
+    expect((await fixture.service.run(WORKSPACE_ID)).success).toBe(true);
+
+    const stagedPath = path.join(fixture.sessionDir, "refine-staged.json");
+    const journal = sharedDurableEventJournal(fixture.sessionDir);
+    // Lazy rejection (not mockRejectedValue): bun creates that rejected
+    // promise eagerly, tripping unhandled-rejection detection.
+    const journalSpy = spyOn(journal, "append").mockImplementation(() =>
+      Promise.reject(new Error("journal unavailable"))
+    );
+    const appendSpy = spyOn(fixture.historyService, "appendToHistory").mockImplementationOnce(() =>
+      Promise.resolve(Err("history unavailable"))
+    );
+    try {
+      // "Crash" before the audit row: the failed append retains the staged
+      // set, leaving exactly the post-crash on-disk state (attempted +
+      // succeeded persisted, no journal row, no audit row).
+      const crashed = await fixture.service.apply(WORKSPACE_ID);
+      expect(crashed.success).toBe(false);
+    } finally {
+      journalSpy.mockRestore();
+      appendSpy.mockRestore();
+    }
+    expect(await pathExists(stagedPath)).toBe(true);
+
+    const resumed = await fixture.service.apply(WORKSPACE_ID);
+    expect(resumed.success).toBe(true);
+    if (!resumed.success) return;
+    // No journal row ever landed (nothing addressable for rollback), but the
+    // mutation is real: reported as untracked, never as a no-op.
+    expect(resumed.data.noOp).toBe(false);
+    expect(resumed.data.applied).toHaveLength(0);
+    expect(resumed.data.untrackedApplied).toBe(1);
+    expect(await pathExists(stagedPath)).toBe(false);
+  });
+
   it("records completed-step usage when a later step errors", async () => {
     // Step 1 completes (tool call + finish with real usage); step 2 errors.
     // The completed step billed real tokens — the error must not make that

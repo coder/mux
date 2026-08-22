@@ -487,7 +487,11 @@ export class RefineService {
       for (const { toolCallId } of journaled) attempted.add(toolCallId);
     }
 
-    let succeeded = 0;
+    // Success outcomes are PERSISTED per edit (succeededToolCallIds), not
+    // just counted: a crash-resumed apply skips attempted edits, so a prior
+    // unjournaled success would otherwise be unreconstructable and the
+    // resume would misreport a real mutation as a no-op (see the schema doc).
+    const succeededIds = new Set(staged.succeededToolCallIds ?? []);
     // Failed approved edits are REPORTED, never folded into a successful
     // no-op: "nothing was applied" must not stand in for "everything failed"
     // (the staged set would be consumed with no record that approved edits
@@ -546,7 +550,7 @@ export class RefineService {
           result !== null &&
           (result as { success?: unknown }).success === true
         ) {
-          succeeded += 1;
+          succeededIds.add(edit.toolCallId);
         } else {
           const toolError =
             typeof result === "object" && result !== null
@@ -582,6 +586,7 @@ export class RefineService {
             ...staged,
             applyBaselineSeq: baselineSeq,
             attemptedToolCallIds: [...attempted],
+            succeededToolCallIds: [...succeededIds],
           });
         } catch (error) {
           log.warn("[Refine] failed to persist apply progress", {
@@ -592,19 +597,27 @@ export class RefineService {
         this.options.onStagedEditAttempted?.(edit.toolCallId);
       }
     }
-    const applied = await this.collectAppliedEdits(
+    const journaledRows = await this.listStagedRefinementRows(
       sessionDir,
       workspaceId,
       baselineSeq,
       staged.edits.map((edit) => edit.toolCallId)
     );
+    const applied: RefineAppliedEdit[] = journaledRows.map(({ row }) => ({
+      refinementId: row.id,
+      description: describeRefinementRow(row),
+    }));
     // Journal acknowledgement can fail while the mutation itself succeeded
     // (appendRefinementEvent swallows journal/blob failures by design so
     // user-facing writes stay self-healing). Those edits are real — files
     // changed with no rollback id — so they must be reported, never
-    // classified as a no-op. The tools' own success results are the ground
-    // truth; anything applied beyond the journaled rows is untracked.
-    const untrackedApplied = Math.max(0, succeeded - applied.length);
+    // classified as a no-op. The tools' own PERSISTED success outcomes are
+    // the ground truth: successes without a journaled row are untracked.
+    // Set difference (not a counter minus applied.length) so a crash-resumed
+    // apply — whose in-pass counter would be zero — still reconstructs
+    // untracked successes recorded by the pre-crash pass.
+    const journaledIds = new Set(journaledRows.map(({ toolCallId }) => toolCallId));
+    const untrackedApplied = [...succeededIds].filter((id) => !journaledIds.has(id)).length;
     const record: RefineRecord = {
       applied,
       summary: staged.summary,
@@ -885,24 +898,6 @@ export class RefineService {
       matched.push({ row, toolCallId: evidence.data.toolCallId });
     }
     return matched;
-  }
-
-  private async collectAppliedEdits(
-    sessionDir: string,
-    workspaceId: string,
-    baselineSeq: number,
-    toolCallIds: string[]
-  ): Promise<RefineAppliedEdit[]> {
-    const matched = await this.listStagedRefinementRows(
-      sessionDir,
-      workspaceId,
-      baselineSeq,
-      toolCallIds
-    );
-    return matched.map(({ row }) => ({
-      refinementId: row.id,
-      description: describeRefinementRow(row),
-    }));
   }
 
   /**

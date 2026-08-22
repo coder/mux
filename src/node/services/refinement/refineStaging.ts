@@ -63,6 +63,15 @@ export const StagedRefineSetSchema = z.object({
    */
   applyBaselineSeq: z.number().optional(),
   attemptedToolCallIds: z.array(z.string()).optional(),
+  /**
+   * Tool calls whose execution reported success, persisted alongside the
+   * attempted set. An unjournaled success (the tool's refinement-journal
+   * append failed, swallowed by design) leaves no other durable trace: a
+   * crash-resumed apply skips the attempted edit with its in-pass success
+   * counter back at zero, so only this record lets recovery reconstruct
+   * untrackedApplied instead of misreporting the real mutation as a no-op.
+   */
+  succeededToolCallIds: z.array(z.string()).optional(),
 });
 export type StagedRefineSet = z.infer<typeof StagedRefineSetSchema>;
 
