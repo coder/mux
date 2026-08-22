@@ -1128,6 +1128,61 @@ describe("SandboxHostService", () => {
     await host.disposeScope("ws-evict");
   });
 
+  test("a guest-clobbered __handleSeq never overwrites live handles", async () => {
+    // Codex r24: the old fallback `(isFinite ? floor : 0) + 1` restarted
+    // numbering at 1 whenever the guest clobbered the counter — the next
+    // handle OVERWROTE live __h1. The sequence now recovers from what
+    // exists: max(live __hN keys, __loadMeta seqs, sanitized counter) + 1.
+    using tmp = new DisposableTempDir("sandbox-host-test");
+    const host = new SandboxHostService();
+    const mount = await host.acquireMount({
+      lifetime: "persistent",
+      runtimeFactory,
+      scopeKey: "ws-seq-clobber",
+      sessionDir: tmp.path,
+    });
+
+    const val = (n: number) => JSON.stringify({ n });
+    await mount.storeResultHandle(val(1), 10_000); // __h1
+    await mount.storeResultHandle(val(2), 10_000); // __h2
+    await mount.storeResultHandle(val(3), 10_000); // __h3
+
+    const clobbers = [
+      "vars.__handleSeq = 0;",
+      'vars.__handleSeq = "garbage";',
+      "delete vars.__handleSeq;",
+      "vars.__handleSeq = Infinity;",
+    ];
+    for (let i = 0; i < clobbers.length; i++) {
+      const clobbered = await mount.runtime.eval(`${clobbers[i]} return true;`);
+      expect(clobbered.success).toBe(true);
+      expect(await mount.storeResultHandle(val(4 + i), 10_000)).toBe(`__h${4 + i}`);
+    }
+    const survivors = await mount.runtime.eval(
+      "return [vars.__h1.n, vars.__h2.n, vars.__h3.n, vars.__h4.n, vars.__h7.n];"
+    );
+    expect(survivors.result).toEqual([1, 2, 3, 4, 7]);
+
+    // Load seqs recover through the same scan: clobber, then register a
+    // load — its seq must extend the live max, preserving age order.
+    const seeded = await mount.runtime.eval('vars.__handleSeq = null; vars.ld = "x"; return true;');
+    expect(seeded.success).toBe(true);
+    await mount.enforceVarsRetention({ newLoadKeys: ["ld"], protectedKeys: [], capBytes: 10_000 });
+    const meta = await mount.runtime.eval("return vars.__loadMeta.ld;");
+    expect(meta.result).toBe(8);
+
+    // An unsafe counter cannot stick: MAX_SAFE_INTEGER mints one oversized
+    // key exactly once, then the sanitizer rejects the now-unsafe counter
+    // and the scan resumes from the live safe max — no live key is reused.
+    const unsafe = await mount.runtime.eval(
+      "vars.__handleSeq = Number.MAX_SAFE_INTEGER; return true;"
+    );
+    expect(unsafe.success).toBe(true);
+    expect(await mount.storeResultHandle(val(9), 10_000)).toBe("__h9007199254740992");
+    expect(await mount.storeResultHandle(val(10), 10_000)).toBe("__h9");
+    await host.disposeScope("ws-seq-clobber");
+  });
+
   test("retention measures UTF-8 bytes, not UTF-16 code units (multibyte payloads)", async () => {
     // Codex r24: sizes were measured as JSON.stringify().length — UTF-16
     // code units — under-counting multibyte payloads by up to 4x. Handles

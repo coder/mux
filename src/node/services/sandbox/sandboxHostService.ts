@@ -308,6 +308,42 @@ const GUEST_UTF8_LEN_SOURCE = `
       }
 `;
 
+/**
+ * Guest-side collision-free handle sequencing (r24). vars is guest-writable,
+ * so vars.__handleSeq can be clobbered (null, "garbage", 0, deleted,
+ * Infinity, MAX_SAFE_INTEGER). The old fallback `(isFinite ? floor : 0) + 1`
+ * restarted numbering at 1 — the next __hN handle OVERWROTE the oldest live
+ * handle — and an unsafe-integer counter lost precision on + 1. Recovery
+ * instead derives the next sequence from what actually exists: max of all
+ * live __hN keys, all __loadMeta seqs, and a sanitized
+ * (Number.isSafeInteger) counter, plus one. A clobbered counter therefore
+ * never reuses a live key — worst case it skips numbers, and a
+ * MAX_SAFE_INTEGER clobber mints one oversized key before the sanitizer
+ * rejects the now-unsafe counter and the scan resumes from the live safe
+ * max.
+ */
+const GUEST_NEXT_HANDLE_SEQ_SOURCE = `
+      function nextHandleSeq() {
+        let maxSeq = 0;
+        for (const k of Object.keys(vars)) {
+          const m = /^__h(\\d+)$/.exec(k);
+          if (m === null) continue;
+          const n = Number(m[1]);
+          if (Number.isSafeInteger(n) && n > maxSeq) maxSeq = n;
+        }
+        const metaRaw = vars.__loadMeta;
+        const meta = typeof metaRaw === "object" && metaRaw !== null ? metaRaw : {};
+        for (const k of Object.keys(meta)) {
+          const n = meta[k];
+          if (typeof n === "number" && Number.isSafeInteger(n) && n > maxSeq) maxSeq = n;
+        }
+        const seqRaw = vars.__handleSeq;
+        const current =
+          typeof seqRaw === "number" && Number.isSafeInteger(seqRaw) && seqRaw > 0 ? seqRaw : 0;
+        return Math.max(maxSeq, current) + 1;
+      }
+`;
+
 export class SandboxMount {
   private readonly hostEventQueue: unknown[] = [];
   private disposed = false;
@@ -437,7 +473,9 @@ export class SandboxMount {
    * Store an offloaded value in the guest `vars` namespace under the next
    * monotonic handle key (__h1, __h2, ...). The sequence counter lives in
    * vars.__handleSeq so it snapshots/restores with vars — handles stay
-   * monotonic per scope across restarts. Returns the handle key.
+   * monotonic per scope across restarts, and a guest-clobbered counter
+   * recovers without reusing live keys (GUEST_NEXT_HANDLE_SEQ_SOURCE).
+   * Returns the handle key.
    *
    * Also enforces `capBytes` on the total bytes retained by handle vars,
    * evicting oldest-first (sizes measured as exact UTF-8 bytes of the JSON
@@ -464,11 +502,9 @@ export class SandboxMount {
     const result = await this.runtime.eval(
       `
       ${GUEST_UTF8_LEN_SOURCE}
+      ${GUEST_NEXT_HANDLE_SEQ_SOURCE}
       const value = JSON.parse(${literal});
-      const seqRaw = vars.__handleSeq;
-      // Tolerate a guest-clobbered counter (vars is guest-writable): restart
-      // numbering rather than crashing the offload.
-      const seq = (typeof seqRaw === "number" && isFinite(seqRaw) ? Math.floor(seqRaw) : 0) + 1;
+      const seq = nextHandleSeq();
       vars.__handleSeq = seq;
       const key = "__h" + seq;
       vars[key] = value;
@@ -529,6 +565,7 @@ export class SandboxMount {
     const result = await this.runtime.eval(
       `
       ${GUEST_UTF8_LEN_SOURCE}
+      ${GUEST_NEXT_HANDLE_SEQ_SOURCE}
       const newLoads = ${JSON.stringify(args.newLoadKeys)};
       const protectedKeys = ${JSON.stringify(args.protectedKeys)};
       const cap = ${args.capBytes};
@@ -537,8 +574,7 @@ export class SandboxMount {
       const meta = typeof metaRaw === "object" && metaRaw !== null ? metaRaw : {};
       vars.__loadMeta = meta;
       for (const key of newLoads) {
-        const seqRaw = vars.__handleSeq;
-        const seq = (typeof seqRaw === "number" && isFinite(seqRaw) ? Math.floor(seqRaw) : 0) + 1;
+        const seq = nextHandleSeq();
         vars.__handleSeq = seq;
         meta[key] = seq;
       }
