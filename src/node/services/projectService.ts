@@ -16,6 +16,7 @@ import type { Secret } from "@/common/types/secrets";
 import type { Stats } from "fs";
 import * as fsPromises from "fs/promises";
 import { execFileAsync, killProcessTree } from "@/node/utils/disposableExec";
+import { GIT_SCOPE_ENV_UNSET } from "@/node/services/backup/credentials";
 import {
   buildFileCompletionsIndex,
   EMPTY_FILE_COMPLETIONS_INDEX,
@@ -1521,24 +1522,32 @@ export class ProjectService {
         }
       } else {
         initializedGitDir = true;
-        using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"]);
+        using initProc = execFileAsync("git", ["-C", normalizedPath, "init", "-b", "main"], {
+          // Inherited repository selectors (GIT_DIR/GIT_WORK_TREE) win over -C and
+          // would redirect init/commit into an unrelated external repository.
+          env: GIT_SCOPE_ENV_UNSET,
+        });
         await initProc.result;
       }
 
       // A born branch is required by worktree and SSH runtimes. Keep the fallback
       // identity scoped to this initial commit instead of changing repository config.
-      using commitProc = execFileAsync("git", [
-        "-C",
-        normalizedPath,
-        "-c",
-        "user.name=mux",
-        "-c",
-        "user.email=mux@localhost",
-        "commit",
-        "--allow-empty",
-        "-m",
-        "Initial commit",
-      ]);
+      using commitProc = execFileAsync(
+        "git",
+        [
+          "-C",
+          normalizedPath,
+          "-c",
+          "user.name=mux",
+          "-c",
+          "user.email=mux@localhost",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "Initial commit",
+        ],
+        { env: GIT_SCOPE_ENV_UNSET }
+      );
       await commitProc.result;
 
       this.fileCompletionsCache.delete(normalizedPath);

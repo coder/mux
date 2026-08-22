@@ -351,6 +351,27 @@ exit 1
       expect(config.loadConfigOrDefault().projects.has(projectPath)).toBe(true);
     });
 
+    it("initializes the new project even when GIT_DIR/GIT_WORK_TREE point elsewhere", async () => {
+      const externalRepoPath = await createLocalGitRepository(tempDir, "external-selected-repo");
+      const externalCommitsBefore = execSync("git rev-list --count HEAD", {
+        cwd: externalRepoPath,
+        encoding: "utf-8",
+      }).trim();
+      const projectPath = path.join(tempDir, "env-selected-project");
+
+      const result = await withEnv(
+        { GIT_DIR: path.join(externalRepoPath, ".git"), GIT_WORK_TREE: externalRepoPath },
+        () => service.create(projectPath, { initGit: true })
+      );
+
+      expect(result.success).toBe(true);
+      // The new project owns its own repository; the externally selected one is untouched.
+      expect((await fs.stat(path.join(projectPath, ".git"))).isDirectory()).toBe(true);
+      expect(
+        execSync("git rev-list --count HEAD", { cwd: externalRepoPath, encoding: "utf-8" }).trim()
+      ).toBe(externalCommitsBefore);
+    });
+
     it("serializes concurrent gitInit calls for the same directory", async () => {
       const projectPath = path.join(tempDir, "concurrent-gitinit");
       await fs.mkdir(projectPath);
