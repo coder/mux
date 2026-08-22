@@ -477,7 +477,7 @@ function deriveSubProjectRelativePath(projectPath: string, subProjectPath: strin
  * @param metadata - Workspace metadata (contains projectPath)
  * @param runtime - Runtime for reading workspace files (supports SSH)
  * @param workspacePath - Workspace directory path
- * @param projectConfigs - Project configs from ~/.mux/config.json for per-project customInstructions
+ * @param projectConfigs - Project configs from ~/.xum/config.json for per-project customInstructions
  * @param claudeSkillsCompatEnabled - Whether to include ~/.claude/CLAUDE.md before native globals
  * @returns Structured instruction sources (ordered global and context entries)
  */
@@ -612,7 +612,7 @@ export async function buildSystemMessage(
      */
     modes?: readonly string[];
     /**
-     * Project configs from ~/.mux/config.json, used to append per-project
+     * Project configs from ~/.xum/config.json, used to append per-project
      * `customInstructions` (Settings → Instructions) to the prompt.
      */
     projectConfigs?: Map<string, ProjectConfig>;
