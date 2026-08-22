@@ -921,10 +921,12 @@ function coalesceConsecutiveParts(messages: ModelMessage[]): ModelMessage[] {
       // Merge consecutive reasoning parts (extended thinking)
       if (part.type === "reasoning" && lastPart?.type === "reasoning") {
         lastPart.text += part.text;
-        // Preserve signature from later parts - during streaming, the signature
-        // arrives at the end and is attached to the last reasoning part.
-        // Cast needed because AI SDK's ReasoningPart doesn't have signature,
-        // but our XumReasoningPart (which flows through convertToModelMessages) does.
+        // Streaming splits one reasoning block across many parts: Anthropic
+        // signatures arrive on the LAST part of a run, OpenAI/xAI itemId and
+        // encrypted content attach to the FIRST (later parts carry none), so
+        // adopting a later part's providerOptions preserves both shapes.
+        // The legacy top-level `signature` field predates providerOptions and
+        // survives here only for defensiveness (conversion strips it upstream).
         const partWithSig = part as typeof part & {
           signature?: string;
           providerOptions?: { anthropic?: { signature?: string } };
