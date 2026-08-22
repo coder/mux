@@ -349,6 +349,16 @@ function parsePluginWorkflowScriptPath(scriptPath: string): {
   }
 
   const relativePath = normalizeRelativeWorkflowPath(remainder.slice(slashIndex + 1), "plugin");
+  // Consent alignment: the install preview and the update capability
+  // comparison fingerprint TOP-LEVEL workflows/*.js only (mirroring the
+  // runtime lister), so nested paths must not be executable either — an
+  // attacker-controlled upstream could otherwise add a nested workflow the
+  // consent surface never names and later direct workflow_run at it.
+  if (relativePath.includes("/")) {
+    throw new Error(
+      `plugin:// workflow scripts must be top-level files in the plugin's workflows directory: ${relativePath}`
+    );
+  }
   return { pluginName, relativePath };
 }
 
